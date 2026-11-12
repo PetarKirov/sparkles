@@ -11,8 +11,8 @@ import examples : Example;
 /// App operations; shared editing operations carry an EditorAction argument.
 enum Command : ubyte { none, palette, guide, newTab, nextTab, previousTab, inspector,
     example, themes, selectTheme, toggleTheme, edit, quit, open, save, saveAs, confirm, cancel,
-    closeTab, discard }
-enum Scope : ubyte { @terminalScope modalModifiers, application, document, dialog, closing }
+    closeTab, discard, restoreSession }
+enum Scope : ubyte { @terminalScope modalModifiers, application, document, dialog, closing, recovery }
 alias CommandId = PaletteCommand!Command;
 alias CommandBinding = Binding!(Command, Scope);
 
@@ -38,6 +38,7 @@ CommandBinding[] commandBindings(EditorTarget target) @safe pure nothrow
         bind(Scope.application, chord(Key.f12), Command.inspector, "Toggle inspector"),
         bind(Scope.application, leader, chord('t'), Command.themes, "Choose theme"),
         bind(Scope.application, leader, chord('d'), Command.toggleTheme, "Toggle dark/light theme"),
+        bind(Scope.recovery, leader, chord('r'), Command.restoreSession, "Restore previous session"),
         bind(Scope.application, open, Command.open, "Open file"),
         bind(Scope.application, saveAs, Command.saveAs, "Save as"),
         bind(Scope.application, save, Command.save, "Save"),
@@ -90,10 +91,12 @@ struct CommandContext
     const(CommandBinding)[] bindings;
     bool modal;
     bool closing;
+    bool recoveryAvailable;
 
     bool available(CommandId command, ulong target) const scope @safe pure nothrow @nogc
     {
         if (command.operation == Command.none) return false;
+        if (command.operation == Command.restoreSession) return !modal && recoveryAvailable;
         if (command.operation == Command.discard) return closing;
         const dialogCommand = command.operation == Command.confirm || command.operation == Command.cancel;
         if (modal != dialogCommand) return false;
@@ -102,6 +105,7 @@ struct CommandContext
 
     bool reachable(Scope scope_) const scope @safe pure nothrow @nogc
         => scope_ == Scope.modalModifiers ? false : scope_ == Scope.closing ? closing
+            : scope_ == Scope.recovery ? !modal && recoveryAvailable
             : scope_ == Scope.dialog ? modal : !modal && (scope_ == Scope.application || document != 0);
 
     /// Modified input belongs to the focused field, never to plain decision letters.

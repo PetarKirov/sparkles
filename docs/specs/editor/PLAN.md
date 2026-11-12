@@ -41,7 +41,7 @@ accepted. Each implementation commit must build and pass its relevant tests.
 | H — Highlighting and presentation | EAP12–EAP16                                       | Shared per-line highlighted presentation with editor decorations, revision-safe background work, themes and generated settings; active-line and preview/cancel scenarios                            | partial: shared syntax/editor overlay, background revisions and theme preview verified; font/settings and language picker pending |
 | U — Layout and input              | EAP17–EAP20                                       | Shared layout-backed navigation/hit-testing, Unicode corpus, terminal touch extraction and live IME on required native targets                                                                      | not started                                                                                                                       |
 | F — Real documents                | EAP21–EAP25                                       | UTF-8 fidelity, safe desktop saves, system document access on Android, conflict and dirty-close decisions; fault/provider tests and real-device evidence                                            | partial: native open/save/conflict and dirty-close tests pass; live close/provider acceptance pending                             |
-| R — Session recovery              | EAP26                                             | Owner-accepted checkpoint/loss policy, versioned settings/session storage, dirty-buffer recovery and interruption/corruption tests; no implicit writes to originals                                 | partial: background checkpoints, retention and configured app exit verified; startup restoration and device acceptance pending    |
+| R — Session recovery              | EAP26                                             | Owner-accepted checkpoint/loss policy, versioned settings/session storage, dirty-buffer recovery and interruption/corruption tests; no implicit writes to originals                                 | partial: native checkpoint/restore and exit verified; settings, lifecycle/resource limits and device latency acceptance pending   |
 | V — Acceptance and measurements   | EAP2, EAP27–EAP30 and all earlier obligations     | Required target matrix, 1/10 MiB and long-line workloads, independent adversarial review, docs and per-commit build checks                                                                          | not started                                                                                                                       |
 
 ## Next slice: document workflows
@@ -59,9 +59,10 @@ available; complete backend/input parity remains an acceptance gate.
    and cross-focus clipboard acceptance; preserve per-document consent.
 3. Add Android document-provider access/grants and the native IME experiments.
    Their actual guarantees remain separate from the native POSIX adapter.
-4. Implement recovery/session checkpoints under EAD11, including durable
-   revision display, continuous-edit scheduling, corruption and storage-failure
-   scenarios, and orderly-exit flush/decision handling.
+4. Native recovery now includes durable revision display, continuous-edit
+   scheduling, corruption/failure checks, explicit restore and orderly-exit
+   decisions. Finish TUI/nonvetoable lifecycle, resource limits and actual
+   one-second/device measurements under EAD11.
 
 Generated font/settings controls, language discovery, code-editor presentation
 and conveniences, shared Unicode layout/touch input and workload acceptance
@@ -95,14 +96,15 @@ evidence for a promised capability.
   file primitives, syscall-fault checks and CLI-open integration are at the
   current validation checkpoint. Native Save/Save As and overwrite decisions
   pass app tests, as do dirty-close decisions and the shared native close
-  hook. Generated settings/fonts,
-  language discovery, recovery and Unicode layout/touch/IME remain open.
+  hook. Native background recovery, retention, startup restore/adoption and
+  exit flush pass tests and a live X11 process-interruption round trip.
+  Generated settings/fonts, language discovery, complete recovery acceptance
+  and Unicode layout/touch/IME remain open.
 - Evidence and reviews: [testing §6](./testing.md#6-evidence-ledger).
-- Next executable action: complete startup archive discovery and explicit
-  restore offers before enabling CLI writes to user state directories.
-  Configured app checkpoint/exit flows and bounded retention are verified;
-  retain older durable generations until a newer write is acknowledged.
-  Settings, Unicode, provider
+- Next executable action: finish recovery lifecycle/resource checks and
+  one-second latency evidence, then implement generated settings/fonts.
+  CLI session writes and explicit restore offers are enabled; older durable
+  generations remain until a newer write is acknowledged. Settings, Unicode, provider
   and workload gates remain open;
   clipboard request identity across focus changes remains an explicit input
   acceptance scenario.

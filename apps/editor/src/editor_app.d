@@ -104,6 +104,119 @@ private class SaveIntent
     bool bom;
 }
 
+/// A restored duplicate becomes an unsaved copy and cannot overwrite another open tab.
+@("editor.app.restoreDuplicatePathIsCopy")
+@safe unittest
+{
+    version (linux) {}
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("Recovery directory leases currently require Linux.");
+    }
+    import core.thread : Thread;
+    import core.time : seconds;
+    import session_directory : SessionDirectory;
+    import session_archive : appendSessionGeneration;
+    import session_record : SessionRecord, SessionTab, SessionSelection;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui.geometry : Size;
+    import std.path : buildPath;
+    import std.file : readText;
+    auto fixture = TmpFS.create();
+    const path = fixture.writeFile("disk");
+    const base = buildPath(fixture.dir, "sessions");
+    auto old = SessionDirectory.create(base, fixture.dir);
+    assert(old.hasValue);
+    SessionRecord record;
+    record.generation = 1;
+    record.active = 7;
+    record.tabs = [SessionTab(id: 7, path: path, name: "recovered", content: "recovered draft",
+        savedContent: "disk", selections: [SessionSelection(0, 0)])];
+    assert(appendSessionGeneration(old.value.path, record).hasValue);
+    old.value.close();
+    EditorApp app;
+    scope (exit) app.dispose();
+    app.enableRecovery(base, fixture.dir);
+    assert(app.openPath(path));
+    RecordingHost host;
+    host.size = Size(80, 28);
+    const deadline = MonoTime.currTime + 3.seconds;
+    while ((app.filesBusy || !app.recovery.discoveryComplete) && MonoTime.currTime < deadline)
+    {
+        cast(void) app.view(host);
+        (() @trusted => Thread.yield())();
+    }
+    auto current = app.document;
+    current.field.insert("local ");
+    app.execute(CommandId(Command.restoreSession));
+    app.execute(CommandId(Command.confirm));
+    assert(app.tabCount == 2 && app.document.path.length == 0 && app.document.dirty);
+    assert(app.document.field.text == "recovered draft" && current.field.text == "local disk");
+    assert(current.path == path && !app.saveTo(path));
+    assert((() @trusted => readText(path))() == "disk");
+}
+
+/// Explicit restore merges into the current session without replacing edits made during discovery.
+@("editor.app.restoreKeepsCurrentEdits")
+@safe unittest
+{
+    version (linux) {}
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("Recovery directory leases currently require Linux.");
+    }
+    import core.thread : Thread;
+    import core.time : seconds;
+    import session_directory : SessionDirectory;
+    import session_archive : appendSessionGeneration;
+    import session_record : SessionRecord, SessionTab, SessionSelection;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui.geometry : Size;
+    import std.path : buildPath;
+    auto fixture = TmpFS.create();
+    const base = buildPath(fixture.dir, "sessions");
+    auto old = SessionDirectory.create(base, fixture.dir);
+    assert(old.hasValue);
+    SessionRecord record;
+    record.generation = 1;
+    record.active = 7;
+    record.theme = "github-dark";
+    record.tabs = [SessionTab(id: 7, name: "recovered", content: "recovered draft",
+        savedContent: "disk", selections: [SessionSelection(0, 0)])];
+    assert(appendSessionGeneration(old.value.path, record).hasValue);
+    old.value.close();
+    EditorApp app;
+    scope (exit) app.dispose();
+    app.enableRecovery(base, fixture.dir);
+    assert(app.openBytes("current", "current text"));
+    app.document.field.run(EditCommand.setRange(0, 0), MonoTime.currTime);
+    app.document.field.insert("new ");
+    auto current = app.document;
+    const count = app.tabCount;
+    RecordingHost host;
+    host.size = Size(80, 28);
+    const deadline = MonoTime.currTime + 3.seconds;
+    while (!app.recovery.discoveryComplete && MonoTime.currTime < deadline)
+    {
+        cast(void) app.view(host);
+        (() @trusted => Thread.yield())();
+    }
+    assert(app.document is current && current.field.text == "new current text");
+    app.execute(CommandId(Command.restoreSession));
+    app.execute(CommandId(Command.cancel));
+    assert(app.document is current && app.tabCount == count && app.recovery.offerCount == 1);
+    app.execute(CommandId(Command.restoreSession));
+    app.execute(CommandId(Command.confirm));
+    assert(app.tabCount == count + 1 && app.document.id != 7 && app.document !is current);
+    assert(app.document.field.text == "recovered draft" && app.document.dirty);
+    assert(current.field.text == "new current text" && current.dirty && app.themeName == "github-dark");
+    assert(app.recovery.offerCount == 0 && app.recovery.pending);
+}
+
 /// Recovery failures keep exit cancellable; an explicit failure decision alone permits bypass.
 @("editor.app.failedRecoveryExitIsCancellable")
 @safe unittest
@@ -150,7 +263,7 @@ private class SaveIntent
     assert(app.quitRequested);
 }
 
-private enum Dialog : ubyte { none, openPath, savePath, dirtyClose, recoveryClose }
+private enum Dialog : ubyte { none, openPath, savePath, dirtyClose, recoveryClose, restoreOffer }
 
 /// Thin shared-widget component, instantiated by recording, TUI and Vulkan hosts.
 struct EditorApp
@@ -296,6 +409,56 @@ struct EditorApp
         dialog = Dialog.dirtyClose;
         ++dialogEpoch;
     }
+
+    private void showRestoreOffer() @safe
+    {
+        if (filesBusy) { status = "Wait for pending file operations before restoring."; return; }
+        if (commands.palette.active) commands.palette.cancel(commands.palette.snapshot.ticket);
+        endPicker(false);
+        document.field.run(EditCommand.of(EditKind.blur), MonoTime.currTime);
+        lantern.reset();
+        dialog = Dialog.restoreOffer;
+        ++dialogEpoch;
+    }
+
+    private void acceptRestoreOffer() @safe
+    {
+        if (recovery is null || !recovery.offerCount) return;
+        auto offered = recovery.offer(0);
+        const restoredActive = offered.record.active;
+        const restoredTheme = offered.record.theme;
+        if (replaceableUntitled) removeDocument(tabs[0].id);
+        foreach (i; 0 .. offered.documentCount)
+        {
+            auto restored = offered.document(i);
+            const selected = restored.id == restoredActive;
+            foreach (tab; tabs)
+                if (restored.path.length && tab.path == restored.path)
+                {
+                    restored.path = null;
+                    restored.savedBytes = null;
+                    restored.saved = Text.init;
+                    restored.name ~= " (recovered copy)";
+                    break;
+                }
+            restored.id = nextId++;
+            restored.field.target = target;
+            tabs ~= restored;
+            if (selected) activeTab = tabs.length - 1;
+        }
+        dialog = Dialog.none;
+        ++dialogEpoch;
+        status = restoredTheme.length && !useTheme(restoredTheme)
+            ? "The recovered theme is unavailable; the current theme was retained." : "Restored previous session.";
+        observeRecovery();
+        recovery.consumeOffer(0);
+    }
+
+    private bool replaceableUntitled() const scope @safe pure nothrow @nogc
+        => tabs.length == 1 && tabs[0].field.empty && !tabs[0].dirty && !tabs[0].path.length
+            && tabs[0].name == "Untitled" && !tabs[0].saving
+            && tabs[0].field.state.history.length == 1
+            && !tabs[0].field.state.composition.active && !tabs[0].field.state.record.pendingRequest;
 
     private void removeDocument(ulong id) @safe
     {
@@ -491,10 +654,7 @@ struct EditorApp
             opened.predominant = result.decoded.predominant;
             opened.language = canonicalLanguageOfPath(result.path);
             if (opened.language == "txt" || opened.language == "log") opened.language = "text";
-            if (activate && tabs.length == 1 && tabs[0].field.empty && !tabs[0].dirty && !tabs[0].path.length
-                && tabs[0].name == "Untitled" && !tabs[0].saving
-                && tabs[0].field.state.history.length == 1
-                && !tabs[0].field.state.composition.active && !tabs[0].field.state.record.pendingRequest)
+            if (activate && replaceableUntitled)
                 tabs[0] = opened;
             else
             {
@@ -563,6 +723,7 @@ struct EditorApp
     private enum size_t tabHitBase = 0x7400_0000;
     private enum size_t dialogConfirmHit = 0x7500_0000, dialogCancelHit = 0x7500_0001;
     private enum size_t dialogDiscardHit = 0x7600_0000;
+    private enum size_t restoreHit = 0x7800_0000;
 
     /// Retain the committed frame for event routing; no second layout/hit model.
     void paint(H)(ref H host, const WidgetTree tree, const Frame[] frames)
@@ -609,6 +770,11 @@ struct EditorApp
             const base = PaletteViewOptions.init.hitBase;
             if (pointer.action == PointerAction.press && hit >= base && hit - base < paletteChoices.length)
                 apply(commands.palette.activate(paletteChoices[hit - base], context));
+            return;
+        }
+        if (hit == restoreHit)
+        {
+            if (pointer.action == PointerAction.press) execute(CommandId(Command.restoreSession));
             return;
         }
         if (hit >= tabHitBase && hit - tabHitBase < tabs.length)
@@ -673,7 +839,8 @@ struct EditorApp
         => dialog == Dialog.openPath || dialog == Dialog.savePath;
 
     CommandContext context() @safe => CommandContext(recoveryExit ? 0 : document.id,
-        bindings, modal, dialog == Dialog.dirtyClose || dialog == Dialog.recoveryClose);
+        bindings, modal, dialog == Dialog.dirtyClose || dialog == Dialog.recoveryClose,
+        recovery !is null && recovery.offerCount != 0);
 
     private void observeRecovery() @safe nothrow
     {
@@ -748,6 +915,7 @@ struct EditorApp
                 ++dialogEpoch;
                 recovery.flush(now);
             }
+            else if (dialog == Dialog.restoreOffer) acceptRestoreOffer();
             else if (replacement !is null) resolveOverwrite(true);
             else if (dialog == Dialog.dirtyClose)
             {
@@ -784,6 +952,7 @@ struct EditorApp
             pathInput.run(EditCommand.of(EditKind.blur), now);
             break;
         case Command.closeTab: requestClose(false); break;
+        case Command.restoreSession: showRestoreOffer(); break;
         case Command.discard:
             if (dialog == Dialog.recoveryClose)
             {
@@ -1032,6 +1201,12 @@ struct EditorApp
         }
         const selectedTarget = host.backend == Backend.gui ? windowTarget : EditorTarget.terminal;
         if (selectedTarget != target) configure(selectedTarget);
+        const recoveryWarning = recovery !is null
+            && (recovery.error.length != 0 || recovery.overdue(MonoTime.currTime));
+        const extraRows = (inspector ? 1 : 0) + (status.length ? 1 : 0)
+            + (document.durabilityWarning.length ? 1 : 0)
+            + (recovery is null ? 0 : 1 + (recoveryWarning ? 1 : 0)
+                + (recovery.notice.length ? 1 : 0) + (recovery.offerCount && !modal ? 3 : 0));
         Builder b;
         uint[] children;
         children ~= b.add(Widget(kind: WidgetKind.text,
@@ -1049,6 +1224,8 @@ struct EditorApp
         {
             children ~= b.add(Widget(kind: WidgetKind.text, text: replacement !is null
                 ? "Replace existing file: " ~ replacement.path
+                : dialog == Dialog.restoreOffer ? text("Restore ", recovery.offer(0).documentCount,
+                    " tabs from the previous session?")
                 : dialog == Dialog.dirtyClose ? "Close " ~ document.name ~ ": Save, Discard or Cancel?"
                 : dialog == Dialog.openPath ? "Open file" : "Save as", slot: Slot.info,
                 wrap: TextWrap.greedy));
@@ -1059,6 +1236,7 @@ struct EditorApp
                 children ~= editorView(b, pathInput.state, EditorViewOptions(visibleLines: 1, placeholder: "Path…"));
             uint[] actions;
             actions ~= chip(b, replacement !is null ? "Replace this time"
+                : dialog == Dialog.restoreOffer ? "Restore tabs"
                 : dialog == Dialog.dirtyClose ? "Save" : "Enter: confirm", dialogConfirmHit + 2 * dialogEpoch,
                 false, ControlSize(rows: 3));
             if (dialog == Dialog.dirtyClose)
@@ -1069,7 +1247,7 @@ struct EditorApp
         }
         else if (commands.palette.active)
         {
-            const reserved = inspector ? 12 : 11;
+            const reserved = 11 + extraRows;
             const rows = host.size.height > reserved + 3
                 ? cast(size_t)(host.size.height - reserved) / 3 : 1;
             const paletteView = viewCommandPalette(b, commands.palette, commands.query.state, context,
@@ -1080,7 +1258,8 @@ struct EditorApp
         }
         else
         {
-            const visible = host.size.height > 5 ? cast(size_t) host.size.height - 5 : 1;
+            const reserved = 5 + extraRows;
+            const visible = host.size.height > reserved ? cast(size_t) host.size.height - reserved : 1;
             const count = document.field.state.text.lineCount;
             if (document.firstLine >= count) document.firstLine = count ? count - 1 : 0;
             if (document.followCaret)
@@ -1132,9 +1311,14 @@ struct EditorApp
             if (delay != typeof(delay).max) host.wakeIn(delay);
             children ~= b.add(Widget(kind: WidgetKind.text, slot: Slot.muted,
                 text: text("Recovery revision ", recovery.durableRevision, " / ", recovery.currentRevision)));
-            if (recovery.error.length || recovery.overdue(MonoTime.currTime))
+            if (recoveryWarning)
                 children ~= b.add(Widget(kind: WidgetKind.text, slot: Slot.warn,
                     text: "Recovery warning: " ~ (recovery.error.length ? recovery.error : "checkpoint exceeds one second")));
+            if (recovery.notice.length)
+                children ~= b.add(Widget(kind: WidgetKind.text, slot: Slot.warn, text: "Recovery notice: " ~ recovery.notice));
+            if (recovery.offerCount && !modal)
+                children ~= chip(b, text("Previous session available (", recovery.offerCount,
+                    ") • F4 R: restore"), restoreHit, false, ControlSize(rows: 3));
         }
         children ~= b.add(Widget(kind: WidgetKind.text, text: "UTF-8  •  "
             ~ (document.dirty ? "Modified" : document.durabilityWarning.length ? "Written" : "Saved")

@@ -12,6 +12,8 @@ import commands : CommandId, AppCommand = Command;
 import examples : Example;
 import core.thread : Thread;
 import core.time : msecs;
+import std.process : environment;
+import std.path : absolutePath, buildNormalizedPath, buildPath;
 
 int main(string[] args) => runCli!Editor(args);
 
@@ -34,6 +36,10 @@ struct Editor
     bool inspector;
     @(Option("shot", description: "Capture a native frame to PNG, then exit.", placeholder: "PATH"))
     string shot;
+    @(Option("state-dir", description: "Session archive registry (defaults to XDG_STATE_HOME/sparkles/editor).", placeholder: "PATH"))
+    string stateDir;
+    @(Option("no-session", description: "Do not read or write session recovery."))
+    bool noSession;
     @(Option("example", description: "Editable example: code, unicode, protectedText."))
     Example example;
     @(Argument("paths", description: "UTF-8 files to open in independent tabs.", optional: true))
@@ -62,6 +68,24 @@ struct Editor
         if (paths.length && !app.openPath(paths[0])) return failRun(app.status);
         if (commands) app.startupCommand = AppCommand.palette;
         if (themes) app.startupCommand = AppCommand.themes;
+        if (!noSession && (!shot.length || stateDir.length))
+        {
+            const home = environment.get("HOME", "");
+            const state = environment.get("XDG_STATE_HOME", home.length ? buildPath(home, ".local", "state") : "");
+            const selected = stateDir.length ? stateDir : state.length ? buildPath(state, "sparkles", "editor") : "";
+            // Desktop namespaces may live outside HOME. Android supplies its
+            // private durable root through its own application entry.
+            string root = "/";
+            if (home.length && selected.length)
+            {
+                const normalizedHome = buildNormalizedPath(absolutePath(home));
+                const normalizedState = buildNormalizedPath(absolutePath(selected));
+                if (normalizedState == normalizedHome || (normalizedState.length > normalizedHome.length
+                    && normalizedState[0 .. normalizedHome.length] == normalizedHome
+                    && normalizedState[normalizedHome.length] == '/')) root = normalizedHome;
+            }
+            app.enableRecovery(selected, root);
+        }
         RunConfig config = {title: "Sparkles Editor", gui: gui, native: native, motion: true};
         if (shot.length) config.gui.gui = true;
         auto outcome = runApp(app, config);

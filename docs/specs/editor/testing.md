@@ -591,3 +591,35 @@ Restore controls and CLI startup wiring remain open.
 The requested additional Argon Medium adoption review could not run because
 `agy` returned `RESOURCE_EXHAUSTED` (individual quota). It remains outstanding;
 the earlier runtime review does not cover adoption markers.
+
+### Native restore controls and desktop startup — 2026-11-13
+
+The editor suite passes 48 tests. Restore is reachable through the common
+command policy, palette, F4 R guide path and a three-row touch control.
+Cancelling leaves current edits and the offer intact. Accepting merges
+prepared tabs under fresh identities, retains edits made during discovery,
+and converts a duplicate open path into an unsaved copy. Tests verify that
+the copy cannot save over the other open tab and that disk bytes are unchanged.
+The viewport reserves rows for recovery controls and warnings.
+
+Desktop CLI startup now enables recovery under
+`$XDG_STATE_HOME/sparkles/editor` (fallback `$HOME/.local/state/sparkles/editor`).
+`--state-dir` selects a registry; `--no-session` disables session access.
+Screenshot runs omit recovery unless a state directory was explicitly supplied.
+CLI help and the checked Vulkan build pass.
+
+The expanded [native probe](../../../apps/editor/tools/native-close-probe.d)
+uses a private Xvfb server and temporary registry. It types `a`, observes a
+valid checkpoint, kills only its own editor process with SIGKILL, starts a new
+instance, accepts Restore through F4 R and Enter, then types `b`. A new valid
+checkpoint contains `ab`, proving the real controls restored both text and
+caret. Native close defers dirty closure; Escape retains the draft; explicit
+Discard flushes the retained session state and exits with status zero. This
+is process-interruption evidence, not a power-loss or Android acceptance test.
+
+That probe exposed hit testing of an empty final view after asynchronous
+quit. `hoverTargets` now returns no targets for an empty tree; its focused
+tests and all 823 UI tests pass, and the live round trip succeeds afterward.
+Argon Medium's adoption/full-flow review remains blocked by its quota.
+TUI EOF, nonvetoable host teardown, Android lifecycle, recovery resource
+bounds and actual one-second/device latency remain open.
