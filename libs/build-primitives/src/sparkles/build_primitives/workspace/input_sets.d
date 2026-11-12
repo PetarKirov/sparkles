@@ -1099,7 +1099,7 @@ unittest
     import sparkles.build_primitives.resolve.driver : SystemDriver;
     import sparkles.build_primitives.resolve.platform : BuildPlatform;
     import sparkles.build_primitives.resolve.registry : nixRegistrySources, readDubLocks;
-    import sparkles.build_primitives.workspace.package_graph : readWorkspaceRecipes;
+    import sparkles.build_primitives.workspace.discovery : readWorkspaceAt;
     import sparkles.test_runner.skip : skipTest;
 
     // The registry packages' sources, as the dev shell exports them.
@@ -1109,7 +1109,7 @@ unittest
 
     // This file is libs/build-primitives/src/sparkles/build_primitives/workspace/input_sets.d.
     const root = buildNormalizedPath(__FILE_FULL_PATH__, "../../../../../../..");
-    const read = readWorkspaceRecipes(root).value;
+    const read = readWorkspaceAt(root).value;
     const host = ["linux", "posix"];
     auto platform = BuildPlatform(host.dup, ["x86_64"], "ldc", "ldc2", 2111, "1.41.0");
     auto driver = new SystemDriver;

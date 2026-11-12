@@ -93,6 +93,7 @@ struct SubPackageRecipe
 @WireCase(CaseStyle.kebabCase)
 enum DiscoveryErrorKind
 {
+    noRootRecipe,         /// the directory read as a workspace holds no `dub.sdl`
     unreadableRecipe,     /// a `dub.sdl` is missing or malformed
     unnamedPackage,       /// a recipe declares no `name`
     inlineSubPackage,     /// a sub-package without a directory
@@ -344,62 +345,20 @@ private PackageId[] uniqueSorted(PackageId[] ids) @safe pure nothrow @nogc
 }
 
 /**
-Reads the root `dub.sdl` under `repoRoot` and every sub-package recipe it
-lists, then builds the graph ($(LREF buildPackageGraph)). A bounded,
-synchronous planning read ([SPEC TDE3]).
+Reads the workspace under `repoRoot`
+($(REF readWorkspaceAt, sparkles,build_primitives,workspace,discovery)), then
+builds the graph ($(LREF buildPackageGraph)). A bounded, synchronous planning
+read ([SPEC TDE3]).
 */
 PlanExpected!(PackageGraph, DiscoveryError) discoverPackages(string repoRoot, RecipeRole role,
     scope const(string)[] hostTokens) @safe
 {
-    auto read = readWorkspaceRecipes(repoRoot);
+    import sparkles.build_primitives.workspace.discovery : readWorkspaceAt;
+
+    auto read = readWorkspaceAt(repoRoot);
     if (read.hasError)
         return planErr!PackageGraph(read.error);
     return buildPackageGraph(read.value.rootName, read.value.recipes, role, hostTokens);
-}
-
-/// The recipes of a repository, read once: what the package graph and the
-/// packages' input sets
-/// ($(REF inputSets, sparkles,build_primitives,workspace,input_sets))
-/// are both derived from.
-struct WorkspaceRecipes
-{
-    string rootName;            /// the root package's name: `sparkles`
-    SubPackageRecipe[] recipes; /// in the order the root recipe lists them
-}
-
-/**
-Reads the root `dub.sdl` under `repoRoot` and every sub-package recipe it
-lists. The only part of discovery that reads files; a bounded, synchronous
-planning read ([SPEC TDE3]).
-*/
-PlanExpected!(WorkspaceRecipes, DiscoveryError) readWorkspaceRecipes(string repoRoot) @safe
-{
-    import std.conv : text;
-    import std.path : buildPath;
-    import sparkles.build_primitives.dub_manifest : readDubManifest;
-
-    alias fail = (kind, detail) => planErr!WorkspaceRecipes(DiscoveryError(kind, detail));
-    alias unreadable = (path, reason) => fail(DiscoveryErrorKind.unreadableRecipe, path ~ ": " ~ reason);
-
-    auto root = readDubManifest(repoRoot.buildPath("dub.sdl"));
-    if (root.hasError)
-        return unreadable("dub.sdl", text(root.error));
-    if (root.value.name.length == 0)
-        return fail(DiscoveryErrorKind.unnamedPackage, "dub.sdl");
-
-    WorkspaceRecipes read;
-    read.rootName = root.value.name;
-    foreach (ref sub; root.value.subPackages)
-    {
-        if (sub.path.length == 0)
-            return fail(DiscoveryErrorKind.inlineSubPackage, sub.name);
-        const recipePath = normalizeRepoPath(sub.path) ~ "/dub.sdl";
-        auto manifest = readDubManifest(repoRoot.buildPath(recipePath));
-        if (manifest.hasError)
-            return unreadable(recipePath, text(manifest.error));
-        read.recipes ~= SubPackageRecipe(sub.path, manifest.value);
-    }
-    return planOk!DiscoveryError(read);
 }
 
 version (unittest)
