@@ -156,6 +156,75 @@ struct Filesets
     in (f.node < nodes.length, "a fileset from another arena")
         => nodes[f.node];
 
+    /**
+    The digest of `f`'s expression: equal for equal expressions in any arena
+    and any process, so a cache can be keyed by "this set, at this tree"
+    (the fileset-native workspace design, §3.4). It covers the arena's case
+    policy, every operator in the expression's shape, each pattern's text
+    and each `.gitignore` rule's text and sign. It does not normalize:
+    `a ∪ b` and `b ∪ a` have different digests, though they select the same
+    files.
+    */
+    ubyte[32] digest(Fileset f) const @safe pure nothrow
+    in (f.node < nodes.length, "a fileset from another arena")
+    {
+        import sparkles.base.hash.blake3 : blake3;
+
+        static void put32(ref ubyte[] b, size_t v) @safe pure nothrow
+        {
+            foreach (k; 0 .. 4)
+                b ~= cast(ubyte)(v >> (8 * k));
+        }
+
+        static void putText(ref ubyte[] b, scope const(char)[] text) @safe pure nothrow
+        {
+            put32(b, text.length);
+            b ~= cast(const(ubyte)[]) text;
+        }
+
+        // The nodes of `f`'s expression; each one's digest, children first, so a
+        // node shared by two parents is hashed once.
+        auto reach = new bool[f.node + 1];
+        reach[f.node] = true;
+        foreach_reverse (i; 0 .. f.node + 1)
+            if (reach[i] && nodes[i].op >= FilesetOp.union_)
+                reach[nodes[i].a] = reach[nodes[i].b] = true;
+        auto memo = new ubyte[32][f.node + 1];
+        foreach (i; 0 .. f.node + 1)
+        {
+            if (!reach[i])
+                continue;
+            const n = nodes[i];
+            ubyte[] bytes = [cast(ubyte) n.op];
+            final switch (n.op)
+            {
+                case FilesetOp.nothing, FilesetOp.everything, FilesetOp.executable,
+                        FilesetOp.gitignored:
+                    break;
+                case FilesetOp.glob:
+                    putText(bytes, patterns[n.a].source);
+                    break;
+                case FilesetOp.ignored:
+                    put32(bytes, n.b);
+                    foreach (r; 0 .. n.b)
+                    {
+                        bytes ~= rules[n.a + r].negated;
+                        putText(bytes, patterns[rules[n.a + r].pattern].source);
+                    }
+                    break;
+                case FilesetOp.union_, FilesetOp.intersection, FilesetOp.difference:
+                    bytes ~= memo[n.a][];
+                    bytes ~= memo[n.b][];
+                    break;
+            }
+            memo[i] = blake3(bytes);
+        }
+        ubyte[] root = cast(ubyte[]) "sparkles fileset expression 1".dup;
+        root ~= cast(ubyte) casePolicy;
+        root ~= memo[f.node][];
+        return blake3(root);
+    }
+
     /// The empty fileset.
     Fileset nothing() @safe pure nothrow @nogc => add(FilesetNode(FilesetOp.nothing));
 
@@ -345,6 +414,7 @@ struct FilesetEvaluator
     private HeapBuffer!Tri tri;
     private HeapBuffer!Tri inc; // `tri` with every difference's exclusions set aside
     private HeapBuffer!bool reachable;
+    private HeapBuffer!uint order_; // the reachable nodes, ascending: children before parents
     private HeapBuffer!ulong pathState;
     private Fileset root_;
     private size_t words;
@@ -375,11 +445,26 @@ struct FilesetEvaluator
             else if (n.op == FilesetOp.gitignored)
                 scopeWord_ = n.state;
         }
+        // Every pass visits these alone, so its cost is the expression's, not
+        // the arena's: in an arena of many packages' sets, a set built late
+        // costs what one built early does.
+        size_t count;
+        foreach (r; reachable[])
+            count += r;
+        order_.length = count;
+        size_t at;
+        foreach (i; 0 .. root.node + 1)
+            if (reachable[i])
+                order_[at++] = cast(uint) i;
     }
 
     /// The state word of the fileset's `gitignored` leaf, or `uint.max` when it
     /// has none: a resolution reads `.gitignore` files only if it has one.
     uint gitignoredWord() const @safe pure nothrow @nogc => scopeWord_;
+
+    /// How many nodes each pass visits: the nodes of its fileset's expression,
+    /// however large the arena.
+    size_t nodesVisited() const @safe pure nothrow @nogc => order_.length;
 
     /// The fileset this evaluator evaluates.
     Fileset root() const @safe pure nothrow @nogc => root_;
@@ -397,10 +482,8 @@ struct FilesetEvaluator
     in (state.length >= words)
     {
         state[] = 0;
-        foreach (i; 0 .. root_.node + 1)
+        foreach (i; order_[])
         {
-            if (!reachable[i])
-                continue;
             const n = sets.nodes[i];
             if (n.op == FilesetOp.glob)
                 state[n.state] = sets.patterns.start(n.a);
@@ -416,10 +499,8 @@ struct FilesetEvaluator
     DirVerdict dirVerdict(ref const Filesets sets, scope const ulong[] state) @safe nothrow @nogc
     in (state.length >= words)
     {
-        foreach (i; 0 .. root_.node + 1)
+        foreach (i; order_[])
         {
-            if (!reachable[i])
-                continue;
             const n = sets.nodes[i];
             Tri t;
             final switch (n.op)
@@ -477,10 +558,8 @@ struct FilesetEvaluator
         scope const ulong[] parent, scope const(char)[] name, scope ulong[] child) @safe nothrow @nogc
     in (parent.length >= words && child.length >= words)
     {
-        foreach (i; 0 .. root_.node + 1)
+        foreach (i; order_[])
         {
-            if (!reachable[i])
-                continue;
             const n = sets.nodes[i];
             if (n.op == FilesetOp.glob)
                 child[n.state] = sets.patterns.enterDir(n.a, parent[n.state], name, *scratch_);
@@ -526,10 +605,8 @@ struct FilesetEvaluator
         scope const ulong[] state, scope const(char)[] name, EntryFacts facts) @safe nothrow @nogc
     in (state.length >= words)
     {
-        foreach (i; 0 .. root_.node + 1)
+        foreach (i; order_[])
         {
-            if (!reachable[i])
-                continue;
             const n = sets.nodes[i];
             Tri t;
             final switch (n.op)
@@ -820,4 +897,42 @@ private Tri combine(in FilesetNode n, Tri a, Tri b) @safe pure nothrow @nogc
         case FilesetOp.intersection: return min(a, b);
         default: return min(a, cast(Tri)(Tri.yes - b));
     }
+}
+
+/// An expression's digest is the same in any arena and any process, and an
+/// evaluator's passes visit its expression alone: a set built after a
+/// thousand others costs what one built first does.
+@("fileset.value.digestAndCost")
+@safe
+unittest
+{
+    static Fileset build(ref Filesets s)
+        => s.difference(s.union_(s.glob("/libs/base/src/**/*.d").value, s.glob("/libs/base/dub.sdl").value),
+            s.ignored("*.tmp\n!keep.tmp").value);
+
+    auto first = Filesets(CasePolicy.sensitive);
+    const early = build(first);
+
+    auto crowded = Filesets(CasePolicy.sensitive);
+    foreach (i; 0 .. 1000)
+        cast(void) crowded.union_(crowded.glob("/other/**").value, crowded.everything);
+    const late = build(crowded);
+    assert(late.node > 1000);
+
+    assert(first.digest(early) == crowded.digest(late));
+    assert(FilesetEvaluator(first, early).nodesVisited == FilesetEvaluator(crowded, late).nodesVisited);
+    assert(FilesetEvaluator(crowded, late).nodesVisited == 5); // two globs, a union, a rule set, a difference
+
+    // Each part of the expression is covered: a pattern's text, a rule's
+    // sign, the operator, the operands' order, and the case policy.
+    auto other = Filesets(CasePolicy.sensitive);
+    const a = other.glob("/a").value, b = other.glob("/b").value;
+    assert(other.digest(other.union_(a, b)) != other.digest(other.union_(b, a)));
+    assert(other.digest(other.union_(a, b)) != other.digest(other.intersection(a, b)));
+    assert(other.digest(other.ignored("x").value) != other.digest(other.ignored("!x").value));
+    assert(other.digest(a) != other.digest(b));
+    auto insensitive = Filesets(CasePolicy.insensitive);
+    assert(insensitive.digest(insensitive.glob("/a").value) != other.digest(a));
+    // The same expression built twice in one arena has one digest.
+    assert(other.digest(other.union_(a, b)) == other.digest(other.union_(a, b)));
 }
