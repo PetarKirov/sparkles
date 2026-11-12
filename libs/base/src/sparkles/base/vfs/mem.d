@@ -266,6 +266,34 @@ struct MemVfs
         return ioOk(n.dataLength);
     }
 
+    /// The absolute path of the directory `dir` holds (VFB9): `/` and its
+    /// path from the tree's root. Counted as a stat.
+    IoResult!size_t pathOf(Handle dir, scope char[] buffer) @safe nothrow @nogc
+    {
+        enter(OpKind.statAt);
+        const d = dirNode(dir, OpKind.statAt);
+        if (d.hasError)
+            return ioErr!size_t(d);
+        // The length first, then the components from the last, backwards.
+        size_t length;
+        for (uint n = d.value; nodes[n].parent != none; n = nodes[n].parent)
+            length += 1 + nodes[n].nameLength;
+        if (length == 0)
+            length = 1; // the root itself: `/`
+        if (buffer.length < length)
+            return ioErr!size_t(ErrorKind.nameTooLong, OpKind.statAt);
+        buffer[0] = '/';
+        size_t end = length;
+        for (uint n = d.value; nodes[n].parent != none; n = nodes[n].parent)
+        {
+            const name = nodes[n].name[0 .. nodes[n].nameLength];
+            buffer[end - name.length .. end] = name[];
+            end -= name.length + 1;
+            buffer[end] = '/';
+        }
+        return ioOk(length);
+    }
+
     /// Creates the link `name` in `dir`, storing `target` verbatim.
     IoResult!void symlinkAt(Handle dir, scope const(char)[] name, scope const(char)[] target)
         @safe nothrow @nogc

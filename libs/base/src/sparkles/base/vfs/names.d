@@ -299,6 +299,50 @@ ErrorKind checkLinkTarget(scope const(char)[] target) @safe pure nothrow @nogc
         assert(checkLinkTarget(`C:\x`) == ErrorKind.escapesRoot);
 }
 
+/**
+Checks the path `symlinkTo` joins to its target directory's (VFO10): it must
+stay beneath that directory, so `escapesRoot` for an absolute path or one
+with an empty, `.` or `..` component, and `invalidName` for one containing
+NUL. An empty path names the directory itself. Returns `ErrorKind.other`
+when the path may be joined.
+*/
+ErrorKind checkBeneathPath(scope const(char)[] path) @safe pure nothrow @nogc
+{
+    foreach (c; path)
+        if (c == '\0')
+            return ErrorKind.invalidName;
+    if (path.length == 0)
+        return ErrorKind.other;
+    if (isAbsolutePath(path))
+        return ErrorKind.escapesRoot;
+    size_t start;
+    foreach (i; 0 .. path.length + 1)
+    {
+        if (i < path.length && path[i] != '/' && !(isWindowsSeparator && path[i] == '\\'))
+            continue;
+        const part = path[start .. i];
+        if (part.length == 0 || part == "." || part == "..")
+            return ErrorKind.escapesRoot;
+        start = i + 1;
+    }
+    return ErrorKind.other;
+}
+
+// Whether `\` separates components here, as on Windows.
+private enum bool isWindowsSeparator = () { version (Windows) return true; else return false; }();
+
+///
+@("vfs.names.checkBeneathPath")
+@safe pure nothrow @nogc unittest
+{
+    assert(checkBeneathPath("") == ErrorKind.other);
+    assert(checkBeneathPath("p") == ErrorKind.other);
+    assert(checkBeneathPath("p/q.d") == ErrorKind.other);
+    foreach (bad; ["../x", "p/../q", "./p", "p/.", "p//q", "p/", "/etc", ".."])
+        assert(checkBeneathPath(bad) == ErrorKind.escapesRoot, bad);
+    assert(checkBeneathPath("a\0b") == ErrorKind.invalidName);
+}
+
 /// An `IoError` for a lexical refusal: no backend call was made.
 IoError lexicalError(ErrorKind kind, OpKind op) @safe pure nothrow @nogc
     => IoError(kind, 0, op, IoErrorStage.completion, "refused before any backend call");

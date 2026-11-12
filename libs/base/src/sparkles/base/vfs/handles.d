@@ -345,6 +345,48 @@ mixin template DirOperations(V, Rights R)
         return self.vfs.symlinkAt(self.handle, name, target);
     }
 
+    /**
+    Creates the link `name` to an absolute target: the path the backend
+    reports for the directory `target` holds, joined with `path`, which must
+    stay beneath it (VFO10, VFB9). Holding `target`, with `lookup`, is the
+    standing to name that place; the absolute part is never the caller's text.
+    */
+    IoResult!void symlinkTo(T)(scope const(char)[] name, ref T target, scope const(char)[] path) scope
+    if (isInstanceOf!(.Dir, T) || isInstanceOf!(.DirRef, T))
+    {
+        import sparkles.base.vfs.concept : hasPathOf;
+        import sparkles.base.vfs.names : checkBeneathPath;
+
+        need!(Rights.create, "symlinkTo");
+        static assert(is(T.Backend == V), "symlinkTo's target must be on the same backend");
+        static assert(hasRights(T.rights, Rights.lookup), "symlinkTo's target needs lookup; it has "
+            ~ rightsText(T.rights));
+        static assert(hasPathOf!V, "symlinkTo needs a backend that reports a directory's path (VFB9)");
+        if (!alive || !target.alive)
+            return emptyHandle!(void)();
+        auto k = checkName(name);
+        if (k == ErrorKind.other)
+            k = checkBeneathPath(path);
+        if (k != ErrorKind.other)
+            return ioErr!void(lexicalError(k, OpKind.symlinkAt));
+        char[4096] buffer = void;
+        auto got = target.self.vfs.pathOf(target.self.handle, buffer[]);
+        if (got.hasError)
+            return ioErr!void(got);
+        size_t n = got.value;
+        if (path.length)
+        {
+            const slash = n && buffer[n - 1] != '/';
+            if (n + slash + path.length > buffer.length)
+                return ioErr!void(ErrorKind.nameTooLong, OpKind.symlinkAt);
+            if (slash)
+                buffer[n++] = '/';
+            buffer[n .. n + path.length] = path[];
+            n += path.length;
+        }
+        return self.vfs.symlinkAt(self.handle, name, buffer[0 .. n]);
+    }
+
     /// Removes the non-directory `name` (VFO3).
     IoResult!void unlinkAt()(scope const(char)[] name) scope
     {
@@ -679,4 +721,51 @@ if (isVfs!V)
     ubyte[8] buf;
     assert(file.value.read(buf[]).value == 5);
     assert(buf[0 .. 5] == "hello");
+}
+
+/// VFO10: an absolute link is made only to a place the caller holds a
+/// handle for, the absolute part the backend's path for it (VFB9); a path
+/// leaving that place is refused before any backend call; `symlinkAt` still
+/// refuses an absolute target.
+@("vfs.handles.VFO10.symlinkTo")
+@safe unittest
+{
+    import sparkles.base.vfs.mem : testVfs;
+
+    auto vfs = testVfs();
+    vfs.mkdirs("out");
+    vfs.mkdirs("store/p");
+
+    auto dest = openRoot!(Rights.all)(vfs, "out", ambientAuthority());
+    auto store = openRoot!(Rights.lookup)(vfs, "store", ambientAuthority());
+    assert(!dest.hasError && !store.hasError);
+
+    char[64] buffer;
+    assert(!dest.value.symlinkTo("s", store.value, "p/q").hasError);
+    assert(dest.value.readlinkAt("s", buffer[]).value == "/store/p/q");
+    assert(!dest.value.symlinkTo("t", store.value, "").hasError, "the place itself");
+    assert(dest.value.readlinkAt("t", buffer[]).value == "/store");
+    auto p = store.value.openDir("p");
+    assert(!dest.value.symlinkTo("u", p.value, "q").hasError, "a narrower handle, a narrower place");
+    assert(dest.value.readlinkAt("u", buffer[]).value == "/store/p/q");
+
+    vfs.resetCounts();
+    foreach (bad; ["../x", "p/../q", "./p", "p//q", "/etc"])
+    {
+        const r = dest.value.symlinkTo("v", store.value, bad);
+        assert(r.hasError && r.error.kind == ErrorKind.escapesRoot, bad);
+    }
+    const nul = dest.value.symlinkTo("v", store.value, "a\0b");
+    assert(nul.hasError && nul.error.kind == ErrorKind.invalidName);
+    assert(vfs.totalCalls == 0, "refused before any backend call");
+
+    const plain = dest.value.symlinkAt("v", "/store/p");
+    assert(plain.hasError && plain.error.kind == ErrorKind.escapesRoot, "symlinkAt is unchanged");
+
+    // A target without lookup is not a standing to name a place.
+    auto listOnly = openRoot!(Rights.list)(vfs, "store", ambientAuthority());
+    static assert(!__traits(compiles, dest.value.symlinkTo("w", listOnly.value, "p")));
+    // Nor can a read-only handle make the link.
+    auto readOnly = openRoot!(Rights.readOnly)(vfs, "out", ambientAuthority());
+    static assert(!__traits(compiles, readOnly.value.symlinkTo("w", store.value, "p")));
 }

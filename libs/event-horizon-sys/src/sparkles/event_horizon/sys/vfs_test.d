@@ -596,3 +596,35 @@ version (linux)
     assert(fifo.hasError && fifo.error.context == "not a regular file");
     assert(root.value.readFile("f", sink, 2).error.kind == ErrorKind.bufferTooSmall);
 }
+
+@("vfs.blocking.VFB9.pathOf")
+@system unittest
+{
+    static assert(hasPathOf!BlockingVfs);
+    auto dir = scratchDir("pathof");
+    scope (exit)
+        rmdirRecurse(dir);
+    mkdirRecurse(buildPath(dir, "real", "p"));
+    write(buildPath(dir, "real", "p", "q"), "x");
+    symlink(buildPath(dir, "real"), buildPath(dir, "via"));
+    mkdirRecurse(buildPath(dir, "out"));
+
+    auto v = new BlockingVfs;
+    // Opened through a link: the path reported is where the directory is.
+    auto store = openRoot!(Rights.readOnly)(v, buildPath(dir, "via"), ambientAuthority());
+    char[4096] buffer;
+    auto n = v.pathOf(store.value.backendHandle, buffer[]);
+    assert(!n.hasError);
+    const real_ = buffer[0 .. n.value].idup;
+    assert(real_.length > 5 && real_[0] == '/' && real_[$ - 5 .. $] == "/real", real_);
+
+    char[4] small;
+    assert(v.pathOf(store.value.backendHandle, small[]).error.kind == ErrorKind.nameTooLong);
+
+    auto dest = openRoot!(Rights.all)(v, buildPath(dir, "out"), ambientAuthority());
+    assert(!dest.value.symlinkTo("s", store.value, "p/q").hasError);
+    assert(readLink(buildPath(dir, "out", "s")) == real_ ~ "/p/q",
+        "the link names the real path, never the one the caller typed");
+    assert(read(buildPath(dir, "out", "s")) == "x");
+    assert(dest.value.symlinkTo("t", store.value, "../q").error.kind == ErrorKind.escapesRoot);
+}
