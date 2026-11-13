@@ -104,6 +104,116 @@ private class SaveIntent
     bool bom;
 }
 
+private struct ClipboardRead
+{
+    ulong document, palette, dialog;
+    uint request;
+}
+
+/// Closing a requester invalidates its reply even when the next tab reuses the local number.
+@("editor.app.clipboardReplyAfterCloseIsIgnored")
+@safe unittest
+{
+    import sparkles.input : NoEvent, pasteChunks;
+    import sparkles.ui_app.record : RecordingHost;
+    EditorApp app;
+    scope (exit) app.dispose();
+    RecordingHost host;
+    app.handle(host, Event(NoEvent()));
+    app.execute(CommandId(Command.edit, EditorAction.paste));
+    app.handle(host, Event(NoEvent()));
+    const closedRequest = host.clipboardReads[0];
+    app.execute(CommandId(Command.closeTab));
+    app.handle(host, Event(NoEvent()));
+    app.execute(CommandId(Command.edit, EditorAction.paste));
+    app.handle(host, Event(NoEvent()));
+    const currentRequest = host.clipboardReads[1];
+    pasteChunks("closed owner", (in Event event) { app.handle(host, event); }, closedRequest);
+    assert(app.document.field.empty);
+    pasteChunks("current owner", (in Event event) { app.handle(host, event); }, currentRequest);
+    assert(app.document.field.text == "current owner");
+}
+
+/// A late document reply cannot become the Save As field's clipboard answer.
+@("editor.app.clipboardCannotCrossIntoPathDialog")
+@safe unittest
+{
+    version (linux) {}
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+        skipTest("This native path/clipboard scenario currently exercises Linux.");
+    }
+    import core.thread : Thread;
+    import core.time : seconds;
+    import sparkles.input : Key, Mods, NoEvent, pasteChunks;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui.geometry : Size;
+    import std.path : buildPath;
+    import std.file : exists, readText;
+    auto fixture = TmpFS.create();
+    const destination = buildPath(fixture.dir, "right.txt");
+    const wrong = buildPath(fixture.dir, "wrong.txt");
+    EditorApp app;
+    scope (exit) app.dispose();
+    RecordingHost host;
+    host.backend = Backend.gui;
+    host.size = Size(80, 28);
+    cast(void) app.view(host);
+    app.handle(host, Event(NoEvent()));
+    app.document.field.insert("payload");
+    app.execute(CommandId(Command.edit, EditorAction.paste));
+    app.handle(host, Event(NoEvent()));
+    const documentRequest = host.clipboardReads[0];
+    app.execute(CommandId(Command.saveAs));
+    app.handle(host, Event(KeyEvent(Key.char_, 'v', Mods(ctrl: true))));
+    assert(host.clipboardReads.length == 2);
+    const pathRequest = host.clipboardReads[1];
+    pasteChunks(wrong, (in Event event) { app.handle(host, event); }, documentRequest);
+    pasteChunks(destination, (in Event event) { app.handle(host, event); }, pathRequest);
+    app.execute(CommandId(Command.confirm));
+    const deadline = MonoTime.currTime + 3.seconds;
+    while (app.filesBusy && MonoTime.currTime < deadline)
+    {
+        app.pollDocuments();
+        (() @trusted => Thread.yield())();
+    }
+    assert(!app.filesBusy && (() @trusted => exists(destination))());
+    assert((() @trusted => readText(destination))() == "payload");
+    assert(!(() @trusted => exists(wrong))() && app.document.field.text == "payload");
+}
+
+/// Delayed clipboard answers retain the requesting tab even when another tab also asks to paste.
+@("editor.app.clipboardRepliesKeepTheirOwner")
+@safe unittest
+{
+    import sparkles.input : NoEvent, pasteChunks;
+    import sparkles.ui_app.record : RecordingHost;
+    EditorApp app;
+    scope (exit) app.dispose();
+    RecordingHost host;
+    app.handle(host, Event(NoEvent()));
+    auto first = app.document;
+    app.execute(CommandId(Command.edit, EditorAction.paste));
+    app.handle(host, Event(NoEvent()));
+    assert(host.clipboardReads.length == 1);
+    const requestA = host.clipboardReads[0];
+    app.execute(CommandId(Command.newTab));
+    app.handle(host, Event(NoEvent()));
+    auto second = app.document;
+    app.execute(CommandId(Command.edit, EditorAction.paste));
+    app.handle(host, Event(NoEvent()));
+    assert(host.clipboardReads.length == 2);
+    const requestB = host.clipboardReads[1];
+    pasteChunks("from A", (in Event event) { app.handle(host, event); }, requestA);
+    assert(first.field.text == "from A" && second.field.empty && app.document is second);
+    pasteChunks("from B", (in Event event) { app.handle(host, event); }, requestB);
+    assert(first.field.text == "from A" && second.field.text == "from B");
+    pasteChunks("old reply", (in Event event) { app.handle(host, event); }, requestA);
+    assert(first.field.text == "from A" && second.field.text == "from B");
+}
+
 /// Without an interactive surface, a failed final checkpoint is returned to the CLI.
 @("editor.app.hostTeardownReportsRecoveryFailure")
 @safe unittest
@@ -341,7 +451,9 @@ struct EditorApp
     private char[] pasteBytes;
     private bool collectingPaste;
     private uint pasteRequest;
-    private ulong pasteDocument, pastePalette;
+    private ClipboardRead pasteOwner;
+    private ClipboardRead[uint] clipboardReads;
+    private uint nextClipboardRead;
     private HighlightSession highlighting;
     private ResolvedTheme syntaxTheme;
     string themeName;
@@ -358,7 +470,6 @@ struct EditorApp
     private Dialog dialog;
     private EditorField pathInput;
     private ulong dialogEpoch;
-    private ulong pasteDialog;
     private ulong closingDocument;
     private bool exiting;
     private RecoverySession recovery;
@@ -867,32 +978,85 @@ struct EditorApp
 
     private void receivePaste(in PasteEvent chunk) @safe
     {
+        if (chunk.request && !(chunk.request in clipboardReads))
+        {
+            if (collectingPaste && pasteRequest == chunk.request)
+            {
+                collectingPaste = false;
+                pasteBytes.length = 0;
+            }
+            return;
+        }
         if (!collectingPaste || chunk.request != pasteRequest)
         {
+            if (collectingPaste && pasteRequest) clipboardReads.remove(pasteRequest);
             pasteBytes.length = 0;
             collectingPaste = true;
             pasteRequest = chunk.request;
-            pasteDocument = document.id;
-            pastePalette = commands.palette.active ? commands.palette.snapshot.ticket.value : 0;
-            pasteDialog = pathDialog ? dialogEpoch : 0;
+            pasteOwner = chunk.request ? clipboardReads[chunk.request]
+                : ClipboardRead(document.id,
+                    commands.palette.active ? commands.palette.snapshot.ticket.value : 0,
+                    pathDialog ? dialogEpoch : 0, 0);
+        }
+        if (!clipboardOwnerValid(pasteOwner))
+        {
+            if (pasteRequest) clipboardReads.remove(pasteRequest);
+            collectingPaste = false;
+            pasteBytes.length = 0;
+            status = "Paste cancelled because its input target changed.";
+            return;
         }
         pasteBytes ~= chunk.text[];
         if (!chunk.last) return;
         collectingPaste = false;
-        scope (exit) pasteBytes.length = 0;
-        if (document.id != pasteDocument || pasteDialog != (pathDialog ? dialogEpoch : 0)
-            || (commands.palette.active ? commands.palette.snapshot.ticket.value : 0) != pastePalette)
+        scope (exit)
         {
-            status = "Paste cancelled because its input target changed.";
-            return;
+            pasteBytes.length = 0;
+            if (pasteRequest) clipboardReads.remove(pasteRequest);
         }
-        if (pasteDialog) pathInput.paste(pasteBytes, pasteRequest, MonoTime.currTime);
-        else if (modal) return;
-        else if (pastePalette)
-            apply(commands.paste(pasteBytes, pasteRequest, context, MonoTime.currTime));
+        if (pasteOwner.dialog) pathInput.paste(pasteBytes, pasteOwner.request, MonoTime.currTime);
+        else if (pasteOwner.palette)
+            apply(commands.paste(pasteBytes, pasteOwner.request, context, MonoTime.currTime));
         else
-            document.field.paste(pasteBytes, pasteRequest, MonoTime.currTime);
-        document.followCaret = true;
+            foreach (tab; tabs) if (tab.id == pasteOwner.document)
+            {
+                tab.field.paste(pasteBytes, pasteOwner.request, MonoTime.currTime);
+                tab.followCaret = true;
+                break;
+            }
+    }
+
+    private bool clipboardOwnerValid(in ClipboardRead owner) @safe
+    {
+        if (owner.dialog)
+            return pathDialog && owner.dialog == dialogEpoch && owner.document == document.id
+                && (!owner.request || owner.request == pathInput.state.record.pendingRequest);
+        if (owner.palette)
+            return commands.palette.active && owner.palette == commands.palette.snapshot.ticket.value
+                && (!owner.request || owner.request == commands.query.state.record.pendingRequest);
+        if (!owner.request && (modal || commands.palette.active || document.id != owner.document)) return false;
+        foreach (tab; tabs) if (tab.id == owner.document)
+            return !owner.request || owner.request == tab.field.state.record.pendingRequest;
+        return false;
+    }
+
+    private uint routeClipboard(ClipboardRead owner, uint request) @safe
+    {
+        owner.request = request;
+        if (!clipboardOwnerValid(owner)) return 0;
+        uint[64] stale;
+        size_t count;
+        foreach (ticket, pending; clipboardReads)
+            if (!clipboardOwnerValid(pending)) stale[count++] = ticket;
+        foreach (ticket; stale[0 .. count]) clipboardReads.remove(ticket);
+        if (clipboardReads.length == stale.length || nextClipboardRead == uint.max)
+        {
+            status = "The clipboard request could not be tracked; retry after pending reads finish.";
+            return 0;
+        }
+        const ticket = ++nextClipboardRead;
+        clipboardReads[ticket] = owner;
+        return ticket;
     }
 
     /// The active document, lazily creating an untitled tab.
@@ -1193,9 +1357,13 @@ struct EditorApp
             },
             (in EndOfInput _) { closeRequested(host); },
             (in _) {});
-        forwardClipboard(document.field, host);
-        forwardClipboard(commands.query, host);
-        forwardClipboard(pathInput, host);
+        forwardClipboard(document.field, host,
+            (uint request) => routeClipboard(ClipboardRead(document: document.id), request));
+        forwardClipboard(commands.query, host,
+            (uint request) => commands.palette.active ? routeClipboard(ClipboardRead(document.id,
+                commands.palette.snapshot.ticket.value), request) : 0u);
+        forwardClipboard(pathInput, host,
+            (uint request) => pathDialog ? routeClipboard(ClipboardRead(document.id, 0, dialogEpoch), request) : 0u);
         if (quitRequested) host.quit();
     }
 

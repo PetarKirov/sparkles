@@ -612,8 +612,14 @@ clipboard by request (`INP25`): copied text to `host.clipboard(text)`, and
 a read to `host.readClipboard(request)`, whose answer arrives later as a
 paste carrying the request, for `EditorField.paste`. Work the host has no
 member for is dropped; declare only what it can do (`FieldSetup`).
+
+An optional `route` maps the field-local request into a host-wide identity.
+The caller translates replies back to the captured local request before
+calling paste. Returning zero declines the read and invalidates its pending
+answer, without sending an ambiguous request to the host.
 */
-void forwardClipboard(Host)(ref EditorField field, ref Host host)
+void forwardClipboard(Host, Route = ClipboardRequestIdentity)(ref EditorField field,
+    ref Host host, scope Route route = Route.init)
 {
     if (field.pendingCopy.length)
     {
@@ -625,8 +631,18 @@ void forwardClipboard(Host)(ref EditorField field, ref Host host)
     field.pendingCopy = Text.init;
     if (field.pendingRead)
         static if (__traits(compiles, host.readClipboard(1u)))
-            host.readClipboard(field.pendingRead);
+        {
+            const request = route(field.pendingRead);
+            if (request) host.readClipboard(request);
+            else if (field.state.record.pendingRequest == field.pendingRead)
+                field.state.record.pendingRequest = 0;
+        }
     field.pendingRead = 0;
+}
+
+private struct ClipboardRequestIdentity
+{
+    uint opCall(uint request) const @safe pure nothrow @nogc => request;
 }
 
 /// A host that answers reads later: the request goes out, the paste comes back.
@@ -654,6 +670,29 @@ unittest
     assert(host.written == "abc" && host.asked != 0);
     assert(field.paste("xyz", host.asked).changed && field.text == "xyz");
     assert(!field.paste("late", host.asked).changed, "an answer counts once");
+}
+
+/// Host identities may differ from local ones, and declined reads cannot later edit the field.
+@("editor.field.forwardClipboard.routedRequests")
+@safe pure nothrow unittest
+{
+    import sparkles.input.events : Key, Mods;
+    static struct Host
+    {
+        uint asked;
+        void readClipboard(uint request) @safe pure nothrow @nogc { asked = request; }
+    }
+    Host host;
+    auto field = FieldSetup(EditorTarget.window, true, true).singleLine();
+    field.key(KeyEvent(Key.char_, 'v', Mods(ctrl: true)));
+    const local = field.pendingRead;
+    forwardClipboard(field, host, (uint request) => 77u);
+    assert(host.asked == 77 && field.paste("accepted", local).changed);
+    field.key(KeyEvent(Key.char_, 'v', Mods(ctrl: true)));
+    const cancelled = field.pendingRead;
+    forwardClipboard(field, host, (uint request) => 0u);
+    assert(host.asked == 77 && !field.paste("declined", cancelled).changed);
+    assert(field.text == "accepted");
 }
 
 /// EDI3 through a field: the host reads the preedit from its pool and the

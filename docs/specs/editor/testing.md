@@ -698,3 +698,24 @@ All 826 UI tests, 50 editor tests and 21 selected base grapheme tests pass;
 the checked Vulkan build succeeds. These measurements cover editing and
 checkpoint modules; full app drawing, bidi/wrapped layout, device acceptance
 and recovery archive-count bounds remain required.
+
+### Clipboard request ownership — 2026-11-13
+
+The editor suite passes 53 tests and the UI suite passes 827 tests; the
+checked Vulkan build succeeds. Outgoing clipboard reads now receive distinct
+app-wide identities retaining the original document, palette ticket or dialog
+epoch and field-local request. Replies are translated back before reaching
+the field. Tests verify delayed replies to two tabs, a closed requester, a
+duplicate stale reply and document/path-dialog ID collisions. The Save As
+fixture writes only the intended path and preserves the document contents.
+
+The shared field helper accepts an optional request mapper and supports
+declining a read without leaving a valid pending answer. Existing callers
+retain identity mapping. Tracking is bounded to 64 live reads and identities
+are never reused within the app lifetime; inability to track a read is surfaced.
+
+Inspection confirms that Vulkan currently offers clipboard writes but lacks
+a read errand. Recording-host read scenarios therefore establish owner policy,
+not native clipboard acceptance. Native read plumbing and a delayed X11
+provider scenario are the next input slice; Wayland/Android parity also remains
+required.
