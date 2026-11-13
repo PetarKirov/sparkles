@@ -277,6 +277,10 @@
         "link": "/apps/fileset-explorer/"
       },
       {
+        "text": "sparkles:fsx",
+        "link": "/apps/fsx/"
+      },
+      {
         "text": "sparkles:hue",
         "link": "/apps/hue/",
         "collapsed": true,
