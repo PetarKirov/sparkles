@@ -23,6 +23,7 @@ import std.path : extension;
 import sparkles.build_primitives.resolve.paths : isAbsolutePath, normalizedPath;
 
 import sparkles.build_primitives.resolve.tree : ResolveTree;
+import sparkles.build_primitives.workspace.discovery : ReadSet;
 import sparkles.build_primitives.resolve.platform : BuildPlatform, matchesSpecification;
 import sparkles.build_primitives.resolve.project : InTreeSources, Package, Project, RegistrySources, loadSingleFileProject,
     ResolveException, TestRoot, addTestRunnerConfiguration, defaultConfiguration, fail,
@@ -131,6 +132,14 @@ struct Resolution
     /// The reaches into another package's directory without a dependency
     /// on it, of every package reached (BGR8).
     HiddenEdge[] hiddenEdges;
+    /**
+    What the resolution read through the tree: every recipe, every probe
+    (dub's default directories, the main-file search) and every listing of
+    a source, import or string-import root, with what it found (BGP1,
+    D55). A listing or probe that would now find something else makes the
+    resolution stale: resolving again is how its lists follow the tree.
+    */
+    ReadSet reads;
 
     /// The target of `packageName`, or null.
     inout(ResolvedTarget)* target(string packageName) inout @safe pure nothrow @nogc
@@ -162,7 +171,12 @@ PlanExpected!(Resolution, ResolveError) resolve(const ResolveRequest request, Re
         return planErr!Resolution(ResolveError(text("the request's path must be absolute: ",
             request.singleFile.length ? request.singleFile : request.directory)));
     try
-        return planOk!ResolveError(resolveOrThrow(request, tree));
+    {
+        Resolution resolution;
+        auto reads = tree.recorded(() { resolution = resolveOrThrow(request, tree); });
+        resolution.reads = reads;
+        return planOk!ResolveError(resolution);
+    }
     catch (ResolveException e)
         return planErr!Resolution(ResolveError(e.msg));
     // A Phobos path or conversion function rejecting a value the recipe
@@ -1295,4 +1309,47 @@ importPaths "$LIB_PACKAGE_DIR/extra"
     // dub adds `$DFLAGS` to every build type; it is an input.
     assert(r.value.targets[0].settings.dflags.canFind("-extra"));
     assert(r.value.environmentInputs == ["DFLAGS"]);
+}
+
+/// A resolution's listings are its inputs (D55): it records each, with its
+/// members' digest, so a file added beneath a listed root makes it stale,
+/// and resolving again lists the file. Requests over one tree share its
+/// listings: a root is listed once, whichever request reaches it first.
+@("build_primitives.resolve.configure.resolve.listingsAreInputs")
+@safe unittest
+{
+    import std.algorithm.iteration : filter;
+    import std.array : array;
+    import sparkles.build_primitives.workspace.discovery : ReadEntry, ReadKind;
+
+    static ReadEntry listingOf(const ref Resolution r, string root, string names) @safe
+    {
+        auto found = r.reads.entries.filter!(e => e.kind == ReadKind.listing && e.path == root
+            && e.names == names).array;
+        assert(found.length == 1, text(root, " ", names, " is not among ", r.reads.entries));
+        return found[0];
+    }
+
+    auto files = fixtureFiles();
+    auto tree = memoryTree(files);
+    const app = resolve(ResolveRequest(directory: "/r", subPackage: ":app", platform: linuxLdc), tree);
+    assert(app.hasValue, app.hasError ? app.error.message : null);
+    const made = tree.listingsMade;
+    const lib = resolve(ResolveRequest(directory: "/r", subPackage: ":lib", platform: linuxLdc), tree);
+    assert(lib.hasValue, lib.hasError ? lib.error.message : null);
+    assert(tree.listingsMade == made, "lib's roots were listed for app already");
+    // Each resolution records what it read, a shared listing included.
+    const before = listingOf(lib.value, "/r/util/source/", "*.d");
+    assert(before == listingOf(app.value, "/r/util/source/", "*.d"));
+    assert(lib.value.reads.entries.canFind!(e => e.path == "/r/lib/dub.sdl" && e.kind == ReadKind.file));
+
+    // A new module beneath a listed root: the listing that recorded the
+    // root no longer holds, and resolving again lists the module.
+    files["/r/util/source/extra.d"] = "";
+    auto fresh = memoryTree(files);
+    const again = resolve(ResolveRequest(directory: "/r", subPackage: ":app", platform: linuxLdc), fresh);
+    assert(again.hasValue, again.hasError ? again.error.message : null);
+    assert(listingOf(again.value, "/r/util/source/", "*.d").digest != before.digest);
+    assert(!app.value.target("r:app").settings.sourceFiles.canFind("/r/util/source/extra.d"));
+    assert(again.value.target("r:app").settings.sourceFiles.canFind("/r/util/source/extra.d"));
 }

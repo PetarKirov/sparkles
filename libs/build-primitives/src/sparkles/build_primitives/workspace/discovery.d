@@ -29,12 +29,26 @@ import sparkles.build_primitives.task.model : PlanExpected, planErr, planOk;
 import sparkles.build_primitives.workspace.package_graph : DiscoveryError, DiscoveryErrorKind,
     normalizeRepoPath, SubPackageRecipe;
 
-/// A file planning read: its repository-relative path and what it held.
+/// What a read was.
+enum ReadKind : ubyte
+{
+    file,    /// a file's bytes were read
+    probe,   /// only whether the path exists was asked
+    listing, /// the files beneath a directory were listed (`names` says which)
+}
+
+/**
+A path planning read: its path and what it held. A file's digest is that of
+its bytes; a listing's, that of its members, one per line, in order; a
+probe's is zero.
+*/
 struct ReadEntry
 {
-    string path;       /// repository-relative, `/`-separated
+    string path;       /// repository-relative, `/`-separated, or absolute for a resolution's
     bool found;        /// whether it existed; an absent one is read as absent
-    ubyte[32] digest;  /// BLAKE3 of its bytes (D48); zero when absent
+    ubyte[32] digest;  /// BLAKE3 (D48); zero when absent, and for a probe
+    ReadKind kind;     ///
+    string names;      /// a listing's name patterns, space-separated: `*.d *.di`
 }
 
 /// The files a value was derived from (BGP1), sorted by path, each once.
@@ -42,7 +56,7 @@ struct ReadSet
 {
     ReadEntry[] entries; ///
 
-    /// Records that `path` was read, holding `bytes`, or was absent.
+    /// Records that the file `path` was read, holding `bytes`, or was absent.
     void add(string path, scope const(ubyte)[] bytes, bool found) @safe pure nothrow
     {
         import sparkles.base.hash.blake3 : blake3;
@@ -50,10 +64,21 @@ struct ReadSet
         ReadEntry e = ReadEntry(path, found);
         if (found)
             e.digest = blake3(bytes);
+        put(e);
+    }
+
+    /// Records an entry: sorted by path, then kind, then names; a second
+    /// read of the same replaces the first.
+    void put(ReadEntry e) @safe pure nothrow
+    {
+        static bool before(const ref ReadEntry a, const ref ReadEntry b) @safe pure nothrow @nogc
+            => a.path != b.path ? a.path < b.path : a.kind != b.kind ? a.kind < b.kind : a.names < b.names;
+
         size_t at = entries.length;
-        while (at > 0 && entries[at - 1].path > path)
+        while (at > 0 && before(e, entries[at - 1]))
             --at;
-        if (at > 0 && entries[at - 1].path == path)
+        if (at > 0 && entries[at - 1].path == e.path && entries[at - 1].kind == e.kind
+                && entries[at - 1].names == e.names)
         {
             entries[at - 1] = e;
             return;
