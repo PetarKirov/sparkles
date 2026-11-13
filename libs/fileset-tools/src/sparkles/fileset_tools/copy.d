@@ -26,6 +26,7 @@ import sparkles.base.vfs.types : Access, Disposition, OpenMode, Rights, Shared;
 import sparkles.build_primitives.fileset.fso : FsoKind;
 
 import sparkles.fileset_tools.evaluate : Member;
+import sparkles.fileset_tools.verify : MemberDigest, startedHasher;
 
 /// Which VFS backend a copy runs over.
 enum CopyVfs : ubyte
@@ -43,6 +44,9 @@ struct CopyReport
     uint peak;         /// the most files in flight at once
     Duration took;     /// from opening the roots to the last file closed
     string failure;    /// the first member that failed, and why; empty when none
+    /// With `hashInline`, each member's record from the bytes the copy read,
+    /// in the members' order (`XV2`).
+    MemberDigest[] read;
 }
 
 /**
@@ -148,12 +152,14 @@ destination's parent must exist; `to` itself is made if it does not. With
 `force`, an entry in a member's way is removed first.
 */
 CopyReport copyMembers(string from, string to, const(Member)[] members, bool force, CopyVfs vfs, uint jobs = 16,
-    LinkRoots linkRoots = LinkRoots.init)
+    LinkRoots linkRoots = LinkRoots.init, bool hashInline = false)
 {
     import sparkles.build_primitives.fileset.driver : InlineExecutor;
     import sparkles.event_horizon.sys : BlockingVfs;
 
     CopyReport report;
+    if (hashInline)
+        report.read = new MemberDigest[members.length];
     const t0 = MonoTime.currTime;
     final switch (vfs)
     {
@@ -189,15 +195,24 @@ CopyReport copyMembers(string from, string to, const(Member)[] members, bool for
     return report;
 }
 
-/// Whether a member is in the way at `to/<path>`: an entry, a link counted
-/// itself, exists there. A missing destination holds nothing.
-bool[] inTheWay(string to, const(Member)[] members)
+/// What is in a member's way at `to/<path>`.
+enum InTheWay : ubyte
+{
+    nothing,   ///
+    entry,     /// a file or a link, which `--force` replaces
+    directory, /// a directory, which nothing replaces (`XC2`)
+}
+
+/// What is in each member's way at `to/<path>`; a link counts as itself.
+/// A missing destination holds nothing.
+InTheWay[] inTheWay(string to, const(Member)[] members)
 {
     import std.file : exists;
     import std.path : baseName, dirName;
+    import sparkles.base.vfs.types : EntryKind;
     import sparkles.event_horizon.sys : BlockingVfs;
 
-    auto there = new bool[members.length];
+    auto there = new InTheWay[members.length];
     if (!exists(to))
         return there;
     auto vfs = new BlockingVfs;
@@ -210,7 +225,9 @@ bool[] inTheWay(string to, const(Member)[] members)
         auto dir = parent == "." ? root.value.walk("") : root.value.walk(parent);
         if (dir.hasError)
             continue; // its directory is not there, nor is it
-        there[i] = !dir.value.statAt(baseName(m.path)).hasError;
+        auto st = dir.value.statAt(baseName(m.path));
+        if (!st.hasError)
+            there[i] = st.value.kind == EntryKind.directory ? InTheWay.directory : InTheWay.entry;
     }
     return there;
 }
@@ -275,7 +292,8 @@ private void copyOver(V, Exec)(V* vfs, string from, string to, const(Member)[] m
         return () {
             if (report.failure.length)
                 return; // one failure ends the copy: start nothing more
-            const why = copyOne(from_, dst, members[i], force, grantedRefs, linkRoots.names, report);
+            auto record = report.read.length ? &report.read[i] : null;
+            const why = copyOne(from_, dst, members[i], force, grantedRefs, linkRoots.names, report, record);
             if (why.length)
                 fail(report, members[i].path, why);
         };
@@ -288,7 +306,7 @@ private void copyOver(V, Exec)(V* vfs, string from, string to, const(Member)[] m
 
 // Copies one member; returns why it could not, or null.
 private string copyOne(D, S, G)(ref S src, ref D dst, ref const Member m, bool force, G[] granted,
-    const(string[])[] grantedNames, ref CopyReport report)
+    const(string[])[] grantedNames, ref CopyReport report, MemberDigest* record)
 {
     import std.conv : text;
     import std.path : baseName, dirName;
@@ -306,6 +324,8 @@ private string copyOne(D, S, G)(ref S src, ref D dst, ref const Member m, bool f
     }
     if (m.kind == FsoKind.symlink)
     {
+        if (record)
+            *record = MemberDigest(m.path, true, FsoKind.symlink, false, 0, (ubyte[32]).init, m.target.idup);
         if (isAbsolutePath(m.target))
         {
             const cover = coverOf(m.target, grantedNames);
@@ -336,6 +356,8 @@ private string copyOne(D, S, G)(ref S src, ref D dst, ref const Member m, bool f
     if (output.hasError)
         return text(output.error);
     auto buffer = new ubyte[64 * 1024];
+    auto hasher = startedHasher();
+    ulong read;
     for (;;)
     {
         auto got = input.value.read(buffer);
@@ -343,6 +365,9 @@ private string copyOne(D, S, G)(ref S src, ref D dst, ref const Member m, bool f
             return text(got.error);
         if (got.value == 0)
             break;
+        if (record)
+            hasher.put(buffer[0 .. got.value]);
+        read += got.value;
         size_t done;
         while (done < got.value)
         {
@@ -355,6 +380,9 @@ private string copyOne(D, S, G)(ref S src, ref D dst, ref const Member m, bool f
         }
         report.bytes += got.value;
     }
+    // The bytes read, as the source held them while the copy read it (`XV2`).
+    if (record)
+        *record = MemberDigest(m.path, true, FsoKind.regular, m.executable, read, hasher.finish(), null);
     ++report.files;
     return null;
 }

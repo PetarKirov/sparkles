@@ -242,8 +242,10 @@ equal ids, and the ring backend reports more than one file in flight.
 the destination's copied members, exactly the members' paths under `DST`
 and nothing else beneath it, and compare the castore id
 ([`CAC1`, `CAC2`](../build-primitives/content-addressing/SPEC.md#_3-castore-cac))
-with the source members' castore id. They **must** be equal for the copy to
-succeed. _Detection:_ every successful copy reports both ids, equal; a
+with the castore id of the tree the copy is to make: the source's members,
+each link made through a granted root holding the target `XC4` gives it.
+They **must** be equal for the copy to succeed; when every granted root is
+named by its real path, that tree is the source's. _Detection:_ every successful copy reports both ids, equal; a
 destination that already held unrelated files still verifies, as they are
 not members.
 
@@ -269,7 +271,9 @@ with no executable bit.
 tree id ([`CAN1`](../build-primitives/content-addressing/SPEC.md#_4-nar-can),
 [`CAG1`](../build-primitives/content-addressing/SPEC.md#_5-git-trees-cag)),
 print every name for the source and for the destination, and require each
-pair to be equal. For an iroh source these two are computed from the bytes
+pair to be equal. When a link would hold a granted root's real path rather
+than the source's target, no copy can have the source's names, and
+`--tree-hashes` **must** refuse before writing anything, naming the link. For an iroh source these two are computed from the bytes
 as they arrive, as neither is known before. _Detection:_ with
 `--tree-hashes` the report lists the three names twice, equal, matching
 what `fileset-explorer stats --ids` names for the same members.

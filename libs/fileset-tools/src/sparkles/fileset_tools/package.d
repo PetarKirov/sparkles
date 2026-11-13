@@ -8,6 +8,9 @@ explorer's Stats tab and `fsx --stats` print.
 */
 module sparkles.fileset_tools;
 
+public import sparkles.fileset_tools.commands;
 public import sparkles.fileset_tools.copy;
 public import sparkles.fileset_tools.evaluate;
+public import sparkles.fileset_tools.source;
 public import sparkles.fileset_tools.stats;
+public import sparkles.fileset_tools.verify;

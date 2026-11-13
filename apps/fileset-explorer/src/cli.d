@@ -333,85 +333,19 @@ time, and any failure, go on `error`.
 int cpCommand(in Root root, string query, string dest, bool force, bool dryRun, out string output,
     out string error, CopyVfs vfs = CopyVfs.blocking, uint jobs = 16, string[] linkRoots = null)
 {
-    import std.conv : text;
-    import std.format : format;
-    import std.path : absolutePath, buildNormalizedPath, buildPath;
-    import sparkles.build_primitives.fileset.fso : FsoKind;
-    import sparkles.base.vfs.names : isAbsolutePath;
-    import sparkles.fileset_tools.copy : copyMembers, coverOf, grantLinkRoots, inTheWay;
+    import sparkles.fileset_tools.commands : copyCommand, CopyOptions;
 
-    if (root.inMemory)
-    {
-        error = "cp: a tree held in memory has no files to copy\n";
-        return 1;
-    }
-    const o = evaluate(root, query);
-    if (o.failed)
-    {
-        error = "fileset-explorer: " ~ o.error.message ~ "\n";
-        return 1;
-    }
-    const base = buildNormalizedPath(absolutePath(root.dir));
-    string refused;
-    auto granted = grantLinkRoots(linkRoots, refused);
-    if (refused.length)
-    {
-        error = "cp: --link-root " ~ refused ~ "\n";
-        return 1;
-    }
-    string[] outside;
-    foreach (ref m; o.found.members)
-        if (m.kind == FsoKind.symlink && isAbsolutePath(m.target) && coverOf(m.target, granted.names).root < 0)
-            outside ~= m.path ~ " -> " ~ m.target;
-    if (outside.length)
-    {
-        error = text("cp: copied nothing: ", outside.length, outside.length == 1 ? " link points" : " links point",
-            " outside the fileset and beneath no --link-root:\n");
-        foreach (l; outside[0 .. outside.length < 20 ? $ : 20])
-            error ~= "  " ~ l ~ "\n";
-        if (outside.length > 20)
-            error ~= text("  and ", outside.length - 20, " more\n");
-        return 1;
-    }
-    size_t files, links;
-    string[] clashes;
-    const there = dryRun ? null : inTheWay(dest, o.found.members);
-    foreach (i, ref m; o.found.members)
-    {
-        files += m.kind == FsoKind.regular;
-        links += m.kind == FsoKind.symlink;
-        const to = buildPath(dest, m.path);
-        if (dryRun)
-            output ~= to ~ "\n";
-        else if (there[i])
-            clashes ~= to;
-    }
-    const totals = text(files, files == 1 ? " file" : " files", " (", humanBytes(o.bytes), ")",
-        links ? text(" and ", links, links == 1 ? " link" : " links") : "");
-    if (dryRun)
-    {
-        error = text("cp: would copy ", totals, " to ", dest, "\n");
-        return 0;
-    }
-    if (clashes.length && !force)
-    {
-        error = text("cp: copied nothing: ", clashes.length, clashes.length == 1 ? " path exists" : " paths exist",
-            " (--force replaces them):\n");
-        foreach (c; clashes[0 .. clashes.length < 20 ? $ : 20])
-            error ~= "  " ~ c ~ "\n";
-        if (clashes.length > 20)
-            error ~= text("  and ", clashes.length - 20, " more\n");
-        return 1;
-    }
-    const report = copyMembers(base, dest, o.found.members, force, vfs, jobs, granted);
-    if (report.failure.length)
-    {
-        error = text("cp: ", report.failure, "\n");
-        return 1;
-    }
-    error = text("cp: copied ", totals, " to ", dest, format!" in %.2f ms"(report.took.total!"usecs" / 1000.0),
-        " (", vfs == CopyVfs.ring ? text("RingVfs, ", report.peak, " in flight at most") : "BlockingVfs", ")\n");
-    return 0;
+    CopyOptions o;
+    o.source = root;
+    o.filter = query;
+    o.dest = dest;
+    o.force = force;
+    o.dryRun = dryRun;
+    o.vfs = vfs;
+    o.jobs = jobs;
+    o.linkRoots = linkRoots;
+    o.program = "cp";
+    return copyCommand(o, output, error);
 }
 
 // ---------------------------------------------------------------------------
