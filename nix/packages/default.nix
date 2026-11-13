@@ -465,7 +465,7 @@
         postFixup = ''
           wrapProgram $out/bin/${finalAttrs.pname} \
             --set-default SPARKLES_TS_GRAMMAR_PATH ${config.packages.ts-grammars} \
-            --set-default SPARKLES_IROH_SEND_LIB ${config.packages.sparkles-iroh-send}/lib/libsparkles_iroh_send.so \
+            --set-default SPARKLES_IROH_SEND_LIB ${config.packages.sparkles-iroh-send}/lib/libsparkles_iroh_send${pkgs.stdenv.hostPlatform.extensions.sharedLibrary} \
             --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
         '';
 
