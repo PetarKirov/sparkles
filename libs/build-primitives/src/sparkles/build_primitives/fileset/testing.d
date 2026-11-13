@@ -2607,6 +2607,63 @@ auto schemeResolve(S)(string literal, ref const Filesets sets, Fileset f, ref S 
     return r.value;
 }
 
+/**
+FSS9: a scheme declaring `listing` hears every directory the machine lists,
+each before its listing arrives, members or not. A directory above the
+start root is never listed, nor one whose verdict skips it.
+*/
+@("fileset.scheme.FSS9.listing")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.machine : ResolutionErrorCode;
+    import sparkles.build_primitives.fileset.scheme : resolveScheme;
+
+    static struct Listening
+    {
+        alias Result = string[];
+        string[] events;
+
+        bool listing(scope const(char)[] path)
+        {
+            events ~= "list " ~ path.idup;
+            return true;
+        }
+
+        bool visit(Entries, Exec)(scope const(char)[] path, Entries es, bool empty, ref Exec exec)
+        {
+            events ~= "visit " ~ path.idup;
+            return true;
+        }
+
+        bool incomplete(scope const(char)[] path, ErrorKind kind) => false;
+        string[] finish() => events;
+    }
+
+    auto sets = Filesets(CasePolicy.sensitive);
+    RecordingExecutor exec;
+    Listening s;
+    const f = sets.glob("src/**/*.d").value;
+    const events = schemeResolve("src/a.d\nsrc/none/x.txt\nsrc/sub/b.d\nskipped/c.d\n", sets, f, s, exec);
+    assert(events == ["list src", "list src/none", "list src/sub", "visit src", "visit src/none", "visit src/sub"],
+        events.join(" | "));
+
+    static struct Refusing
+    {
+        alias Result = int;
+        bool listing(scope const(char)[] path) => path != "src/sub";
+        bool visit(Entries, Exec)(scope const(char)[] path, Entries es, bool empty, ref Exec exec) => true;
+        bool incomplete(scope const(char)[] path, ErrorKind kind) => false;
+        int finish() => 0;
+    }
+
+    auto tree = openFixture("src/a.d\nsrc/sub/b.d\n");
+    auto root = openRoot!(Rights.readOnly)(&tree.value.get().vfs, "", ambientAuthority());
+    Refusing r;
+    const got = resolveScheme(root.value.borrow, sets, f, r, exec);
+    assert(got.hasError && got.error.code == ResolutionErrorCode.schemeFailed, "a refused listing aborts");
+}
+
 /// FSS1: each order, pinned by the `a` versus `a.b` fixture (a link `0`
 /// tells `partitionedOrder` apart), for a stream and for a fold.
 @("fileset.scheme.FSS1.orders")

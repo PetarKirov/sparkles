@@ -1,5 +1,5 @@
 /**
-The scheme seam (FSS1–FSS8): a resolution consumed by a scheme, whose
+The scheme seam (FSS1–FSS9): a resolution consumed by a scheme, whose
 result is the resolution's (FSE4).
 
 A scheme is a struct that declares, as enums, how it consumes a resolution,
@@ -23,6 +23,9 @@ $(TR $(TD `bool fold(path, entries, empty, ref exec, out Value)`) $(TD a
     fold's directory, after its subdirectories; `false` aborts))
 $(TR $(TD `Result finish(ref Value root)`) $(TD a fold's result, from the
     fileset root's value))
+$(TR $(TD `bool listing(path)`) $(TD optional: hears each directory the
+    machine is about to list, members or not, before it is listed (FSS9);
+    `false` aborts))
 $(TR $(TD `string failure()`) $(TD optional: why it aborted))
 )
 
@@ -61,8 +64,8 @@ import sparkles.base.vfs.types : Rights;
 import sparkles.build_primitives.fileset.driver : FilesetDriver, notAdmittedError, refusedWork;
 import sparkles.build_primitives.fileset.fso : EntryOrder, FsoFingerprint, FsoMetadata, FsoNode, SchemeShape,
     Traversal;
-import sparkles.build_primitives.fileset.machine : Resolution, ResolutionError, ResolutionErrorCode,
-    ResolutionLimits, StepKind, UnitEntry, noChild, noDir;
+import sparkles.build_primitives.fileset.machine : RequestKind, Resolution, ResolutionError,
+    ResolutionErrorCode, ResolutionLimits, StepKind, UnitEntry, noChild, noDir;
 import sparkles.build_primitives.fileset.value : Fileset, Filesets;
 
 /**
@@ -231,6 +234,12 @@ SchemeResult!S resolveScheme(V, Rights R, S, Exec)(DirRef!(V, R) root, ref const
         final switch (kind)
         {
             case StepKind.needIO:
+                // Before the listing, so that a watch placed now misses no
+                // change made after it (FSS9).
+                static if (__traits(hasMember, S, "listing"))
+                    foreach (i, ref r; m.batch)
+                        if (r.kind == RequestKind.readDir && !scheme.listing(m.listingPath(cast(uint) i)))
+                            return aborted();
                 exec.run(m.batch, (size_t i) { driver.perform(m, root, i); });
                 if (refusedWork(exec))
                     return fail(notAdmittedError);

@@ -277,6 +277,13 @@ struct Resolution
     const(Request)[] batch() const return @safe pure nothrow @nogc
         => requests[][0 .. pending];
 
+    /// The directory `readDir` request `req` of the batch lists, relative to
+    /// the fileset root: the path the resolution reached it by, a followed
+    /// link's own (FSS9). Valid until the next `step`.
+    const(char)[] listingPath(uint req) const return @safe pure nothrow @nogc
+    in (requests[req].kind == RequestKind.readDir, "only a readDir lists a directory")
+        => names[][frames[requests[req].target].path.start .. frames[requests[req].target].path.end];
+
     /// The id of a directory whose handle the driver may close: the last one
     /// `step` finished with, or `noDir`. Valid until the next `step`.
     uint retired() const @safe pure nothrow @nogc => retired_;
