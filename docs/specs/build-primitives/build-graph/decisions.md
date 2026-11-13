@@ -1446,3 +1446,37 @@ refactor of `apps/ci` outside this design.
 
 **Revisit when** `ci`'s planning and test-driving code moves into a package
 of its own: its closure is then the rule's.
+
+## D55: Listings are inputs of resolution, not deferred (accepted)
+
+**Question.** BGW8 splits resolution into a symbolic stage, whose settings
+hold filesets and list nothing, and materialization, which turns them into
+lists, so that an added file changes a list without resolving again. The
+resolver decides from listing contents, though: a target with no source
+files is typed by that, the test root searches the source list for the main
+file, the main file is filtered out of dependencies' lists, a string import
+overrides another by base name, and object files are picked out of source
+lists. Defer the lists anyway, and how?
+
+**Choice.** Listings stay fileset resolutions and become inputs of
+resolution, decided by the owner on 2026-11-13. The tree lists each
+distinct root and name patterns once, shares the listing across every
+request it serves, and records each listing, probe and file read in the
+resolution's read set (`Resolution.reads`), a listing with its members'
+digest. Resolving again (some 35 ms a request) is how a list follows the
+tree, and the read set says when it must. No settings field holds a list a
+later edit can leave stale, because none outlives the read set it came from.
+
+**Rejected for now, may be revisited.**
+
+- **Fully symbolic lists:** every file-list field a fileset expression, each
+  decision that reads a list moved into materialization. It matches BGW8's
+  first wording, but rewrites much of configuration and the test root, at a
+  risk to dub agreement.
+- **Symbolic resolution with consumed facts:** symbolic resolution records
+  the listing facts it decided on (a list's emptiness, the main file's
+  presence, the base names that override), and materialization resolves
+  again only when one of them changed. Precise, and the most machinery.
+
+**Revisit when** resolving again costs a watch more than it saves, or a
+consumer needs a list between two resolutions.

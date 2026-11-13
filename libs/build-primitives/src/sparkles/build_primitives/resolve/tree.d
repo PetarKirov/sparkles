@@ -17,7 +17,7 @@ module sparkles.build_primitives.resolve.tree;
 
 import sparkles.base.vfs.handles : Dir;
 import sparkles.base.vfs.types : EntryKind, OpenMode, Rights;
-import sparkles.build_primitives.workspace.discovery : ReadSet;
+import sparkles.build_primitives.workspace.discovery : ReadEntry, ReadKind, ReadSet;
 
 /// What resolution reads of the file system.
 interface ResolveTree
@@ -40,9 +40,20 @@ interface ResolveTree
     */
     string[] files(string root, scope const(string)[] names) @safe;
 
-    /// The files read and the paths probed so far, each with what was
-    /// found.
+    /// The files read, the paths probed and the directories listed so far,
+    /// each with what was found.
     ReadSet reads() @safe;
+
+    /**
+    Runs `work` and returns what it read, probed and listed, a listing the
+    tree had cached included: the read set of one resolution, when the tree
+    serves several.
+    */
+    ReadSet recorded(scope void delegate() @safe work) @safe;
+
+    /// How many listings the tree has made, as opposed to served from its
+    /// cache.
+    size_t listingsMade() @safe;
 }
 
 /**
@@ -63,6 +74,10 @@ final class VfsTree(V, Keep = typeof(null)) : ResolveTree
     private Mount*[] mounts; // each malloc'd, released by the destructor
     private bool ambient;
     private ReadSet reads_;
+    private ReadSet* recording;
+    private string[][string] listed; // by root and names: each listing made once
+    private bool[string] rootFound;  // by the same key: whether the root was a directory
+    private size_t listingsMade_;
     private Keep keep; // destroyed after the destructor's body, so after the mounts
 
     // A directory mounted at an absolute prefix.
@@ -125,9 +140,15 @@ final class VfsTree(V, Keep = typeof(null)) : ResolveTree
 
     bool readText(string path, out string text) @safe
     {
+        import sparkles.base.hash.blake3 : blake3;
+
         const(ubyte)[] bytes;
         const found = read(path, bytes);
-        reads_.add(slashes(path), bytes, found);
+
+        auto e = ReadEntry(slashes(path), found);
+        if (found)
+            e.digest = blake3(bytes);
+        note(e);
         if (found)
             text = (() @trusted => cast(string) bytes)();
         return found;
@@ -165,11 +186,77 @@ final class VfsTree(V, Keep = typeof(null)) : ResolveTree
                 }
             }
         }
-        reads_.add(slashes(path), null, found);
+        note(ReadEntry(slashes(path), found, (ubyte[32]).init, ReadKind.probe));
         return found;
     }
 
     string[] files(string root, scope const(string)[] names) @safe
+    {
+        import std.algorithm.sorting : sort;
+        import sparkles.build_primitives.fileset.driver : PathCollector, resolve;
+        import sparkles.build_primitives.fileset.pattern : CasePolicy;
+        import sparkles.build_primitives.fileset.value : Fileset, Filesets;
+
+        const base = withSlash(slashes(root));
+        string key = base;
+        foreach (name; names)
+            key ~= " " ~ name;
+        if (auto cached = key in listed)
+        {
+            noteListing(base, names, *cached, rootFound[key]);
+            return (*cached).dup;
+        }
+        bool found;
+        auto made = list(root, names, found);
+        listed[key] = made;
+        rootFound[key] = found;
+        ++listingsMade_;
+        noteListing(base, names, made, found);
+        return made.dup;
+    }
+
+    ReadSet reads() @safe => reads_;
+
+    ReadSet recorded(scope void delegate() @safe work) @safe
+    {
+        auto into = new ReadSet;
+        auto outer = recording;
+        recording = into;
+        scope (exit)
+            recording = outer;
+        work();
+        return *into;
+    }
+
+    size_t listingsMade() @safe => listingsMade_;
+
+    // Records `e` in the tree's read set and in the one being recorded.
+    private void note(ReadEntry e) @safe
+    {
+        reads_.put(e);
+        if (recording !is null)
+            recording.put(e);
+    }
+
+    // Records a listing of `base` by `names`: its members' digest, or that
+    // `base` was no directory.
+    private void noteListing(string base, scope const(string)[] names, scope const(string)[] members,
+        bool found) @safe
+    {
+        import sparkles.base.hash.blake3 : blake3;
+
+        string joined, patterns;
+        foreach (m; members)
+            joined ~= m ~ "\n";
+        foreach (i, name; names)
+            patterns ~= (i ? " " : "") ~ name;
+        note(ReadEntry(base, found, found ? blake3(cast(const(ubyte)[]) joined) : (ubyte[32]).init,
+            ReadKind.listing, patterns));
+    }
+
+    // Lists `root` by `names`, through a fileset resolution; `found` says
+    // whether `root` is a directory.
+    private string[] list(string root, scope const(string)[] names, out bool found) @safe
     {
         import std.algorithm.sorting : sort;
         import sparkles.build_primitives.fileset.driver : PathCollector, resolve;
@@ -199,14 +286,13 @@ final class VfsTree(V, Keep = typeof(null)) : ResolveTree
                 return null;
             cast(void) resolve(dir.value.borrow, sets, f, sink);
         }
+        found = true;
         const base = withSlash(slashes(root));
         string[] result;
         foreach (member; sink.members)
             result ~= base ~ member;
         return result.sort.release;
     }
-
-    ReadSet reads() @safe => reads_;
 
     // The bytes of the file at `path`, if it is one.
     private bool read(string path, out const(ubyte)[] bytes) @safe
@@ -417,9 +503,9 @@ unittest
         "/r/source/notes.txt": "",
         "/r/views/logo.txt": "",
     ]);
-    string text;
-    assert(tree.readText("/r/dub.sdl", text) && text == "name \"r\"\n");
-    assert(!tree.readText("/r/dub.json", text));
+    string content;
+    assert(tree.readText("/r/dub.sdl", content) && content == "name \"r\"\n");
+    assert(!tree.readText("/r/dub.json", content));
     assert(tree.isDirectory("/r/source") && tree.isDirectory("/r") && !tree.isDirectory("/r/dub.sdl"));
     assert(tree.exists("/r/views/logo.txt"), "a file exists");
     assert(tree.exists("/r/views"), "a directory exists");
@@ -427,8 +513,20 @@ unittest
     assert(tree.files("/r/source", ["*.d"]) == ["/r/source/app.d", "/r/source/sub/b.d"]);
     assert(tree.files("/r/source/", ["*"]) == ["/r/source/app.d", "/r/source/notes.txt", "/r/source/sub/b.d"]);
     assert(tree.files("/r/absent", ["*"]) == []);
-    assert(tree.reads.paths == ["/r/dub.json", "/r/dub.sdl", "/r/src", "/r/views", "/r/views/logo.txt"],
-        tree.reads.paths.text);
+    // What was read, probed and listed, each with what it found.
+    string[] reads;
+    foreach (ref e; tree.reads.entries)
+        reads ~= text(e.path, " ", e.kind, e.names.length ? " " ~ e.names : "", e.found ? "" : " absent");
+    assert(reads == [
+        "/r/absent/ listing * absent", "/r/dub.json file absent", "/r/dub.sdl file", "/r/source/ listing *",
+        "/r/source/ listing *.d", "/r/src probe absent", "/r/views probe", "/r/views/logo.txt probe",
+    ], reads.text);
+
+    // A listing is made once per root and names, and served again from the
+    // tree's cache, recorded each time.
+    const made = tree.listingsMade;
+    const recorded = tree.recorded(() { cast(void) tree.files("/r/source", ["*.d"]); });
+    assert(tree.listingsMade == made && recorded.entries.length == 1 && recorded.entries[0].kind == ReadKind.listing);
 }
 
 version (unittest) import std.conv : text;
