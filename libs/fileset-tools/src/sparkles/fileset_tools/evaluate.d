@@ -182,6 +182,35 @@ Outcome evaluate(in Root root, string source, bool withIds = false)
     return o;
 }
 
+/**
+The members at exactly `paths` beneath the directory `dir`, resolved and
+named as `evaluate` names a query's: what a copy's destination holds of the
+members it was given (`XV4`, docs/specs/fsx). Its `query` is unset; check
+`resolved`, not `failed`.
+*/
+Outcome evaluatePaths(string dir, const(string)[] paths, bool withIds = false)
+{
+    import sparkles.event_horizon.sys : BlockingVfs;
+
+    Outcome o;
+    auto vfs = new BlockingVfs;
+    auto opened = openRoot!(Rights.readOnly)(vfs, dir, ambientAuthority());
+    if (opened.hasError)
+    {
+        o.failure = QueryError(text("cannot open ", dir), 0);
+        return o;
+    }
+    auto sets = Filesets(CasePolicy.sensitive);
+    auto set = sets.paths(paths);
+    if (set.hasError)
+    {
+        o.failure = QueryError(text("not a list of paths: ", set.error), 0);
+        return o;
+    }
+    resolveSet(opened.value.borrow, Root(dir: dir), sets, set.value, o, withIds);
+    return o;
+}
+
 private void resolveInto(V, Rights R)(DirRef!(V, R) dir, in Root root, ref Outcome o, bool withIds)
 {
     auto sets = Filesets(CasePolicy.sensitive);
@@ -192,10 +221,18 @@ private void resolveInto(V, Rights R)(DirRef!(V, R) dir, in Root root, ref Outco
         o.failure = compiled.error;
         return;
     }
+    resolveSet(dir, root, sets, compiled.set, o, withIds);
+}
+
+// Resolves `set`, compiled into `sets`, into `o`: its members, its numbers,
+// and with `withIds`, or when it is small, its names.
+private void resolveSet(V, Rights R)(DirRef!(V, R) dir, in Root root, ref Filesets sets, Fileset set,
+    ref Outcome o, bool withIds)
+{
     InlineExecutor exec;
     Collect collect;
     const t0 = MonoTime.currTime;
-    auto r = resolveScheme(dir, sets, compiled.set, collect, exec);
+    auto r = resolveScheme(dir, sets, set, collect, exec);
     o.millis = (MonoTime.currTime - t0).total!"usecs" / 1000.0;
     if (r.hasError)
     {
@@ -233,7 +270,7 @@ private void resolveInto(V, Rights R)(DirRef!(V, R) dir, in Root root, ref Outco
         // Every name in one read, castore and the collection sharing BLAKE3
         // (`CAT2`, `CAT4`).
         NarScheme!(SHA256, FsoRef!(V, Rights.readOnly), CastoreDirectory, GitTree!SHA1, IrohCollection) ids;
-        auto id = resolveScheme(dir, sets, compiled.set, ids, exec);
+        auto id = resolveScheme(dir, sets, set, ids, exec);
         if (!id.hasError)
         {
             o.hasIds = true;
