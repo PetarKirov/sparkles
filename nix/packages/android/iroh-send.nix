@@ -72,7 +72,7 @@ in
         cargo = toolchain;
       };
 
-      lock = pkgs.callPackage ../sparkles-iroh-send-lock.nix { };
+      lock = (pkgs.callPackage ../../../libs/iroh-send/package.nix { }).lock;
       cargoDeps = rustPlatform.importCargoLock { lockFile = lock; };
       bridge = ../../../libs/iroh-send/rust;
 
