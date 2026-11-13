@@ -156,9 +156,34 @@ ListingResult listFiles(string root, scope Fileset delegate(ref Filesets) @safe 
         return err!(Listing, NoGcHook)("the directory to list could not be opened: " ~ root);
 
     ListingRun run;
+    version (Posix)
+        enum loopOffloads = true;
+    else
+        enum loopOffloads = false;
+    static if (!loopOffloads)
+    {
+        // Where the loop has no blocking pool (Windows), `RingVfs` runs each
+        // call inline on the fiber that makes it, so a loop overlaps
+        // nothing, and the native backend's frames (a listing's buffer held
+        // inline, wide-character paths) overflow a fiber's stack. One
+        // request after another, then: on this thread's stack, or on a
+        // thread of its own when this is a fiber.
+        if (onScheduler())
+        {
+            import core.thread : Thread;
+
+            enum size_t listingStack = 4 << 20;
+            auto t = new Thread(() {
+                run.began = true;
+                run.result = resolve(opened.value.borrow, sets, f, run.sink);
+                run.finished = true;
+            }, listingStack);
+            () @trusted { t.start(); t.join(); }();
+        }
+    }
     // On a scheduler already, as a UI loop is: resolve on its fibers.
     // Otherwise on a loop of our own, for as long as the listing takes.
-    if (onScheduler())
+    else if (onScheduler())
     {
         auto exec = LoopExecutor!Sched(&currentScheduler(), new Admission(32));
         run.began = true;
