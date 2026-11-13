@@ -1064,7 +1064,7 @@ struct CachedRun
 {
     string id;      /// `toCastoreText` of the root, or why the run failed
     ubyte[] record; /// the encoded cache
-    size_t filesRead, filesReused, dirsReused, dirsEncoded; ///
+    size_t filesRead, filesReused, dirsReused, dirsEncoded, futureTimes; ///
 }
 
 /**
@@ -1103,6 +1103,7 @@ CachedRun cachedRun(V = StatValidator)(ref MemVfs vfs, const(ubyte)[] previous, 
     run.filesReused = fold.cache.filesReused;
     run.dirsReused = fold.cache.dirsReused;
     run.dirsEncoded = fold.cache.dirsEncoded;
+    run.futureTimes = fold.cache.futureTimes;
     return run;
 }
 
@@ -1469,6 +1470,10 @@ everything and still gives the right id.
     v.marginNs = 10;
     assert(v.unchanged(fp, fp, 1_011));
     assert(!v.unchanged(fp, fp, 1_010), "a change time within the margin is racy");
+    // BGK5: the modification time too, so one set later than the stamp is
+    // never trusted, though the change time is old.
+    const future = FsoFingerprint(5, 1, 9, 5_000, 1_000);
+    assert(!v.unchanged(future, future, 1_011) && v.unchanged(future, future, 5_011));
     foreach (i; 0 .. 5)
     {
         FsoFingerprint other = fp;
@@ -1482,6 +1487,24 @@ everything and still gives the right id.
         }
         assert(!v.unchanged(fp, other, 10_000));
     }
+}
+
+/// BGK5: a file whose modification time lies after the run's stamp is read
+/// on every run that meets it, and each run counts it, for its caller to
+/// report.
+@("content_addressing.cache.BGK5.futureTimes")
+@system unittest
+{
+    auto made = openFixture("a/x = 1\nb = 2\n");
+    auto vfs = &made.value.get().vfs;
+    vfs.clockNs = 10_000_000_000;
+    assert(vfs.setMtime("b", 50_000_000_000));
+    const first = cachedRun(*vfs, null);
+    assert(first.futureTimes == 1, text(first));
+    vfs.clockNs += 3_000_000_000;
+    const warm = cachedRun(*vfs, first.record);
+    assert(warm.id == coldId(*vfs));
+    assert(warm.filesReused == 1 && warm.filesRead == 1 && warm.futureTimes == 1, text(warm));
 }
 
 /// FSC3: a change time a caller can set, as Windows's can be, proves
