@@ -155,6 +155,9 @@ struct SchemeEntries(V, Rights R, Value, Units)
     ///
     void popFront() { units.popFront(); }
 
+    /// The directory the entries are in: the handle that was listed.
+    DirRef!(V, R) directory() return scope => dir;
+
     ///
     SchemeEntry!(V, R, Value) front() return scope
     {

@@ -172,6 +172,60 @@ struct TreeWatcher
         return ioOk(batch);
     }
 
+    /**
+    ditto, on a thread no scheduler runs: blocks for the first note, or,
+    with a positive `timeout`, for at most that long, and then returns an
+    empty batch. A caller whose watches the host refused rescans on that
+    timeout (D50's fallback).
+    */
+    IoResult!(WatchNote[]) nextBatch(Duration quiet, Duration timeout = Duration.zero)
+    {
+        import core.thread : Thread;
+        import core.time : MonoTime, msecs;
+
+        WatchNote[] batch;
+        WatchNote more;
+        if (sink_.takeDropped())
+            batch ~= WatchNote(0, WatchNoteKind.overflow);
+        else if (timeout <= Duration.zero)
+        {
+            auto first = sink_.channel.take();
+            if (first.hasError)
+                return ioErr!(WatchNote[])(first.error.code, OpKind.read, IoErrorStage.completion,
+                    "the watcher ended");
+            batch ~= first.value;
+        }
+        else
+        {
+            const until = MonoTime.currTime + timeout;
+            while (!sink_.channel.tryTake(more))
+            {
+                if (sink_.takeDropped())
+                    return ioOk([WatchNote(0, WatchNoteKind.overflow)]);
+                if (sink_.channel.closed)
+                    return ioErr!(WatchNote[])(32 /* EPIPE */, OpKind.read, IoErrorStage.completion,
+                        "the watcher ended");
+                if (MonoTime.currTime >= until)
+                    return ioOk(batch);
+                Thread.sleep(10.msecs);
+            }
+            batch ~= more;
+        }
+        for (;;)
+        {
+            const before = batch.length;
+            if (quiet > Duration.zero)
+                Thread.sleep(quiet);
+            while (sink_.channel.tryTake(more))
+                batch ~= more;
+            if (batch.length == before || quiet <= Duration.zero)
+                break;
+        }
+        if (sink_.takeDropped())
+            batch ~= WatchNote(0, WatchNoteKind.overflow);
+        return ioOk(batch);
+    }
+
     /// Stops the backend and ends every watch; a parked `nextBatch` returns
     /// once the notes already delivered are taken. Idempotent.
     void close()
@@ -554,6 +608,34 @@ unittest
         }
         assert(overflowed);
     });
+}
+
+/// Off the loop: a thread waits for a batch, and a timeout ends a wait
+/// with nothing to report.
+@("tree_watch.onAThread")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+    import std.conv : text;
+
+    const dir = buildPath(tempDir, text("sparkles-tree-watch-thread-", thisProcessID));
+    mkdirRecurse(dir);
+    scope (exit)
+        rmdirRecurse(dir);
+    TreeWatcher w;
+    assert(!TreeWatcher.create(w).hasError);
+    scope (exit)
+        w.close();
+    assert(w.watch(dir, ambientAuthority()).hasValue);
+    auto none = w.nextBatch(10.msecs, 30.msecs);
+    assert(none.hasValue && none.value.length == 0);
+    write(buildPath(dir, "x"), "1");
+    auto batch = w.nextBatch(30.msecs);
+    assert(batch.value.canFind!(n => n.kind == WatchNoteKind.created && n.name == "x"), describe(batch.value));
 }
 
 /// A path that is not a directory is refused.
