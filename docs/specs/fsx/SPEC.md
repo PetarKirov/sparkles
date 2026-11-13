@@ -307,10 +307,11 @@ and for a link `->` and its target, separated by tabs. _Detection:_ a
 fixture with an executable file, a plain file and a link gives three rows
 whose fields are exactly those values.
 
-**`XL3` — The tree.** `--tree` **must** draw the members as the explorer's
-member tree draws them: directories first, each entry under its parent,
-connectors between them. _Detection:_ the drawn lines equal the explorer's
-plain render of the same members.
+**`XL3` — The tree.** `--tree` **must** draw the members as a tree below
+a `.` line: each directory, with a `/` after its name, before the files
+beside it, each level in name order, every entry joined to its parent with
+`tree`'s `├──`, `└──` and `│` connectors, and a link followed by `->` and
+its target. _Detection:_ a fixture's drawing equals one written by hand.
 
 **`XL4` — Numbers and names.** `--stats` and `--tree-hashes` **must** print
 the Stats report and the members' castore, NAR and git ids on standard
