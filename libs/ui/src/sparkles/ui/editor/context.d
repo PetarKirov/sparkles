@@ -6,6 +6,15 @@ A context is any type with the members `isEditContext` names, so a view can
 answer from its own layout and a test from plain logical lines. Every query
 is a pure function of the text it is given.
 
+A layout context may additionally offer
+`horizontalCaret(text, range, direction, extend) -> CaretTarget`. It selects
+the next visual caret, including a nonempty selection's visual collapse edge.
+The step retains the returned affinity and keeps the logical anchor when
+extending. Without this primitive, grapheme motion retains logical order.
+`lineBoundaryCaret(text, position, affinity, boundary) -> CaretTarget` may
+likewise supply the visual left/right edge of the wrapped row for Home/End.
+The context must answer for the supplied revision, never from stale geometry.
+
 Specification: `docs/specs/ui/editor.md` §2.
 */
 module sparkles.ui.editor.context;
@@ -26,6 +35,13 @@ struct VisualLine
 {
     size_t start;
     size_t end;
+}
+
+/// A source byte position and the side of an ambiguous visual boundary it belongs to.
+struct CaretTarget
+{
+    size_t position;
+    Affinity affinity;
 }
 
 /**

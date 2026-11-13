@@ -829,3 +829,25 @@ An attempted full X11 hosted smoke stopped at its outside-pointer-release
 assertion before reaching clipboard checks. Its unrelated pointer/IME lanes
 are not counted as passing here. Wayland/Android input and full editor layout
 acceptance remain open; these X11 checks make no device performance claim.
+
+### Shared visual-motion context boundary — 2026-11-14
+
+The generic editor stepper now consumes optional `horizontalCaret` and
+`lineBoundaryCaret` queries returning a `CaretTarget` with source byte position
+and affinity. Contexts without those queries retain the existing logical
+grapheme, selection-collapse and smart-Home behavior. The stepper keeps the
+logical anchor on extension and preserves a visual query's returned affinity.
+
+Two tests first failed under logical-only movement, then passed through the
+new queries. A fixed layout for the Hebrew run in `ab אב` requires visual
+Right from byte 5 to byte 3, visual collapse and extension from the existing
+logical anchor. A wholly RTL `אב` row requires Home at logical EOF (byte 4)
+and End at byte zero. These are worked source/visual examples at the generic
+step seam, not output derived from the implementation under test.
+
+All 830 UI tests and 60 editor tests pass, and the checked Vulkan build
+succeeds. The runnable `visual-carets.d` example prints Home byte 4 and End
+byte 0 for the fixed RTL row. This is preparation for U:
+`EditorField` still embeds `LogicalContext`, and real-font layout, wrapped
+row/vertical affinity, shared rendered geometry, touch and live IME remain
+unimplemented acceptance work. It does not establish bidi rendering in the app.

@@ -39,7 +39,7 @@ accepted. Each implementation commit must build and pass its relevant tests.
 | P — Shared command palette        | EAP8–EAP11                                        | Display-independent state and catalog, shared widget view, invocation-target/context/identity/lifecycle scenarios, recording and TUI/Vulkan adapters; one public-behavior red→green slice at a time | partial: shared view/input and effective-shortcut tests pass; backend parity pending                                            |
 | A — Thin editor shell             | EAP1–EAP7, EAP27–EAP28                            | Standard CLI/build identity, editable examples, tabs, command guide/palette and basic inspector; app recording-flow and native smoke evidence                                                       | partial: shell, tabs, editable examples, commands, clipboard, pointer and native/TUI smoke; full tools pending                  |
 | H — Highlighting and presentation | EAP12–EAP16                                       | Shared per-line highlighted presentation with editor decorations, revision-safe background work, themes and generated settings; active-line and preview/cancel scenarios                            | partial: syntax/editor overlay, background revisions, theme preview and language picker verified; font/settings pending         |
-| U — Layout and input              | EAP17–EAP20                                       | Shared layout-backed navigation/hit-testing, Unicode corpus, terminal touch extraction and live IME on required native targets                                                                      | not started                                                                                                                     |
+| U — Layout and input              | EAP17–EAP20                                       | Shared layout-backed navigation/hit-testing, Unicode corpus, terminal touch extraction and live IME on required native targets                                                                      | partial: generic visual-motion hooks verified; production layout, touch and live IME pending                                    |
 | F — Real documents                | EAP21–EAP25                                       | UTF-8 fidelity, safe desktop saves, system document access on Android, conflict and dirty-close decisions; fault/provider tests and real-device evidence                                            | partial: native open/save/conflict and dirty-close tests pass; live close/provider acceptance pending                           |
 | R — Session recovery              | EAP26                                             | Owner-accepted checkpoint/loss policy, versioned settings/session storage, dirty-buffer recovery and interruption/corruption tests; no implicit writes to originals                                 | partial: native checkpoint/restore and exit verified; settings, lifecycle/resource limits and device latency acceptance pending |
 | V — Acceptance and measurements   | EAP2, EAP27–EAP30 and all earlier obligations     | Required target matrix, 1/10 MiB and long-line workloads, independent adversarial review, docs and per-commit build checks                                                                          | not started                                                                                                                     |
@@ -67,6 +67,73 @@ available; complete backend/input parity remains an acceptance gate.
 Generated font/settings controls, code-editor presentation
 and conveniences, shared Unicode layout/touch input and workload acceptance
 remain required. The native file work does not replace their delivery gates.
+
+## Remaining implementation sequence
+
+This sequence covers the remaining accepted scope, not just the current
+checkpoint. Correctness failures found while validating an earlier slice take
+precedence over the next feature. The milestone gates above remain authoritative;
+a library preparation commit does not close an app or device acceptance gate.
+
+1. **Shared layout and input geometry (U, S0).** Complete the real-font
+   mixed-direction/wrapping experiment. Supply one revision-bound result for
+   drawing, visual caret movement, row edges, pointer hits, selections and IME
+   rectangles. The generic stepper now accepts visual-motion hooks; the app's
+   field still needs a production layout context. Preserve the accepted visual
+   collapse, fixed logical anchor and affinity policies. Reuse base Unicode
+   and font shaping and respect the separate text-layout composition boundary.
+2. **Generated settings and document fonts (H).** Extract the reusable font
+   discovery/preparation and picker mechanisms from text-lab. Add the
+   monospace-filtered list and show-all option, real family styles, declared
+   weight/optical-size axes, ligatures, size, line height and letter spacing.
+   Keep document typography independent of interface typography. Generate the
+   pane from one settings subject with shared numeric editors/runtime bounds;
+   integrate accepted theme/presentation choices rather than adding a second
+   settings renderer.
+3. **Editor presentation and tools (A, H).** Finish shared source-view
+   presentation: line numbers, current-line treatment, indentation guides,
+   bracket matching and whitespace diagnostics. Complete the undo-branch
+   inspector, indentation/autoindent, language-aware commenting and the
+   accepted editing actions through the common command policy.
+4. **Find and replace (A, V).** Add literal and regex search/replace over
+   retained revisions, including selection/occurrence workflows and protected
+   spans. Establish work, cancellation and pattern limits with the planned
+   adversarial fixtures before claiming responsive large-document behavior.
+5. **Live composition and touch (U).** Complete desktop and Android preedit,
+   cancel/commit, focus and candidate placement with real input methods.
+   Extract reusable terminal selection geometry/gestures, then implement
+   editor handles, crossing, edge scrolling and selection actions. Verify
+   Android keyboard insets and gesture ownership on actual devices.
+6. **Android documents and remaining file workflows (F).** Build the editor
+   APK/native entry, system document access/open-with, retained grants and
+   provider save semantics. Test revocation, cancellation, failed writes,
+   conflicts and informed weaker replacement. Finish native close/save
+   requests that arrive during in-flight operations and remaining focus races.
+7. **Session settings, lifecycle and resource bounds (R).** Persist the
+   accepted settings alongside tabs/selections with explicit version handling.
+   Bound archive discovery/retained restore state and complete nonvetoable
+   lifecycle handling. Measure acknowledged one-second recovery on the
+   supported devices; preserve failed/unconfirmed states and original files.
+8. **Frontend parity and capability reporting (P, A, U).** Finish Lantern
+   prefix timing/wakeups, palette/menu/touch integration and effective binding
+   agreement. Exercise TUI and Vulkan on narrow/wide layouts and make actual
+   unsupported host/input/font capabilities visible.
+9. **Workload and device acceptance (V).** Run the 1 MiB, 10 MiB and 1 MiB
+   single-line workloads, Unicode corpus and sustained edits/font changes.
+   Profile before optimizing; report input, CPU/GPU frame, presentation and
+   retained-memory measurements separately. A 120 Hz claim requires measured
+   8.33 ms deadline behavior on a named device/refresh mode.
+10. **Review and delivery (V).** Run the requested independent adversarial
+    review with `agy` and Argon Medium, repair findings and rerun affected
+    checks. Complete the Nix artifact, screenshots/diagnostics, documentation
+    and per-commit build validation. Rebase/series cleanup follows repository
+    policy and the owner's applicable authorization; pushing remains a
+    separately authorized action.
+
+The last independent review attempt was quota-blocked; final review is pending.
+Desktop native clipboard,
+storage and recovery evidence already recorded in testing.md does not replace
+the remaining Wayland/Android, layout, IME or device-performance gates.
 
 ## Bounded feasibility experiments
 
@@ -102,8 +169,9 @@ evidence for a promised capability.
   tests. Generated settings/fonts, complete recovery acceptance
   and Unicode layout/touch/IME remain open.
 - Evidence and reviews: [testing §6](./testing.md#6-evidence-ledger).
-- Next executable action: finish recovery lifecycle/resource checks and
-  one-second latency evidence, then implement generated settings/fonts.
+- Next executable action: finish the shared visual-layout experiment/context
+  integration, then generated settings/fonts, while retaining the remaining
+  recovery lifecycle/resource and device-latency gates.
   CLI session writes and explicit restore offers are enabled; older durable
   generations remain until a newer write is acknowledged. Settings, Unicode, provider
   and workload gates remain open;

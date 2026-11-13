@@ -23,7 +23,7 @@ import sparkles.text_buffer.history : HistoryStatus, HistoryStep;
 import sparkles.text_buffer.summary : Affinity, tokenAt;
 import sparkles.text_buffer.text : Text;
 import sparkles.ui.editor.command : Boundary, EditCommand, EditKind;
-import sparkles.ui.editor.context : clusterCells, VisualLine, isEditContext;
+import sparkles.ui.editor.context : CaretTarget, clusterCells, VisualLine, isEditContext;
 import sparkles.ui.editor.effect : EditEffect, EditEffects, EffectKind, NoopReason;
 import sparkles.ui.editor.kill_ring : KillEntry, KillRing;
 import sparkles.ui.editor.selection : EditRange, SelectionSet;
@@ -432,10 +432,21 @@ struct Stepper(Texts, Context)
         SharedBuffer!(EditRange, 4) moved;
         foreach (r; state.selection.ranges)
         {
-            const head = target(motion, r);
-            moved.put(EditRange(extend ? r.anchor : head, head));
+            const next = caretTarget(motion, r, extend);
+            moved.put(EditRange(extend ? r.anchor : next.position, next.position, next.affinity));
         }
         state.selection = normalized(moved[], state.selection.primaryIndex);
+    }
+
+    CaretTarget caretTarget(Motion motion, in EditRange range, bool extend)
+    {
+        static if (is(typeof(context.horizontalCaret(text, range, cmd.direction, extend)) == CaretTarget))
+            if (motion == Motion.grapheme)
+                return context.horizontalCaret(text, range, cmd.direction, extend);
+        static if (is(typeof(context.lineBoundaryCaret(text, range.head, range.affinity, cmd.boundary)) == CaretTarget))
+            if (motion == Motion.lineBoundary)
+                return context.lineBoundaryCaret(text, range.head, range.affinity, cmd.boundary);
+        return CaretTarget(target(motion, range));
     }
 
     size_t target(Motion motion, in EditRange r)

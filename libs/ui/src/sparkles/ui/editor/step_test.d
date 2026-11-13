@@ -63,6 +63,100 @@ unittest
     assert(r.shown == "a[bc]d");
 }
 
+/// A layout's RTL caret order controls movement/collapse and preserves visual affinity.
+@("editor.motion.layoutCaretOrder")
+@safe pure nothrow unittest
+{
+    import sparkles.text_buffer.text : Text;
+    import sparkles.ui.editor.context : CaretTarget, LogicalContext;
+    import sparkles.ui.editor.kill_ring : KillRing;
+    import sparkles.ui.editor.selection : SelectionSet;
+    import sparkles.ui.editor.state : EditorState;
+    import sparkles.ui.editor.step : stepInPlace;
+    import sparkles.ui.editor.testing : TestPool;
+    struct Context
+    {
+        LogicalContext logical;
+        alias logical this;
+        CaretTarget horizontalCaret(in Text text, in EditRange range, int direction, bool extend)
+            const @safe pure nothrow @nogc
+        {
+            // "ab אב" displays its Hebrew run as Bet, Alef. From left to
+            // right its run boundaries are EOF (byte 7), byte 5, byte 3.
+            enum CaretTarget[3] stops = [CaretTarget(7, Affinity.before),
+                CaretTarget(5, Affinity.before), CaretTarget(3, Affinity.after)];
+            assert(text == "ab אב");
+            size_t head = size_t.max, anchor = size_t.max;
+            foreach (index, stop; stops)
+            {
+                if (stop.position == range.head) head = index;
+                if (stop.position == range.anchor) anchor = index;
+            }
+            assert(head != size_t.max && anchor != size_t.max);
+            if (!extend && !range.empty)
+                return stops[direction < 0 ? (anchor < head ? anchor : head)
+                    : (anchor > head ? anchor : head)];
+            const next = direction < 0 ? (head ? head - 1 : 0)
+                : (head + 1 < stops.length ? head + 1 : head);
+            return stops[next];
+        }
+    }
+    Context context;
+    auto pool = new TestPool;
+    KillRing ring;
+    auto state = EditorState.create("ab אב");
+    state.selection = SelectionSet.caret(5);
+    stepInPlace(state, ring, *pool, C.grapheme(1), context);
+    assert(state.selection.primary.head == 3 && state.selection.primary.affinity == Affinity.after);
+    state.selection = SelectionSet.single(EditRange(3, 7));
+    stepInPlace(state, ring, *pool, C.grapheme(-1), context);
+    assert(state.selection.primary.empty && state.selection.primary.head == 7);
+    state.selection = SelectionSet.single(EditRange(3, 7));
+    stepInPlace(state, ring, *pool, C.grapheme(1, true), context);
+    assert(state.selection.primary.anchor == 3 && state.selection.primary.head == 5);
+    stepInPlace(state, ring, *pool, C.grapheme(1, true), context);
+    assert(state.selection.primary.empty && state.selection.primary.head == 3
+        && state.selection.primary.affinity == Affinity.after);
+}
+
+/// Home/End use visual row edges supplied by the layout, including an RTL row.
+@("editor.motion.layoutRowEdges")
+@safe pure nothrow unittest
+{
+    import sparkles.text_buffer.text : Text;
+    import sparkles.ui.editor.context : CaretTarget, LogicalContext;
+    import sparkles.ui.editor.kill_ring : KillRing;
+    import sparkles.ui.editor.selection : SelectionSet;
+    import sparkles.ui.editor.state : EditorState;
+    import sparkles.ui.editor.step : stepInPlace;
+    import sparkles.ui.editor.testing : TestPool;
+    struct Context
+    {
+        LogicalContext logical;
+        alias logical this;
+        CaretTarget lineBoundaryCaret(in Text text, size_t position, Affinity affinity, Boundary boundary)
+            const @safe pure nothrow @nogc
+        {
+            // A wholly RTL row displays Bet then Alef: its left edge is
+            // logical EOF, its right edge logical byte zero.
+            assert(text == "אב");
+            return boundary == Boundary.start ? CaretTarget(4, Affinity.before)
+                : CaretTarget(0, Affinity.after);
+        }
+    }
+    Context context;
+    auto pool = new TestPool;
+    KillRing ring;
+    auto state = EditorState.create("אב");
+    state.selection = SelectionSet.caret(2);
+    stepInPlace(state, ring, *pool, C.lineBoundary(Boundary.start), context);
+    assert(state.selection.primary.empty && state.selection.primary.head == 4);
+    stepInPlace(state, ring, *pool, C.lineBoundary(Boundary.end, true), context);
+    assert(state.selection.primary.anchor == 4 && state.selection.primary.head == 0
+        && state.selection.primary.affinity == Affinity.after);
+    assert(state.text == "אב");
+}
+
 /// EDC3: Alt-F/Alt-B skip non-words then one word, as Readline's
 /// `rl_forward_word`; Alt-Backspace and Alt-D kill the same span.
 @("editor.word.motionAndKill")

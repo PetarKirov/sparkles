@@ -2225,6 +2225,10 @@
             "link": "/specs/ui/editor"
           },
           {
+            "text": "Editor layout contexts",
+            "link": "/libs/ui/reference/editor-context"
+          },
+          {
             "text": "Backends",
             "link": "/specs/ui/backends"
           },

@@ -26,6 +26,10 @@ LF newline command. A throwing policy preserves the prior state and kill ring.
 The [runnable example](../../../libs/ui/examples/insert-each.d) prints `aAbcB`,
 then `abc` after one undo.
 
+[Editor layout contexts](./reference/editor-context.md) describe the generic
+stepper's visual caret and row-edge queries, including affinity and the
+logical fallback when no visual layout is supplied.
+
 | Module                     | Role                                                                                                                                                                                                                                                                                                                                |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `geometry`                 | `Point`/`Size` (specializing `sparkles:math`'s `Vector`, like `TermSize`/`TermPosition`), `Rect`/`Insets` in abstract cells and `SizeSpec`; text width/fitting comes from owned base `visibleWidth`/`fitCells`, not geometry exports                                                                                                |
