@@ -55,8 +55,11 @@ import sparkles.build_primitives.fileset.fso : FsoFingerprint, FsoKind, precedes
 
 /**
 The default validator: a file is unchanged when its fingerprint equals the
-recorded one and the recorded change time is older than the recording run's
-stamp by more than `marginNs` (FSC3).
+recorded one and both recorded times, change and modification, are older
+than the recording run's stamp by more than `marginNs` (FSC3, and the build
+graph's BGK5: one rule for every reader of a file's digest). A modification
+time later than the stamp, which `touch` can set, is therefore never
+trusted: such a file is read on every run that meets it.
 
 The margin absorbs the distance between the clock a caller reads and the
 one that stamps files. A file system's timestamps are coarse: the kernel's
@@ -72,7 +75,7 @@ struct StatValidator
     /// unchanged now that its `stat` reads `now`.
     bool unchanged(in FsoFingerprint recorded, in FsoFingerprint now, long stampNs)
         const @safe pure nothrow @nogc
-        => recorded == now && recorded.ctimeNs < stampNs - marginNs;
+        => recorded == now && recorded.ctimeNs < stampNs - marginNs && recorded.mtimeNs < stampNs - marginNs;
 }
 
 /**
@@ -152,6 +155,10 @@ struct SubtreeCache(Dir, Leaf, Validator = StatValidator)
     /// What the current run reused and did, for a caller's statistics and a
     /// test's assertions.
     size_t filesReused, filesRead, dirsReused, dirsEncoded;
+    /// Files recorded with a modification time later than the run's stamp:
+    /// each is read again whenever it is met, and a caller reports them
+    /// (BGK5).
+    size_t futureTimes;
 
     private Table previous, next;
     private long previousStamp, stamp;
@@ -217,7 +224,7 @@ struct SubtreeCache(Dir, Leaf, Validator = StatValidator)
         next.clear();
         stamp = stampNs;
         sealed = false;
-        filesReused = filesRead = dirsReused = dirsEncoded = 0;
+        filesReused = filesRead = dirsReused = dirsEncoded = futureTimes = 0;
     }
 
     /**
@@ -404,6 +411,8 @@ struct SubtreeCache(Dir, Leaf, Validator = StatValidator)
             ++filesReused;
         else
             ++filesRead;
+        if (hasFingerprint && fp.mtimeNs > stamp)
+            ++futureTimes;
     }
 
     /// Records a link of the open directory.
