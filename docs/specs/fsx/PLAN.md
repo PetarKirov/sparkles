@@ -23,3 +23,11 @@ reporting no payload beyond it and the names. It answered yes
 (`iroh_send.XR.receiveSpike`), once the size proofs first planned were
 dropped ([XO13](./decisions.md#xo13-no-sizes-before-the-filter-accepted)).
 A negative answer would have reopened [XO9](./decisions.md#xo9-an-iroh-source-filters-before-it-downloads-accepted).
+
+## Progress
+
+M1–M6 are delivered on Linux, with the evidence [testing](./testing.md)
+names; M7 on macOS (arm64). On Windows the code cross-compiles and has not
+run: the next step is a run on a Windows host, then adding `fileset-tools`
+and `fsx` to `ci/test-windows.sh`'s allowlist, and a Windows build of the
+iroh bridge with a `LoadLibraryW` path in its loader.
