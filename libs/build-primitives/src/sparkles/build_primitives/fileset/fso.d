@@ -49,13 +49,13 @@ struct FsoNode
         => FsoNode(FsoKind.symlink, false, target);
 
     /// The node's kind.
-    FsoKind kind() const => kind_;
+    FsoKind kind() const scope => kind_;
 
     /// Whether a regular file is executable; `false` for every other kind.
-    bool executable() const => executable_;
+    bool executable() const scope => executable_;
 
     /// A link's target; `null` for every other kind.
-    const(char)[] target() const return => target_;
+    const(char)[] target() const return scope => target_;
 }
 
 ///

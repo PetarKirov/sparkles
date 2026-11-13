@@ -705,6 +705,7 @@ PlanExpected!(PackagePlan, SelectionError) planPackages(string repoRoot, RecipeR
         plan.since = move(since.value);
 
         auto inputs = workspaceInputSets(repoRoot, tree, plan.graph, workspace.value, options, hostTokens);
+        claimLinks(repoRoot, inputs);
         plan.requests = packageRequests(repoRoot, tree, plan.graph, inputs, role, options, hostTokens);
         request.changes = seedsByClaims(inputs, plan.graph, plan.requests, plan.since.changes);
     }
@@ -714,6 +715,32 @@ PlanExpected!(PackagePlan, SelectionError) planPackages(string repoRoot, RecipeR
         return planErr!PackagePlan(selection.error);
     plan.selection = move(selection.value);
     return planOk!SelectionError(move(plan));
+}
+
+/**
+Records, as claimed by each set that holds the link, the target of every
+link among the sets' members beneath `repoRoot` (BGW11): one listing of
+their union through the VFS, following no link, so that each is a member,
+and reading no file. A root that cannot be listed records no link.
+*/
+void claimLinks(string repoRoot, ref InputSets inputs) @safe
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : DotDotPolicy, ResolvePolicy, Rights, SymlinkPolicy;
+    import sparkles.build_primitives.fileset.driver : InlineExecutor;
+    import sparkles.build_primitives.workspace.input_state : linksOf;
+    import sparkles.event_horizon.sys : BlockingVfs;
+
+    auto vfs = new BlockingVfs;
+    const policy = ResolvePolicy(SymlinkPolicy.none, DotDotPolicy.reject, crossMounts: true);
+    auto root = openRoot!(Rights.readOnly)(vfs, repoRoot, ambientAuthority(), policy);
+    if (root.hasError)
+        return;
+    InlineExecutor exec;
+    const all = inputs.allInputs;
+    auto links = linksOf(root.value.borrow, inputs.sets, all, exec);
+    if (!links.hasError)
+        inputs.claimLinkTargets(links.value);
 }
 
 /// The input sets of `graph`'s packages, read from `workspace`, with the
@@ -1071,6 +1098,44 @@ unittest
     // A package's own recipe is its input, not every package's.
     assert(r.since("libs/dql/dub.sdl") ==
         "packages (1):\n  sparkles:dql: changed=libs/dql/dub.sdl\nedges (0):\n");
+}
+
+/**
+BGW11: a pattern claims a link, not what it names, so an edit to a link's
+target selects the packages holding the link only once materialization has
+recorded the target. A link to a directory claims what lies beneath it; one
+that leaves the worktree claims nothing.
+*/
+@("build_primitives.workspace.select.seedsByClaims.linkTargets")
+@safe
+unittest
+{
+    import std.algorithm.searching : startsWith;
+    import sparkles.build_primitives.workspace.input_state : LinkRead, LinkTargetKind;
+
+    auto r = reaches();
+    r.requests = r.requests[0 .. $ - 1]; // without viewer, which is uncertain
+    assert(r.since("docs/dql.md").startsWith("empty-selection"), r.since("docs/dql.md"));
+    r.inputs.claimLinkTargets([
+        LinkRead("libs/dql/src/sparkles/dql/spec.md", "../../../../../docs/dql.md", "docs/dql.md",
+            LinkTargetKind.file),
+        LinkRead("libs/font/test/data", "../../../corpus", "corpus", LinkTargetKind.directory),
+        LinkRead("libs/base/src/outside", "/etc", null, LinkTargetKind.outside),
+    ]);
+    // dql's sources hold the link, and so do ui's tests, which compile them.
+    assert(r.since("docs/dql.md") ==
+        "packages (2):\n"
+        ~ "  sparkles:dql: changed=docs/dql.md\n"
+        ~ "  sparkles:ui: changed=docs/dql.md\n"
+        ~ "edges (0):\n", r.since("docs/dql.md"));
+    assert(r.since("corpus/fonts/a.ttf") ==
+        "packages (2):\n"
+        ~ "  sparkles:font: changed=corpus/fonts/a.ttf\n"
+        ~ "  sparkles:font-oracle: changed=corpus/fonts/a.ttf\n"
+        ~ "edges (1):\n"
+        ~ "  sparkles:font -> sparkles:font-oracle\n", r.since("corpus/fonts/a.ttf"));
+    assert(r.since("corpusX").startsWith("empty-selection"), "a directory claim covers what lies beneath it only");
+    assert(r.inputs.linkClaims.length == 4, "outside the worktree, nothing is claimed");
 }
 
 /// A path is judged without the file, so a removed one needs neither a probe

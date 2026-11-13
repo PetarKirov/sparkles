@@ -508,6 +508,84 @@ private struct StateFold(Cache)
     }
 }
 
+/**
+The links among the members of `set` beneath `root`, each with its target
+settled (`resolved`, and `kind`, never an id), in path order. Reads no
+file's bytes, so it costs a listing of the set: what the claim index needs
+of links (BGW11). `root`'s policy should follow no link, so that every link
+is a member.
+*/
+Expected!(LinkRead[], ResolutionError, NoGcHook) linksOf(V, Rights R, Exec)(DirRef!(V, R) root,
+    ref const Filesets sets, Fileset set, ref Exec exec, ResolutionLimits limits = ResolutionLimits.init)
+{
+    import std.algorithm.sorting : sort;
+    import sparkles.build_primitives.fileset.scheme : resolveScheme;
+
+    static struct Links
+    {
+        enum metadata = FsoMetadata.linkTarget;
+        alias Result = LinkRead[];
+        LinkRead[] links;
+
+        bool visit(Entries, Exec)(scope const(char)[] path, scope Entries entries, bool empty, ref Exec exec)
+        {
+            foreach (e; entries)
+                if (e.node.kind == FsoKind.symlink)
+                    links ~= LinkRead(path.length ? (path ~ "/" ~ e.name).idup : e.name.idup,
+                        e.node.target.idup);
+            return true;
+        }
+
+        // An unreadable entry holds no link a pattern could see.
+        bool incomplete(scope const(char)[] path, ErrorKind kind) => true;
+        LinkRead[] finish() => links;
+    }
+
+    Links scheme;
+    auto got = resolveScheme(root, sets, set, scheme, exec, limits);
+    if (got.hasError)
+        return err!(LinkRead[], NoGcHook)(got.error);
+    auto links = got.value;
+    foreach (ref l; links)
+        settleKind(root, l);
+    links.sort!((a, b) => a.path < b.path);
+    return ok!(ResolutionError, NoGcHook)(links);
+}
+
+// Settles what the link `l` names, without reading it.
+private void settleKind(V, Rights R)(DirRef!(V, R) root, ref LinkRead l)
+{
+    import std.string : lastIndexOf;
+    import sparkles.base.vfs.types : EntryKind;
+
+    l.resolved = resolveLinkTarget(l.path, l.target);
+    if (l.resolved is null)
+    {
+        l.kind = LinkTargetKind.outside;
+        return;
+    }
+    const slash = l.resolved.lastIndexOf('/');
+    const name = slash < 0 ? l.resolved : l.resolved[slash + 1 .. $];
+    void settle(D)(D dir)
+    {
+        auto st = dir.statAt(name);
+        l.kind = st.hasError ? LinkTargetKind.absent
+            : st.value.kind == EntryKind.directory ? LinkTargetKind.directory
+            : LinkTargetKind.file;
+    }
+
+    if (slash < 0)
+        settle(root);
+    else
+    {
+        auto parent = root.walk(l.resolved[0 .. slash]);
+        if (parent.hasError)
+            l.kind = LinkTargetKind.absent;
+        else
+            settle(parent.value.borrow);
+    }
+}
+
 /// The target text of the link at `path` beneath `root`; `null` when it
 /// cannot be read.
 private string readLink(V, Rights R)(DirRef!(V, R) root, string path)
@@ -673,16 +751,15 @@ private void settleTarget(V, Rights R, Cache)(DirRef!(V, R) root, ref LinkRead l
 
 version (unittest)
 {
-    import sparkles.build_primitives.fileset.testing : openFixture, RecordingExecutor;
-    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
-    import sparkles.base.vfs.mem : MemVfs;
-    import sparkles.build_primitives.fileset.pattern : CasePolicy;
-
     // Observes `f` (all of it when `glob` is null) over `vfs` with `cache`,
-    // following links beneath the root.
-    InputState observed(ref MemVfs vfs, ref DigestCache!() cache, string glob = null) @system
+    // following links beneath the root. A template, so that the test-only
+    // modules it imports are imported only by the tests that call it.
+    InputState observed(V)(ref V vfs, ref DigestCache!() cache, string glob = null)
     {
+        import sparkles.base.vfs.handles : ambientAuthority, openRoot;
         import sparkles.base.vfs.types : ResolvePolicy, SymlinkPolicy;
+        import sparkles.build_primitives.fileset.pattern : CasePolicy;
+        import sparkles.build_primitives.fileset.testing : RecordingExecutor;
 
         auto sets = Filesets(CasePolicy.sensitive);
         const f = glob is null ? sets.everything : sets.glob(glob).value;
@@ -703,6 +780,8 @@ version (unittest)
 @("workspace.inputState.observe.members")
 @system unittest
 {
+    import sparkles.build_primitives.fileset.testing : openFixture;
+
     import sparkles.base.hash.blake3 : blake3;
     import sparkles.build_primitives.content_addressing.testing : coldId;
     import sparkles.build_primitives.content_addressing.castore : toCastoreText;
@@ -730,6 +809,8 @@ and its target's members are the state's under the link's path.
 @("workspace.inputState.observe.links")
 @system unittest
 {
+    import sparkles.build_primitives.fileset.testing : openFixture;
+
     auto made = openFixture("docs/spec.md = one\nlib/spec.md -> ../docs/spec.md\nlib/out -> ../../x\n"
         ~ "lib/d -> ../docs\n");
     auto vfs = &made.value.get().vfs;
@@ -780,6 +861,8 @@ damaged one is rejected whole.
 @("workspace.inputState.digestCache")
 @system unittest
 {
+    import sparkles.build_primitives.fileset.testing : openFixture;
+
     auto made = openFixture("a/x = 1\na/y = 2\nb = 3\n");
     auto vfs = &made.value.get().vfs;
     vfs.clockNs = 10_000_000_000;
@@ -803,4 +886,30 @@ damaged one is rejected whole.
 
     bytes[10] ^= 1;
     assert(next.load(bytes).hasError, "a damaged cache is rejected");
+}
+
+/// `linksOf` lists the links among a set's members, settling each target
+/// without reading it, under a policy that follows no link.
+@("workspace.inputState.linksOf")
+@system unittest
+{
+    import sparkles.build_primitives.fileset.testing : openFixture;
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.build_primitives.fileset.pattern : CasePolicy;
+    import sparkles.build_primitives.fileset.testing : RecordingExecutor;
+
+    auto made = openFixture("docs/spec.md = one\ndocs/d/\nlib/spec.md -> ../docs/spec.md\nlib/d -> ../docs/d\n"
+        ~ "lib/gone -> nothing\nlib/out -> ../../x\nother -> docs\n");
+    auto vfs = &made.value.get().vfs;
+    auto sets = Filesets(CasePolicy.sensitive);
+    auto root = openRoot!(Rights.readOnly)(vfs, "", ambientAuthority());
+    RecordingExecutor exec;
+    const f = sets.glob("lib/**").value;
+    auto got = linksOf(root.value.borrow, sets, f, exec);
+    assert(!got.hasError);
+    string[] seen;
+    foreach (l; got.value)
+        seen ~= text(l.path, " ", l.kind, " ", l.resolved);
+    assert(seen == ["lib/d directory docs/d", "lib/gone absent lib/nothing", "lib/out outside ",
+        "lib/spec.md file docs/spec.md"], seen.text);
 }

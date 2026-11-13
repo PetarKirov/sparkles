@@ -156,7 +156,7 @@ struct SchemeEntries(V, Rights R, Value, Units)
     void popFront() { units.popFront(); }
 
     ///
-    SchemeEntry!(V, R, Value) front()
+    SchemeEntry!(V, R, Value) front() return scope
     {
         const UnitEntry u = units.front;
         SchemeEntry!(V, R, Value) e;
