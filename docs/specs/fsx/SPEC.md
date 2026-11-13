@@ -156,7 +156,7 @@ link, an executable file and a `.git` directory lists all three with
 
 **`XS3` — An iroh source's tree.** An iroh source's tree **must** be the
 collection's names: each name is a member regular file, not executable,
-with the size the peer proves for it (`XR2`). When every name begins with
+whose size the peer proves as the file arrives (`XR4`). When every name begins with
 the same first component, that component is the collection's _label_
 ([`CAI1`](../build-primitives/content-addressing/SPEC.md#_8-iroh-s-collection-cai))
 and is removed from every path; the label is reported, not copied. Before
@@ -260,12 +260,13 @@ _Detection:_ a source file rewritten between the two passes, through a hook
 the test drives, fails a separate copy and passes an inline one; both modes
 read a member's bytes the stated number of times.
 
-**`XV3` — An iroh source's ids come first.** For an iroh source, the
-source's castore id **must** be computed from the names, the BLAKE3 digests
-and the proved sizes of the selected members, before any of their contents
-is fetched, whichever `--verify` says. _Detection:_ the id reported before
-the download equals the castore id of the same files materialized locally
-with no executable bit.
+**`XV3` — An iroh source's id comes from its digests.** For an iroh
+source, the source's castore id **must** be assembled from the selected
+members' names and the BLAKE3 digests the collection lists, each with the
+size the peer proves as the file arrives, and never from the bytes
+written; the destination is then hashed as `XV1` says. _Detection:_ the id
+reported equals the castore id of the same files materialized locally with
+no executable bit.
 
 **`XV4` — More names.** `--tree-hashes` **must** add the NAR hash and the git
 tree id ([`CAN1`](../build-primitives/content-addressing/SPEC.md#_4-nar-can),
@@ -359,19 +360,18 @@ only local sources **must** be unaffected. _Detection:_ with the bridge's
 path pointing nowhere, `fscp` from a ticket exits 1 naming the path, and a
 local copy succeeds.
 
-**`XR2` — The metadata first.** An iroh source **must** be opened by fetching
-the collection's hash sequence, its metadata blob and a proof of each
-file's size, and nothing else, before the filter is evaluated. A size is
-proved by the last chunk of the blob, verified against its digest.
-_Detection:_ opening a collection of `n` files against a counting provider
-requests the sequence, the metadata blob and one last-chunk range per file,
-and no other range.
+**`XR2` — The names first.** An iroh source **must** be opened by
+fetching the collection's hash sequence and its metadata blob, and nothing
+of any file, before the filter is evaluated. No size is fetched then: iroh
+sends a blob in groups of 16 KiB, so proving a small file's size sends the
+file ([XO13](./decisions.md#xo13-no-sizes-before-the-filter-accepted)).
+_Detection:_ opening a collection of 50 files reads fewer than 4 KiB, all of
+it the sequence and the names.
 
 **`XR3` — Only the selected files.** The contents fetched after opening
-**must** be those of the selected members alone. _Detection:_ copying one
-file of a 50-file collection served by the repository's own provider makes
-the provider report payload bytes below the metadata's, the size proofs'
-and that file's size, with the proof overhead the bao encoding states.
+**must** be those of the selected members alone. _Detection:_ fetching one file of a 50-file collection served by the
+repository's own provider makes the provider report payload bytes below
+that file's size and the names' 4 KiB.
 
 **`XR4` — Verified before written.** Each range of a blob **must** be
 verified against the blob's digest before any byte of it is written or

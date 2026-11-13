@@ -35,8 +35,11 @@ use iroh_blobs::{
 use n0_future::StreamExt;
 use tokio::sync::{mpsc, oneshot};
 
+/// The receive half: a collection read from a peer (`fsx`, docs/specs/fsx).
+pub mod sparkles_iroh_receive;
+
 /// The version of this interface; D refuses a library with another.
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 
 /// The flag that disables relays: a ticket then carries direct addresses only.
 pub const FLAG_NO_RELAY: u32 = 1;

@@ -16,16 +16,18 @@
     { pkgs, ... }:
     let
       bridge = ../../libs/iroh-send/rust;
+      lock = pkgs.callPackage ./sparkles-iroh-send-lock.nix { };
     in
     {
       packages.sparkles-iroh-send = pkgs.rustPlatform.buildRustPackage {
         pname = "sparkles-iroh-send";
         inherit (pkgs.sendme) version src;
-        cargoLock.lockFile = "${pkgs.sendme.src}/Cargo.lock";
+        cargoLock.lockFile = lock;
 
         postPatch = ''
-          cp ${bridge}/sparkles_iroh_send.rs ${bridge}/iroh_collection.rs src/
+          cp ${bridge}/sparkles_iroh_send.rs ${bridge}/sparkles_iroh_receive.rs ${bridge}/iroh_collection.rs src/
           cat ${bridge}/targets.toml >> Cargo.toml
+          cp ${lock} Cargo.lock
         '';
 
         cargoBuildFlags = [

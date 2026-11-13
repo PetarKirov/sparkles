@@ -14,6 +14,14 @@ sending is unavailable. The fileset explorer's Send is built on it
 ([`FXS`](../../specs/fileset-explorer/SPEC.md#_7-names-and-sending-fxs),
 [X18](../../specs/fileset-explorer/decisions.md)).
 
+It receives too. `IrohSend.receive` opens a collection a peer serves and
+reads its names and digests, and nothing of any file; `Receiver.fetch` then
+asks for the files a caller chose, and `Receiver.next` hands out each one's
+bytes in order, every piece verified against the file's BLAKE3 tree before
+it is handed out. `fsx` copies from a ticket with it, choosing the files
+with a fileset filter before any is downloaded
+([`XR`](../../specs/fsx/SPEC.md#_8-the-iroh-source-xr)).
+
 ```d
 import core.thread : Thread;
 import core.time : msecs;

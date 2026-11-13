@@ -98,11 +98,11 @@ and the iroh bridge built for it.
 and filter locally, or read the collection's metadata, filter, and fetch
 only the selection. Which?
 
-**Choice.** The second (`XR2`, `XR3`). The names, the digests and proofs of
-the sizes are fetched first; the filter is evaluated over them; only the
-selected blobs follow, each verified as it streams (`XR4`). Because a
-castore file id is the blob's BLAKE3 digest, the source's id is known
-before any content arrives (`XV3`).
+**Choice.** The second (`XR2`, `XR3`). The hash sequence and the names are
+fetched first; the filter is evaluated over the names; only the selected
+blobs follow, each verified as it streams (`XR4`). Because a castore file id
+is the blob's BLAKE3 digest, the source's id is assembled from the digests
+the collection lists, not from the bytes written (`XV3`).
 
 **Rejected.** A full download into a temporary directory followed by a local
 copy: simpler, but it fetches everything for a filter that selects one
@@ -141,3 +141,23 @@ not carry (`XS3`).
 
 **Rejected.** Keeping the label, which would make a copy from a ticket
 differ in layout and in ids from the same copy made locally.
+
+## XO13: No sizes before the filter (accepted)
+
+**Question.** Should an iroh source prove every file's size when it is
+opened, so that the source's castore id and the Stats report's sizes are
+known before anything is downloaded?
+
+**Choice.** No (`XR2`). A size is proved by the blob's last chunk, and iroh
+sends a blob in groups of 16 KiB, so the proof of a file smaller than that
+is the file. In a source tree most files are, and the proofs would fetch
+most of the collection before the filter had chosen any of it. The filter
+needs only names, since the query language has no size predicate; each
+selected file's size is proved as it arrives, and the castore id is
+assembled from the digests and those sizes (`XV3`). This is the plan of
+[XO9](#xo9-an-iroh-source-filters-before-it-downloads-accepted) as the
+owner stated it; the size proofs were the author's addition, found wrong
+while writing their test.
+
+**Rejected.** Proving every size at open, which costs up to 16 KiB a file
+whether it is selected or not.

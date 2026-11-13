@@ -14,10 +14,12 @@ the evidence its rows in [testing](./testing.md) name.
 | M6        | `package.nix` in nixpkgs' style                                                                               | `XP1`–`XP3`                                                       | `callPackage` against a nixpkgs checkout builds each option combination; the closure is recorded      |
 | M7        | macOS and Windows                                                                                             | `XP4`                                                             | the test suite on the owner's macOS machine and on Windows; `pathOf` on Windows                       |
 
-M4 starts with a spike that answers one question: can the bridge request a
-collection's metadata and one last-chunk range per file in a single
-request, and stream a chosen child's verified bytes to the caller, against
-`sendme send` of the pinned version? The decision criterion is a received
-metadata blob equal to the D collection's, sizes equal to the files', and
-one child's bytes equal to its file, with the provider reporting no payload
-beyond them. A negative answer reopens [XO9](./decisions.md#xo9-an-iroh-source-filters-before-it-downloads-accepted).
+M4 starts with a spike that answers one question: can the bridge read a
+collection's names without any file, and stream a chosen child's verified
+bytes to the caller, against the pinned `sendme`'s provider? The decision
+criterion is a listing whose names and digests are the files', read in
+under 4 KiB, and one child's bytes equal to its file, with the provider
+reporting no payload beyond it and the names. It answered yes
+(`iroh_send.XR.receiveSpike`), once the size proofs first planned were
+dropped ([XO13](./decisions.md#xo13-no-sizes-before-the-filter-accepted)).
+A negative answer would have reopened [XO9](./decisions.md#xo9-an-iroh-source-filters-before-it-downloads-accepted).

@@ -10,3 +10,8 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "iroh-collection"
 path = "src/iroh_collection.rs"
+
+# The receive half names bao-tree's content items (sparkles_iroh_receive.rs);
+# the lock already holds it, through iroh-blobs, and gains only this edge.
+[dependencies.bao-tree]
+version = "0.16.1"
