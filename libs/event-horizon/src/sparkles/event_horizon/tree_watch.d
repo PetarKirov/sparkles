@@ -575,6 +575,44 @@ unittest
     });
 }
 
+/// A directory watched inside another keeps its own token, and its watch
+/// outlives its parent's: notes go to the directory that holds the name.
+@("tree_watch.nestedWatches")
+@system
+unittest
+{
+    import std.algorithm.searching : all, canFind;
+    import std.file : mkdir, write;
+    import std.path : buildPath;
+    import sparkles.event_horizon.live_shared : RingClock;
+
+    onLoop((ref Sched s, string dir) {
+        TreeWatcher w;
+        assert(!TreeWatcher.create(w).hasError);
+        scope (exit)
+            w.close();
+        auto clock = RingClock(&s);
+        mkdir(buildPath(dir, "sub"));
+        const outer = w.watch(dir, ambientAuthority()).value;
+        const inner = w.watch(buildPath(dir, "sub"), ambientAuthority()).value;
+        assert(outer.token != inner.token);
+
+        write(buildPath(dir, "sub", "f"), "x");
+        auto batch = w.nextBatch(s, clock, 50.msecs);
+        assert(batch.value.canFind!(n => n.token == inner.token
+            && n.kind == WatchNoteKind.created && n.name == "f"), describe(batch.value));
+        assert(!batch.value.canFind!(n => n.name == "f" && n.token == outer.token), describe(batch.value));
+
+        w.unwatch(outer.token);
+        write(buildPath(dir, "h"), "x");
+        write(buildPath(dir, "sub", "g"), "x");
+        batch = w.nextBatch(s, clock, 50.msecs);
+        assert(batch.value.canFind!(n => n.token == inner.token
+            && n.kind == WatchNoteKind.created && n.name == "g"), describe(batch.value));
+        assert(batch.value.all!(n => n.token != outer.token), describe(batch.value));
+    });
+}
+
 /// More notes than the channel holds: the rest become one `overflow`.
 @("tree_watch.overflowIsReported")
 @system
@@ -595,8 +633,12 @@ unittest
         foreach (i; 0 .. 1500)
             write(buildPath(dir, text(i)), "x");
         auto clock = RingClock(&s);
+        // FSEvents calls back after a latency: let every note arrive before
+        // the first batch drains the channel.
+        assert(!clock.sleep(200.msecs).hasError);
         bool overflowed;
-        // Each file is at least a creation and a write: more than 1024.
+        // Each file is at least one note (inotify: a creation and a write):
+        // more than 1024.
         foreach (_; 0 .. 20)
         {
             auto batch = w.nextBatch(s, clock, 20.msecs);

@@ -14,6 +14,9 @@ dependency "sparkles:base" path="../.."
 // io_uring binding (Linux).
 dependency "sparkles:event-horizon-sys" path="../.."
 
+// macOS: the tree watcher's FSEvents backend (tree_watch_darwin.d).
+lflags "-framework" "CoreServices" "-framework" "CoreFoundation" platform="osx"
+
 // Android: the kqueue backend is the only one there (backend/concept.d), over
 // libkqueue built for Android (`android-pkg-config` resolves `kqueue`). First,
 // so dub picks it there and only there.
