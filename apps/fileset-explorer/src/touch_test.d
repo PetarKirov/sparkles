@@ -16,7 +16,7 @@ import sparkles.ui_app.host : RunConfig;
 import sparkles.ui_app.record : RecordingHost;
 import sparkles.ui_app.run_app : runAppRecorded;
 
-import evaluate : Root;
+import sparkles.fileset_tools.evaluate : Root;
 import explorer : ExplorerApp, Focus;
 import render : renderFrame;
 

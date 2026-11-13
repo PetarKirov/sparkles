@@ -16,7 +16,7 @@ import sparkles.android.assets : extractAssetBundle;
 import sparkles.ui_app.gui_options : GuiOptions;
 import sparkles.wsi.platform.android : AndroidWsiMain, logFailure;
 
-import evaluate : Root;
+import sparkles.fileset_tools.evaluate : Root;
 import launch : defaultQuery, explorerGui, launch, sonameQueriesRoot;
 import send : prepareIrohSend, sendStoreParent, shareText;
 import sparkles.android.activity : nativeActivity;

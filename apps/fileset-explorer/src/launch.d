@@ -12,7 +12,7 @@ import sparkles.ui_app.host : RunConfig, TouchGestures;
 import sparkles.ui_app.run : asRunResult;
 import sparkles.ui_app.run_app : runApp;
 
-import evaluate : Root;
+import sparkles.fileset_tools.evaluate : Root;
 import explorer : ExplorerApp;
 
 /// The query the explorer opens with.

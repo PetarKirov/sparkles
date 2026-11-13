@@ -15,7 +15,7 @@ import std.conv : text;
 import sparkles.build_primitives.content_addressing.collection : CollectionFile;
 import sparkles.iroh_send : IrohSend, loadIrohSend, SendFile, SendPhase, SendSession, SendState;
 
-import evaluate : humanBytes, Outcome, Root;
+import sparkles.fileset_tools.evaluate : humanBytes, Outcome, Root;
 
 /// Where the iroh bridge keeps its store while it sends; empty: the
 /// system's temporary directory. Android sets it to the app's data.

@@ -6,7 +6,7 @@ import std.algorithm.searching : canFind;
 import sparkles.build_primitives.fileset.emit : NixGlobs, Target;
 import sparkles.ui.geometry : Size;
 
-import evaluate : Root;
+import sparkles.fileset_tools.evaluate : Root;
 import explorer : ExplorerApp;
 import render : renderFrame;
 

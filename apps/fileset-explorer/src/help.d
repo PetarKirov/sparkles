@@ -17,7 +17,7 @@ import std.string : strip;
 import sparkles.build_primitives.fileset.fso : FsoKind;
 import sparkles.syntax.md.model : MdBlock, MdBlockKind, MdDoc;
 
-import evaluate : evaluate, Member, Root;
+import sparkles.fileset_tools.evaluate : evaluate, Member, Root;
 
 /// The help page's markdown.
 enum string helpSource = import("index.md");

@@ -12,7 +12,7 @@ import sparkles.ui_app.host : RunConfig;
 import sparkles.ui_app.record : RecordingHost;
 import sparkles.ui_app.run_app : runAppRecorded;
 
-import evaluate : Root;
+import sparkles.fileset_tools.evaluate : Root;
 import explorer : ExplorerApp, Focus;
 import render : renderFrame;
 
@@ -157,7 +157,7 @@ private ExplorerApp* make(string query)
 @("fileset_explorer.FXL9.bareCallNameHints")
 @system unittest
 {
-    import evaluate : evaluate;
+    import sparkles.fileset_tools.evaluate : evaluate;
 
     const tree = Root(literal: "src/a.d = a\nnone = n\n", name: "t");
     auto o = evaluate(tree, "all | none");

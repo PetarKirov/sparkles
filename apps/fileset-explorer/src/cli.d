@@ -17,13 +17,13 @@ import sparkles.iroh_send : SendPhase;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.gui_options : GuiOptions, NativeOptions;
 
-import evaluate : evaluate, humanBytes, Root;
+import sparkles.fileset_tools.evaluate : evaluate, humanBytes, Root;
 import explorer : ExplorerApp;
 import launch : defaultQuery, explorerGui, launch;
 import render : renderFrame;
-import copy : CopyVfs;
+import sparkles.fileset_tools.copy : CopyVfs;
 import send : BlobProvider, IrohProvider, openIrohProvider, SendStage, Sending;
-import stats : executableBits, formatStats, statsRows;
+import sparkles.fileset_tools.stats : executableBits, formatStats, statsRows;
 
 /// The command line.
 @(Command("fileset-explorer",
@@ -338,7 +338,7 @@ int cpCommand(in Root root, string query, string dest, bool force, bool dryRun, 
     import std.path : absolutePath, buildNormalizedPath, buildPath;
     import sparkles.build_primitives.fileset.fso : FsoKind;
     import sparkles.base.vfs.names : isAbsolutePath;
-    import copy : copyMembers, coverOf, grantLinkRoots, inTheWay;
+    import sparkles.fileset_tools.copy : copyMembers, coverOf, grantLinkRoots, inTheWay;
 
     if (root.inMemory)
     {
