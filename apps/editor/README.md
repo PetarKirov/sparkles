@@ -7,6 +7,8 @@ an optional inspector. Highlighting runs on a revision-aware event-horizon
 worker; selections and preedit retain their editor decorations. The theme
 picker previews live, restores on Escape and accepts on Enter. Editable code,
 Unicode and protected-text examples need no filesystem access.
+The language picker discovers installed highlighting grammars in the background
+and offers a per-tab override, including Plain text, without changing file bytes.
 Native UTF-8 file operands load on a background worker and retain independent
 tabs. Invalid operands produce CLI errors before the rendering host starts.
 Native saves acknowledge their captured revision and offer informed replacement
@@ -22,6 +24,7 @@ dub run :editor -- --tui
 dub run :editor -- --gui --commands --shot /tmp/editor.png
 dub run :editor -- --gui --example code
 dub run :editor -- --gui --themes
+dub run :editor -- --gui --languages
 dub run :editor -- --gui path/to/file.d
 dub run :editor -- --gui --state-dir /tmp/editor-session-demo
 dub run :editor -- --gui --no-session
@@ -31,6 +34,7 @@ dub test :editor
 Press Ctrl+N for a new tab, Ctrl+Tab or Ctrl+Shift+Tab to switch tabs,
 Ctrl+Shift+P for commands, F1 for the key guide, and F12 for diagnostics.
 F4 then T opens themes; F4 then D toggles light/dark presentation.
+F4 then L opens languages. Enter accepts the override; Escape leaves it unchanged.
 The command palette also lists editing operations and their effective keys.
 Ctrl+O opens a file, Ctrl+S saves and Ctrl+Shift+S chooses a destination.
 Ctrl+W closes a native tab; the TUI uses Ctrl+Shift+W to preserve kill-word.

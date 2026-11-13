@@ -11,7 +11,7 @@ import examples : Example;
 /// App operations; shared editing operations carry an EditorAction argument.
 enum Command : ubyte { none, palette, guide, newTab, nextTab, previousTab, inspector,
     example, themes, selectTheme, toggleTheme, edit, quit, open, save, saveAs, confirm, cancel,
-    closeTab, discard, restoreSession }
+    closeTab, discard, restoreSession, languages, selectLanguage }
 enum Scope : ubyte { @terminalScope modalModifiers, application, document, dialog, closing, recovery }
 alias CommandId = PaletteCommand!Command;
 alias CommandBinding = Binding!(Command, Scope);
@@ -38,6 +38,7 @@ CommandBinding[] commandBindings(EditorTarget target) @safe pure nothrow
         bind(Scope.application, chord(Key.f12), Command.inspector, "Toggle inspector"),
         bind(Scope.application, leader, chord('t'), Command.themes, "Choose theme"),
         bind(Scope.application, leader, chord('d'), Command.toggleTheme, "Toggle dark/light theme"),
+        bind(Scope.document, leader, chord('l'), Command.languages, "Choose language"),
         bind(Scope.recovery, leader, chord('r'), Command.restoreSession, "Restore previous session"),
         bind(Scope.application, open, Command.open, "Open file"),
         bind(Scope.application, saveAs, Command.saveAs, "Save as"),
@@ -101,7 +102,8 @@ struct CommandContext
         const dialogCommand = command.operation == Command.confirm || command.operation == Command.cancel;
         if (modal != dialogCommand) return false;
         const documentCommand = command.operation == Command.edit || command.operation == Command.save
-            || command.operation == Command.saveAs || command.operation == Command.closeTab;
+            || command.operation == Command.saveAs || command.operation == Command.closeTab
+            || command.operation == Command.languages || command.operation == Command.selectLanguage;
         return !documentCommand || (target == document && document != 0);
     }
 

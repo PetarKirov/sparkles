@@ -32,6 +32,8 @@ struct Editor
     bool commands;
     @(Option("themes", description: "Open the theme picker with live preview."))
     bool themes;
+    @(Option("languages", description: "Open the highlighting-language picker."))
+    bool languages;
     @(Option("inspector", description: "Show editor diagnostics."))
     bool inspector;
     @(Option("shot", description: "Capture a native frame to PNG, then exit.", placeholder: "PATH"))
@@ -68,6 +70,7 @@ struct Editor
         if (paths.length && !app.openPath(paths[0])) return failRun(app.status);
         if (commands) app.startupCommand = AppCommand.palette;
         if (themes) app.startupCommand = AppCommand.themes;
+        if (languages) app.startupCommand = AppCommand.languages;
         if (!noSession && (!shot.length || stateDir.length))
         {
             const home = environment.get("HOME", "");

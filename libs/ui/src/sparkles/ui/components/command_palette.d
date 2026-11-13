@@ -17,6 +17,7 @@ struct PaletteViewOptions
     size_t hitBase = 0x7300_0000;
     size_t queryHit = 0x7300_ffff;
     string title = "Commands";
+    string placeholder = "Search commands"; /// Query prompt for the catalog being searched.
 }
 
 /// Retain these value-only actions with the displayed tree, not mutable list indices.
@@ -42,7 +43,7 @@ PaletteView!Cmd viewCommandPalette(Cmd, size_t Capacity, size_t QueryBytes, Cont
     }
     uint[] children;
     children ~= b.add(Widget(kind: WidgetKind.text, text: options.title, slot: Slot.docs));
-    const prompt = editorView(b, query, EditorViewOptions(placeholder: "Search commands"));
+    const prompt = editorView(b, query, EditorViewOptions(placeholder: options.placeholder));
     b.nodes[prompt].hitId = options.queryHit;
     children ~= b.add(Widget(kind: WidgetKind.column, children: [prompt],
         padding: Insets(1, 1, 1, 1), slot: Slot.surfaceSunken, paintBackground: true,

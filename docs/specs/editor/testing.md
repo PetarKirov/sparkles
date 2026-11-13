@@ -754,3 +754,30 @@ palette opening. The repaired flow accepts the theme and restores the command
 catalog. Save, Save As, tab closure and editing remain bound to the captured
 document; switching tabs before accepting Save As cannot open a path dialog
 for the new document. All 55 editor tests pass.
+
+### Installed language discovery and manual overrides — 2026-11-13
+
+The language picker uses the shared command policy through F4 L or Choose
+language in the palette. Registry discovery runs on an event-horizon worker
+in `sparkles.source_view.language_catalog.LanguageCatalog`. It uses the same
+parser/query search precedence as highlighting and also understands the
+soname layout's extracted queries. No parser library is loaded for listing.
+Discovery rejects more than 511 names or 8,192 scanned entries instead of
+silently truncating the catalog; filesystem failures remain visible.
+
+Plain text is immediately available. Installing the completed registry
+catalog preserves the opening ticket and the typed query. Acceptance changes
+only the captured tab's language; cancellation, file contents, saved baseline
+and line endings are unchanged. The inspector includes the selected language.
+The shared palette now uses the specified 512-entry capacity and search
+prompts that identify the current catalog.
+
+All 57 editor, 56 source-view and 125 syntax tests pass, as do the two selected
+shared palette-view tests. Registry fixtures check sorting/deduplication,
+first-parser query precedence, missing parser/query files, soname discovery
+and explicit capacity failure. App tests cover accept/cancel and a query
+entered before real bundle discovery completes. The source-view README's
+runnable example verifies successfully. The checked native build succeeds;
+an Xvfb Vulkan `--example code --languages --shot` capture shows installed
+language rows and the explicit Plain text choice. This is desktop input/view
+evidence; Android packaging and IME/provider acceptance remain open.

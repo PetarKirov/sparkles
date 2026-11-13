@@ -33,6 +33,15 @@ document fence tags.
 Every lookup returns a `TsExpected` — a missing grammar is an error value
 your code turns into plain-text output, never a crash.
 
+`registry.languages()` discovers sorted unique names with a parser and a
+highlights query, using the same first-parser precedence. Soname registries
+discover names from the extracted queries; discovery does not load or verify
+native libraries. Missing roots are ignored. Filesystem failures, more than
+511 names or more than 8,192 directory entries throw instead of returning a
+partial catalog; both limits are configurable arguments. Run this filesystem
+operation on a worker. `sparkles.source_view.language_catalog.LanguageCatalog`
+supplies the background lifecycle for UI consumers.
+
 ## Configuration
 
 ```d

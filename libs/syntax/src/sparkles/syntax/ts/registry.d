@@ -147,6 +147,46 @@ struct GrammarRegistry
         => _dirs;
 
     /**
+    Sorted unique language names with a highlights query in this registry.
+    Search-path discovery requires a parser file; soname discovery uses the
+    extracted query directories. Native libraries are not loaded or validated.
+    First-parser precedence matches grammar/query lookup. Missing roots are
+    ignored; filesystem failures, more than maximum names or more than
+    maximumEntries directory entries throw rather than returning an incomplete
+    catalog. Run discovery on a worker thread.
+    */
+    string[] languages(size_t maximum = 511, size_t maximumEntries = 8192) const @safe
+    {
+        import std.algorithm.sorting : sort;
+        import std.file : dirEntries, exists, isDir, isFile, SpanMode;
+        import std.path : baseName, buildPath;
+        string[] names;
+        bool[string] seen;
+        size_t visited;
+        foreach (root; _dirs)
+        {
+            if (!root.exists) continue;
+            foreach (entry; dirEntries(root, SpanMode.shallow))
+            {
+                if (visited++ == maximumEntries)
+                    throw new Exception("Language discovery exceeds the directory entry limit.");
+                const name = entry.name.baseName;
+                if (!isPlainLanguageName(name) || !entry.isDir || name in seen) continue;
+                const parser = buildPath(entry.name, "parser");
+                if (!_sonameLayout && (!parser.exists || !parser.isFile)) continue;
+                seen[name] = true;
+                const query = buildPath(entry.name, "queries", "highlights.scm");
+                if (!query.exists || !query.isFile) continue;
+                if (names.length == maximum)
+                    throw new Exception("Language discovery exceeds the configured catalog limit.");
+                names ~= name;
+            }
+        }
+        sort(names);
+        return names;
+    }
+
+    /**
     Loads (and caches) the grammar for `languageName` — first search-path
     hit wins. A present-but-broken grammar is an error, not a fall-through.
     Not thread-safe (batch use); grammars stay loaded for the process
@@ -448,6 +488,36 @@ unittest
     // and the caller renders plain text.
     assert(canonicalLanguage("wat") == "wat");
     assert(canonicalLanguage("text") == "text");
+}
+
+/// Discover names from the same search layout without loading native parser code.
+@("ts.registry.languageDiscovery")
+@system unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.uuid : randomUUID;
+    const root = buildPath(tempDir, "sparkles-language-discovery-" ~ randomUUID.toString());
+    mkdirRecurse(root);
+    scope (exit) rmdirRecurse(root);
+    foreach (bundle; ["first", "second"])
+        foreach (language; ["json", "d", "no-parser", "no-query", "Uppercase"])
+        {
+            const dir = buildPath(root, bundle, language);
+            mkdirRecurse(buildPath(dir, "queries"));
+            if (language != "no-parser") write(buildPath(dir, "parser"), "not a native library");
+            if (language != "no-query") write(buildPath(dir, "queries", "highlights.scm"), "");
+        }
+    const registry = GrammarRegistry.fromDirs([buildPath(root, "first"), buildPath(root, "second"),
+        buildPath(root, "missing")]);
+    // The first parser's missing query must not be borrowed from a later bundle.
+    write(buildPath(root, "second", "no-query", "queries", "highlights.scm"), "");
+    assert(registry.languages() == ["d", "json"]);
+    import std.exception : assertThrown;
+    assertThrown!Exception(registry.languages(maximum: 1));
+    assertThrown!Exception(registry.languages(maximumEntries: 1));
+    const android = GrammarRegistry.fromSonames(buildPath(root, "first"));
+    assert(android.languages() == ["d", "json", "no-parser"]);
 }
 
 @("ts.registry.missingGrammar")

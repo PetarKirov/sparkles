@@ -32,6 +32,7 @@ import sparkles.ui_app.gui_options : GuiOptions, resolveTheme;
 import sparkles.ui_app.run_app : appThemeOf;
 import sparkles.source_view.editor : highlightedEditorLine, syntaxWindow;
 import sparkles.source_view.highlight_session : HighlightSession;
+import sparkles.source_view.language_catalog : LanguageCatalog;
 import sparkles.syntax.label : LabelSet;
 import sparkles.syntax.theme : ResolvedTheme, resolveSyntaxTheme = resolveTheme;
 import sparkles.ui.editor.state : ReadOnlySpan;
@@ -39,7 +40,7 @@ import commands : Command, CommandBinding, CommandContext, CommandId, commandBin
 import examples : Example, exampleText;
 import document_text : decodeDocument, enterEnding;
 public import editor_document : Document;
-import sparkles.syntax.ts.registry : canonicalLanguageOfPath;
+import sparkles.syntax.ts.registry : canonicalLanguageOfPath, GrammarRegistry;
 import sparkles.ui.editor.state : EditorState;
 import sparkles.ui.editor.selection : SelectionSet;
 import document_io : DocumentIo, FileOperation;
@@ -432,7 +433,7 @@ private enum Dialog : ubyte { none, openPath, savePath, dirtyClose, recoveryClos
 struct EditorApp
 {
     AppTheme theme;
-    PaletteInput!(Command, 128) commands;
+    PaletteInput!(Command, 512) commands;
     bool inspector;
     bool quitRequested;
     string status;
@@ -462,6 +463,9 @@ struct EditorApp
     private AppTheme themeBefore;
     private ResolvedTheme syntaxBefore;
     private string[] themeNames;
+    private LanguageCatalog languageCatalog;
+    private string[] languageNames;
+    private bool choosingLanguage;
     private DocumentIo files;
     private ulong[ulong] openOrigins;
     private SaveIntent[ulong] saves;
@@ -836,6 +840,7 @@ struct EditorApp
     {
         if (files !is null) files.shutdown();
         if (highlighting !is null) highlighting.shutdown();
+        if (languageCatalog !is null) languageCatalog.shutdown();
         if (recovery !is null) recovery.shutdown();
     }
 
@@ -851,16 +856,40 @@ struct EditorApp
 
     private void endPicker(bool accepted) @safe
     {
-        if (!choosingTheme) return;
-        if (!accepted)
+        if (!choosingTheme && !choosingLanguage) return;
+        if (choosingTheme && !accepted)
         {
             theme = themeBefore;
             syntaxTheme = syntaxBefore;
             themeName = themeBeforePreview;
         }
         choosingTheme = false;
+        choosingLanguage = false;
         const result = commands.palette.catalog(commandCatalog(bindings));
         assert(result == PaletteStatus.ok);
+    }
+
+    private void installLanguages() @safe
+    {
+        languageNames = ["text"];
+        if (languageCatalog !is null && languageCatalog.ready)
+        {
+            foreach (name; languageCatalog.names)
+                if (name != "text") languageNames ~= name;
+            if (languageCatalog.error.length) status = languageCatalog.error;
+        }
+        PaletteEntry!Command[] entries;
+        foreach (index, name; languageNames)
+            entries ~= PaletteEntry!Command(CommandId(Command.selectLanguage, index),
+                name == "text" ? "Plain text" : name, "Language");
+        const result = commands.palette.catalog(entries);
+        assert(result == PaletteStatus.ok);
+        if (commands.palette.active)
+        {
+            const searched = commands.palette.search(commands.palette.snapshot.ticket,
+                commands.query.text, context);
+            assert(searched == PaletteStatus.ok);
+        }
     }
 
     /// Resolve syntax and chrome through the same library theme.
@@ -1117,7 +1146,7 @@ struct EditorApp
         commands.query.target = target;
         pathInput.target = target;
         bindings = commandBindings(target);
-        if (!choosingTheme)
+        if (!choosingTheme && !choosingLanguage)
         {
             const result = commands.palette.catalog(commandCatalog(bindings));
             assert(result == PaletteStatus.ok);
@@ -1215,7 +1244,21 @@ struct EditorApp
         case Command.nextTab: activeTab = (activeTab + 1) % tabs.length; break;
         case Command.previousTab: activeTab = (activeTab + tabs.length - 1) % tabs.length; break;
         case Command.inspector: inspector = !inspector; break;
+        case Command.languages:
+            endPicker(false);
+            choosingLanguage = true;
+            if (languageCatalog is null)
+                languageCatalog = new LanguageCatalog(GrammarRegistry.fromEnvironment());
+            installLanguages();
+            commands.open(PaletteInvocation(document.id, document.id), context);
+            commands.query.target = target;
+            break;
+        case Command.selectLanguage:
+            if (id.argument < languageNames.length)
+                document.language = languageNames[cast(size_t) id.argument];
+            break;
         case Command.themes:
+            endPicker(false);
             themeNames = canonicalThemeNames();
             themeBeforePreview = themeName.length ? themeName : GuiOptions.init.theme;
             themeBefore = theme;
@@ -1287,7 +1330,7 @@ struct EditorApp
                 status = "The command is no longer available in this context.";
                 return;
             }
-            const wasChoosing = choosingTheme;
+            const wasChoosing = choosingTheme || choosingLanguage;
             execute(effect.command);
             if (wasChoosing) endPicker(true);
         }
@@ -1379,6 +1422,11 @@ struct EditorApp
     {
         if (!recoveryExit) ensureInitialized();
         pollDocuments();
+        if (languageCatalog !is null)
+        {
+            if (languageCatalog.poll() && choosingLanguage && commands.palette.active) installLanguages();
+            if (languageCatalog.busy) host.wakeIn(8.msecs);
+        }
         if (recovery !is null)
         {
             recovery.poll();
@@ -1427,7 +1475,8 @@ struct EditorApp
         highlighting.poll();
         previewPicker();
         if (highlighting.busy) host.wakeIn(8.msecs);
-        if (shotPath.length && !highlighting.busy && !filesBusy)
+        if (shotPath.length && !highlighting.busy && !filesBusy
+            && (languageCatalog is null || !languageCatalog.busy))
         {
             if (highlighting.error.length)
             {
@@ -1500,7 +1549,10 @@ struct EditorApp
                 ? cast(size_t)(host.size.height - reserved) / 3 : 1;
             const paletteView = viewCommandPalette(b, commands.palette, commands.query.state, context,
                 PaletteViewOptions(visibleRows: rows,
-                    title: choosingTheme ? "Themes • Enter accepts • Esc cancels" : "Commands"));
+                    placeholder: choosingTheme ? "Search themes" : choosingLanguage ? "Search languages" : "Search commands",
+                    title: choosingTheme ? "Themes • Enter accepts • Esc cancels"
+                        : choosingLanguage ? languageCatalog.busy ? "Listing languages… • Esc cancels"
+                            : "Languages • Enter accepts • Esc cancels" : "Commands"));
             paletteChoices = paletteView.choices;
             children ~= paletteView.root;
         }
@@ -1547,7 +1599,7 @@ struct EditorApp
             children ~= b.add(Widget(kind: WidgetKind.text, slot: Slot.info,
                 text: text("bytes ", document.field.state.text.length, "  selections ",
                     document.field.state.selection.ranges.length, "  composition ",
-                    document.field.state.composition.active, "  highlighting ",
+                    document.field.state.composition.active, "  language ", document.language, "  highlighting ",
                     highlighting.busy ? "pending" : highlighting.error.length ? highlighting.error : "ready")));
         if (status.length) children ~= b.add(Widget(kind: WidgetKind.text, text: status, slot: Slot.warn));
         if (document.durabilityWarning.length)
@@ -1787,6 +1839,66 @@ struct EditorApp
     app.handleKey(KeyEvent(Key.escape));
     app.execute(CommandId(Command.previousTab));
     assert(app.document.field.text == "original");
+}
+
+/// Language selection changes highlighting policy without changing document bytes or dirty state.
+@("editor.app.languagePickerAcceptAndCancel")
+@safe unittest
+{
+    import sparkles.input : Key;
+    EditorApp app;
+    scope (exit) app.dispose();
+    assert(app.openBytes("sample.d", "int value = 1;\r\n"));
+    assert(app.document.language == "d");
+    app.handleKey(KeyEvent(Key.f4));
+    app.handleKey(KeyEvent(Key.char_, 'l'));
+    assert(app.commands.palette.active);
+    app.commands.insert("Plain text", app.context);
+    app.handleKey(KeyEvent(Key.escape));
+    assert(app.document.language == "d");
+    app.execute(CommandId(Command.languages));
+    app.commands.insert("Plain text", app.context);
+    app.handleKey(KeyEvent(Key.enter));
+    assert(app.document.language == "text" && !app.commands.palette.active);
+    assert(app.document.encodedBytes == "int value = 1;\r\n" && !app.document.dirty);
+    app.execute(CommandId(Command.newTab));
+    app.execute(CommandId(Command.previousTab));
+    assert(app.document.language == "text");
+}
+
+/// Background registry discovery preserves an already typed query before selection.
+@("editor.app.languageDiscoveryPreservesQuery")
+@safe unittest
+{
+    import core.thread : Thread;
+    import core.time : seconds;
+    import std.process : environment;
+    import std.file : exists;
+    import sparkles.input : Key;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui.geometry : Size;
+    import sparkles.test_runner.skip : skipTest;
+    const bundle = environment.get("SPARKLES_TS_GRAMMAR_PATH", "");
+    if (!bundle.length) skipTest("SPARKLES_TS_GRAMMAR_PATH is unset; enter the development shell.");
+    foreach (root; GrammarRegistry.fromSearchPath(bundle).dirs) assert(root.exists);
+    EditorApp app;
+    scope (exit) app.dispose();
+    assert(app.openBytes("data.unknown", "{\"value\": 1}\n"));
+    app.execute(CommandId(Command.languages));
+    app.commands.insert("json", app.context);
+    RecordingHost host;
+    host.size = Size(80, 28);
+    const deadline = MonoTime.currTime + 3.seconds;
+    while (!app.commands.palette.rowCount && MonoTime.currTime < deadline)
+    {
+        cast(void) app.view(host);
+        (() @trusted => Thread.yield())();
+    }
+    assert(app.commands.query.text == "json" && app.commands.palette.rowCount);
+    assert(app.commands.palette.row(0).label == "json");
+    app.handleKey(KeyEvent(Key.enter));
+    assert(app.document.language == "json" && !app.document.dirty);
+    assert(app.document.field.text == "{\"value\": 1}\n");
 }
 
 /// Enter honors each selected line's convention; undo restores the exact BOM/mixed-ending bytes.

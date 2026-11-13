@@ -44,3 +44,17 @@ Keep the session alive through `shutdown()`. The host calls it before dropping
 its documents: it cancels queued work, joins the running worker and dispatches
 remaining completions while their source snapshots still exist. A stopped
 session accepts no further requests.
+
+`sparkles.source_view.language_catalog.LanguageCatalog(registry)` discovers
+highlighting languages on an event-horizon worker. `poll()` publishes the
+sorted `names`, a `ready` flag and an `error` diagnostic. Missing grammar
+roots produce an empty catalog; discovery failures remain visible and do not
+publish a partial result. Add an explicit Plain text choice in the consumer.
+The registry limits discovery to 511 names and 8,192 directory entries.
+Discovery checks parser/query presence rather than loading native parser code;
+actual highlighting can still report an unavailable grammar.
+
+Keep the catalog alive through `shutdown()`, which joins its worker before
+releasing job storage. Cancellation cannot interrupt a filesystem syscall.
+When updating an open palette, replace its catalog and search again using the
+existing ticket and query; do not reopen the input and discard typed text.
