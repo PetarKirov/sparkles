@@ -116,7 +116,7 @@ any of the toolkit's UI, windowing or GPU packages, nor the diff engine,
 the syntax highlighter or tree-sitter; the iroh bridge **must** be loaded at
 run time, so that a build without it still copies, lists and compares local
 trees. `diff` belongs to a separate build configuration that adds the diff
-engine and the highlighted views; the default build, run as `fsdiff` or
+engine; the default build, run as `fsdiff` or
 given `diff`, **must** exit 2 saying it was built without it. _Detection:_
 the default build's dependency list, from `dub describe`, holds none of the
 named packages, and its executable runs `cp` with the bridge's path unset.
@@ -342,10 +342,10 @@ exactly those five lines.
 **`XD2` — Contents only when needed.** `fsdiff` **must** decide `XD1` from
 digests: a file of an iroh source is never fetched to compare it, and a
 local one is read only to hash it. `-p`/`--patch` **must** add, for each `M`
-whose two sides are UTF-8 text, a unified diff of their lines, highlighted
-when standard output is a terminal; only then are an iroh source's changed
-files fetched. _Detection:_ comparing a local tree with a ticket fetches no
-blob beyond the metadata and sizes; `--patch` fetches the changed files
+whose two sides are UTF-8 text, a unified diff of their lines, colored
+as git colors one when standard output is a terminal; only then are an iroh source's changed
+files fetched. _Detection:_ comparing a local tree with a ticket fetches nothing
+beyond the names; `--patch` fetches the changed files
 alone.
 
 **`XD3` — The status.** `fsdiff` **must** exit 0 when the two sides' members
@@ -432,10 +432,10 @@ the copy of a link fails, naming it.
 
 Non-normative: where the parts live.
 
-| Requirements                                 | Where                                                                            |
-| -------------------------------------------- | -------------------------------------------------------------------------------- |
-| `XA1`–`XA5`, `XL1`–`XL4`                     | `apps/fsx`                                                                       |
-| `XA6`, `XS1`–`XS4`, `XV1`–`XV6`, `XC1`–`XC7` | `libs/fileset-tools`                                                             |
-| `XD1`–`XD3`                                  | `apps/fsx`, in its `full` configuration, over `libs/diff` and `libs/source-view` |
-| `XR1`–`XR6`                                  | `libs/fileset-tools` (the source), `libs/iroh-send` (the bridge's receive half)  |
-| `XP1`–`XP4`                                  | `apps/fsx/package.nix`                                                           |
+| Requirements                                 | Where                                                                           |
+| -------------------------------------------- | ------------------------------------------------------------------------------- |
+| `XA1`–`XA5`, `XL1`–`XL4`                     | `apps/fsx`                                                                      |
+| `XA6`, `XS1`–`XS4`, `XV1`–`XV6`, `XC1`–`XC7` | `libs/fileset-tools`                                                            |
+| `XD1`–`XD3`                                  | `apps/fsx`, in its `full` configuration, over `libs/diff`                       |
+| `XR1`–`XR6`                                  | `libs/fileset-tools` (the source), `libs/iroh-send` (the bridge's receive half) |
+| `XP1`–`XP4`                                  | `apps/fsx/package.nix`                                                          |

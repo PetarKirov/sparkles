@@ -24,14 +24,15 @@ adds little over `cp`; `ferry`, `sift`, `pluck` and `fileset-cp` as names.
 
 **Question.** What may `fsx` depend on?
 
-**Choice.** Nothing from the UI stack, and the diff engine and the
-highlighted views only in an optional configuration that adds `fsdiff`
-(`XA5`). The iroh bridge stays loaded at run time. The package links Phobos
+**Choice.** Nothing from the UI stack, and the diff engine only in an
+optional configuration that adds `fsdiff` (`XA5`). A patch is colored line
+by line as git colors one; highlighting the code inside it would bring
+`libs/source-view`, and is left out. The iroh bridge stays loaded at run time. The package links Phobos
 and druntime statically (`XP2`), and is written so that Linux distributions,
 nixpkgs first, can take it as it is.
 
 **Rejected.** `fsdiff` in the default build, which would bring `libs/diff`
-and `libs/source-view` into every install.
+into every install.
 
 ## XO3: Every copy is verified (accepted)
 
@@ -64,7 +65,7 @@ would make a copy delete files.
 **Choice.** `fsls`: one path per line in byte order, `-0` for NUL
 separators, `-l` for kind, size and link target, `--tree` for the explorer's
 tree (`XL1`–`XL3`). `fsdiff A B`: both sides sources, the filter applied to
-both, git's `--name-status` letters by content id, `-p` for highlighted
+both, git's `--name-status` letters by content id, `-p` for unified
 text diffs, and `diff`'s exit statuses (`XD1`–`XD3`).
 
 ## XO6: The filter from a file (accepted)

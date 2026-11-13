@@ -91,13 +91,12 @@ private Run run(string[] args...)
 
 /// XA5: the default build has no diff, and says so.
 @("fsx.XA5.noDiff")
-@system unittest
+@safe unittest
 {
-    version (FsxDiff) {} else
-    {
-        const r = run("fsdiff", "a", "b");
-        assert(r.status == 2 && r.error.canFind("built without diff"), r.error);
-    }
+    import cli : diffUnavailable;
+
+    string error;
+    assert(diffUnavailable(error) == 2 && error.canFind("built without diff"), error);
 }
 
 /// XC, XV: fscp copies the fixture, verified; a second copy refuses; the

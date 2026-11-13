@@ -167,7 +167,7 @@ int runFsxTo(string[] args, out string output, out string error)
 
     const sub = args.length ? subcommandOfName(args[0]) : null;
     string[] argv = sub.length ? ["fsx", sub] ~ args[1 .. $] : args.dup;
-    if (sub == "diff")
+    if (argv.length > 1 && argv[1] == "diff")
         argv = diffArgs(argv);
     auto parsed = parseCli!Fsx(argv);
     if (!parsed)
@@ -330,8 +330,12 @@ private int runDiff(ref Diff d, ref string output, ref string error)
         return diffCommand(d, output, error);
     }
     else
-    {
-        error = "fsdiff: this fsx was built without diff; its full configuration has it\n";
-        return 2;
-    }
+        return diffUnavailable(error);
+}
+
+/// What a build without `diff` says when asked for it (`XA5`).
+int diffUnavailable(ref string error) @safe
+{
+    error ~= "fsdiff: this fsx was built without diff; its full configuration has it\n";
+    return 2;
 }
