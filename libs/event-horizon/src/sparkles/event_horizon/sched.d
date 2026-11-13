@@ -132,12 +132,37 @@ private:
 struct SchedOptions
 {
     size_t stackSize = 64 * 1024;  /// per-fiber stack (open-issues O4)
-    size_t guardPageSize = 4096;   /// guard page below each stack
+    /// The guard below each stack, rounded up to whole pages: `mprotect`
+    /// guards a page at a time, so on a 16 KiB-page host (Apple silicon) an
+    /// unrounded 4 KiB guard would protect a whole page carved out of
+    /// `stackSize`, leaving 52 KiB of a 64 KiB stack.
+    size_t guardPageSize = 4096;
     uint maxFibers = 256;          /// task-slab size; `spawn` fails past it
     uint resumeBudget = 64;        /// fibers run per tick before re-draining
     /// How a fiber waiting on a `sparkles.base.sync` primitive parks
     /// (fiber-parker.md EFP6).
     FiberPark fiberPark = FiberPark.auto_;
+}
+
+/// `bytes` rounded up to whole pages of this host; zero stays zero (no guard).
+private size_t wholePages(size_t bytes) @safe nothrow @nogc
+{
+    import core.memory : pageSize;
+
+    return (bytes + pageSize - 1) / pageSize * pageSize;
+}
+
+@("sched.wholePages.guardIsWholePagesAndZeroStaysUnguarded")
+@safe nothrow @nogc
+unittest
+{
+    import core.memory : pageSize;
+
+    assert(wholePages(0) == 0, "no guard requested, none added");
+    assert(wholePages(1) == pageSize);
+    assert(wholePages(4096) == (pageSize > 4096 ? pageSize : 4096),
+        "the default guard covers one page on a 16 KiB-page host");
+    assert(wholePages(pageSize + 1) == 2 * pageSize);
 }
 
 /**
@@ -211,7 +236,7 @@ struct Sched
         s._tasks = new FiberTask[opts.maxFibers];
         foreach_reverse (i; 0 .. opts.maxFibers)
         {
-            auto t = new FiberTask(opts.stackSize, opts.guardPageSize);
+            auto t = new FiberTask(opts.stackSize, wholePages(opts.guardPageSize));
             t.owner = &s;
             t.slabIndex = i;
             s._tasks[i] = t;
