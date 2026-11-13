@@ -16,7 +16,7 @@ target must fall lexically beneath it, and the link is made with
 `symlinkTo`, so its absolute part is the root's own path as the backend
 reports it, never text from the source tree.
 */
-module copy;
+module sparkles.fileset_tools.copy;
 
 import core.time : Duration, MonoTime;
 
@@ -25,7 +25,7 @@ import sparkles.base.vfs.handles : ambientAuthority, openRoot;
 import sparkles.base.vfs.types : Access, Disposition, OpenMode, Rights, Shared;
 import sparkles.build_primitives.fileset.fso : FsoKind;
 
-import evaluate : Member;
+import sparkles.fileset_tools.evaluate : Member;
 
 /// Which VFS backend a copy runs over.
 enum CopyVfs : ubyte
@@ -124,7 +124,7 @@ Cover coverOf(string target, const(string[])[] names) @safe pure nothrow
 }
 
 ///
-@("fileset_explorer.copy.coverOf")
+@("fileset_tools.copy.coverOf")
 @safe pure nothrow unittest
 {
     const names = [["/nix/store"], ["/home/u/via", "/home/u/real"], ["/"]];

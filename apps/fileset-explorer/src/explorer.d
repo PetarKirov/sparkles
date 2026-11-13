@@ -37,9 +37,9 @@ import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle, T
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 
-import evaluate : autoIdBytes, evaluate, humanBytes, Outcome, Root;
+import sparkles.fileset_tools.evaluate : autoIdBytes, evaluate, humanBytes, Outcome, Root;
 import send : SendStage, Sending, shareText;
-import stats : executableBits, nameKeys, nameValueOf, statsKeyWidth, statsRows;
+import sparkles.fileset_tools.stats : executableBits, nameKeys, nameValueOf, statsKeyWidth, statsRows;
 import help : helpSource, namedTrees, runFileset, TryBlock, tryBlocks, TryOutcome;
 import export_tab : exportFor, highlightCode, languageOf, targets;
 import sparkles.build_primitives.fileset.emit : Emitted, NixGlobs, Target, targetName;

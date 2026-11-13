@@ -626,6 +626,10 @@
         "link": "/libs/iroh-send/"
       },
       {
+        "text": "fileset-tools",
+        "link": "/libs/fileset-tools/"
+      },
+      {
         "text": "font",
         "link": "/libs/font/",
         "collapsed": true,

@@ -3,7 +3,7 @@ Resolving a query: parse, compile, walk, and the numbers the Stats tab shows
 (`FXU1`). A query resolves against a directory on disk, or against a tree held
 in memory — a tutorial's named tree (`FXT4`).
 */
-module evaluate;
+module sparkles.fileset_tools.evaluate;
 
 import core.time : MonoTime;
 import std.algorithm.sorting : sort;
@@ -278,7 +278,7 @@ string extensionOf(string path) @safe pure nothrow
 }
 
 ///
-@("fileset_explorer.extensionOf")
+@("fileset_tools.extensionOf")
 @safe pure nothrow unittest
 {
     assert(extensionOf("a/b.d") == ".d");
@@ -304,7 +304,7 @@ string humanBytes(ulong n) @safe
 }
 
 ///
-@("fileset_explorer.humanBytes")
+@("fileset_tools.humanBytes")
 @safe unittest
 {
     assert(humanBytes(0) == "0 B" && humanBytes(1023) == "1023 B");
@@ -313,7 +313,7 @@ string humanBytes(ulong n) @safe
 
 /// A query over an in-memory tree selects its members, with their kinds and
 /// sizes, and the ids beside them.
-@("fileset_explorer.evaluate.inMemory")
+@("fileset_tools.evaluate.inMemory")
 @system unittest
 {
     const root = Root(literal: "src/a.d = 12345\nsrc/a_test.d = x\nbin/run +x = #!\nREADME.md = hi\nl -> src\n",

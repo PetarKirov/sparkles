@@ -16,7 +16,7 @@ import sparkles.build_primitives.fileset.query : globText, Query;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : TextSpan;
 
-import evaluate : evaluate, Outcome, Root;
+import sparkles.fileset_tools.evaluate : evaluate, Outcome, Root;
 
 /// The targets in the order the tab cycles them.
 immutable Target[] targets = [Target.nix, Target.gitPathspec, Target.gitignore, Target.rsync, Target.tar,

@@ -13,7 +13,7 @@ import sparkles.ui.components.file_icons : fileIcon, folderFg, folderGlyph;
 import sparkles.ui.components.tree_widget : TreeData;
 import sparkles.ui.style : Slot;
 
-import evaluate : humanBytes, Member;
+import sparkles.fileset_tools.evaluate : humanBytes, Member;
 
 /// A node of the member tree, with the capabilities the tree view looks for.
 struct Item

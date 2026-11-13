@@ -12,6 +12,8 @@ dependency "sparkles:base" path="../.."
 dependency "sparkles:build-primitives" path="../.."
 dependency "sparkles:core-cli" path="../.."
 dependency "sparkles:event-horizon-sys" path="../.."
+// Resolving, naming and copying the members (`XA6`, docs/specs/fsx).
+dependency "sparkles:fileset-tools" path="../.."
 dependency "sparkles:input" path="../.."
 dependency "sparkles:syntax" path="../.."
 dependency "sparkles:source-view" path="../.."

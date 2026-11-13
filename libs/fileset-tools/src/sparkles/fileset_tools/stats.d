@@ -3,7 +3,7 @@ The Stats tab's lines (`FXU1`, `FXS1`), shared by the tab and by the `stats`
 subcommand (`FXC2`): what a resolution found, its names, and its commonest
 extensions.
 */
-module stats;
+module sparkles.fileset_tools.stats;
 
 import std.algorithm.comparison : max, min;
 import std.conv : text;
@@ -11,7 +11,7 @@ import std.format : format;
 
 import sparkles.build_primitives.fileset.fso : FsoKind;
 
-import evaluate : autoIdBytes, humanBytes, Outcome;
+import sparkles.fileset_tools.evaluate : autoIdBytes, humanBytes, Outcome;
 
 /// The names a Stats line shows and copies (`FXS1`), in order.
 static immutable string[] nameKeys = ["castore", "NarHash", "store path", "git tree", "git (Nix)", "SWHID",
@@ -113,7 +113,7 @@ string formatStats(in string[2][] rows) @safe
 }
 
 ///
-@("fileset_explorer.formatStats")
+@("fileset_tools.formatStats")
 @safe unittest
 {
     assert(formatStats([["members", "3"], ["", ""], ["", "by extension"], ["  .d", "2"]])
@@ -130,7 +130,7 @@ string executableBits(size_t n) @safe pure
 }
 
 ///
-@("fileset_explorer.stats.executableBits")
+@("fileset_tools.stats.executableBits")
 @safe pure unittest
 {
     assert(executableBits(1) == "1 file arrives without its executable bit");

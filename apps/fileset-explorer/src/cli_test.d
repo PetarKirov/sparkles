@@ -10,12 +10,12 @@ import std.sumtype : match;
 import sparkles.core_cli.args : parseCli;
 import sparkles.iroh_send : SendFile, SendPhase, SendState;
 
-import copy : CopyVfs;
+import sparkles.fileset_tools.copy : CopyVfs;
 import cli : Cp, cpCommand, Emit, Explorer, SendCommand, sendCommand, SendIo, StatsCommand, statsCommand, View;
-import evaluate : Root;
+import sparkles.fileset_tools.evaluate : Root;
 import explorer : ExplorerApp;
 import send : BlobProvider;
-import stats : formatStats;
+import sparkles.fileset_tools.stats : formatStats;
 
 /// FXC1: no subcommand is `view`; `--dir` and `--query` go on either side of
 /// a subcommand; `--help` lists the four.
@@ -107,7 +107,7 @@ private string[] untimed(string s) => s.split('\n').filter!(l => !l.startsWith("
 @("fileset_explorer.FXC2.ids")
 @system unittest
 {
-    import evaluate : autoIdBytes;
+    import sparkles.fileset_tools.evaluate : autoIdBytes;
 
     char[] big = new char[autoIdBytes + 1];
     big[] = 'x';
@@ -278,7 +278,7 @@ naming the paths; `--force` replaces them; `--dry-run` copies nothing.
     import std.file : exists, getAttributes, isSymlink, readLink, readText, setAttributes, symlink, write;
     import std.path : buildPath, dirName;
 
-    import evaluate : evaluate;
+    import sparkles.fileset_tools.evaluate : evaluate;
 
     enum query = "src/** | l";
     auto f = Fixture.make("cp", ["src/a.d": "module a;", "src/deep/b.d": "module b;", "src/run": "#!/bin/sh",

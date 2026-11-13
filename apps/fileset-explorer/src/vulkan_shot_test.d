@@ -28,7 +28,7 @@ import sparkles.ui_app.run_app : runAppRecorded;
 import sparkles.ui_vulkan.painter : FrameMetrics, TextMetrics;
 import sparkles.ui_vulkan.testing : Canvas, readbackEnabled, readbackSkipReason, Rig;
 
-import evaluate : Root;
+import sparkles.fileset_tools.evaluate : Root;
 import explorer : ExplorerApp;
 
 // A tablet's cell at 12 points: 26 × 44 pixels, 16 dp tall at 2.75 pixels a dp.

@@ -45,6 +45,7 @@ live under `docs/libs/<name>/` and specs under `docs/specs/`.
 - **`sparkles:http`** (`libs/http`) — HTTP/1.1 building blocks (request parser + minimal server API) over `sparkles:event-horizon`
 - **`sparkles:image`** (`libs/image`) — Image file codecs: the project's one PNG decoder (every colour type and depth, `tRNS`, Adam7; straight or premultiplied RGBA into caller-owned storage, nothing allocated; held to stb_image over PngSuite) and an RGBA encoder. Used by the terminal's kitty graphics, `sparkles:font`'s colour strikes and native screenshots
 - **`sparkles:input`** (`libs/input`) — Abstract, capability-tiered input vocabulary shared by every `sparkles:ui` target: events as Regular values (a sum type over key/pointer/wheel/focus/resize, positions in the toolkit's 0-based cells) plus the tier-0/1/2 interaction ladder; `sparkles:tui` decodes its wire formats directly into it (design: `docs/specs/ui/input.md`)
+- **`sparkles:fileset-tools`** (`libs/fileset-tools`) — The engine `fsx` and the fileset explorer share (spec: `docs/specs/fsx/`): `evaluate` resolves a fileset query over a directory or an in-memory tree into its members and their castore, NAR, git and iroh names; `copyMembers` writes them elsewhere through the capability VFS (`BlockingVfs` or `RingVfs`), absolute links only beneath granted roots; `statsRows`/`formatStats` are the Stats report. No UI package
 - **`sparkles:iroh-send`** (`libs/iroh-send`) — `sendme send` as a library loaded at run time: `loadIrohSend` `dlopen`s `libsparkles_iroh_send.so`, iroh's own code built inside `sendme`'s source tree from `rust/` (`nix/packages/sparkles-iroh-send.nix`), and `IrohSend.start` serves a list of files over iroh's blobs protocol as a collection `sendme receive` takes, with progress, ticket and stop; `IrohSend.collection` names the collection offline. Nothing links it, so a program runs without it (design: `docs/specs/fileset-explorer/decisions.md`, X18)
 - **`sparkles:math`** (`libs/math`) — Small math primitives for games/graphics (early stage)
 - **`sparkles:metadata`** (`libs/metadata`) — Dependency-free passive UDA vocabulary (`WireName`, `WireCase`, `WireRepr` and the format tags, `CaseStyle`, `Aliases`, `Label`, `Description`, `Range`) shared without coupling foundational libraries to CLI, serialization, UI, or query-engine policy
@@ -206,6 +207,7 @@ sparkles/
 │   │   ├── change_set.d, storage.d # ChangeSet: of/apply/invert/compose/mapPos/touched; refcounted arrays
 │   │   └── history.d               # History: undo tree, amend, earlier/later by steps or time, prune
 │   ├── input/src/sparkles/input/   # events.d (sum-type Event + Key/Mods/Point vocabulary), tier.d (tier-0/1/2 ladder)
+│   ├── fileset-tools/src/sparkles/fileset_tools/  # evaluate.d (resolve + names), copy.d (VFS copy), stats.d (the Stats report)
 │   ├── iroh-send/                  # src/sparkles/iroh_send/bridge.d (dlopen + C interface); rust/ (the bridge, built in sendme's tree)
 │   ├── math/src/sparkles/math/     # vector.d, package.d
 │   ├── font/src/sparkles/font/     # face.d (open, directory), tables.d, cmap.d, names.d, glyph_names.d, errors.d; test/ fixtures + mutation corpus

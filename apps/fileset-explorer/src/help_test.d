@@ -7,7 +7,7 @@ import std.conv : text;
 
 import sparkles.ui.geometry : Size;
 
-import evaluate : Root;
+import sparkles.fileset_tools.evaluate : Root;
 import explorer : ExplorerApp, Focus;
 import help : runFileset, TryBlock;
 import render : renderFrame;
