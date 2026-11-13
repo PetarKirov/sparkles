@@ -100,74 +100,74 @@ The **Basis** column is the revision a deep-dive reads, from
 [`sources.tsv`](./sources.tsv), or `docs` where nothing is cloned. A subject
 without a link is not written yet; its wave says when it is due.
 
-| Subject                                               | Ecosystem | Cluster           | Tier | Basis             | Wave | Doc     |
-| ----------------------------------------------------- | --------- | ----------------- | ---- | ----------------- | ---- | ------- |
-| mir-algorithm (`Slice`, `ndslice`) and mir-core       | D         | D landscape       | A    | clone `2da212382` | 1    | planned |
-| dcv                                                   | D         | D landscape       | A    | clone `c777e2aa9` | 1    | planned |
-| color (TurkeyMan)                                     | D         | D landscape       | A    | clone `e9d31e416` | 1    | planned |
-| `ae.utils.graphics` (functional image processing)     | D         | D landscape       | A    | clone `7870bc3cd` | 1    | planned |
-| gamut                                                 | D         | D landscape       | B    | clone `7f07b8ca3` | 2    | planned |
-| arsd image modules                                    | D         | D landscape       | B    | clone `11491fa8b` | 2    | planned |
-| Dplug graphics                                        | D         | D landscape       | B    | clone `f4a6d71ae` | 2    | planned |
-| intel-intrinsics                                      | D         | D landscape       | B    | clone `2141185c6` | 4    | planned |
-| dcompute                                              | D         | D landscape       | B    | clone `cdb5792d4` | 4    | planned |
-| Boost.GIL (and its Adobe origin)                      | C++       | Generic libraries | A    | clone `97ed52cc0` | 1    | planned |
-| VIGRA                                                 | C++       | Generic libraries | A    | clone `de98f930b` | 1    | planned |
-| Halide                                                | C++ DSL   | Generic libraries | A    | clone `85f161839` | 1    | planned |
-| JuliaImages (ImageCore, ColorTypes)                   | Julia     | Generic libraries | A    | clone `c3f815704` | 1    | planned |
-| ITK                                                   | C++       | Generic libraries | A    | clone `443d201c3` | 2    | planned |
-| OpenCV (`cv::Mat`, `UMat`, HAL)                       | C++       | Generic libraries | A    | clone `96f8c0761` | 2    | planned |
-| ImageSharp                                            | C#        | Generic libraries | A    | clone `b2b1ca9bd` | 2    | planned |
-| libvips                                               | C         | Generic libraries | A    | clone `b8242162f` | 2    | planned |
-| OpenImageIO                                           | C++       | Generic libraries | A    | clone `e7eb5d109` | 2    | planned |
-| image-rs                                              | Rust      | Generic libraries | A    | clone `075e65d61` | 2    | planned |
-| zune-image                                            | Rust      | Generic libraries | A    | clone `2f9086b07` | 2    | planned |
-| Skia (`SkPixmap`, codecs, `SkColorSpace`)             | C++       | Generic libraries | A    | clone `3ad790ab4` | 2    | planned |
-| CImg                                                  | C++       | Generic libraries | B    | clone `38bb024de` | 2    | planned |
-| SAIL                                                  | C         | Generic libraries | B    | clone `dccd2ebd5` | 2    | planned |
-| stb_image                                             | C         | Generic libraries | B    | clone `003501f6d` | 2    | planned |
-| Go `image` and `x/image`                              | Go        | Generic libraries | B    | clone `b06f1de3f` | 2    | planned |
-| NumPy `ndarray` and the buffer protocol (PEP 3118)    | Python    | Generic libraries | B    | clone `b833c1b9b` | 2    | planned |
-| DLPack                                                | C ABI     | Generic libraries | B    | clone `94485e235` | 2    | planned |
-| GDAL, GeoTIFF and Cloud Optimized GeoTIFF             | C++       | Generic libraries | B    | clone `739fcf03b` | 4    | planned |
-| ROS `image_transport` and `cv_bridge`                 | C++       | Generic libraries | B    | clone `faf0db265` | 4    | planned |
-| Open3D and PCL                                        | C++       | Generic libraries | C    | clone `b6c5e1963` | 4    | planned |
-| Wuffs                                                 | Wuffs, C  | Formats           | A    | clone `4be865da2` | 3    | planned |
-| libpng                                                | C         | Formats           | A    | clone `890812a28` | 3    | planned |
-| libspng                                               | C         | Formats           | A    | clone `46c81dc2b` | 3    | planned |
-| libjpeg-turbo                                         | C         | Formats           | A    | clone `7b4993786` | 3    | planned |
-| libwebp                                               | C         | Formats           | A    | clone `1844042d1` | 3    | planned |
-| libjxl                                                | C++       | Formats           | A    | clone `e2948747f` | 3    | planned |
-| libavif                                               | C         | Formats           | A    | clone `9b07a9d7a` | 3    | planned |
-| OpenEXR                                               | C++       | Formats           | A    | clone `b0460b224` | 3    | planned |
-| libheif                                               | C++       | Formats           | B    | clone `12a259a58` | 3    | planned |
-| libtiff                                               | C         | Formats           | B    | clone `d23249978` | 3    | planned |
-| QOI                                                   | spec      | Formats           | C    | docs              | 3    | planned |
-| Little CMS 2                                          | C         | Colour            | A    | clone `5546f1d68` | 4    | planned |
-| OpenColorIO                                           | C++       | Colour            | B    | clone `22dd9c4fa` | 4    | planned |
-| ICC v4 and iccMAX                                     | spec      | Colour            | B    | docs              | 4    | planned |
-| CICP (ITU-T H.273)                                    | spec      | Colour            | B    | docs              | 4    | planned |
-| Ultra HDR and ISO 21496-1 gain maps                   | spec      | Colour            | B    | docs              | 4    | planned |
-| ExifTool                                              | Perl      | Metadata          | B    | clone `2200871d9` | 3    | planned |
-| Exiv2                                                 | C++       | Metadata          | B    | clone `be479c1b7` | 3    | planned |
-| Simd (ermig1979)                                      | C++       | GPU and SIMD      | A    | clone `37dd13062` | 4    | planned |
-| Highway                                               | C++       | GPU and SIMD      | A    | clone `872f22991` | 4    | planned |
-| KTX-Software (KTX2)                                   | C++       | GPU and SIMD      | A    | clone `d9b1dd090` | 4    | planned |
-| basis_universal                                       | C++       | GPU and SIMD      | A    | clone `ee771a7f9` | 4    | planned |
-| libyuv                                                | C++       | GPU and SIMD      | B    | clone `205022c08` | 4    | planned |
-| nvImageCodec                                          | C++, CUDA | GPU and SIMD      | B    | clone `e7a7ef0f5` | 4    | planned |
-| glTF `KHR_texture_basisu` and texture extensions      | spec      | GPU and SIMD      | B    | clone `1c84b58ba` | 4    | planned |
-| Filament and bgfx texture pipelines                   | C++       | GPU and SIMD      | B    | clone `4e2df5e24` | 4    | planned |
-| Godot texture import                                  | C++       | GPU and SIMD      | B    | local clone       | 4    | planned |
-| Apple ImageIO                                         | closed    | GPU and SIMD      | C    | docs              | 4    | planned |
-| Apple vImage (Accelerate)                             | closed    | GPU and SIMD      | C    | docs              | 4    | planned |
-| Intel IPP                                             | closed    | GPU and SIMD      | C    | docs              | 4    | planned |
-| Vulkan transfer and memory decompression              | spec      | Storage to GPU    | A    | clone `a8b088a3f` | 4    | planned |
-| DirectStorage and IoRing                              | Windows   | Storage to GPU    | B    | clone `32f9411bc` | 4    | planned |
-| `io_uring` registered buffers, `O_DIRECT` and dma-buf | Linux     | Storage to GPU    | B    | docs              | 4    | planned |
-| GPUDirect Storage (`cuFile`)                          | closed    | Storage to GPU    | C    | docs              | 4    | planned |
-| nvCOMP and GDeflate                                   | closed    | Storage to GPU    | C    | docs              | 4    | planned |
-| Metal fast resource loading (`MTLIOCommandQueue`)     | closed    | Storage to GPU    | C    | docs              | 4    | planned |
+| Subject                                               | Ecosystem | Cluster           | Tier | Basis             | Wave | Doc                           |
+| ----------------------------------------------------- | --------- | ----------------- | ---- | ----------------- | ---- | ----------------------------- |
+| mir-algorithm (`Slice`, `ndslice`) and mir-core       | D         | D landscape       | A    | clone `2da212382` | 1    | [Deep-dive](./mir-algorithm/) |
+| dcv                                                   | D         | D landscape       | A    | clone `c777e2aa9` | 1    | [Deep-dive](./dcv.md)         |
+| color (TurkeyMan)                                     | D         | D landscape       | A    | clone `e9d31e416` | 1    | [Deep-dive](./color.md)       |
+| `ae.utils.graphics` (functional image processing)     | D         | D landscape       | A    | clone `7870bc3cd` | 1    | [Deep-dive](./ae-graphics.md) |
+| gamut                                                 | D         | D landscape       | B    | clone `7f07b8ca3` | 2    | planned                       |
+| arsd image modules                                    | D         | D landscape       | B    | clone `11491fa8b` | 2    | planned                       |
+| Dplug graphics                                        | D         | D landscape       | B    | clone `f4a6d71ae` | 2    | planned                       |
+| intel-intrinsics                                      | D         | D landscape       | B    | clone `2141185c6` | 4    | planned                       |
+| dcompute                                              | D         | D landscape       | B    | clone `cdb5792d4` | 4    | planned                       |
+| Boost.GIL (and its Adobe origin)                      | C++       | Generic libraries | A    | clone `97ed52cc0` | 1    | [Deep-dive](./boost-gil.md)   |
+| VIGRA                                                 | C++       | Generic libraries | A    | clone `de98f930b` | 1    | [Deep-dive](./vigra.md)       |
+| Halide                                                | C++ DSL   | Generic libraries | A    | clone `85f161839` | 1    | [Deep-dive](./halide.md)      |
+| JuliaImages (ImageCore, ColorTypes)                   | Julia     | Generic libraries | A    | clone `c3f815704` | 1    | [Deep-dive](./juliaimages.md) |
+| ITK                                                   | C++       | Generic libraries | A    | clone `443d201c3` | 2    | planned                       |
+| OpenCV (`cv::Mat`, `UMat`, HAL)                       | C++       | Generic libraries | A    | clone `96f8c0761` | 2    | planned                       |
+| ImageSharp                                            | C#        | Generic libraries | A    | clone `b2b1ca9bd` | 2    | planned                       |
+| libvips                                               | C         | Generic libraries | A    | clone `b8242162f` | 2    | planned                       |
+| OpenImageIO                                           | C++       | Generic libraries | A    | clone `e7eb5d109` | 2    | planned                       |
+| image-rs                                              | Rust      | Generic libraries | A    | clone `075e65d61` | 2    | planned                       |
+| zune-image                                            | Rust      | Generic libraries | A    | clone `2f9086b07` | 2    | planned                       |
+| Skia (`SkPixmap`, codecs, `SkColorSpace`)             | C++       | Generic libraries | A    | clone `3ad790ab4` | 2    | planned                       |
+| CImg                                                  | C++       | Generic libraries | B    | clone `38bb024de` | 2    | planned                       |
+| SAIL                                                  | C         | Generic libraries | B    | clone `dccd2ebd5` | 2    | planned                       |
+| stb_image                                             | C         | Generic libraries | B    | clone `003501f6d` | 2    | planned                       |
+| Go `image` and `x/image`                              | Go        | Generic libraries | B    | clone `b06f1de3f` | 2    | planned                       |
+| NumPy `ndarray` and the buffer protocol (PEP 3118)    | Python    | Generic libraries | B    | clone `b833c1b9b` | 2    | planned                       |
+| DLPack                                                | C ABI     | Generic libraries | B    | clone `94485e235` | 2    | planned                       |
+| GDAL, GeoTIFF and Cloud Optimized GeoTIFF             | C++       | Generic libraries | B    | clone `739fcf03b` | 4    | planned                       |
+| ROS `image_transport` and `cv_bridge`                 | C++       | Generic libraries | B    | clone `faf0db265` | 4    | planned                       |
+| Open3D and PCL                                        | C++       | Generic libraries | C    | clone `b6c5e1963` | 4    | planned                       |
+| Wuffs                                                 | Wuffs, C  | Formats           | A    | clone `4be865da2` | 3    | planned                       |
+| libpng                                                | C         | Formats           | A    | clone `890812a28` | 3    | planned                       |
+| libspng                                               | C         | Formats           | A    | clone `46c81dc2b` | 3    | planned                       |
+| libjpeg-turbo                                         | C         | Formats           | A    | clone `7b4993786` | 3    | planned                       |
+| libwebp                                               | C         | Formats           | A    | clone `1844042d1` | 3    | planned                       |
+| libjxl                                                | C++       | Formats           | A    | clone `e2948747f` | 3    | planned                       |
+| libavif                                               | C         | Formats           | A    | clone `9b07a9d7a` | 3    | planned                       |
+| OpenEXR                                               | C++       | Formats           | A    | clone `b0460b224` | 3    | planned                       |
+| libheif                                               | C++       | Formats           | B    | clone `12a259a58` | 3    | planned                       |
+| libtiff                                               | C         | Formats           | B    | clone `d23249978` | 3    | planned                       |
+| QOI                                                   | spec      | Formats           | C    | docs              | 3    | planned                       |
+| Little CMS 2                                          | C         | Colour            | A    | clone `5546f1d68` | 4    | planned                       |
+| OpenColorIO                                           | C++       | Colour            | B    | clone `22dd9c4fa` | 4    | planned                       |
+| ICC v4 and iccMAX                                     | spec      | Colour            | B    | docs              | 4    | planned                       |
+| CICP (ITU-T H.273)                                    | spec      | Colour            | B    | docs              | 4    | planned                       |
+| Ultra HDR and ISO 21496-1 gain maps                   | spec      | Colour            | B    | docs              | 4    | planned                       |
+| ExifTool                                              | Perl      | Metadata          | B    | clone `2200871d9` | 3    | planned                       |
+| Exiv2                                                 | C++       | Metadata          | B    | clone `be479c1b7` | 3    | planned                       |
+| Simd (ermig1979)                                      | C++       | GPU and SIMD      | A    | clone `37dd13062` | 4    | planned                       |
+| Highway                                               | C++       | GPU and SIMD      | A    | clone `872f22991` | 4    | planned                       |
+| KTX-Software (KTX2)                                   | C++       | GPU and SIMD      | A    | clone `d9b1dd090` | 4    | planned                       |
+| basis_universal                                       | C++       | GPU and SIMD      | A    | clone `ee771a7f9` | 4    | planned                       |
+| libyuv                                                | C++       | GPU and SIMD      | B    | clone `205022c08` | 4    | planned                       |
+| nvImageCodec                                          | C++, CUDA | GPU and SIMD      | B    | clone `e7a7ef0f5` | 4    | planned                       |
+| glTF `KHR_texture_basisu` and texture extensions      | spec      | GPU and SIMD      | B    | clone `1c84b58ba` | 4    | planned                       |
+| Filament and bgfx texture pipelines                   | C++       | GPU and SIMD      | B    | clone `4e2df5e24` | 4    | planned                       |
+| Godot texture import                                  | C++       | GPU and SIMD      | B    | local clone       | 4    | planned                       |
+| Apple ImageIO                                         | closed    | GPU and SIMD      | C    | docs              | 4    | planned                       |
+| Apple vImage (Accelerate)                             | closed    | GPU and SIMD      | C    | docs              | 4    | planned                       |
+| Intel IPP                                             | closed    | GPU and SIMD      | C    | docs              | 4    | planned                       |
+| Vulkan transfer and memory decompression              | spec      | Storage to GPU    | A    | clone `a8b088a3f` | 4    | planned                       |
+| DirectStorage and IoRing                              | Windows   | Storage to GPU    | B    | clone `32f9411bc` | 4    | planned                       |
+| `io_uring` registered buffers, `O_DIRECT` and dma-buf | Linux     | Storage to GPU    | B    | docs              | 4    | planned                       |
+| GPUDirect Storage (`cuFile`)                          | closed    | Storage to GPU    | C    | docs              | 4    | planned                       |
+| nvCOMP and GDeflate                                   | closed    | Storage to GPU    | C    | docs              | 4    | planned                       |
+| Metal fast resource loading (`MTLIOCommandQueue`)     | closed    | Storage to GPU    | C    | docs              | 4    | planned                       |
 
 ### Analysis spine
 
@@ -190,7 +190,7 @@ applicable, because …" where one does not apply:
 | Wave | Delivers                                                                                                                     |
 | ---- | ---------------------------------------------------------------------------------------------------------------------------- |
 | 0    | the baseline, the papers and the hardware matrix (done)                                                                      |
-| 1    | the D landscape and the generic-programming core; the `Slice` experiment                                                     |
+| 1    | the D landscape and the generic-programming core; the [`Slice` experiment](./mir-algorithm/slice-experiment.md) (done)       |
 | 2    | the generic and architectural libraries; the D Tier B subjects                                                               |
 | 3    | Wuffs, the stills codecs and metadata; `wired-flat-fit.md` and `wired-requirements.md`                                       |
 | 4    | colour, SIMD, GPU textures and storage-to-GPU; the Tier C digest                                                             |

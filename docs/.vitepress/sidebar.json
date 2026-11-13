@@ -8604,6 +8604,36 @@
                 "link": "/research/images/hardware/contributing"
               }
             ]
+          },
+          {
+            "text": "D landscape",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "mir-algorithm",
+                "link": "/research/images/mir-algorithm/"
+              },
+              {
+                "text": "The Slice experiment",
+                "link": "/research/images/mir-algorithm/slice-experiment"
+              },
+              { "text": "dcv", "link": "/research/images/dcv" },
+              { "text": "color", "link": "/research/images/color" },
+              {
+                "text": "ae.utils.graphics",
+                "link": "/research/images/ae-graphics"
+              }
+            ]
+          },
+          {
+            "text": "Generic libraries",
+            "collapsed": true,
+            "items": [
+              { "text": "Boost.GIL", "link": "/research/images/boost-gil" },
+              { "text": "VIGRA", "link": "/research/images/vigra" },
+              { "text": "Halide", "link": "/research/images/halide" },
+              { "text": "JuliaImages", "link": "/research/images/juliaimages" }
+            ]
           }
         ]
       }

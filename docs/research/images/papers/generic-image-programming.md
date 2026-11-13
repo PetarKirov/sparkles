@@ -933,12 +933,14 @@ or specialise on, contiguity at compile time.
 layer. Its three kinds are exactly the properties Milena dispatches on and the
 representations Repa 3 indexes: `canonical` matches the typical image (padded
 rows, contiguous pixels within a row) and enables `scanline` access and SIMD
-row loops. Reuse the classification even if not the package: Mir is archived
-("Libmir Archive"), so depending on it is a maintenance risk.
+row loops. Reuse the classification even if not the package. "Libmir Archive" is
+the documentation site's name, not an archival state: the GitHub API reported
+both `libmir/mir-algorithm` and `libmir/mir-core` as not archived on November 7,
+2026, with a `mir-algorithm` push the day before ([deep dive][mir-deep-dive]).
 
 **Caveats.** Strides are in elements, not bytes, so non-multiple-of-pixel
-row pitches need care. The project is archived, and the documentation is a
-generated API reference rather than a design rationale.
+row pitches need care. The documentation is a generated API reference rather
+than a design rationale.
 
 ### Panteleev 2014: Functional image processing in D
 
@@ -1154,7 +1156,7 @@ executes the per-pixel function as written.
 [ritter-web]: https://www.cise.ufl.edu/~jnw/IA/ia-theory.html
 [koethe1999-pdf]: https://web.archive.org/web/20040726165410/http://kogs-www.informatik.uni-hamburg.de:80/~koethe/papers/handbook.pdf
 [koethe2000-pdf]: https://web.archive.org/web/20040726164958/http://kogs-www.informatik.uni-hamburg.de:80/~koethe/papers/GenericProg2DC++Report.pdf
-[koethe-dagstuhl]: https://cs.rpi.edu/~musser/gp/dagstuhl/gpdag_26.html
+[koethe-dagstuhl]: https://web.archive.org/web/20170529210450/http://www.cs.rpi.edu:80/~musser/gp/dagstuhl/gpdag_26.html
 [vigra-home]: https://ukoethe.github.io/vigra/
 [vigra-ipol]: https://www.ipol.im/event/2012_imlib/docs/vigra.pdf
 [gil-guide]: https://stlab.adobe.com/gil_design_guide.pdf
@@ -1195,4 +1197,5 @@ executes the per-pixel function as written.
 [juliaimages-ac]: https://juliaimages.org/latest/tutorials/arrays_colors/
 [mir-slice]: http://mir-algorithm.libmir.org/mir_ndslice_slice.html
 [mir-kind]: http://mir-algorithm.libmir.org/mir.ndslice.slice.mir_slice_kind.html
+[mir-deep-dive]: ../mir-algorithm/index.md
 [panteleev]: https://blog.cy.md/2014/03/21/functional-image-processing-in-d/
