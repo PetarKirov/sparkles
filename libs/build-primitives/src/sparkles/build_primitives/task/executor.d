@@ -1,8 +1,8 @@
 /++
-The task executor ([SPEC TDM7, TDE1, TDC1–TDC6, TDD1](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)):
-weighted admission with exclusive keys, conditional edge resolution, outcomes,
-the event stream, structured fail-fast, external cancellation, and protected
-cleanup.
+The task executor ([SPEC TDM7, TDM15, TDM16, TDE1, TDC1–TDC6, TDD1](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)):
+weighted admission with exclusive keys and file-claim conflicts, freshness,
+conditional edge resolution, outcomes, the event stream, structured
+fail-fast, external cancellation, and protected cleanup.
 
 The executor knows actions only through an $(I action driver), and events
 only through an $(I event sink). It is generic over the Event Horizon fiber
@@ -11,7 +11,9 @@ a `LoopGroup` and on `TestSched` under a `TestClock`:
 
 $(LIST
     * A driver `D` provides `TaskOutcome run(ref TaskContext!X)`, called on the
-        task's own fiber ($(LREF isActionDriver)).
+        task's own fiber ($(LREF isActionDriver)). It may also provide
+        `Freshness freshness(ref TaskContext!X)` ($(LREF hasFreshness)),
+        asked first on the same fiber: a task it calls fresh does not run.
     * A sink `S` provides `put(ref X, TaskEvent)` returning an `IoResult`:
         the intra-worker `Channel`, or the cross-worker channel once the
         reporter runs elsewhere ($(LREF isEventSink)). The executor is its only
@@ -20,12 +22,19 @@ $(LIST
 
 Admission ([SPEC TDM8]): ready tasks are considered in presentation
 order — the graph's index order, by `PresentationKey` then `TaskId`. A task
-starts when its exclusive keys are free and its weight, clamped to the
-capacity, fits. A ready task that waits for $(I capacity) stops admission of
-every later task until it starts — no backfilling past it — so a heavy task
-cannot be starved by a stream of light ones. A task that waits only for a
-key does not hold back the rest. A task whose fiber cannot be spawned (the
-fiber slab is full) fails at once as `Failed(spawnFailed, ENOBUFS)`.
+starts when its exclusive keys are free, no task whose file claims conflict
+with its own runs (TDM15), and its weight, clamped to the capacity, fits. A
+ready task that waits for $(I capacity) stops admission of every later task
+until it starts — no backfilling past it — so a heavy task cannot be starved
+by a stream of light ones. A task that waits only for a key or a conflict
+does not hold back the rest. A task whose fiber cannot be spawned (the fiber
+slab is full) fails at once as `Failed(spawnFailed, ENOBUFS)`.
+
+Freshness (TDM16): a driver with `freshness` says, before a task runs,
+whether a result recorded for the same action and inputs is reused. A fresh
+task emits `TaskFresh`, runs nothing and succeeds; a stale one emits
+`TaskStale` with the reason, then runs. A task the driver calls fresh is
+stale nonetheless when a prerequisite ran in this run (`prerequisiteRan`).
 
 Fail-fast ([SPEC TDC2]): the first authoritative failure — the lowest index
 among those that complete in the same turn — emits `CancellationRequested`
@@ -58,6 +67,12 @@ import sparkles.build_primitives.task.model;
 /// Whether `D` can run a task's action on executor `X`.
 enum bool isActionDriver(D, X) = __traits(compiles, (ref D d, ref TaskContext!X ctx) {
     TaskOutcome outcome = d.run(ctx);
+});
+
+/// Whether `D` says, before a task runs on executor `X`, whether it is fresh
+/// (TDM16).
+enum bool hasFreshness(D, X) = __traits(compiles, (ref D d, ref TaskContext!X ctx) {
+    Freshness f = d.freshness(ctx);
 });
 
 /// Whether `S` accepts the executor's events on executor `X`: the shape of
@@ -156,6 +171,8 @@ struct TaskExecutor(X, C, D, S)
         streamSeq = new ulong[2 * n];
         chunkSeq = new ulong[n];
         started = new MonoTime[n];
+        conflictHeld = new uint[n];
+        ran = new bool[n];
     }
 
     /**
@@ -269,6 +286,8 @@ private:
     ulong[] chunkSeq;
     MonoTime[] started;
     bool[string] heldKeys; // membership only; never iterated
+    uint[] conflictHeld;   // per task: how many running tasks conflict with it
+    bool[] ran;            // per task: its action ran (it was not fresh)
     uint free;
     size_t running;
     ulong sequence;
@@ -423,7 +442,7 @@ private:
                 continue;
             }
             const claim = (*graph)[t].resources;
-            bool keyBusy;
+            bool keyBusy = conflictHeld[i] > 0;
             foreach (key; claim.exclusiveKeys)
                 if (key in heldKeys)
                     keyBusy = true;
@@ -435,6 +454,8 @@ private:
             free -= weight;
             foreach (key; claim.exclusiveKeys)
                 heldKeys[key] = true;
+            foreach (other; graph.conflicts(t))
+                ++conflictHeld[other.value];
             state[i] = TaskState.running;
             ++running;
             started[i] = clock.now();
@@ -458,8 +479,44 @@ private:
             outcome = protect!(() => driveCatching(ctx))(*exec);
         else if (cancelling)
             outcome = TaskOutcome(Cancelled(CancelReason.interrupted));
+        else if (isFresh(ctx))
+            outcome = TaskOutcome(Succeeded());
         else
+        {
+            ran[t.value] = true;
             outcome = driveCatching(ctx);
+        }
+    }
+
+    // TDM16: asks the driver, when it can say, and reports its answer. A
+    // task is fresh only when no prerequisite ran; a driver that throws
+    // has no record to offer.
+    bool isFresh(ref TaskContext!X ctx)
+    {
+        static if (hasFreshness!(D, X))
+        {
+            Freshness f;
+            try
+                f = driver.freshness(ctx);
+            catch (Exception)
+                f = Freshness(Freshness.Kind.stale, reason: StaleReason.noRecord);
+            if (f.kind == Freshness.Kind.notTracked)
+                return false;
+            if (f.kind == Freshness.Kind.fresh)
+                foreach (e; graph.incoming(ctx.task))
+                    if (ran[e.prerequisite.value])
+                    {
+                        f = Freshness(Freshness.Kind.stale, reason: StaleReason.prerequisiteRan);
+                        break;
+                    }
+            if (f.kind == Freshness.Kind.fresh)
+            {
+                emit(TaskEventPayload(TaskFresh(ctx.task, f.inputs)));
+                return true;
+            }
+            emit(TaskEventPayload(TaskStale(ctx.task, f.reason)), f.path);
+        }
+        return false;
     }
 
     TaskOutcome driveCatching(ref TaskContext!X ctx)
@@ -504,6 +561,8 @@ private:
             free += claim.admittedWeight(options.capacity);
             foreach (key; claim.exclusiveKeys)
                 heldKeys.remove(key);
+            foreach (other; graph.conflicts(c.task))
+                --conflictHeld[other.value];
             --running;
             finish(c.task, outcome, clock.now() - started[i]);
             if (kindOf(outcome) == OutcomeKind.failed
@@ -650,12 +709,78 @@ unittest
 @system
 unittest
 {
-    const g = graphOf([tnode("a", 1, TaskKind.rewrite, ["workspace-write:README.md"]),
-        tnode("b", 1, TaskKind.rewrite, ["workspace-write:README.md"]), tnode("c")], null);
+    const g = graphOf([tnode("a", 1, TaskKind.report, ["coverage-publish"]),
+        tnode("b", 1, TaskKind.report, ["coverage-publish"]), tnode("c")], null);
     auto run = runFake(g, ["a": Script(10.msecs), "b": Script(10.msecs), "c": Script(1.msecs)],
         ExecutorOptions(capacity: 8));
     assert(run.startedAt["b"] - MonoTime.zero == 10.msecs, "b waits for a's key");
     assert(run.startedAt["c"] - MonoTime.zero == 0.msecs, "a key wait holds back nothing else");
+}
+
+/// TDM15: writes that overlap, a tree and a file beneath it, serialize; a
+/// write elsewhere, and a read ordered after a write, do not hold anything
+/// back.
+@("build_primitives.task.executor.admission.overlappingWritesSerialize")
+@system
+unittest
+{
+    import sparkles.build_primitives.fileset.pattern : CasePolicy;
+    import sparkles.build_primitives.fileset.value : Filesets;
+
+    auto sets = new Filesets(CasePolicy.sensitive);
+    const docs = sets.glob("docs/**").value;
+    const g = graphWith(sets, [
+        claiming(tnode("a", 1, TaskKind.rewrite), Fileset.init, "out/"),
+        claiming(tnode("b", 1, TaskKind.rewrite), Fileset.init, "out/b.txt"),
+        claiming(tnode("c", 1, TaskKind.rewrite), docs, "docs/c.md"),
+        claiming(tnode("d", 1, TaskKind.scan), docs),
+        tnode("e"),
+    ], [tedge("c", "d")]).value;
+    assert(g.conflicts(g.indexOf(tid("a"))).length == 1);
+    auto run = runFake(g, ["a": Script(10.msecs), "b": Script(10.msecs), "c": Script(3.msecs),
+        "d": Script(1.msecs), "e": Script(1.msecs)], ExecutorOptions(capacity: 8));
+    assert(run.result.exitCode == 0);
+    assert(run.startedAt["b"] - MonoTime.zero == 10.msecs, "b waits for the tree a writes");
+    assert(run.startedAt["c"] - MonoTime.zero == 0.msecs, "a conflict holds back nothing else");
+    assert(run.startedAt["d"] - MonoTime.zero == 3.msecs, "the reader follows its edge");
+    assert(run.startedAt["e"] - MonoTime.zero == 0.msecs, "a node that states nothing");
+}
+
+/// TDM16: a fresh task runs nothing and succeeds; a stale one says why; a
+/// task its driver calls fresh runs when a prerequisite ran.
+@("build_primitives.task.executor.freshness.freshTasksStartNoProcess")
+@system
+unittest
+{
+    import std.conv : text;
+
+    const Digest inputs = 7;
+    const g = graphOf([tnode("a"), tnode("b"), tnode("c"), tnode("d"), tnode("e")],
+        [tedge("a", "b"), tedge("c", "d")]);
+    auto run = runFake(g, [
+        "a": Script(5.msecs, freshness: Freshness(Freshness.Kind.fresh, inputs)),
+        "b": Script(5.msecs, freshness: Freshness(Freshness.Kind.fresh, inputs)),
+        "c": Script(5.msecs, freshness: Freshness(Freshness.Kind.stale,
+            reason: StaleReason.inputChanged, path: "libs/base/src/buffer.d")),
+        "d": Script(5.msecs, freshness: Freshness(Freshness.Kind.fresh, inputs)),
+        "e": Script(5.msecs),
+    ], ExecutorOptions(capacity: 8));
+    assert(run.result.exitCode == 0);
+    assert(run.startOrder == ["c", "e", "d"], "a fresh task's action never runs");
+    assert(run.outcomeOf(g, "a") == "succeeded" && run.outcomeOf(g, "b") == "succeeded");
+    assert(run.finishedAt["b"] - MonoTime.zero == 0.msecs, "fresh behind fresh");
+
+    string[] fresh;
+    string[] stale;
+    foreach (e; run.events)
+        e.payload.match!(
+            (TaskFresh f) { assert(f.inputs == inputs); fresh ~= g[f.task].id.text; },
+            (TaskStale s) { stale ~= text(g[s.task].id.text, " ", s.reason, " ", e.text); },
+            (_) {});
+    assert(fresh == ["a", "b"]);
+    assert(stale == ["c inputChanged libs/base/src/buffer.d", "d prerequisiteRan "], text(stale));
+    assert(countOf!((TaskFresh f) => g[f.task].id.text == "e")(run.events) == 0,
+        "an untracked task says nothing");
 }
 
 @("build_primitives.task.executor.failFast.simultaneousFailuresPickTheLowestKey")

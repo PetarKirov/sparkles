@@ -112,6 +112,8 @@ struct PlainReporter(Writer)
                 facts.exitCode = r.exitCode;
                 ended = true;
             },
+            (const TaskFresh f) { blocks.freshness(f.task, FreshnessNote.of(e)); },
+            (const TaskStale s) { blocks.freshness(s.task, FreshnessNote.of(e)); },
             (_) {},
         );
     }
@@ -192,6 +194,7 @@ private:
             writeOutcome(title, *graph, blocks.outcome(t));
         else
             title.put("unfinished");
+        writeFreshness(title, blocks.freshness(t));
         return title[];
     }
 
@@ -246,6 +249,7 @@ private:
             writeOutcome(*writer, *graph, blocks.outcome(t));
         else
             put(*writer, "unfinished");
+        writeFreshness(*writer, blocks.freshness(t));
         if (options.timings && blocks.isDone(t) && blocks.took(t) > Duration.zero)
         {
             put(*writer, " (");
@@ -407,6 +411,26 @@ unittest
     assert(text.canFind("cancelled: fail-fast after a\n"));
     assert(text.canFind("time: 10ms\n"));
     assert(!text.canFind("\x1b"), "plain output carries no control sequence");
+}
+
+/// BGW19: a task's line says why it ran, in terms of a path, or that it was
+/// fresh.
+@("build_primitives.task.reporter_plain.freshAndStale")
+@system
+unittest
+{
+    const Digest inputs = 1;
+    const g = graphOf([tnode("a"), tnode("b"), tnode("c")], [tedge("b", "c")]);
+    auto run = runFake(g, [
+        "a": Script(1.msecs, freshness: Freshness(Freshness.Kind.fresh, inputs)),
+        "b": Script(2.msecs, freshness: Freshness(Freshness.Kind.stale,
+            reason: StaleReason.inputChanged, path: "libs/base/src/buffer.d")),
+        "c": Script(1.msecs, freshness: Freshness(Freshness.Kind.fresh, inputs)),
+    ], ExecutorOptions(capacity: 2));
+    const text = transcript(g, run.events, PlainOptions(timings: false));
+    assert(text.startsWith("a: succeeded, fresh\n"
+        ~ "b: succeeded, ran: libs/base/src/buffer.d changed\n"
+        ~ "c: succeeded, ran: a prerequisite ran\n"), text);
 }
 
 @("build_primitives.task.reporter_plain.consumeEventsThroughAChannel")

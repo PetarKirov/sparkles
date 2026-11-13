@@ -96,11 +96,18 @@ struct OrderedBlocks
         outcomes = new TaskOutcome[taskCount];
         elapsed = new Duration[taskCount];
         done = new bool[taskCount];
+        notes = new FreshnessNote[taskCount];
     }
 
     /// Records an output line.
     void output(TaskIndex t, OutputStream stream, scope const(char)[] text, bool unterminated) @safe
         => spools[t.value].append(stream, text, unterminated);
+
+    /// Records that a task was fresh, or why it ran (TDM16).
+    void freshness(TaskIndex t, FreshnessNote note) @safe pure nothrow @nogc { notes[t.value] = note; }
+
+    /// What the run said of `t`'s freshness.
+    FreshnessNote freshness(TaskIndex t) const @safe pure nothrow @nogc => notes[t.value];
 
     /// Records a terminal outcome. The task's output is complete, so its
     /// spill file is closed (replay reopens it).
@@ -143,7 +150,98 @@ private:
     TaskOutcome[] outcomes;
     Duration[] elapsed;
     bool[] done;
+    FreshnessNote[] notes;
     size_t next;
+}
+
+/// What a run said of a task's freshness (TDM16): nothing, `TaskFresh`, or
+/// `TaskStale` with its reason and path.
+struct FreshnessNote
+{
+    /// The three cases.
+    enum Kind : ubyte
+    {
+        none,  ///
+        fresh, ///
+        stale, ///
+    }
+
+    Kind kind;          ///
+    StaleReason reason; ///
+    string path;        ///
+
+    /// The note a freshness event makes, or `none` for any other event.
+    static FreshnessNote of(const ref TaskEvent e) @safe pure nothrow @nogc
+        => e.payload.match!(
+            (const TaskFresh _) => FreshnessNote(Kind.fresh),
+            (const TaskStale s) => FreshnessNote(Kind.stale, s.reason, e.text),
+            _ => FreshnessNote.init,
+        );
+}
+
+/**
+Writes, after a task's outcome, why it ran or that it did not:
+`, fresh`, `, ran: libs/base/src/buffer.d changed`, `, ran: a prerequisite
+ran`. Writes nothing for a task whose freshness is not tracked.
+*/
+void writeFreshness(Writer)(ref Writer w, const FreshnessNote note)
+{
+    final switch (note.kind)
+    {
+        case FreshnessNote.Kind.none:
+            return;
+        case FreshnessNote.Kind.fresh:
+            put(w, ", fresh");
+            return;
+        case FreshnessNote.Kind.stale:
+            put(w, ", ran: ");
+            break;
+    }
+    switch (note.reason)
+    {
+        case StaleReason.inputChanged:
+            put(w, note.path.length ? note.path : "an input");
+            put(w, " changed");
+            break;
+        case StaleReason.absentAppeared:
+            put(w, note.path.length ? note.path : "a probed path");
+            put(w, " appeared");
+            break;
+        case StaleReason.noRecord:
+            put(w, "no recorded result");
+            break;
+        case StaleReason.prerequisiteRan:
+            put(w, "a prerequisite ran");
+            break;
+        default:
+            writeEnumMemberName!AnyFormat(w, note.reason);
+            if (note.path.length)
+            {
+                put(w, ' ');
+                put(w, note.path);
+            }
+    }
+}
+
+@("build_primitives.task.reporter.writeFreshness.wording")
+@safe pure nothrow
+unittest
+{
+    import sparkles.base.buffer : checkWriter;
+
+    alias K = FreshnessNote.Kind;
+    checkWriter!((ref b) => writeFreshness(b, FreshnessNote.init))("");
+    checkWriter!((ref b) => writeFreshness(b, FreshnessNote(K.fresh)))(", fresh");
+    checkWriter!((ref b) => writeFreshness(b, FreshnessNote(K.stale, StaleReason.inputChanged,
+        "libs/base/src/buffer.d")))(", ran: libs/base/src/buffer.d changed");
+    checkWriter!((ref b) => writeFreshness(b, FreshnessNote(K.stale, StaleReason.absentAppeared,
+        "sparkles/base.d")))(", ran: sparkles/base.d appeared");
+    checkWriter!((ref b) => writeFreshness(b, FreshnessNote(K.stale, StaleReason.prerequisiteRan)))(
+        ", ran: a prerequisite ran");
+    checkWriter!((ref b) => writeFreshness(b, FreshnessNote(K.stale, StaleReason.noRecord)))(
+        ", ran: no recorded result");
+    checkWriter!((ref b) => writeFreshness(b, FreshnessNote(K.stale, StaleReason.evicted)))(
+        ", ran: evicted");
 }
 
 @("build_primitives.task.reporter.OrderedBlocks.releasesInPresentationOrder")
