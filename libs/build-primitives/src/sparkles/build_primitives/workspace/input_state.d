@@ -342,6 +342,23 @@ of a set would claim an id it does not have.
 */
 Observed observe(V, Rights R, Cache, Exec)(DirRef!(V, R) root, ref const Filesets sets, Fileset set,
     ref Cache cache, ref Exec exec, ResolutionLimits limits = ResolutionLimits.init)
+    => observe(root, sets, set, cache, exec, ListingHooks.init, limits);
+
+/**
+What a caller hears of the directories an observation lists (BGW14):
+`before` each is listed, by its path relative to the root (`false`
+aborts), and, once it is, the identity of the directory the handle listed,
+when the root's rights allow a `stat`.
+*/
+struct ListingHooks
+{
+    bool delegate(scope const(char)[] path) before;                       ///
+    void delegate(scope const(char)[] path, ulong device, ulong inode) listed; ///
+}
+
+/// ditto, telling `hooks` of each directory listed.
+Observed observe(V, Rights R, Cache, Exec)(DirRef!(V, R) root, ref const Filesets sets, Fileset set,
+    ref Cache cache, ref Exec exec, ListingHooks hooks, ResolutionLimits limits = ResolutionLimits.init)
 {
     import std.algorithm.searching : canFind;
     import std.algorithm.sorting : sort;
@@ -349,6 +366,7 @@ Observed observe(V, Rights R, Cache, Exec)(DirRef!(V, R) root, ref const Fileset
     import sparkles.build_primitives.fileset.scheme : resolveScheme;
 
     auto fold = StateFold!Cache(&cache);
+    fold.hooks = hooks;
     auto got = resolveScheme(root, sets, set, fold, exec, limits);
     if (got.hasError)
         return err!(InputState, NoGcHook)(got.error);
@@ -432,6 +450,7 @@ private struct StateFold(Cache)
     LinkRead[] links;
     string[] listed, throughLinks, incompletes;
     string why;
+    ListingHooks hooks;
 
     this(Cache* cache)
     {
@@ -440,6 +459,8 @@ private struct StateFold(Cache)
 
     bool listing(scope const(char)[] path, bool throughLink)
     {
+        if (hooks.before !is null && !hooks.before(path))
+            return fail("the listing of " ~ path.idup ~ " was refused");
         listed ~= path.idup;
         if (throughLink)
             throughLinks ~= path.idup;
@@ -449,6 +470,15 @@ private struct StateFold(Cache)
     bool fold(Entries, Exec)(scope const(char)[] path, Entries entries, bool empty, ref Exec exec,
         out Value value)
     {
+        import sparkles.base.vfs.types : StatMask;
+
+        if (hooks.listed !is null)
+            static if (__traits(compiles, entries.directory.stat(StatMask.identity)))
+            {
+                auto st = entries.directory.stat(StatMask.identity);
+                if (st.hasValue && st.value.hasIdentity)
+                    hooks.listed(path, st.value.device, st.value.inode);
+            }
         dir.begin();
         bool holds;
         foreach (e; entries)
