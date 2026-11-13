@@ -10,6 +10,7 @@ public import sparkles.build_primitives.resolve.driver;
 public import sparkles.build_primitives.resolve.dub_versions;
 public import sparkles.build_primitives.resolve.hidden_edges;
 public import sparkles.build_primitives.resolve.libraries;
+public import sparkles.build_primitives.resolve.paths;
 public import sparkles.build_primitives.resolve.platform;
 public import sparkles.build_primitives.resolve.project;
 public import sparkles.build_primitives.resolve.recipe;

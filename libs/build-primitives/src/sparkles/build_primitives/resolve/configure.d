@@ -19,9 +19,10 @@ import std.algorithm.searching : canFind, endsWith, startsWith;
 import std.algorithm.sorting : sort;
 import std.array : array, join;
 import std.conv : text;
-import std.path : buildNormalizedPath, extension, isAbsolute;
+import std.path : extension;
 
 import sparkles.build_primitives.resolve.driver : ResolveDriver;
+import sparkles.build_primitives.resolve.paths : isAbsolutePath, normalizedPath;
 import sparkles.build_primitives.resolve.platform : BuildPlatform, matchesSpecification;
 import sparkles.build_primitives.resolve.project : InTreeSources, Package, Project, RegistrySources, loadSingleFileProject,
     ResolveException, TestRoot, addTestRunnerConfiguration, defaultConfiguration, fail,
@@ -143,9 +144,7 @@ struct ResolveError
 /// Resolves `request`, reading through `driver`.
 PlanExpected!(Resolution, ResolveError) resolve(const ResolveRequest request, ResolveDriver driver) @safe
 {
-    import std.path : isAbsolute;
-
-    if (request.singleFile.length ? !request.singleFile.isAbsolute : !request.directory.isAbsolute)
+    if (request.singleFile.length ? !request.singleFile.isAbsolutePath : !request.directory.isAbsolutePath)
         return planErr!Resolution(ResolveError(text("the request's path must be absolute: ",
             request.singleFile.length ? request.singleFile : request.directory)));
     try
@@ -751,8 +750,8 @@ private struct Variables
         const expanded = expand(s, p, extra);
         if (!isPath)
             return expanded;
-        return expanded.isAbsolute ? buildNormalizedPath(expanded)
-            : buildNormalizedPath(p.directory, expanded);
+        return expanded.isAbsolutePath ? normalizedPath(expanded)
+            : normalizedPath(p.directory, expanded);
     }
 
     string[] processAll(const string[] values, Package p, bool isPath, const string[string][] extra) @safe

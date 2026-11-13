@@ -224,16 +224,16 @@ that declares none, `app.d` or `main.d` choosing the application's main file.
 void fillWithDefaults(ref SettingsTemplate top, ref ConfigurationTemplate[] configurations,
     string packageName, string directory, ResolveDriver driver) @safe
 {
-    import std.path : buildPath;
+    import sparkles.build_primitives.resolve.paths : joinedPath;
 
-    if ("" !in top.stringImportPaths && driver.exists(directory.buildPath("views")))
+    if ("" !in top.stringImportPaths && driver.exists(directory.joinedPath("views")))
         top.stringImportPaths.require("", null) ~= "views";
 
     const hasSourcePaths = ("" in top.sourcePaths) !is null;
     const hasImportPaths = ("" in top.importPaths) !is null;
     if (!hasSourcePaths || !hasImportPaths)
         foreach (defaultPath; ["source/", "src/"])
-            if (driver.exists(directory.buildPath(defaultPath)))
+            if (driver.exists(directory.joinedPath(defaultPath)))
             {
                 if (!hasSourcePaths)
                     top.sourcePaths.require("", null) ~= defaultPath;
@@ -247,10 +247,10 @@ void fillWithDefaults(ref SettingsTemplate top, ref ConfigurationTemplate[] conf
     const name = packageName.length ? packageName : "unknown";
     search: foreach_reverse (sourcePath; top.sourcePaths.get("", null))
     {
-        if (!driver.exists(directory.buildPath(sourcePath)))
+        if (!driver.exists(directory.joinedPath(sourcePath)))
             continue;
         foreach (candidate; ["app.d", "main.d", name ~ "/main.d", name ~ "/app.d"])
-            if (driver.exists(directory.buildPath(sourcePath, candidate)))
+            if (driver.exists(directory.joinedPath(sourcePath, candidate)))
             {
                 mainFile = joinRelative(sourcePath, candidate);
                 break search;
@@ -284,9 +284,9 @@ void fillWithDefaults(ref SettingsTemplate top, ref ConfigurationTemplate[] conf
 // `a/` ~ `b`, as dub's `NativePath(a) ~ b` prints it.
 private string joinRelative(string directory, string file) @safe pure nothrow
 {
-    import std.path : buildNormalizedPath;
+    import sparkles.build_primitives.resolve.paths : normalizedPath;
 
-    return buildNormalizedPath(directory, file);
+    return normalizedPath(directory, file);
 }
 
 /**
@@ -302,7 +302,7 @@ void applyTemplate(const SettingsTemplate template_, ref BuildSettings into, con
 {
     import std.algorithm.sorting : sort;
     import std.array : array;
-    import std.path : buildNormalizedPath;
+    import sparkles.build_primitives.resolve.paths : normalizedPath;
 
     into.targetType = template_.targetType;
     if (template_.targetPath.length)
@@ -313,7 +313,7 @@ void applyTemplate(const SettingsTemplate template_, ref BuildSettings into, con
         into.workingDirectory = template_.workingDirectory;
     if (template_.mainSourceFile.length)
     {
-        into.mainSourceFile = buildNormalizedPath(template_.mainSourceFile);
+        into.mainSourceFile = normalizedPath(template_.mainSourceFile);
         into.addSourceFiles(into.mainSourceFile);
     }
 
@@ -380,8 +380,9 @@ private string[] collectFiles(const string[][string] paths, const string[] patte
     const BuildPlatform platform, string directory, ResolveDriver driver) @safe
 {
     import std.algorithm.searching : any;
-    import std.path : absolutePath, baseName, buildNormalizedPath, globMatch, isAbsolute,
-        pathSplitter, relativePath;
+    import std.path : baseName, globMatch, pathSplitter;
+
+    import sparkles.build_primitives.resolve.paths : isAbsolutePath, normalizedPath, relativePathTo;
 
     string[] files;
     foreach (specifier, list; paths)
@@ -396,7 +397,7 @@ private string[] collectFiles(const string[][string] paths, const string[] patte
 
                 fail(text(directory, ": a source or import path must not be empty"));
             }
-            const root = buildNormalizedPath(path.isAbsolute ? path : buildNormalizedPath(directory, path));
+            const root = path.isAbsolutePath ? normalizedPath(path) : normalizedPath(directory, path);
             if (!driver.isDirectory(root))
                 continue;
             foreach (file; driver.filesBelow(root))
@@ -405,7 +406,7 @@ private string[] collectFiles(const string[][string] paths, const string[] patte
                     continue;
                 if (!patterns.any!(p => globMatch(file.baseName, p)))
                     continue;
-                files ~= relativePath(file, directory);
+                files ~= relativePathTo(file, directory);
             }
         }
     }

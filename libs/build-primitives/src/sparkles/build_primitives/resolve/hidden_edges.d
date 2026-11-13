@@ -12,9 +12,9 @@ module sparkles.build_primitives.resolve.hidden_edges;
 
 import std.algorithm.searching : canFind, startsWith;
 import std.conv : text;
-import std.path : buildNormalizedPath, isAbsolute;
 
 import sparkles.build_primitives.resolve.driver : ResolveDriver;
+import sparkles.build_primitives.resolve.paths : isAbsolutePath, normalizedPath;
 import sparkles.build_primitives.resolve.project : Package;
 import sparkles.build_primitives.resolve.recipe : SettingsTemplate;
 
@@ -126,7 +126,7 @@ private string locate(string value, string directory) @safe pure
     auto expanded = value.replace("${PACKAGE_DIR}", directory).replace("$PACKAGE_DIR", directory);
     if (expanded.canFind('$'))
         return null;
-    return expanded.isAbsolute ? buildNormalizedPath(expanded) : buildNormalizedPath(directory, expanded);
+    return expanded.isAbsolutePath ? normalizedPath(expanded) : normalizedPath(directory, expanded);
 }
 
 // The package owning `path`: the one with the longest directory containing

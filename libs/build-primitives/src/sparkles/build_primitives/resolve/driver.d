@@ -67,13 +67,15 @@ final class SystemDriver : ResolveDriver
         import std.algorithm.sorting : sort;
         import std.file : SpanMode, dirEntries;
 
+        import sparkles.build_primitives.resolve.paths : modelPath;
+
         if (!isDirectory(directory))
             return null;
         string[] files;
         try
             foreach (entry; dirEntries(directory, SpanMode.depth, followSymlink: true))
                 if (!entry.isDir)
-                    files ~= entry.name;
+                    files ~= modelPath(entry.name);
         catch (Exception)
             return files.sort.release;
         return files.sort.release;
