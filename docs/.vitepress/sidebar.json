@@ -1824,6 +1824,28 @@
         ]
       },
       {
+        "text": "fsx",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Specification",
+            "link": "/specs/fsx/SPEC"
+          },
+          {
+            "text": "Delivery Plan",
+            "link": "/specs/fsx/PLAN"
+          },
+          {
+            "text": "Testing",
+            "link": "/specs/fsx/testing"
+          },
+          {
+            "text": "Decisions",
+            "link": "/specs/fsx/decisions"
+          }
+        ]
+      },
+      {
         "text": "Fuzzy",
         "collapsed": true,
         "items": [
