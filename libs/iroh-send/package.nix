@@ -10,6 +10,7 @@
 # the vendored sources are the ones the upstream lock names.
 {
   lib,
+  stdenv,
   rustPlatform,
   runCommand,
   sendme,
@@ -46,7 +47,7 @@ rustPlatform.buildRustPackage {
   # installed.
   postInstall = ''
     mkdir -p $out/lib
-    find target -name libsparkles_iroh_send.so -path '*/release/*' -exec cp {} $out/lib/ \;
+    find target -name libsparkles_iroh_send${stdenv.hostPlatform.extensions.sharedLibrary} -path '*/release/*' -exec cp {} $out/lib/ \;
     ${lib.optionalString (!withOracle) "rm -rf $out/bin"}
   '';
 
