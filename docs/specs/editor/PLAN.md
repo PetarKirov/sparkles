@@ -108,7 +108,7 @@ evidence for a promised capability.
   generations remain until a newer write is acknowledged. Settings, Unicode, provider
   and workload gates remain open;
   native clipboard request identity across focus changes passes the private
-  X11 provider scenario; provider withdrawal/reuse and other targets remain open.
+  X11 provider scenarios, including withdrawal/reuse; other targets remain open.
 - Owner policies: visual bidi movement/collapse, convention-aware Enter and
   one-second recovery checkpoints are accepted in EAD9–EAD11. Layout,
   storage and scheduling implementations still require their acceptance tests.

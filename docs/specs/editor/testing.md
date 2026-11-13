@@ -799,3 +799,33 @@ A freshly painted document remains selectable. All 60 editor tests pass.
 These checks preserve the current logical-line renderer's ownership boundary;
 shared bidi/wrapped layout, preedit geometry and live IME acceptance remain
 open under U.
+
+### X11 withdrawn-provider isolation — 2026-11-13
+
+The private-provider regression first checkpointed `xSTALE PROVIDER` in the
+replacement tab: a late `SelectionNotify` reused the newer sink's property.
+The X11 backend now gives each wire conversion a private requestor window
+and keeps wire slots separate from generational sink IDs. Cancellation
+releases sink references immediately; remaining packets are discarded.
+Capacity pressure can retire canceled requestor windows without evicting a
+live read or allowing late packets to name its replacement.
+
+Expanding the scenario to eight provider changes exposed permanent wire-slot
+exhaustion; the repaired scenario reaches the ninth read, rejects two old
+replies and checkpoints only the current provider's text. A focused own-copy
+probe also exposed queued requests to retired windows and older ownership-loss
+notifications invalidating a newer accepted offer. Both paths now preserve
+the current transfer without protocol errors.
+
+All 66 WSI tests pass and the checked editor build succeeds. The native
+`x11-clipboard-probe.d` passes all four shared clipboard properties with
+32 MiB `INCR` streaming, then nine cancellations followed by a successful
+own-clipboard read. The editor's `--clipboard-withdrawal`, `--clipboard` and
+default SIGKILL/Restore/dirty-close probes all pass on private X11 servers.
+The focused lane is independently runnable from the
+[X11 clipboard reference](../../libs/wsi/reference/x11-clipboard.md).
+
+An attempted full X11 hosted smoke stopped at its outside-pointer-release
+assertion before reaching clipboard checks. Its unrelated pointer/IME lanes
+are not counted as passing here. Wayland/Android input and full editor layout
+acceptance remain open; these X11 checks make no device performance claim.

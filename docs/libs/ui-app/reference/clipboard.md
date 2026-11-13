@@ -38,3 +38,9 @@ on the terminal host's capabilities.
 provider that delays two transfers and completes them in reverse order.
 The resulting checkpoint must retain each tab's intended text. This is X11
 evidence; Wayland and Android clipboard acceptance remain separate gates.
+
+The `--clipboard-withdrawal` scenario changes providers eight times while
+holding replies, then sends old replies before the current one. The X11 backend
+isolates these wire conversions with private requestor windows; see
+[X11 clipboard transfers](../../wsi/reference/x11-clipboard.md) for cancellation,
+capacity reclamation and the focused native streaming probe.

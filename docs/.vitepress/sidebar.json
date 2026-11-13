@@ -986,6 +986,17 @@
         "link": "/libs/ui/"
       },
       {
+        "text": "wsi",
+        "link": "/libs/wsi/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "X11 clipboard transfers",
+            "link": "/libs/wsi/reference/x11-clipboard"
+          }
+        ]
+      },
+      {
         "text": "wired",
         "collapsed": true,
         "items": [

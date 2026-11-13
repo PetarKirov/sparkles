@@ -75,8 +75,11 @@ new process, continues editing, and exercises native dirty-close decisions:
 ```bash
 dub run --single apps/editor/tools/native-close-probe.d -b checked --compiler=ldc2
 dub run --single apps/editor/tools/native-close-probe.d -b checked --compiler=ldc2 -- --clipboard
+dub run --single apps/editor/tools/native-close-probe.d -b checked --compiler=ldc2 -- --clipboard-withdrawal
 dub run --single apps/editor/tools/tui-close-probe.d -b checked --compiler=ldc2
 ```
 
 The `--clipboard` scenario holds two native X11 reads and completes them in
 reverse order, checking that each tab receives its own text.
+`--clipboard-withdrawal` holds replies across eight provider changes and
+checks that stale bytes never reach the replacement read.

@@ -28,10 +28,11 @@ import session_archive : readSessionGeneration, sessionGenerationOfName;
 
 int main(string[] args) @system
 {
-    if (args.length == 1 || (args.length == 2 && args[1] == "--clipboard"))
+    if (args.length == 1 || (args.length == 2
+        && (args[1] == "--clipboard" || args[1] == "--clipboard-withdrawal")))
     {
         auto command = ["xvfb-run", "-a", thisExePath, "--private-server"];
-        if (args.length == 2) command ~= "--clipboard";
+        if (args.length == 2) command ~= args[1];
         const result = execute(command);
         write(result.output);
         return result.status;
@@ -115,6 +116,8 @@ int main(string[] args) @system
         xcb_send_event(connection, 0, window, XCB_EVENT_MASK_NO_EVENT, cast(const(char)*) &event);
         xcb_flush(connection);
     }
+    string latestDrafts;
+    ulong observedGeneration;
     bool hasDraft(string expected) @system
     {
         foreach (archive; dirEntries(state, SpanMode.shallow))
@@ -126,6 +129,12 @@ int main(string[] args) @system
                 if (!generation) continue;
                 const record = readSessionGeneration(archive.name, generation);
                 if (record.hasError) continue;
+                if (generation >= observedGeneration)
+                {
+                    observedGeneration = generation;
+                    latestDrafts = "";
+                    foreach (tab; record.value.tabs) latestDrafts ~= "[" ~ tab.content ~ "]";
+                }
                 foreach (tab; record.value.tabs) if (tab.content == expected) return true;
             }
         }
@@ -139,9 +148,10 @@ int main(string[] args) @system
             assert(!tryWait(child).terminated, readText(log.name));
             Thread.sleep(10.msecs);
         }
-        assert(hasDraft(expected), "Expected recovery contents were not checkpointed: " ~ expected ~ "\n" ~ readText(log.name));
+        assert(hasDraft(expected), "Expected recovery contents were not checkpointed: " ~ expected
+            ~ "; latest private-fixture tabs: " ~ latestDrafts ~ "\n" ~ readText(log.name));
     }
-    if (args.length == 3 && args[2] == "--clipboard")
+    if (args.length == 3 && (args[2] == "--clipboard" || args[2] == "--clipboard-withdrawal"))
     {
         const clipboard = atom("CLIPBOARD"), targets = atom("TARGETS"), utf8 = atom("UTF8_STRING");
         const owner = xcb_generate_id(connection);
@@ -197,17 +207,53 @@ int main(string[] args) @system
                 pump();
                 Thread.sleep(10.msecs);
             }
-            assert(requests.length == count, "The native host did not request clipboard contents.");
+            assert(requests.length == count, text("Expected ", count,
+                " native clipboard requests, received ", requests.length, '.'));
         }
         key(55, XCB_MOD_MASK_CONTROL); // Ctrl+V in the first tab; hold its reply.
         awaitRequest(1);
+        const withdrawn = args[2] == "--clipboard-withdrawal";
+        if (withdrawn)
+        foreach (iteration; 0 .. 8)
+        {
+            const replacement = xcb_generate_id(connection);
+            xcb_create_window(connection, 0, replacement, root, -1, -1, 1, 1, 0,
+                XCB_WINDOW_CLASS_INPUT_ONLY, XCB_COPY_FROM_PARENT, 0, null);
+            advertised = false;
+            xcb_set_selection_owner(connection, replacement, clipboard, XCB_CURRENT_TIME);
+            xcb_flush(connection);
+            const replacementDeadline = MonoTime.currTime + 5.seconds;
+            while (!advertised && MonoTime.currTime < replacementDeadline)
+            { pump(); Thread.sleep(10.msecs); }
+            assert(advertised, "The replacement provider was not discovered.");
+            Thread.sleep(100.msecs);
+            if (iteration != 7)
+            {
+                key(55, XCB_MOD_MASK_CONTROL);
+                awaitRequest(iteration + 2);
+            }
+        }
         key(57, XCB_MOD_MASK_CONTROL); // Ctrl+N creates a second tab.
         Thread.sleep(100.msecs);
         key(55, XCB_MOD_MASK_CONTROL);
-        awaitRequest(2);
-        answer(requests[1], "from B");
-        awaitDraft("from B");
-        answer(requests[0], "from A");
+        awaitRequest(withdrawn ? 9 : 2);
+        if (withdrawn)
+        {
+            answer(requests[0], "STALE PROVIDER");
+            answer(requests[1], "ANOTHER STALE PROVIDER");
+            // This later key is an X11 ordering barrier. Its checkpoint must
+            // not contain bytes from the withdrawn transfer, even briefly.
+            key(53); // x
+            awaitDraft("x");
+            answer(requests[$ - 1], "from B");
+            awaitDraft("xfrom B");
+        }
+        else
+        {
+            answer(requests[1], "from B");
+            awaitDraft("from B");
+            answer(requests[0], "from A");
+        }
         bool paired;
         const pairDeadline = MonoTime.currTime + 5.seconds;
         while (!paired && MonoTime.currTime < pairDeadline)
@@ -221,8 +267,8 @@ int main(string[] args) @system
                     if (!generation) continue;
                     const record = readSessionGeneration(archive.name, generation);
                     if (record.hasValue && record.value.tabs.length == 2
-                        && record.value.tabs[0].content == "from A"
-                        && record.value.tabs[1].content == "from B") paired = true;
+                        && record.value.tabs[0].content == (withdrawn ? "" : "from A")
+                        && record.value.tabs[1].content == (withdrawn ? "xfrom B" : "from B")) paired = true;
                 }
             }
             Thread.sleep(10.msecs);
@@ -230,13 +276,14 @@ int main(string[] args) @system
         assert(paired, "Out-of-order native clipboard replies did not retain their requesting tabs.");
         closeWindow();
         Thread.sleep(100.msecs);
-        key(40);
+        if (!withdrawn) key(40);
         Thread.sleep(100.msecs);
         key(40);
         const deadline = MonoTime.currTime + 5.seconds;
         while (!tryWait(child).terminated && MonoTime.currTime < deadline) Thread.sleep(10.msecs);
         assert(tryWait(child).terminated && tryWait(child).status == 0, readText(log.name));
-        writeln("out-of-order native X11 clipboard replies retained their requesting tabs");
+        writeln(withdrawn ? "withdrawn X11 clipboard replies did not reach a replacement transfer"
+            : "out-of-order native X11 clipboard replies retained their requesting tabs");
         return 0;
     }
     key(38); // Xvfb's default XKB map: a.

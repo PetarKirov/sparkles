@@ -7,9 +7,9 @@ native values before re-arming the same Event Horizon loop. XIM/keymap work is
 a later input slice and cannot introduce another display connection or wait.
 
 The clipboard is the `CLIPBOARD` selection, owned by a hidden `InputOnly`
-helper window that is also the requestor of every conversion; transfers past
-one 64 KiB property go `INCR`, and XFixes reports another client taking the
-selection.
+helper window. Each incoming conversion has its own bounded requestor window,
+so delayed replies cannot name a replacement transfer. Transfers past one
+64 KiB property go `INCR`, and XFixes reports another client taking the selection.
 */
 module sparkles.wsi.platform.x11;
 
@@ -1126,6 +1126,8 @@ struct X11Wsi
             remember(detached.error);
         foreach (h; clipboard_.transfers.byLive)
             clipboard_.end(h, TransferStatus.failed);
+        foreach (i; 0 .. fetches_.length)
+            finishFetch(i);
         if (clip_.helper != 0)
             destroyNative(clip_.helper);
         foreach (h; windows_.byLive)
@@ -1639,7 +1641,7 @@ struct X11Wsi
 
     /**
     Starts reading `offer`'s `mimeType` into `sink` (`DT2`): the selection is
-    converted into a property of the helper window and read as it arrives,
+    converted into a property of a private requestor window and read as it arrives,
     following `INCR`. Only the clipboard's current offer is readable.
     */
     WsiResult!TransferId receive(S)(OfferId offer, scope const(char)[] mimeType,
@@ -1650,55 +1652,102 @@ struct X11Wsi
             return x11Failure!TransferId(WsiOperation.command, 0,
                 "the offer has ended", WsiErrorKind.staleId);
         const target = targetFor(offer, mimeType);
+        size_t i;
+        while (i < fetches_.length && fetches_[i].state != Fetch.State.idle) ++i;
+        if (i == fetches_.length)
+            foreach (index, ref fetch; fetches_)
+                if (fetch.state == Fetch.State.discardRequested || fetch.state == Fetch.State.discarding)
+                {
+                    // A cancelled provider may never reply. Retire its unique
+                    // requestor under pressure; late traffic cannot name the
+                    // next conversion, which receives a different window ID.
+                    finishFetch(index);
+                    i = index;
+                    break;
+                }
+        if (i == fetches_.length)
+            return x11Failure!TransferId(WsiOperation.command, 0,
+                "X11 clipboard wire capacity reached", WsiErrorKind.capacity);
+        const requestor = xcb_generate_id(connection_);
+        if (!requestor)
+            return x11Failure!TransferId(WsiOperation.command,
+                xcb_connection_has_error(connection_), "clipboard requestor allocation failed");
+        const uint mask = XCB_EVENT_MASK_PROPERTY_CHANGE;
+        const created = checkedRequest(xcb_create_window_checked(connection_, 0, requestor,
+            bootstrap_.root, -1, -1, 1, 1, 0, XCB_WINDOW_CLASS_INPUT_ONLY,
+            XCB_COPY_FROM_PARENT, XCB_CW_EVENT_MASK, &mask));
+        if (created)
+            return x11Failure!TransferId(WsiOperation.command, created,
+                "clipboard requestor creation failed");
         auto begun = clipboard_.begin(offer, mimeType,
             (() @trusted => SinkRef.to(sink))());
         if (begun.hasError)
+        {
+            destroyNative(requestor);
             return begun;
+        }
         if (target == XCB_NONE)
         {
+            destroyNative(requestor);
             clipboard_.end(begun.value, TransferStatus.failed);
             return begun;
         }
-        const i = begun.value.index;
-        fetches_[i] = Fetch(Fetch.State.requested, begun.value);
-        xcb_convert_selection(connection_, clip_.helper, clip_.clipboard,
+        fetches_[i] = Fetch(Fetch.State.requested, begun.value, requestor, target);
+        xcb_convert_selection(connection_, requestor, clip_.clipboard,
             target, clip_.transfer[i], XCB_CURRENT_TIME);
         xcb_flush(connection_);
         return begun;
     }
 
-    /// Ends a transfer with `cancelled`; its sink then hears nothing more. An
-    /// `INCR` transfer in flight is still read to its end and discarded, so
-    /// the sender is not left waiting.
+    /// Ends a transfer with `cancelled`; its sink then hears nothing more.
+    /// Conversion replies and `INCR` streams are drained and discarded while
+    /// wire slots are available. Pressure retires a cancelled requestor window;
+    /// delayed traffic cannot name its replacement or retain a sink reference.
     WsiResult!void cancelTransfer(TransferId transfer)
     {
         if (clipboard_.transfers.isLive(transfer))
         {
-            ref fetch = fetches_[transfer.index];
-            fetch.state = fetch.state == Fetch.State.incremental
-                ? Fetch.State.discarding : Fetch.State.idle;
+            foreach (ref fetch; fetches_)
+                if (fetch.transfer == transfer) discardFetch(fetch);
         }
         return clipboard_.cancel(transfer);
     }
 
     private struct ClipAtoms
     {
-        uint helper;     // the window that owns the selection and receives it
+        uint helper;     // owns the selection and receives TARGETS discovery
         uint clipboard;
         uint targets;
         uint incr;
         uint utf8;       // UTF8_STRING
         uint targetsProperty;
-        uint[8] transfer; // one property per transfer slot
+        uint[8] transfer; // one property per wire slot, independent of sink IDs
         ubyte xfixesEvent; // XFixes' first event code; 0 without XFixes
     }
 
-    // One incoming transfer, by transfer slot.
+    // Wire slots are separate from reusable sink IDs: cancelled conversions
+    // retain their requestor until drained or retired under capacity pressure.
     private struct Fetch
     {
-        enum State : ubyte { idle, requested, incremental, discarding }
+        enum State : ubyte { idle, requested, incremental, discardRequested, discarding }
         State state;
         TransferId transfer;
+        uint requestor, target;
+    }
+
+    private static void discardFetch(ref Fetch fetch) @safe pure nothrow @nogc
+    {
+        if (fetch.state == Fetch.State.requested) fetch.state = Fetch.State.discardRequested;
+        else if (fetch.state == Fetch.State.incremental) fetch.state = Fetch.State.discarding;
+    }
+
+    private void finishFetch(size_t index) @system
+    {
+        ref fetch = fetches_[index];
+        foreach (ref serve; serves_)
+            if (serve.requestor == fetch.requestor) serve.live = false;
+        if (fetch.requestor) destroyNative(fetch.requestor);
+        fetch = Fetch.init;
     }
 
     // One outgoing `INCR` transfer to a requestor.
@@ -1782,11 +1831,7 @@ struct X11Wsi
             offerTargets_[offer.index][i] = internAtom(connection_, t[]);
         xcb_set_selection_owner(connection_, clip_.helper, clip_.clipboard,
             XCB_CURRENT_TIME);
-        auto owner = xcb_get_selection_owner_reply(connection_,
-            xcb_get_selection_owner(connection_, clip_.clipboard), null);
-        const owned = owner !is null && owner.owner == clip_.helper;
-        free(owner);
-        if (!owned)
+        if (!isSelectionOwner(clip_.helper))
         {
             dropOffer(offer);
             return x11Failure!OfferId(WsiOperation.command, 0,
@@ -1794,6 +1839,16 @@ struct X11Wsi
         }
         publish(offer);
         return wsiOk(offer);
+    }
+
+    // An owner notification can be queued before a newer synchronous offer.
+    // Confirm the server's current owner before it invalidates that offer.
+    private bool isSelectionOwner(uint expected) @system nothrow @nogc
+    {
+        auto owner = xcb_get_selection_owner_reply(connection_,
+            xcb_get_selection_owner(connection_, clip_.clipboard), null);
+        scope (exit) free(owner);
+        return owner !is null && owner.owner == expected;
     }
 
     // The X target to convert `offer`'s `mime` to: the atom it was listed
@@ -1817,7 +1872,8 @@ struct X11Wsi
             && responseType == clip_.xfixesEvent + XCB_XFIXES_SELECTION_NOTIFY)
         {
             auto event = cast(const xcb_xfixes_selection_notify_event_t*) generic;
-            if (event.selection == clip_.clipboard && event.owner != clip_.helper)
+            if (event.selection == clip_.clipboard && event.owner != clip_.helper
+                && isSelectionOwner(event.owner))
                 noticeForeignOwner(event.owner);
             return true;
         }
@@ -1828,8 +1884,7 @@ struct X11Wsi
                 return true;
             case XCB_SELECTION_NOTIFY:
                 auto event = cast(const xcb_selection_notify_event_t*) generic;
-                if (event.requestor == clip_.helper)
-                    converted(event);
+                converted(event);
                 return true;
             case XCB_SELECTION_CLEAR:
                 auto event = cast(const xcb_selection_clear_event_t*) generic;
@@ -1837,7 +1892,7 @@ struct X11Wsi
                 // offer has ended (`DT1`).
                 if (event.selection == clip_.clipboard)
                     if (auto record = clipboard_.offers.get(clipboard_.current))
-                        if (record.own)
+                        if (record.own && !isSelectionOwner(clip_.helper))
                         {
                             announce(clipboard_.current, DataOfferAction.withdrawn);
                             dropOffer(clipboard_.current);
@@ -1871,9 +1926,9 @@ struct X11Wsi
 
     private void converted(const xcb_selection_notify_event_t* event)
     {
-        if (event.property == clip_.targetsProperty
+        if (event.requestor == clip_.helper && (event.property == clip_.targetsProperty
             || (event.target == clip_.targets && event.property == XCB_NONE
-                && fetchingTargets_))
+                && fetchingTargets_)))
         {
             fetchingTargets_ = false;
             if (event.property != XCB_NONE)
@@ -1882,17 +1937,16 @@ struct X11Wsi
         }
         foreach (i, ref fetch; fetches_)
         {
-            if (fetch.state != Fetch.State.requested
-                || (event.property != clip_.transfer[i]
-                    && !(event.property == XCB_NONE
-                        && event.target == targetFor(
-                            clipboard_.transfers[fetch.transfer].offer,
-                            clipboard_.transfers[fetch.transfer].mime[]))))
+            if ((fetch.state != Fetch.State.requested && fetch.state != Fetch.State.discardRequested)
+                || event.requestor != fetch.requestor || event.selection != clip_.clipboard
+                || event.target != fetch.target
+                || (event.property != clip_.transfer[i] && event.property != XCB_NONE))
                 continue;
             if (event.property == XCB_NONE)
             {
-                fetch.state = Fetch.State.idle;
-                clipboard_.end(fetch.transfer, TransferStatus.failed);
+                const transfer = fetch.transfer;
+                finishFetch(i);
+                clipboard_.end(transfer, TransferStatus.failed);
                 return;
             }
             readTransfer(i, true);
@@ -1977,27 +2031,30 @@ struct X11Wsi
         for (;;)
         {
             auto reply = xcb_get_property_reply(connection_,
-                xcb_get_property(connection_, 0, clip_.helper, clip_.transfer[i],
+                xcb_get_property(connection_, 0, fetch.requestor, clip_.transfer[i],
                     XCB_GET_PROPERTY_TYPE_ANY, cast(uint)(offset / 4),
                     cast(uint)(clipChunkBytes / 4)), null);
             if (reply is null)
             {
-                fetch.state = Fetch.State.idle;
-                clipboard_.end(fetch.transfer, TransferStatus.failed);
+                const transfer = fetch.transfer;
+                finishFetch(i);
+                clipboard_.end(transfer, TransferStatus.failed);
                 return;
             }
             scope (exit) free(reply);
             if (first && offset == 0 && reply.type == clip_.incr)
             {
                 // Deleting the property asks the owner for the first chunk.
-                fetch.state = Fetch.State.incremental;
-                xcb_delete_property(connection_, clip_.helper, clip_.transfer[i]);
+                fetch.state = fetch.state == Fetch.State.discardRequested
+                    ? Fetch.State.discarding : Fetch.State.incremental;
+                xcb_delete_property(connection_, fetch.requestor, clip_.transfer[i]);
                 xcb_flush(connection_);
                 return;
             }
             const length = xcb_get_property_value_length(reply);
             const bytes = (cast(const(ubyte)*) xcb_get_property_value(reply))[0 .. length];
-            if (length != 0 && fetch.state != Fetch.State.discarding)
+            if (length != 0 && fetch.state != Fetch.State.discarding
+                && fetch.state != Fetch.State.discardRequested)
                 if (auto transfer = clipboard_.transfers.get(fetch.transfer))
                     transfer.sink.chunk(fetch.transfer, bytes);
             offset += length;
@@ -2005,16 +2062,18 @@ struct X11Wsi
                 continue;
             // Deleting the property takes the chunk, which asks an `INCR`
             // sender for the next one.
-            xcb_delete_property(connection_, clip_.helper, clip_.transfer[i]);
+            xcb_delete_property(connection_, fetch.requestor, clip_.transfer[i]);
             xcb_flush(connection_);
             // A whole value ends here; an `INCR` transfer, with an empty chunk.
-            const ended = fetch.state == Fetch.State.requested || offset == 0;
+            const ended = first || offset == 0;
             if (ended)
             {
-                const discarded = fetch.state == Fetch.State.discarding;
-                fetch.state = Fetch.State.idle;
+                const discarded = fetch.state == Fetch.State.discarding
+                    || fetch.state == Fetch.State.discardRequested;
+                const transfer = fetch.transfer;
+                finishFetch(i);
                 if (!discarded)
-                    clipboard_.end(fetch.transfer, TransferStatus.completed);
+                    clipboard_.end(transfer, TransferStatus.completed);
             }
             return;
         }
@@ -2032,10 +2091,8 @@ struct X11Wsi
                     writeChunk(serve);
             return;
         }
-        if (event.window != clip_.helper)
-            return;
         foreach (i, ref fetch; fetches_)
-            if (event.atom == clip_.transfer[i]
+            if (event.window == fetch.requestor && event.atom == clip_.transfer[i]
                 && (fetch.state == Fetch.State.incremental
                     || fetch.state == Fetch.State.discarding))
                 readTransfer(i, false);
@@ -2043,6 +2100,17 @@ struct X11Wsi
 
     private void serveRequest(const xcb_selection_request_event_t* request)
     {
+        // Capacity pressure may retire our cancelled requestor before its
+        // already queued SelectionRequest reaches this connection. Sending a
+        // reply to that dead window would raise a fatal BadWindow here.
+        const setup = xcb_get_setup(connection_);
+        if ((request.requestor & ~setup.resource_id_mask) == setup.resource_id_base)
+        {
+            bool live = request.requestor == clip_.helper
+                || indexOfWindow(request.requestor) != size_t.max;
+            foreach (ref fetch; fetches_) live |= fetch.requestor == request.requestor;
+            if (!live) return;
+        }
         xcb_selection_notify_event_t reply;
         reply.response_type = XCB_SELECTION_NOTIFY;
         reply.time = request.time;
@@ -2185,8 +2253,8 @@ struct X11Wsi
     {
         foreach (h; clipboard_.transfers.byLive)
             if (clipboard_.transfers[h].offer == offer)
-                fetches_[h.index].state = fetches_[h.index].state
-                    == Fetch.State.incremental ? Fetch.State.discarding : Fetch.State.idle;
+                foreach (ref fetch; fetches_)
+                    if (fetch.transfer == h) discardFetch(fetch);
         foreach (ref serve; serves_)
             if (serve.offer == offer)
                 serve.live = false;
