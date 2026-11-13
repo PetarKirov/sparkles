@@ -12,7 +12,8 @@ explorer `FXS8`, decision `X18`).
 
 $(UL
 $(LI $(LREF loadIrohSend) opens the library, by the path in
-    `$SPARKLES_IROH_SEND_LIB` or by its bare name.)
+    `$SPARKLES_IROH_SEND_LIB`, beside the program in `../lib`, or by its
+    bare name.)
 $(LI $(LREF IrohSend.start) starts a $(LREF SendSession), which runs on the
     library's own threads; $(LREF SendSession.poll) reads where it is.)
 $(LI $(LREF IrohSend.collection) names the collection of a list of files
@@ -29,8 +30,12 @@ import sparkles.base.expected : Expected, err, ok;
 /// The interface version this module speaks; a library with another is refused.
 enum uint irohSendAbi = 3;
 
-/// The library's file name; `dlopen` searches for it when no path is given.
-enum string irohSendLibraryName = "libsparkles_iroh_send.so";
+/// The library's file name, as Rust names a `cdylib` on this platform;
+/// `dlopen` searches for it when no path is given.
+version (OSX)
+    enum string irohSendLibraryName = "libsparkles_iroh_send.dylib";
+else
+    enum string irohSendLibraryName = "libsparkles_iroh_send.so";
 
 /// One file to send: its name in the collection, and its path on disk.
 struct SendFile
@@ -264,7 +269,8 @@ struct Receiver
 }
 
 /**
-Opens the iroh bridge: at `path`, else at `$SPARKLES_IROH_SEND_LIB`, else by
+Opens the iroh bridge: at `path`, else at `$SPARKLES_IROH_SEND_LIB`, else in
+`../lib` beside the running program, where a package installs it, else by
 its bare name, which the dynamic loader searches for. Fails with the
 loader's reason, or when the library speaks another interface version.
 */
@@ -274,7 +280,9 @@ Expected!(IrohSend, string) loadIrohSend(string path = null) @trusted
     import std.string : fromStringz, toStringz;
 
     if (path.length == 0)
-        path = environment.get("SPARKLES_IROH_SEND_LIB", irohSendLibraryName);
+        path = environment.get("SPARKLES_IROH_SEND_LIB");
+    if (path.length == 0)
+        path = besideProgram();
     version (Posix)
     {
         import core.sys.posix.dlfcn : dlerror, dlopen, dlsym, RTLD_LOCAL, RTLD_NOW;
@@ -305,6 +313,25 @@ Expected!(IrohSend, string) loadIrohSend(string path = null) @trusted
 }
 
 // ---------------------------------------------------------------------------
+
+// `../lib/<library>` beside the running program when it is there, as a
+// package lays them out; else the bare name.
+private string besideProgram() @safe
+{
+    import std.file : exists, thisExePath;
+    import std.path : buildNormalizedPath, dirName;
+
+    try
+    {
+        const candidate = buildNormalizedPath(dirName(thisExePath), "..", "lib", irohSendLibraryName);
+        if (exists(candidate))
+            return candidate;
+    }
+    catch (Exception)
+    {
+    }
+    return irohSendLibraryName;
+}
 
 // The library's C interface (`sparkles_iroh_send.rs`).
 private extern (C) nothrow @nogc

@@ -10,7 +10,7 @@
   buildDubPackage,
   callPackage,
   llvmPackages,
-  patchelf,
+  stdenv,
   withDiff ? false,
   withIroh ? true,
   fsxSource ? lib.fileset.toSource {
@@ -45,7 +45,7 @@ buildDubPackage {
 
   # The repository links with lld on Linux (docs/guidelines/build-settings.md);
   # the wrapped bintools add the run paths a bare `ld.lld` leaves out.
-  nativeBuildInputs = [ llvmPackages.bintools ] ++ lib.optionals withIroh [ patchelf ];
+  nativeBuildInputs = lib.optionals stdenv.hostPlatform.isLinux [ llvmPackages.bintools ];
 
   doCheck = true;
   # The suite needs no runner: the binary runs its own tests, one at a time,
@@ -64,13 +64,10 @@ buildDubPackage {
     ln -s fsx $out/bin/fscp
     ln -s fsx $out/bin/fsls
     ${lib.optionalString withDiff "ln -s fsx $out/bin/fsdiff"}
+    # The bridge in `../lib` beside the program, where it looks first after
+    # its variable, so no environment variable has to name it (`XP3`).
+    ${lib.optionalString withIroh "mkdir -p $out/lib && ln -s ${bridge}/lib/* $out/lib/"}
     runHook postInstall
-  '';
-
-  # The bridge is found by its bare name through the program's own run path,
-  # so no environment variable has to name it (`XP3`).
-  postFixup = lib.optionalString withIroh ''
-    patchelf --add-rpath ${bridge}/lib $out/bin/fsx
   '';
 
   passthru = { inherit bridge; };
