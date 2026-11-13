@@ -20,11 +20,12 @@ import std.algorithm.searching : canFind, countUntil, endsWith, startsWith;
 import std.algorithm.sorting : sort;
 import std.array : array, replace;
 import std.conv : text;
-import std.path : buildNormalizedPath, buildPath, dirName, isAbsolute, relativePath;
+import std.path : dirName;
 
 import sparkles.build_primitives.dub_manifest : DubManifest, DubSubPackage, DubToolchainRequirements,
     parseDubRecipeText;
 import sparkles.build_primitives.resolve.driver : ResolveDriver;
+import sparkles.build_primitives.resolve.paths : isAbsolutePath, joinedPath, normalizedPath, relativePathTo;
 import sparkles.build_primitives.resolve.platform : BuildPlatform;
 import sparkles.build_primitives.resolve.recipe : ConfigurationTemplate, DependencySpec,
     SettingsTemplate, expandPackageName, fillWithDefaults, packageSettings, toTemplate;
@@ -176,12 +177,12 @@ final class Project
                 string name = s.name;
                 if (!s.isInline)
                 {
-                    const directory = buildNormalizedPath(base.directory, s.path);
+                    const directory = normalizedPath(base.directory, s.path);
                     string source;
                     foreach (file; ["dub.sdl", "dub.json", "package.json"])
-                        if (driver.readText(directory.buildPath(file), source))
+                        if (driver.readText(directory.joinedPath(file), source))
                         {
-                            auto parsed = parseDubRecipeText(source, directory.buildPath(file));
+                            auto parsed = parseDubRecipeText(source, directory.joinedPath(file));
                             if (parsed.hasValue)
                                 name = parsed.value.name;
                             break;
@@ -250,7 +251,7 @@ Project loadProject(string directory, string subPackage, ResolveDriver driver,
     project.driver = driver;
     project.registry = registry;
     project.inTree = inTree;
-    auto base = loadRecipe(project, buildNormalizedPath(directory), null);
+    auto base = loadRecipe(project, normalizedPath(directory), null);
     project.root = subPackage.length
         ? resolveSubPackage(project, base, subPackage.startsWith(":") ? subPackage[1 .. $] : subPackage)
         : base;
@@ -272,7 +273,7 @@ Project loadSingleFileProject(string file, ResolveDriver driver, RegistrySources
     project.driver = driver;
     project.registry = registry;
     project.inTree = inTree;
-    file = buildNormalizedPath(file);
+    file = normalizedPath(file);
     string source;
     if (!driver.readText(file, source))
         fail(text("cannot read ", file));
@@ -311,9 +312,9 @@ private Package loadRecipe(Project project, string directory, string expectedNam
         return *loaded;
     string recipe, source;
     foreach (file; ["dub.sdl", "dub.json", "package.json"])
-        if (project.driver.readText(directory.buildPath(file), source))
+        if (project.driver.readText(directory.joinedPath(file), source))
         {
-            recipe = directory.buildPath(file);
+            recipe = directory.joinedPath(file);
             break;
         }
     if (recipe is null)
@@ -387,12 +388,12 @@ private Package resolveSubPackage(Project project, Package base, string sub) @sa
         }
         else
         {
-            const directory = buildNormalizedPath(base.directory, s.path);
+            const directory = normalizedPath(base.directory, s.path);
             string recipe, source;
             foreach (file; ["dub.sdl", "dub.json", "package.json"])
-                if (project.driver.readText(directory.buildPath(file), source))
+                if (project.driver.readText(directory.joinedPath(file), source))
                 {
-                    recipe = directory.buildPath(file);
+                    recipe = directory.joinedPath(file);
                     break;
                 }
             if (recipe is null)
@@ -507,15 +508,15 @@ private Package loadDependency(Project project, Package from, string name, const
     else if (rootName == from.base.name)
         base = from.base;
     else if (spec.path.length && spec.repository.length == 0)
-        base = loadRecipe(project, buildNormalizedPath(from.directory, spec.path), rootName);
+        base = loadRecipe(project, normalizedPath(from.directory, spec.path), rootName);
     else if (auto tree = rootName in project.inTree)
-        base = loadRecipe(project, buildNormalizedPath(*tree), rootName);
+        base = loadRecipe(project, normalizedPath(*tree), rootName);
     // A repository dependency is pinned by the locks like a registry one,
     // and the locks must pin what the recipe asks for.
     else if (auto source = lockedSource(project, from, name, spec))
     {
         checkLocked(from, name, spec, *source);
-        base = loadRecipe(project, buildNormalizedPath(source.directory), rootName);
+        base = loadRecipe(project, normalizedPath(source.directory), rootName);
     }
     else
         fail(text(from.recipe, ": the dependency `", name, "` is in neither DUB lock"));
@@ -835,8 +836,8 @@ TestRoot addTestRunnerConfiguration(Project project, const BuildPlatform platfor
     string mainFile = testConfiguration.settings.mainSourceFile;
     if (mainFile.length == 0)
         mainFile = root.settings.mainSourceFile;
-    if (mainFile.isAbsolute)
-        mainFile = relativePath(mainFile, root.directory);
+    if (mainFile.isAbsolutePath)
+        mainFile = relativePathTo(mainFile, root.directory);
 
     TestRoot result = TestRoot(name, true);
     foreach (file; settings.sourceFiles)
@@ -844,7 +845,7 @@ TestRoot addTestRunnerConfiguration(Project project, const BuildPlatform platfor
         if (!file.endsWith(".d"))
             continue;
         // A single-file package's main file is its only source: dub keeps it.
-        if (!project.single && mainFile.length && buildNormalizedPath(file) == buildNormalizedPath(mainFile))
+        if (!project.single && mainFile.length && normalizedPath(file) == normalizedPath(mainFile))
         {
             testConfiguration.settings.excludedSourceFiles.require("", null) ~= mainFile;
             continue;

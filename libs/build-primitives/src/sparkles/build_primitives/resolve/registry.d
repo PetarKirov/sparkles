@@ -85,12 +85,12 @@ from the tree is an error.
 PlanExpected!(RegistrySources, string) nixRegistrySources(const LockedPackage[] packages,
     string sources, ResolveDriver driver) @safe
 {
-    import std.path : buildPath;
+    import sparkles.build_primitives.resolve.paths : joinedPath;
 
     RegistrySources result;
     foreach (ref p; packages)
     {
-        const directory = buildPath(sources, ".dub", "packages", p.name, p.version_, p.name);
+        const directory = joinedPath(sources, ".dub", "packages", p.name, p.version_, p.name);
         if (!driver.isDirectory(directory))
             return planErr!RegistrySources(text("`", p.name, "` ", p.version_, " (", p.lock,
                 ") is not in the DUB sources at ", sources));
