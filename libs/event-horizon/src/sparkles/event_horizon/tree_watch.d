@@ -18,7 +18,9 @@ $(LI `lost`: one watch ended without being asked to: its directory was
 )
 
 A watch the kernel refuses for want of capacity fails with `ENOSPC`, which a
-caller treats as a loss too.
+caller treats as a loss too. On Windows a watched directory that is renamed
+ends no watch: the watch on its parent reports the name `removed`, which a
+caller that watches every directory it lists treats as the loss.
 
 Each host has a backend: inotify on Linux, FSEvents on macOS and
 `ReadDirectoryChangesW` on Windows. A backend runs on a thread of its own
@@ -111,8 +113,9 @@ struct TreeWatcher
     Watches the directory at `path`, an absolute path the process's ambient
     authority resolves, for changes to the names directly in it. Watching a
     directory already watched returns its token again. `ENOSPC` when the
-    host refuses the watch for want of capacity, `ENOTDIR` when `path` is
-    not a directory.
+    host refuses the watch for want of capacity, `ErrorKind.notADirectory`
+    (`ENOTDIR`, or `ERROR_DIRECTORY` on Windows) when `path` is not a
+    directory.
     */
     IoResult!WatchedDir watch(scope const(char)[] path, AmbientAuthority authority)
     in (authority.granted, "AmbientAuthority must come from ambientAuthority()")
@@ -561,6 +564,10 @@ unittest
         const moved = w.watch(buildPath(dir, "moved"), ambientAuthority()).value;
         const quiet = w.watch(buildPath(dir, "quiet"), ambientAuthority()).value;
         assert(gone.inode != moved.inode);
+        // Windows reports no rename on a directory's own handle: a caller
+        // learns of it through the parent, which it watches too (BGW14).
+        version (Windows)
+            const parent = w.watch(dir, ambientAuthority()).value;
 
         w.unwatch(quiet.token);
         rmdir(buildPath(dir, "quiet"));
@@ -569,8 +576,12 @@ unittest
         auto batch = w.nextBatch(s, clock, 50.msecs);
         assert(batch.value.canFind!(n => n.token == gone.token && n.kind == WatchNoteKind.lost),
             describe(batch.value));
-        assert(batch.value.canFind!(n => n.token == moved.token && n.kind == WatchNoteKind.lost),
-            describe(batch.value));
+        version (Windows)
+            assert(batch.value.canFind!(n => n.token == parent.token
+                && n.kind == WatchNoteKind.removed && n.name == "moved"), describe(batch.value));
+        else
+            assert(batch.value.canFind!(n => n.token == moved.token
+                && n.kind == WatchNoteKind.lost), describe(batch.value));
         assert(!batch.value.canFind!(n => n.token == quiet.token), describe(batch.value));
     });
 }
