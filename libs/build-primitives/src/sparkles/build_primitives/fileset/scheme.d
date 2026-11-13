@@ -25,7 +25,9 @@ $(TR $(TD `Result finish(ref Value root)`) $(TD a fold's result, from the
     fileset root's value))
 $(TR $(TD `bool listing(path)`) $(TD optional: hears each directory the
     machine is about to list, members or not, before it is listed (FSS9);
-    `false` aborts))
+    `false` aborts. Declared as `listing(path, bool throughLink)`, it also
+    hears whether the path is a link the root's policy follows; a link
+    whose target proves to be a file is then handed over as a member))
 $(TR $(TD `string failure()`) $(TD optional: why it aborted))
 )
 
@@ -238,8 +240,16 @@ SchemeResult!S resolveScheme(V, Rights R, S, Exec)(DirRef!(V, R) root, ref const
                 // change made after it (FSS9).
                 static if (__traits(hasMember, S, "listing"))
                     foreach (i, ref r; m.batch)
-                        if (r.kind == RequestKind.readDir && !scheme.listing(m.listingPath(cast(uint) i)))
+                    {
+                        if (r.kind != RequestKind.readDir)
+                            continue;
+                        static if (__traits(compiles, scheme.listing("", true)))
+                            const heard = scheme.listing(m.listingPath(cast(uint) i), r.throughLink);
+                        else
+                            const heard = scheme.listing(m.listingPath(cast(uint) i));
+                        if (!heard)
                             return aborted();
+                    }
                 exec.run(m.batch, (size_t i) { driver.perform(m, root, i); });
                 if (refusedWork(exec))
                     return fail(notAdmittedError);

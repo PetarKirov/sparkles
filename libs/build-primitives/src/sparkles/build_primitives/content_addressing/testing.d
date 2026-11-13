@@ -1152,19 +1152,7 @@ string cacheDivergence(V = StatValidator)(string literal, const(Change)[] script
     auto vfs = &made.value.get().vfs;
     vfs.clockNs = 10_000_000_000;
     string[] files, links;
-    foreach (line; literal.lineSplitter)
-    {
-        const l = line.strip;
-        if (!l.length || l.endsWith("/"))
-            continue;
-        if (l.canFind(" -> "))
-            links ~= l[0 .. l.indexOf(" -> ")];
-        else
-        {
-            const name = l.canFind(" = ") ? l[0 .. l.indexOf(" = ")] : l;
-            files ~= name.endsWith(" +x") ? name[0 .. $ - 3] : name;
-        }
-    }
+    scriptTargets(literal, files, links);
     auto rng = Mt19937(cast(uint) seed);
     const(ubyte)[] record;
     foreach (step; 0 .. script.length + 1)
@@ -1189,6 +1177,102 @@ string cacheDivergence(V = StatValidator)(string literal, const(Change)[] script
         }
     }
     return null;
+}
+
+// The files and links of a tree literal, which a script changes.
+private void scriptTargets(string literal, ref string[] files, ref string[] links) @safe
+{
+    import std.algorithm.searching : canFind, endsWith;
+
+    foreach (line; literal.lineSplitter)
+    {
+        const l = line.strip;
+        if (!l.length || l.endsWith("/"))
+            continue;
+        if (l.canFind(" -> "))
+            links ~= l[0 .. l.indexOf(" -> ")];
+        else
+        {
+            const name = l.canFind(" = ") ? l[0 .. l.indexOf(" = ")] : l;
+            files ~= name.endsWith(" +x") ? name[0 .. $ - 3] : name;
+        }
+    }
+}
+
+/**
+M7's oracle, extended to input states (BGW9): runs `observe` with a
+`DigestCache` over `literal` and after each change of `script`, each run
+loading the record the one before encoded, and compares every state with
+one observed with no cache. Returns the first divergence, or `null`, and
+adds to `reused` the files the cache spared.
+*/
+string stateDivergence(string literal, const(Change)[] script, long tickNs, ulong seed, ref size_t reused)
+    @system
+{
+    import sparkles.build_primitives.workspace.input_state : DigestCache, InputState, observe;
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+
+    auto made = openFixture(literal);
+    auto vfs = &made.value.get().vfs;
+    vfs.clockNs = 10_000_000_000;
+    string[] files, links;
+    scriptTargets(literal, files, links);
+    auto rng = Mt19937(cast(uint) seed);
+
+    string state(ref DigestCache!() cache)
+    {
+        auto sets = Filesets(CasePolicy.sensitive);
+        auto root = openRoot!(Rights.readOnly)(vfs, "", ambientAuthority());
+        RecordingExecutor exec;
+        auto got = observe(root.value.borrow, sets, sets.everything, cache, exec);
+        return got.hasError ? got.error.context : text(got.value);
+    }
+
+    const(ubyte)[] record;
+    foreach (step; 0 .. script.length + 1)
+    {
+        string what;
+        if (step)
+        {
+            vfs.clockNs += tickNs;
+            what = text(script[step - 1], change(*vfs, script[step - 1], files, links, rng));
+        }
+        DigestCache!() warm, cold;
+        if (record.length && warm.load(record).hasError)
+            return "a cache this module wrote does not load";
+        warm.begin(vfs.clockNs);
+        cold.begin(vfs.clockNs);
+        const w = state(warm), c = state(cold);
+        if (w != c)
+            return text("after change ", step, " (", what, "): the cache gives ", w, ", a cold run ", c);
+        reused += warm.filesReused;
+        record = warm.encode();
+    }
+    return null;
+}
+
+/// BGW9: an input state observed through the digest cache equals one
+/// observed cold, after every change of every kind, in the same tick as the
+/// run before and in later ones; and the cache is used.
+@("content_addressing.cache.BGW9.inputStates")
+@system unittest
+{
+    import std.traits : EnumMembers;
+
+    static immutable Change[] every = [EnumMembers!Change];
+    size_t scripts, reused;
+    foreach (t; oracleTrees(30)[5 .. $])
+        foreach (tick; [0L, 3_000_000_000L])
+        {
+            auto rng = Mt19937(cast(uint)(scripts + 11));
+            Change[] script;
+            foreach (_; 0 .. 10)
+                script ~= every[uniform(0, every.length, rng)];
+            const why = stateDivergence(t.literal, script, tick, scripts, reused);
+            assert(why is null, text(t.label, ", tick ", tick, ": ", why));
+            ++scripts;
+        }
+    assert(scripts > 50 && reused > 1000, text(scripts, " scripts, ", reused, " files reused"));
 }
 
 // Applies `c` to a random file or link; returns what it changed.
