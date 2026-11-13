@@ -4,6 +4,18 @@
       "version": "c72f75135de636987e91bcd8ec5a22d32d34a197",
       "repository": "https://codeberg.org/ddn/eve.git",
       "sha256": "sha256-mXGcKf5bf0furz5fzp0rE4aWX1za/DnzdS/4O4IujZc="
+    },
+    "mir-algorithm": {
+      "version": "3.22.4",
+      "sha256": "1x4vwj3g6g0qmwngb9wrkmhd3z298p75i4xc1gbhcpzysphbqldp"
+    },
+    "mir-core": {
+      "version": "1.7.4",
+      "sha256": "1p3rjp9b1l90xz8j6rk5nak150qq93dhrdgff9s504px5y14gr9h"
+    },
+    "silly": {
+      "version": "1.1.1",
+      "sha256": "0fz7ib715sfk3w69i6xns5pwd4caahvfqjf32v13daxm1ms8xdzz"
     }
   }
 }
