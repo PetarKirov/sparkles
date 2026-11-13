@@ -6,7 +6,7 @@ resolves them.
 module sparkles.build_primitives.resolve;
 
 public import sparkles.build_primitives.resolve.configure;
-public import sparkles.build_primitives.resolve.driver;
+public import sparkles.build_primitives.resolve.tree;
 public import sparkles.build_primitives.resolve.dub_versions;
 public import sparkles.build_primitives.resolve.hidden_edges;
 public import sparkles.build_primitives.resolve.libraries;

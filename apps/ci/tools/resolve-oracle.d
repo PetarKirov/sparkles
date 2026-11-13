@@ -428,7 +428,9 @@ int main(string[] args)
         return 2;
     }
 
-    auto driver = new ours.SystemDriver;
+    auto driver = ours.systemTree();
+    // dub reads the process's environment; so does the resolver, through the request.
+    auto processEnvironment = ours.processEnvironment();
     auto pkgConfig = new ours.SystemPkgConfig;
     const locked = ours.readDubLocks([repoRoot.buildPath("nix", "dub-lock.json"),
         repoRoot.buildPath("nix", "ci-dub-lock.json")], driver);
@@ -549,6 +551,7 @@ int main(string[] args)
             ourRequest.inTree["sparkles"] = repoRoot;
         foreach (name, source; registry.value)
             ourRequest.registry[name] = source;
+        ourRequest.environment = processEnvironment;
         const resolution = ours.resolve(ourRequest, driver);
 
         if (resolution.hasError || dubFailed)

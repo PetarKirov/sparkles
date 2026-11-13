@@ -21,11 +21,11 @@ import std.algorithm.sorting : sort;
 import std.array : array, replace;
 import std.conv : text;
 import std.path : dirName;
+import sparkles.build_primitives.resolve.paths : isAbsolutePath, joinedPath, normalizedPath, relativePathTo;
 
 import sparkles.build_primitives.dub_manifest : DubManifest, DubSubPackage, DubToolchainRequirements,
     parseDubRecipeText;
-import sparkles.build_primitives.resolve.driver : ResolveDriver;
-import sparkles.build_primitives.resolve.paths : isAbsolutePath, joinedPath, normalizedPath, relativePathTo;
+import sparkles.build_primitives.resolve.tree : ResolveTree;
 import sparkles.build_primitives.resolve.platform : BuildPlatform;
 import sparkles.build_primitives.resolve.recipe : ConfigurationTemplate, DependencySpec,
     SettingsTemplate, expandPackageName, fillWithDefaults, packageSettings, toTemplate;
@@ -143,9 +143,9 @@ final class Package
     }
 
     /// This package's settings for one configuration (`Package.getBuildSettings`).
-    BuildSettings buildSettings(const BuildPlatform platform, string configuration, ResolveDriver driver)
+    BuildSettings buildSettings(const BuildPlatform platform, string configuration, ResolveTree tree)
         const @safe
-        => packageSettings(settings, configurations, configuration, name, platform, directory, driver);
+        => packageSettings(settings, configurations, configuration, name, platform, directory, tree);
 }
 
 /// The packages a request reaches, the root first.
@@ -156,7 +156,7 @@ final class Project
     private Package[string] byRecipe; // root packages by recipe directory
     private Package[string] subPackages; // subpackages by full name, once read
     private RecipeRead[string] recipesRead; // by directory: each recipe read and parsed once
-    private ResolveDriver driver;
+    private ResolveTree tree;
     private RegistrySources registry;
     private InTreeSources inTree;
     /// Whether the root is a single-file package.
@@ -238,11 +238,11 @@ Loads the project rooted at the recipe in `directory`, or at its subpackage
 of them by version resolves to that directory, as a documentation example's
 `version="*"` dependency on this repository does when the requester asks.
 */
-Project loadProject(string directory, string subPackage, ResolveDriver driver,
+Project loadProject(string directory, string subPackage, ResolveTree tree,
     RegistrySources registry, InTreeSources inTree = null) @safe
 {
     auto project = new Project;
-    project.driver = driver;
+    project.tree = tree;
     project.registry = registry;
     project.inTree = inTree;
     auto base = loadRecipe(project, normalizedPath(directory), null);
@@ -258,18 +258,18 @@ Loads the project rooted at a single-file package (BGR6): a D source whose
 leading `/+ dub.sdl: … +/` comment is its recipe, and which is its only
 source, as dub's `loadSingleFilePackage` makes it.
 */
-Project loadSingleFileProject(string file, ResolveDriver driver, RegistrySources registry,
+Project loadSingleFileProject(string file, ResolveTree tree, RegistrySources registry,
     InTreeSources inTree = null) @safe
 {
     import std.path : baseName, stripExtension;
 
     auto project = new Project;
-    project.driver = driver;
+    project.tree = tree;
     project.registry = registry;
     project.inTree = inTree;
     file = normalizedPath(file);
     string source;
-    if (!driver.readText(file, source))
+    if (!tree.readText(file, source))
         fail(text("cannot read ", file));
     auto parsed = parseDubRecipeText(source, file);
     if (parsed.hasError)
@@ -291,7 +291,7 @@ Project loadSingleFileProject(string file, ResolveDriver driver, RegistrySources
     p.settings.mainSourceFile = file;
     if (p.settings.targetType == TargetType.autodetect)
         p.settings.targetType = TargetType.executable;
-    fillWithDefaults(p.settings, p.configurations, p.name, p.directory, driver);
+    fillWithDefaults(p.settings, p.configurations, p.name, p.directory, tree);
     p.base = p;
     project.root = p;
     project.single = true;
@@ -319,7 +319,7 @@ private RecipeRead recipeIn(Project project, string directory) @safe
     RecipeRead read;
     string source;
     foreach (file; ["dub.sdl", "dub.json", "package.json"])
-        if (project.driver.readText(directory.joinedPath(file), source))
+        if (project.tree.readText(directory.joinedPath(file), source))
         {
             read.path = directory.joinedPath(file);
             break;
@@ -391,7 +391,7 @@ private Package makePackage(R)(Project project, const ref R recipe, string name,
         p.buildTypes[b.name] = settings;
     }
     if (fillDefaults)
-        fillWithDefaults(p.settings, p.configurations, name, directory, project.driver);
+        fillWithDefaults(p.settings, p.configurations, name, directory, project.tree);
     return p;
 }
 
@@ -528,8 +528,8 @@ private Package loadDependency(Project project, Package from, string name, const
         base = from.base;
     else if (spec.path.length && spec.repository.length == 0)
         base = loadRecipe(project, normalizedPath(from.directory, spec.path), rootName);
-    else if (auto tree = rootName in project.inTree)
-        base = loadRecipe(project, normalizedPath(*tree), rootName);
+    else if (auto inTreeDirectory = rootName in project.inTree)
+        base = loadRecipe(project, normalizedPath(*inTreeDirectory), rootName);
     // A repository dependency is pinned by the locks like a registry one,
     // and the locks must pin what the recipe asks for.
     else if (auto source = lockedSource(project, from, name, spec))
@@ -834,7 +834,7 @@ TestRoot addTestRunnerConfiguration(Project project, const BuildPlatform platfor
     if (baseConfiguration is null)
         baseConfiguration = defaultConfiguration(project, platform, true);
 
-    const settings = root.buildSettings(platform, baseConfiguration, project.driver);
+    const settings = root.buildSettings(platform, baseConfiguration, project.tree);
     if (settings.targetType == TargetType.none)
         fail(text("the configuration `", baseConfiguration, "` of `", root.name, "` has target type none"));
     if (settings.targetType == TargetType.executable && baseConfiguration == "unittest")

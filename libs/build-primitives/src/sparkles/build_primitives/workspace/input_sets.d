@@ -1466,7 +1466,7 @@ unittest
 unittest
 {
     import sparkles.build_primitives.resolve.configure : resolve, ResolveRequest;
-    import sparkles.build_primitives.resolve.driver : MemoryDriver;
+    import sparkles.build_primitives.resolve.tree : memoryTree;
     import sparkles.build_primitives.resolve.platform : BuildPlatform;
 
     string[string] texts = [
@@ -1478,7 +1478,7 @@ unittest
             ~ "    stringImportPaths \"fancy\"\n}\n",
         "/r/lib/source/lib.d": "",
     ];
-    auto driver = new MemoryDriver(texts);
+    auto driver = memoryTree(texts);
     auto platform = BuildPlatform(["linux", "posix"], ["x86_64"], "ldc", "ldc2", 2111, "1.41.0");
     const resolution = resolve(ResolveRequest(directory: "/r", subPackage: "app", platform: platform), driver);
     assert(!resolution.hasError, resolution.hasError ? resolution.error.message : "");
@@ -1510,7 +1510,7 @@ unittest
 
     import sparkles.build_primitives.dub_manifest : hostPlatformTokens;
     import sparkles.build_primitives.resolve.configure : resolve, ResolveRequest;
-    import sparkles.build_primitives.resolve.driver : SystemDriver;
+    import sparkles.build_primitives.resolve.tree : systemTree;
     import sparkles.build_primitives.resolve.platform : BuildPlatform;
     import sparkles.build_primitives.resolve.registry : nixRegistrySources, readDubLocks;
     import sparkles.build_primitives.workspace.discovery : readWorkspaceAt;
@@ -1526,7 +1526,7 @@ unittest
     const read = readWorkspaceAt(root).value;
     const host = ["linux", "posix"];
     auto platform = BuildPlatform(host.dup, ["x86_64"], "ldc", "ldc2", 2111, "1.41.0");
-    auto driver = new SystemDriver;
+    auto driver = systemTree();
     const locked = readDubLocks([root.buildPath("nix", "dub-lock.json"), root.buildPath("nix", "ci-dub-lock.json")],
         driver);
     assert(!locked.hasError, locked.hasError ? locked.error : "");

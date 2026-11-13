@@ -19,7 +19,7 @@ import std.algorithm.searching : canFind, startsWith;
 import std.conv : text;
 
 import sparkles.build_primitives.dub_manifest : DubDependency, DubPlatformValues;
-import sparkles.build_primitives.resolve.driver : ResolveDriver;
+import sparkles.build_primitives.resolve.tree : ResolveTree;
 import sparkles.build_primitives.resolve.platform : BuildPlatform, matchesSpecification;
 import sparkles.build_primitives.resolve.settings : BuildSettings, TargetType, buildOptionNamed,
     buildRequirementNamed, extractBuildOptions, parseTargetType;
@@ -222,18 +222,18 @@ import path, and the `application` and `library` configurations of a recipe
 that declares none, `app.d` or `main.d` choosing the application's main file.
 */
 void fillWithDefaults(ref SettingsTemplate top, ref ConfigurationTemplate[] configurations,
-    string packageName, string directory, ResolveDriver driver) @safe
+    string packageName, string directory, ResolveTree tree) @safe
 {
     import sparkles.build_primitives.resolve.paths : joinedPath;
 
-    if ("" !in top.stringImportPaths && driver.exists(directory.joinedPath("views")))
+    if ("" !in top.stringImportPaths && tree.exists(directory.joinedPath("views")))
         top.stringImportPaths.require("", null) ~= "views";
 
     const hasSourcePaths = ("" in top.sourcePaths) !is null;
     const hasImportPaths = ("" in top.importPaths) !is null;
     if (!hasSourcePaths || !hasImportPaths)
         foreach (defaultPath; ["source/", "src/"])
-            if (driver.exists(directory.joinedPath(defaultPath)))
+            if (tree.exists(directory.joinedPath(defaultPath)))
             {
                 if (!hasSourcePaths)
                     top.sourcePaths.require("", null) ~= defaultPath;
@@ -247,10 +247,10 @@ void fillWithDefaults(ref SettingsTemplate top, ref ConfigurationTemplate[] conf
     const name = packageName.length ? packageName : "unknown";
     search: foreach_reverse (sourcePath; top.sourcePaths.get("", null))
     {
-        if (!driver.exists(directory.joinedPath(sourcePath)))
+        if (!tree.exists(directory.joinedPath(sourcePath)))
             continue;
         foreach (candidate; ["app.d", "main.d", name ~ "/main.d", name ~ "/app.d"])
-            if (driver.exists(directory.joinedPath(sourcePath, candidate)))
+            if (tree.exists(directory.joinedPath(sourcePath, candidate)))
             {
                 mainFile = joinRelative(sourcePath, candidate);
                 break search;
@@ -298,7 +298,7 @@ setting adds the groups whose specifier matches, in group order. File paths
 are relative to `directory`, as dub's are at this stage.
 */
 void applyTemplate(const SettingsTemplate template_, ref BuildSettings into, const BuildPlatform platform,
-    string directory, ResolveDriver driver) @safe
+    string directory, ResolveTree tree) @safe
 {
     import std.algorithm.sorting : sort;
     import std.array : array;
@@ -317,18 +317,18 @@ void applyTemplate(const SettingsTemplate template_, ref BuildSettings into, con
         into.addSourceFiles(into.mainSourceFile);
     }
 
-    into.addSourceFiles(collectFiles(template_.sourcePaths, ["*.d"], platform, directory, driver));
-    into.addSourceFiles(collectFiles(template_.cSourcePaths, ["*.c", "*.i"], platform, directory, driver));
+    into.addSourceFiles(collectFiles(template_.sourcePaths, ["*.d"], platform, directory, tree));
+    into.addSourceFiles(collectFiles(template_.cSourcePaths, ["*.c", "*.i"], platform, directory, tree));
     into.sourceFiles.sort;
 
-    auto importFiles = (collectFiles(template_.importPaths, ["*.d", "*.di"], platform, directory, driver)
-        ~ collectFiles(template_.cImportPaths, ["*.h"], platform, directory, driver)).sort.release;
+    auto importFiles = (collectFiles(template_.importPaths, ["*.d", "*.di"], platform, directory, tree)
+        ~ collectFiles(template_.cImportPaths, ["*.h"], platform, directory, tree)).sort.release;
     string[] onlyImported;
     foreach (file; importFiles)
         if (!into.sourceFiles.canFind(file))
             onlyImported ~= file;
     into.addImportFiles(onlyImported);
-    into.addStringImportFiles(collectFiles(template_.stringImportPaths, ["*"], platform, directory, driver));
+    into.addStringImportFiles(collectFiles(template_.stringImportPaths, ["*"], platform, directory, tree));
 
     void each(string name)(void delegate(string[]) @safe add)
     {
@@ -374,14 +374,12 @@ void applyTemplate(const SettingsTemplate template_, ref BuildSettings into, con
 }
 
 // dub's `collectFiles`: the files under each matching path whose base name
-// matches one of `patterns`, relative to `directory`. A path that is no
+// matches one of `patterns`, without hidden ones, relative to `directory`;
+// a fileset resolution of each path (`ResolveTree.files`). A path that is no
 // directory is skipped; dub warns about it unless it names a variable.
 private string[] collectFiles(const string[][string] paths, const string[] patterns,
-    const BuildPlatform platform, string directory, ResolveDriver driver) @safe
+    const BuildPlatform platform, string directory, ResolveTree tree) @safe
 {
-    import std.algorithm.searching : any;
-    import std.path : baseName, globMatch, pathSplitter;
-
     import sparkles.build_primitives.resolve.paths : isAbsolutePath, normalizedPath, relativePathTo;
 
     string[] files;
@@ -397,17 +395,9 @@ private string[] collectFiles(const string[][string] paths, const string[] patte
 
                 fail(text(directory, ": a source or import path must not be empty"));
             }
-            const root = path.isAbsolutePath ? normalizedPath(path) : normalizedPath(directory, path);
-            if (!driver.isDirectory(root))
-                continue;
-            foreach (file; driver.filesBelow(root))
-            {
-                if (pathSplitter(file[root.length .. $]).any!(part => part.length && part[0] == '.'))
-                    continue;
-                if (!patterns.any!(p => globMatch(file.baseName, p)))
-                    continue;
+            const root = normalizedPath(path.isAbsolutePath ? path : normalizedPath(directory, path));
+            foreach (file; tree.files(root, patterns))
                 files ~= relativePathTo(file, directory);
-            }
         }
     }
     return files;
@@ -418,16 +408,16 @@ private string[] collectFiles(const string[][string] paths, const string[] patte
 /// default target name, and the dflags DMD spells as options.
 BuildSettings packageSettings(const SettingsTemplate top, const ConfigurationTemplate[] configurations,
     string configuration, string packageName, const BuildPlatform platform, string directory,
-    ResolveDriver driver) @safe
+    ResolveTree tree) @safe
 {
     import std.array : replace;
 
     BuildSettings settings;
-    applyTemplate(top, settings, platform, directory, driver);
+    applyTemplate(top, settings, platform, directory, tree);
     foreach (ref c; configurations)
         if (c.name == configuration)
         {
-            applyTemplate(c.settings, settings, platform, directory, driver);
+            applyTemplate(c.settings, settings, platform, directory, tree);
             break;
         }
     if (settings.targetName.length == 0)
@@ -467,9 +457,9 @@ environments "K" "V"
 @("build_primitives.resolve.recipe.applyTemplate.platformAndFiles")
 @safe unittest
 {
-    import sparkles.build_primitives.resolve.driver : MemoryDriver;
+    import sparkles.build_primitives.resolve.tree : memoryTree;
 
-    auto driver = new MemoryDriver(["/p/src/b.d": "", "/p/src/a.d": "", "/p/src/.hidden/x.d": "",
+    auto tree = memoryTree(["/p/src/b.d": "", "/p/src/a.d": "", "/p/src/.hidden/x.d": "",
         "/p/src/app.d": "", "/p/src/c.h": "", "/p/views/t.txt": "", "/p/inc/i.di": ""]);
     SettingsTemplate t;
     t.sourcePaths[""] = ["src"];
@@ -482,7 +472,7 @@ environments "K" "V"
     t.versions["posix"] = ["P"];
 
     BuildSettings s;
-    applyTemplate(t, s, BuildPlatform(["linux", "posix"], ["x86_64"], "ldc"), "/p", driver);
+    applyTemplate(t, s, BuildPlatform(["linux", "posix"], ["x86_64"], "ldc"), "/p", tree);
     assert(s.sourceFiles == ["src/a.d", "src/b.d"]);
     assert(s.importFiles == ["inc/i.di"]);
     assert(s.stringImportFiles == ["views/t.txt"]);
@@ -493,12 +483,12 @@ environments "K" "V"
 @("build_primitives.resolve.recipe.fillWithDefaults.dubDefaults")
 @safe unittest
 {
-    import sparkles.build_primitives.resolve.driver : MemoryDriver;
+    import sparkles.build_primitives.resolve.tree : memoryTree;
 
-    auto driver = new MemoryDriver(["/p/source/app.d": "", "/p/views/v": ""]);
+    auto tree = memoryTree(["/p/source/app.d": "", "/p/views/v": ""]);
     SettingsTemplate top;
     ConfigurationTemplate[] configurations;
-    fillWithDefaults(top, configurations, "p", "/p", driver);
+    fillWithDefaults(top, configurations, "p", "/p", tree);
     assert(top.sourcePaths[""] == ["source/"] && top.importPaths[""] == ["source/"]);
     assert(top.stringImportPaths[""] == ["views"]);
     assert(configurations.length == 2);
@@ -511,7 +501,7 @@ environments "K" "V"
     none.sourcePaths[""] = null;
     none.targetType = TargetType.sourceLibrary;
     ConfigurationTemplate[] noConfigurations;
-    fillWithDefaults(none, noConfigurations, "p", "/p", driver);
+    fillWithDefaults(none, noConfigurations, "p", "/p", tree);
     assert(none.sourcePaths[""].length == 0 && none.importPaths[""] == ["source/"]);
     assert(noConfigurations.length == 1 && noConfigurations[0].settings.targetType == TargetType.sourceLibrary);
 }

@@ -46,8 +46,10 @@ enum plannerPackage = "sparkles:ci";
 static immutable string[] plannerLibraries = ["sparkles:build-primitives"];
 
 /// The focus options carrying this repository's workspace inputs, resolved
-/// for `platform` with the registry `registry`.
-FocusOptions repositoryFocus(BuildPlatform platform, RegistrySources registry) @safe pure nothrow
+/// for `platform` with the registry `registry` and the environment
+/// `environment` (the process's, `processEnvironment()`).
+FocusOptions repositoryFocus(BuildPlatform platform, RegistrySources registry,
+    string[string] environment = null) @safe pure nothrow
 {
     FocusOptions options;
     options.workspace = WorkspaceInputs(read: lockfiles.dup, patterns: toolchainInputs.dup,
@@ -56,6 +58,7 @@ FocusOptions repositoryFocus(BuildPlatform platform, RegistrySources registry) @
     options.plannerLibraries = plannerLibraries;
     options.platform = platform;
     options.registry = registry;
+    options.environment = environment;
     return options;
 }
 
@@ -70,7 +73,7 @@ unittest
     import std.path : buildNormalizedPath, buildPath;
     import std.process : environment;
 
-    import sparkles.build_primitives.resolve.driver : SystemDriver;
+    import sparkles.build_primitives.resolve.tree : systemTree;
     import sparkles.build_primitives.resolve.registry : nixRegistrySources, readDubLocks;
     import sparkles.build_primitives.workspace.discovery : readWorkspaceAt;
     import sparkles.build_primitives.workspace.package_graph : buildPackageGraph, RecipeRole;
@@ -84,7 +87,7 @@ unittest
     // This file is apps/ci/src/repository_inputs.d.
     const root = buildNormalizedPath(__FILE_FULL_PATH__, "../../../..");
     const host = ["linux", "posix"];
-    auto driver = new SystemDriver;
+    auto driver = systemTree();
     const locked = readDubLocks([root.buildPath("nix", "dub-lock.json"), root.buildPath("nix", "ci-dub-lock.json")],
         driver);
     assert(!locked.hasError, locked.hasError ? locked.error : "");
@@ -95,7 +98,7 @@ unittest
     const graph = buildPackageGraph(workspace.rootName, workspace.recipes, RecipeRole.test, host).value;
     const options = repositoryFocus(BuildPlatform(host.dup, ["x86_64"], "ldc", "ldc2", 2111, "1.41.0"),
         registry.value);
-    auto inputs = workspaceInputSets(root, graph, workspace, options, host);
+    auto inputs = workspaceInputSets(root, driver, graph, workspace, options, host);
 
     foreach (path; [
         // Read by planning.

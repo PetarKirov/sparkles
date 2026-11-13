@@ -20,9 +20,9 @@ import std.algorithm.sorting : sort;
 import std.array : array, join;
 import std.conv : text;
 import std.path : extension;
-
-import sparkles.build_primitives.resolve.driver : ResolveDriver;
 import sparkles.build_primitives.resolve.paths : isAbsolutePath, normalizedPath;
+
+import sparkles.build_primitives.resolve.tree : ResolveTree;
 import sparkles.build_primitives.resolve.platform : BuildPlatform, matchesSpecification;
 import sparkles.build_primitives.resolve.project : InTreeSources, Package, Project, RegistrySources, loadSingleFileProject,
     ResolveException, TestRoot, addTestRunnerConfiguration, defaultConfiguration, fail,
@@ -80,6 +80,20 @@ struct ResolveRequest
     /// Root package names whose dependencies by version resolve to the
     /// given in-tree recipe directory (BGR6).
     InTreeSources inTree;
+    /**
+    The environment variables a value may refer to (`DFLAGS` included):
+    the process's, from $(LREF processEnvironment), for a request a command
+    makes. Resolution reads no other environment.
+    */
+    string[string] environment;
+}
+
+/// The process's environment variables, for `ResolveRequest.environment`.
+string[string] processEnvironment() @safe
+{
+    import std.process : environment;
+
+    return environment.toAA();
 }
 
 /// One binary target, or the root of one.
@@ -141,14 +155,14 @@ struct ResolveError
     }
 }
 
-/// Resolves `request`, reading through `driver`.
-PlanExpected!(Resolution, ResolveError) resolve(const ResolveRequest request, ResolveDriver driver) @safe
+/// Resolves `request`, reading through `tree`.
+PlanExpected!(Resolution, ResolveError) resolve(const ResolveRequest request, ResolveTree tree) @safe
 {
     if (request.singleFile.length ? !request.singleFile.isAbsolutePath : !request.directory.isAbsolutePath)
         return planErr!Resolution(ResolveError(text("the request's path must be absolute: ",
             request.singleFile.length ? request.singleFile : request.directory)));
     try
-        return planOk!ResolveError(resolveOrThrow(request, driver));
+        return planOk!ResolveError(resolveOrThrow(request, tree));
     catch (ResolveException e)
         return planErr!Resolution(ResolveError(e.msg));
     // A Phobos path or conversion function rejecting a value the recipe
@@ -174,21 +188,21 @@ private struct TargetInfo
 // The versions and debug versions `configuration`'s block of `p` adds to
 // what its top level states, `-version=` dflags included.
 private void configurationOnlyVersions(Package p, string configuration, const BuildPlatform platform,
-    ResolveDriver driver, out string[] versions, out string[] debugVersions) @safe
+    ResolveTree tree, out string[] versions, out string[] debugVersions) @safe
 {
     auto block = p.configuration(configuration);
     if (block is null)
         return;
     BuildSettings top, own;
-    applyTemplate(p.settings, top, platform, p.directory, driver);
-    applyTemplate(block.settings, own, platform, p.directory, driver);
+    applyTemplate(p.settings, top, platform, p.directory, tree);
+    applyTemplate(block.settings, own, platform, p.directory, tree);
     top.extractBuildOptions("dmd");
     own.extractBuildOptions("dmd");
     versions = own.versions.filter!(v => !top.versions.canFind(v)).array;
     debugVersions = own.debugVersions.filter!(v => !top.debugVersions.canFind(v)).array;
 }
 
-private Resolution resolveOrThrow(ref const ResolveRequest request, ResolveDriver driver) @safe
+private Resolution resolveOrThrow(ref const ResolveRequest request, ResolveTree tree) @safe
 {
     RegistrySources registry;
     foreach (name, dir; request.registry)
@@ -197,8 +211,8 @@ private Resolution resolveOrThrow(ref const ResolveRequest request, ResolveDrive
     foreach (name, dir; request.inTree)
         inTree[name] = dir;
     auto project = request.singleFile.length
-        ? loadSingleFileProject(request.singleFile, driver, registry, inTree)
-        : loadProject(request.directory, request.subPackage, driver, registry, inTree);
+        ? loadSingleFileProject(request.singleFile, tree, registry, inTree)
+        : loadProject(request.directory, request.subPackage, tree, registry, inTree);
     const platform = request.platform;
 
     Resolution resolution;
@@ -222,18 +236,18 @@ private Resolution resolveOrThrow(ref const ResolveRequest request, ResolveDrive
     foreach (p; project.topological(false, configurations))
         checkToolchain(p, platform, request.dubVersion);
 
-    auto variables = Variables(project, request, driver, configurations);
+    auto variables = Variables(project, request, tree, configurations);
 
     TargetInfo[string] targets;
     foreach (p; project.topological(true, configurations))
     {
         const c = configurations[p.name];
-        auto raw = p.buildSettings(platform, c, driver);
+        auto raw = p.buildSettings(platform, c, tree);
         BuildSettings processed;
         processVars(processed, p, raw, variables, true);
         auto ti = TargetInfo(p, [p], c, processed);
         if (request.inheritance == VersionInheritance.divergent)
-            configurationOnlyVersions(p, c, platform, driver, ti.configurationVersions,
+            configurationOnlyVersions(p, c, platform, tree, ti.configurationVersions,
                 ti.configurationDebugVersions);
         targets[p.name] = ti;
     }
@@ -261,7 +275,7 @@ private Resolution resolveOrThrow(ref const ResolveRequest request, ResolveDrive
     foreach (name, directory; registry)
         locations ~= PackageLocation(name, directory.directory);
     foreach (p; project.topological(false, configurations))
-        resolution.hiddenEdges ~= hiddenEdges(p, locations, driver);
+        resolution.hiddenEdges ~= hiddenEdges(p, locations, tree);
     return resolution;
 }
 
@@ -559,7 +573,7 @@ private void addBuildTypeSettings(Project project, ref TargetInfo ti, ref const 
     if (!(ti.settings.requirements & BuildRequirement.noDefaultFlags))
     {
         BuildSettings buildType;
-        addBuildType(project.root, buildType, request.platform, request.buildType, variables.driver,
+        addBuildType(project.root, buildType, request.platform, request.buildType, variables.tree,
             variables);
         if (!isRoot)
             buildType.options &= ~BuildOption.unittests;
@@ -574,14 +588,14 @@ private void addBuildTypeSettings(Project project, ref TargetInfo ti, ref const 
 // dub's `Package.addBuildTypeSettings`: the recipe's own build type, else one
 // of dub's built-in ones.
 private void addBuildType(Package root, ref BuildSettings settings, const BuildPlatform platform,
-    string buildType, ResolveDriver driver, ref Variables variables) @safe
+    string buildType, ResolveTree tree, ref Variables variables) @safe
 {
     alias O = BuildOption;
     scope (success)
         settings.addDFlags(environmentDFlags(variables));
     if (auto custom = buildType in root.buildTypes)
     {
-        applyTemplate(*custom, settings, platform, root.directory, driver);
+        applyTemplate(*custom, settings, platform, root.directory, tree);
         return;
     }
     switch (buildType)
@@ -611,7 +625,9 @@ private string[] environmentDFlags(ref Variables variables) @safe
     import std.array : split;
 
     string dflags;
-    if (!variables.driver.environment("DFLAGS", dflags))
+    if (auto found = "DFLAGS" in variables.request.environment)
+        dflags = *found;
+    else
         return null;
     variables.noteInput("DFLAGS");
     return dflags.split;
@@ -622,7 +638,7 @@ private struct Variables
 {
     Project project;
     const(ResolveRequest)* request;
-    ResolveDriver driver;
+    ResolveTree tree;
     const(string[string]) configurations;
     /// The environment variables the values referred to.
     string[] environmentInputs;
@@ -633,13 +649,13 @@ private struct Variables
             environmentInputs ~= name;
     }
 
-    this(Project project, ref const ResolveRequest request, ResolveDriver driver,
+    this(Project project, ref const ResolveRequest request, ResolveTree tree,
         const string[string] configurations) @trusted
     {
         this.project = project;
         // Variables lives only as long as the resolution of `request`.
         this.request = &request;
-        this.driver = driver;
+        this.tree = tree;
         this.configurations = configurations;
     }
 
@@ -686,7 +702,7 @@ private struct Variables
             return request.buildType;
         case "DFLAGS", "LFLAGS":
             // dub reads them in the request's configuration, whatever the package.
-            const settings = p.buildSettings(platform, configurations.get(project.root.name, null), driver);
+            const settings = p.buildSettings(platform, configurations.get(project.root.name, null), tree);
             return (name == "DFLAGS" ? settings.dflags : settings.lflags).join(" ");
         default:
             break;
@@ -694,11 +710,10 @@ private struct Variables
         foreach_reverse (aa; extra)
             if (auto found = name in aa)
                 return *found;
-        string environment;
-        if (driver.environment(name, environment))
+        if (auto environment = name in request.environment)
         {
             noteInput(name);
-            return environment;
+            return *environment;
         }
         return fail(text("`", p.name, "`: invalid variable `$", name, "`"));
     }
@@ -850,16 +865,16 @@ private string[] processFiles(const string[] files, Package p, ref Variables var
 
 version (unittest)
 {
-    import sparkles.build_primitives.resolve.driver : MemoryDriver;
+    import sparkles.build_primitives.resolve.tree : memoryTree, ResolveTree;
 
     private enum linuxLdc = BuildPlatform(["linux", "posix"], ["x86_64"], "ldc", "ldc2", 2111, "1.41.0");
 
     // A repository of four packages: `app` uses `lib` and the source
     // library `util`; `lib` uses `util` and `leaf`, selecting `leaf`'s
     // `special` configuration.
-    private MemoryDriver fixture() @safe
+    private string[string] fixtureFiles() @safe
     {
-        return new MemoryDriver([
+        return [
             "/r/dub.sdl": `name "r"
 subPackage "app"
 subPackage "lib"
@@ -906,8 +921,10 @@ configuration "special" {
 importPaths "include"
 `,
             "/r/leaf/source/leaf.d": "",
-        ]);
+        ];
     }
+
+    private ResolveTree fixture() @safe => memoryTree(fixtureFiles());
 
     private Resolution resolved(ResolveRequest request) @safe
     {
@@ -1021,42 +1038,49 @@ importPaths "include"
     auto noConfiguration = resolve(ResolveRequest(directory: "/r", subPackage: ":leaf",
         configuration: "absent", platform: linuxLdc), fixture);
     assert(noConfiguration.hasError);
-    auto driver = fixture;
-    driver.files["/r/lib/dub.sdl"] = "name \"lib\"\ndependency \"absent\" version=\"~>1.0\"\n";
-    auto unlocked = resolve(ResolveRequest(directory: "/r", subPackage: ":lib", platform: linuxLdc), driver);
+    auto files = fixtureFiles();
+    auto tree = memoryTree(files);
+    files["/r/lib/dub.sdl"] = "name \"lib\"\ndependency \"absent\" version=\"~>1.0\"\n";
+    tree = memoryTree(files);
+    auto unlocked = resolve(ResolveRequest(directory: "/r", subPackage: ":lib", platform: linuxLdc), tree);
     assert(unlocked.hasError && unlocked.error.message.canFind("in neither DUB lock"), unlocked.error.message);
 }
 
 @("build_primitives.resolve.configure.resolve.variables")
 @safe unittest
 {
-    auto driver = new MemoryDriver([
+    string[string] files = [
         "/v/dub.sdl": `name "v"
 importPaths "$PACKAGE_DIR/gen" "${ROOT_PACKAGE_DIR}/x"
 dflags "-a=$ARCH-$PLATFORM-$PLATFORM_POSIX-$BUILD_TYPE" "-b=$$HOME" "-c=$SDK"
 `,
         "/v/source/v.d": "",
-    ], ["SDK": "21"]);
-    auto r = resolve(ResolveRequest(directory: "/v", platform: linuxLdc), driver);
+    ];
+    auto tree = memoryTree(files);
+    auto r = resolve(ResolveRequest(directory: "/v", platform: linuxLdc, environment: ["SDK": "21"]), tree);
     assert(r.hasValue, r.hasError ? r.error.message : null);
     const v = r.value.targets[0].settings;
     // Stated import paths replace the default `source/` one.
     assert(v.importPaths == ["/v/gen", "/v/x"], text(v.importPaths));
     assert(v.dflags == ["-a=x86_64-linux-posix-debug", "-b=$HOME", "-c=21"], text(v.dflags));
     assert(r.value.environmentInputs == ["SDK"]);
-    driver.files["/v/dub.sdl"] = "name \"v\"\ndflags \"$NOPE\"\n";
-    assert(resolve(ResolveRequest(directory: "/v", platform: linuxLdc), driver).hasError);
+    files["/v/dub.sdl"] = "name \"v\"\ndflags \"$NOPE\"\n";
+    tree = memoryTree(files);
+    assert(resolve(ResolveRequest(directory: "/v", platform: linuxLdc), tree).hasError);
 }
 
 @("build_primitives.resolve.configure.resolve.singleFilePackage")
 @safe unittest
 {
-    auto driver = fixture;
-    driver.files["/r/examples/demo.d"] = "#!/usr/bin/env dub\n/+ dub.sdl:\n    dependency \"r:lib\" version=\"*\"\n+/\nvoid main() {}\n";
-    driver.files["/r/examples/helper.d"] = "";
+    auto files = fixtureFiles();
+    auto tree = memoryTree(files);
+    files["/r/examples/demo.d"] = "#!/usr/bin/env dub\n/+ dub.sdl:\n    dependency \"r:lib\" version=\"*\"\n+/\nvoid main() {}\n";
+    tree = memoryTree(files);
+    files["/r/examples/helper.d"] = "";
+    tree = memoryTree(files);
 
     auto r = resolve(ResolveRequest(singleFile: "/r/examples/demo.d", platform: linuxLdc,
-        inTree: ["r": "/r"]), driver);
+        inTree: ["r": "/r"]), tree);
     assert(r.hasValue, r.hasError ? r.error.message : null);
     // Named after the file; its only source is the file itself.
     const demo = r.value.targets[0];
@@ -1065,15 +1089,16 @@ dflags "-a=$ARCH-$PLATFORM-$PLATFORM_POSIX-$BUILD_TYPE" "-b=$$HOME" "-c=$SDK"
     assert(demo.dependencies == ["r:lib"]);
 
     // Without the rewrite, a dependency by version must be in a lock.
-    assert(resolve(ResolveRequest(singleFile: "/r/examples/demo.d", platform: linuxLdc), driver).hasError);
-    driver.files["/r/examples/bad.d"] = "/+ dub.sdl:\n    sourcePaths \".\"\n+/\n";
-    assert(resolve(ResolveRequest(singleFile: "/r/examples/bad.d", platform: linuxLdc), driver).hasError);
+    assert(resolve(ResolveRequest(singleFile: "/r/examples/demo.d", platform: linuxLdc), tree).hasError);
+    files["/r/examples/bad.d"] = "/+ dub.sdl:\n    sourcePaths \".\"\n+/\n";
+    tree = memoryTree(files);
+    assert(resolve(ResolveRequest(singleFile: "/r/examples/bad.d", platform: linuxLdc), tree).hasError);
 }
 
 @("build_primitives.resolve.configure.resolve.stringImportsAndTargetKinds")
 @safe unittest
 {
-    auto driver = new MemoryDriver([
+    string[string] files = [
         "/s/dub.sdl": "name \"s\"\nsubPackage \"top\"\nsubPackage \"dep\"\nsubPackage \"dyn\"\n",
         "/s/top/dub.sdl": `name "top"
 targetType "executable"
@@ -1097,8 +1122,9 @@ lflags "-ldep"
         "/s/dep/views/own.txt": "",
         "/s/dyn/dub.sdl": "name \"dyn\"\ntargetType \"dynamicLibrary\"\nbuildRequirements \"noDefaultFlags\"\n",
         "/s/dyn/source/dyn.d": "",
-    ]);
-    auto r = resolve(ResolveRequest(directory: "/s", subPackage: ":top", platform: linuxLdc), driver);
+    ];
+    auto tree = memoryTree(files);
+    auto r = resolve(ResolveRequest(directory: "/s", subPackage: ":top", platform: linuxLdc), tree);
     assert(r.hasValue, r.hasError ? r.error.message : null);
     const top = r.value.target("s:top").settings;
     const dep = r.value.target("s:dep").settings;
@@ -1123,7 +1149,7 @@ lflags "-ldep"
 {
     import sparkles.build_primitives.resolve.project : RegistrySource;
 
-    auto driver = new MemoryDriver([
+    string[string] files = [
         "/a/dub.sdl": `name "a"
 dependency "lib" version="~>1.2"
 toolchainRequirements frontend=">=2.100" ldc=">=1.40"
@@ -1132,39 +1158,41 @@ importPaths "$LIB_PACKAGE_DIR/extra"
         "/a/source/a.d": "",
         "/store/lib/dub.json": `{"name": "lib", "version": "1.2.7", "importPaths": ["src"], "sourcePaths": ["src"]}`,
         "/store/lib/src/lib.d": "",
-    ]);
+    ];
+    auto tree = memoryTree(files);
     auto request = ResolveRequest(directory: "/a", platform: linuxLdc);
     request.registry["lib"] = RegistrySource("/store/lib", "1.2.7");
-    auto r = resolve(request, driver);
+    auto r = resolve(request, tree);
     assert(r.hasValue, r.hasError ? r.error.message : null);
     assert(r.value.target("lib").settings.sourceFiles == ["/store/lib/src/lib.d"]);
     assert(r.value.target("a").settings.importPaths.canFind("/store/lib/extra"));
 
     // The locks pin a version the recipe does not admit.
     request.registry["lib"] = RegistrySource("/store/lib", "2.0.0");
-    auto mismatch = resolve(request, driver);
+    auto mismatch = resolve(request, tree);
     assert(mismatch.hasError && mismatch.error.message.canFind("the locks pin 2.0.0"), mismatch.error.message);
 
     // A compiler older than the recipe admits.
     request.registry["lib"] = RegistrySource("/store/lib", "1.2.7");
     request.platform.compilerVersion = "1.39.0";
-    auto old = resolve(request, driver);
+    auto old = resolve(request, tree);
     assert(old.hasError && old.error.message.canFind("requires ldc >=1.40"), old.error.message);
 
     // A relative path is refused, not resolved against the working directory.
-    auto relative = resolve(ResolveRequest(directory: "a", platform: linuxLdc), driver);
+    auto relative = resolve(ResolveRequest(directory: "a", platform: linuxLdc), tree);
     assert(relative.hasError);
 
     // A registry package pinned at a commit depends on its own subpackage
     // with a range the commit cannot satisfy: it is the same package.
-    auto own = new MemoryDriver([
+    string[string] ownFiles = [
         "/a/dub.sdl": "name \"a\"\ndependency \"dmd\" repository=\"git+https://x/dmd.git\" version=\"0123abc\"\n",
         "/a/source/a.d": "",
         "/store/dmd/dub.sdl": "name \"dmd\"\ndependency \"dmd:parser\" version=\"*\"\n"
             ~ "subPackage {\n    name \"parser\"\n    sourcePaths \"parser\"\n}\n",
         "/store/dmd/source/dmd.d": "",
         "/store/dmd/parser/p.d": "",
-    ]);
+    ];
+    auto own = memoryTree(ownFiles);
     auto pinned = ResolveRequest(directory: "/a", platform: linuxLdc);
     pinned.registry["dmd"] = RegistrySource("/store/dmd", "0123abc", "git+https://x/dmd.git");
     auto commit = resolve(pinned, own);
@@ -1179,38 +1207,41 @@ importPaths "$LIB_PACKAGE_DIR/extra"
 
     // `a` is loaded through the root's range, which the lock satisfies; `b`
     // asks for a range the same lock does not, and is checked too.
-    auto driver = new MemoryDriver([
+    string[string] files = [
         "/r/dub.sdl": "name \"r\"\ndependency \"a\" version=\"~>1.0\"\ndependency \"b\" version=\"*\"\n",
         "/r/source/r.d": "",
         "/store/a/dub.sdl": "name \"a\"\nversion \"1.0.0\"\n",
         "/store/a/source/a.d": "",
         "/store/b/dub.sdl": "name \"b\"\nversion \"1.0.0\"\ndependency \"a\" version=\">=2.0.0\"\n",
         "/store/b/source/b.d": "",
-    ]);
+    ];
+    auto tree = memoryTree(files);
     auto request = ResolveRequest(directory: "/r", platform: linuxLdc);
     request.registry["a"] = RegistrySource("/store/a", "1.0.0");
     request.registry["b"] = RegistrySource("/store/b", "1.0.0");
-    auto r = resolve(request, driver);
+    auto r = resolve(request, tree);
     assert(r.hasError, "the locks pin a version `b` does not admit");
     assert(r.error.message.canFind("/store/b/dub.sdl: `a` asks for >=2.0.0; the locks pin 1.0.0"),
         r.error.message);
 
     // A lock every dependent admits resolves.
-    driver.files["/store/b/dub.sdl"] = "name \"b\"\nversion \"1.0.0\"\ndependency \"a\" version=\">=1.0.0\"\n";
-    auto ok = resolve(request, driver);
+    files["/store/b/dub.sdl"] = "name \"b\"\nversion \"1.0.0\"\ndependency \"a\" version=\">=1.0.0\"\n";
+    tree = memoryTree(files);
+    auto ok = resolve(request, tree);
     assert(ok.hasValue, ok.hasError ? ok.error.message : null);
 
     // One dependent naming `a` twice: each range is checked, the
     // configuration's as well as the top level's, whichever configuration
     // the request builds.
-    driver.files["/r/dub.sdl"] = "name \"r\"\ndependency \"a\" version=\"~>1.0\"\n"
+    files["/r/dub.sdl"] = "name \"r\"\ndependency \"a\" version=\"~>1.0\"\n"
         ~ "configuration \"lib\" {\n    targetType \"library\"\n}\n"
         ~ "configuration \"x\" {\n    targetType \"library\"\n    dependency \"a\" version=\">=2.0.0\"\n}\n";
+    tree = memoryTree(files);
     request.registry.remove("b");
     foreach (configuration; ["x", "lib"])
     {
         request.configuration = configuration;
-        auto twice = resolve(request, driver);
+        auto twice = resolve(request, tree);
         assert(twice.hasError, "configuration `x` asks for a version the lock does not pin");
         assert(twice.error.message.canFind("/r/dub.sdl: `a` asks for >=2.0.0; the locks pin 1.0.0"),
             twice.error.message);
@@ -1228,19 +1259,20 @@ importPaths "$LIB_PACKAGE_DIR/extra"
     // unlocked one is skipped, `default` or not.
     foreach (attributes; [" optional=true", " optional=true default=true"])
     {
-        auto driver = new MemoryDriver([
+        string[string] files = [
             "/r/dub.sdl": "name \"r\"\ndependency \"a\" version=\"*\"" ~ attributes ~ "\n",
             "/r/source/r.d": "",
             "/store/a/dub.sdl": "name \"a\"\nversion \"1.0.0\"\n",
             "/store/a/source/a.d": "",
-        ]);
+        ];
+        auto tree = memoryTree(files);
         auto request = ResolveRequest(directory: "/r", platform: linuxLdc);
-        auto unlocked = resolve(request, driver);
+        auto unlocked = resolve(request, tree);
         assert(unlocked.hasValue, unlocked.hasError ? unlocked.error.message : null);
         assert(("a" in unlocked.value.configurations) is null, "an unselected optional dependency is skipped");
 
         request.registry["a"] = RegistrySource("/store/a", "1.0.0");
-        auto locked = resolve(request, driver);
+        auto locked = resolve(request, tree);
         assert(locked.hasValue, locked.hasError ? locked.error.message : null);
         assert(("a" in locked.value.configurations) !is null, "a selected optional dependency is used");
     }
@@ -1251,10 +1283,12 @@ importPaths "$LIB_PACKAGE_DIR/extra"
 {
     // Oracle 13: a reach into another package with no dependency on it is
     // reported, with its recipe line.
-    auto driver = fixture;
-    driver.files["/r/leaf/dub.sdl"] = "name \"leaf\"\nimportPaths \"../util/source\"\n";
-    driver.variables["DFLAGS"] = "-extra";
-    auto r = resolve(ResolveRequest(directory: "/r", subPackage: ":leaf", platform: linuxLdc), driver);
+    auto files = fixtureFiles();
+    auto tree = memoryTree(files);
+    files["/r/leaf/dub.sdl"] = "name \"leaf\"\nimportPaths \"../util/source\"\n";
+    tree = memoryTree(files);
+    auto r = resolve(ResolveRequest(directory: "/r", subPackage: ":leaf", platform: linuxLdc,
+        environment: ["DFLAGS": "-extra"]), tree);
     assert(r.hasValue, r.hasError ? r.error.message : null);
     assert(r.value.hiddenEdges.length == 1, text(r.value.hiddenEdges));
     assert(r.value.hiddenEdges[0].reached == "r:util" && r.value.hiddenEdges[0].line == 2);
