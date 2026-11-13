@@ -11,12 +11,6 @@ dependency "sparkles:base" path="../.."
 dependency "sparkles:metadata" path="../.."
 dependency "sparkles:wired" path="../.."
 
-// The UI components moved to the canvas-first toolkit; `core-cli` keeps
-// command-line concerns and consumes them (prompts style their output with the
-// theme and drive a live region). `sparkles:ui` does not depend on this
-// package, so this edge closes no cycle.
-dependency "sparkles:ui" path="../.."
-
 targetType "library"
 targetPath "build"
 
@@ -25,11 +19,24 @@ targetPath "build"
 dependency "sparkles:math" path="../.."
 importPaths "src"
 
+// The UI components moved to the canvas-first toolkit; `core-cli` keeps
+// command-line concerns and consumes them (prompts style their output with the
+// theme and drive a live region). `sparkles:ui` does not depend on this
+// package, so this edge closes no cycle.
 configuration "library" {
     targetType "library"
+    dependency "sparkles:ui" path="../.."
+}
+
+// The argument parser and its help without the prompts, so a program can
+// parse a command line without the UI toolkit (`fsx`, docs/specs/fsx `XA5`).
+configuration "args" {
+    targetType "library"
+    excludedSourceFiles "src/sparkles/core_cli/prompts.d"
 }
 
 configuration "unittest" {
+    dependency "sparkles:ui" path="../.."
     dependency "sparkles:test-utils" path="../.."
 
     dflags "-checkaction=context" "-allinst"
