@@ -1,10 +1,12 @@
 /++
 The task vocabulary ([SPEC TDM1–TDM14](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)):
-task ids, nodes, edges, resource claims, outcomes, and events.
+task ids, nodes, edges, resource and file claims, outcomes, and events.
 
 This module is a leaf: beside Phobos and `sparkles:base` it imports only the
-action vocabulary ($(MREF sparkles,build_primitives,task,action)). It knows no command, executor,
-reporter, Event Horizon, or UI module.
+action vocabulary ($(MREF sparkles,build_primitives,task,action)) and the
+fileset handle a read claim is
+([design BGW16](../../../../../../docs/specs/build-primitives/build-graph/fileset-native-workspace.md)).
+It knows no command, executor, reporter, Event Horizon, or UI module.
 
 Within a validated graph a task is referred to by its $(LREF TaskIndex) — its
 position in presentation order. Outcomes and events carry indices rather than
@@ -24,6 +26,7 @@ import sparkles.base.text.case_style : CaseStyle;
 import sparkles.base.text.wire_names : AnyFormat, WireCase;
 
 public import sparkles.build_primitives.task.action : TaskAction;
+public import sparkles.build_primitives.fileset.value : Fileset;
 
 /**
 A fallible planning result: `Expected` under `NoGcHook`, so `value` and
@@ -205,13 +208,16 @@ struct PresentationKey
 
 /**
 What a node holds while it runs ([SPEC TDM7]). The executor admits a node only
-when every exclusive key is free and `jobsWeight` tokens are available.
+when every exclusive key is free, no node whose file claims conflict with its
+own is running (TDM15), and `jobsWeight` tokens are available.
 */
 struct ResourceClaim
 {
     uint jobsWeight = 1;    /// >= 1 for runnable work
     ulong memoryHintBytes;  /// a planning and reporting hint, not a second scheduler
-    string[] exclusiveKeys; /// semantic resources: `workspace-write:README.md`, `coverage-publish`
+    /// Resources that are not files: `coverage-publish`, a publication slot.
+    /// A file is claimed by $(LREF FileClaims).
+    string[] exclusiveKeys;
 
     /// The weight actually taken from `capacity` tokens: a claim larger than
     /// the capacity is clamped, so it runs alone rather than deadlocking.
@@ -222,8 +228,8 @@ struct ResourceClaim
 /**
 The default claim for a `kind` of work ([SPEC TDM9]'s weight table). A
 compiler-bearing node weighs 2; everything else 1. A mutating rewrite also
-needs its `workspace-write:<path>` key — see $(LREF rewriteClaim). Package
-overrides (a DMD-frontend-heavy package weighs 4) are the planner's.
+states the file it writes, in $(LREF FileClaims). Package overrides (a
+DMD-frontend-heavy package weighs 4) are the planner's.
 */
 ResourceClaim defaultClaim(TaskKind kind) @safe pure nothrow @nogc
 {
@@ -246,18 +252,12 @@ ResourceClaim defaultClaim(TaskKind kind) @safe pure nothrow @nogc
     }
 }
 
-/// The claim of a mutating rewrite of `path`: weight 1 plus the exclusive
-/// `workspace-write:<path>` key.
-ResourceClaim rewriteClaim(string path) @safe pure nothrow
-    => ResourceClaim(jobsWeight: 1, exclusiveKeys: ["workspace-write:" ~ path]);
-
 @("build_primitives.task.model.ResourceClaim.defaultsAndClamp")
 @safe pure nothrow
 unittest
 {
     assert(defaultClaim(TaskKind.test).jobsWeight == 2);
     assert(defaultClaim(TaskKind.scan).jobsWeight == 1);
-    assert(rewriteClaim("README.md").exclusiveKeys == ["workspace-write:README.md"]);
 
     const heavy = ResourceClaim(jobsWeight: 4);
     assert(heavy.admittedWeight(8) == 4);
@@ -287,6 +287,33 @@ enum OutputPolicy
     none,
 }
 
+/**
+A file or a directory tree a node writes ([TDM15]; design BGW16): the two
+forms an action's declared outputs take. `path` is relative to the worktree
+root: no leading or trailing `/`, no empty, `.` or `..` segment.
+*/
+struct WriteClaim
+{
+    string path; ///
+    bool tree;   /// the directory `path` and everything beneath it
+}
+
+/**
+The files a node reads and writes ([TDM15]; design BGW16). `reads` is a
+fileset of the graph's arena ($(REF TaskGraphBuilder.files,
+sparkles,build_primitives,task,graph)); `Fileset.init` states nothing. A
+node that states nothing at all is treated as before file claims: it
+conflicts with nothing and is never fresh.
+*/
+struct FileClaims
+{
+    Fileset reads;       ///
+    WriteClaim[] writes; ///
+
+    /// Whether the node states any file.
+    bool any() const @safe pure nothrow @nogc => reads.valid || writes.length > 0;
+}
+
 /// A unit of work in a task graph ([SPEC TDM1–TDM3]).
 struct TaskNode
 {
@@ -298,6 +325,7 @@ struct TaskNode
     TaskAction action;           ///
     FailurePolicy failurePolicy; ///
     OutputPolicy outputPolicy;   ///
+    FileClaims files;            /// what the node reads and writes (TDM15)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -557,6 +585,65 @@ struct TaskOutput
     bool unterminated;   ///
 }
 
+/// A content id: BLAKE3 (D48).
+alias Digest = ubyte[32];
+
+/**
+Why a task whose freshness is tracked runs (TDM16): the first of
+[OBA8](../../../../../../docs/specs/build-primitives/observability/SPEC.md#_4-action-metrics)'s
+miss reasons that applies, or one of the two that tasks outside the build
+graph add.
+*/
+@WireCase(CaseStyle.kebabCase)
+enum StaleReason
+{
+    corrupt,         /// a matching result failed its digest check
+    evicted,         /// a matching result is missing
+    inputChanged,    /// a file read last time changed; the event names it
+    absentAppeared,  /// a path probed and missing last time exists; the event names it
+    conservative,    /// the action is keyed by whole roots
+    noEntry,         /// any other miss of the store
+    noRecord,        /// no result is recorded for this task
+    prerequisiteRan, /// a prerequisite ran in this run
+}
+
+/**
+What a driver says of a task before it runs (TDM16): `notTracked` when the
+command does not track the node's freshness, else whether a recorded result
+of the same action and inputs is reused.
+*/
+struct Freshness
+{
+    /// The three answers.
+    enum Kind : ubyte
+    {
+        notTracked, ///
+        fresh,      ///
+        stale,      ///
+    }
+
+    Kind kind;          ///
+    Digest inputs;      /// the input identity, when fresh
+    StaleReason reason; /// when stale
+    string path;        /// when stale, the path the reason names, if any
+}
+
+/// The task did not run: a result recorded for the same action and inputs is
+/// reused (TDM16). Its outcome follows.
+struct TaskFresh
+{
+    TaskIndex task; ///
+    Digest inputs;  ///
+}
+
+/// The task runs because of `reason`; `TaskEvent.text` holds the path the
+/// reason names, when there is one (TDM16).
+struct TaskStale
+{
+    TaskIndex task;     ///
+    StaleReason reason; ///
+}
+
 /// A resource-usage observation of a running task.
 struct TaskUsage
 {
@@ -598,21 +685,22 @@ struct RunFinished
 
 /// What happened ([SPEC TDM12, TDM13]).
 alias TaskEventPayload = SumType!(GraphPlanned, TaskReady, TaskStarted, TaskOutput,
-    TaskUsage, TaskFinished, CancellationRequested, RunFinished);
+    TaskUsage, TaskFinished, CancellationRequested, RunFinished, TaskFresh, TaskStale);
 
 /**
 An event: a run-local sequence number and monotonic timestamp around its
 payload. The executor is the sole producer.
 
-The one variable-length datum, a `TaskOutput` line, travels in `text`
-beside the payload rather than in it: a `SumType` with an indirection is
-`@system` to assign, and keeping the payload pointer-free keeps every event
-`@safe` to move through a channel. `text` is empty for every other payload.
+The variable-length data, a `TaskOutput` line and a `TaskStale` path,
+travel in `text` beside the payload rather than in it: a `SumType` with an
+indirection is `@system` to assign, and keeping the payload pointer-free
+keeps every event `@safe` to move through a channel. `text` is empty for
+every other payload.
 */
 struct TaskEvent
 {
     ulong sequence;           ///
     MonoTime at;              ///
     TaskEventPayload payload; ///
-    string text;              /// a `TaskOutput` line
+    string text;              /// a `TaskOutput` line, a `TaskStale` path
 }

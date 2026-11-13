@@ -27,6 +27,7 @@ import std.array : array;
 import sparkles.event_horizon.clock : TestClock;
 import sparkles.event_horizon.testing : advanceAndSettle, TestSched;
 import sparkles.build_primitives.task.action : InertAction;
+import sparkles.build_primitives.fileset.value : Filesets;
 
 alias Clock = TestClock!(TestSched.Waker);
 
@@ -43,6 +44,8 @@ struct Script
     /// Report the scripted outcome even when the run asked the task to
     /// stop, as a child that finishes on its own does.
     bool ignoresCancel;
+    /// What the driver says of the task before it runs.
+    Freshness freshness;
 }
 
 /// Sleeps each task's scripted duration on the virtual clock, then
@@ -80,6 +83,8 @@ struct FakeDriver
             return TaskOutcome(Cancelled(CancelReason.interrupted));
         return script.outcome;
     }
+
+    Freshness freshness(X)(ref TaskContext!X ctx) => scripts.get(ctx.node.id.text, Script.init).freshness;
 }
 
 TaskId tid(string text) @safe pure nothrow => taskId(text).value;
@@ -93,13 +98,33 @@ TaskEdge tedge(string from, string to, EdgeCondition c = EdgeCondition.onSuccess
     => TaskEdge(tid(from), tid(to), c, EdgeReason.packageDependency);
 
 TaskGraph graphOf(TaskNode[] nodes, TaskEdge[] edges) @safe pure nothrow
+    => graphWith(null, nodes, edges).value;
+
+/// The graph of `nodes` and `edges`, whose read claims are sets of `files`,
+/// or why it is refused.
+PlanExpected!(TaskGraph, GraphError) graphWith(Filesets* files, TaskNode[] nodes, TaskEdge[] edges,
+    LinkFact[] links = null) @safe pure nothrow
 {
     TaskGraphBuilder b;
+    b.files = files;
     foreach (n; nodes)
         b.add(n);
     foreach (e; edges)
         b.add(e);
-    return b.build().value;
+    foreach (l; links)
+        b.add(l);
+    return b.build();
+}
+
+/// `node` with file claims: it reads `reads` (`Fileset.init` for none) and
+/// writes `writes`, a trailing `/` claiming a tree.
+TaskNode claiming(TaskNode node, Fileset reads, string[] writes...) @safe pure nothrow
+{
+    node.files.reads = reads;
+    foreach (w; writes)
+        node.files.writes ~= w.length && w[$ - 1] == '/'
+            ? WriteClaim(w[0 .. $ - 1], tree: true) : WriteClaim(w);
+    return node;
 }
 
 struct Run

@@ -103,6 +103,8 @@ struct TtyReporter
                 facts.exitCode = r.exitCode;
                 ended = true;
             },
+            (const TaskFresh f) { blocks.freshness(f.task, FreshnessNote.of(e)); },
+            (const TaskStale s) { blocks.freshness(s.task, FreshnessNote.of(e)); },
             (_) {},
         );
     }
@@ -164,10 +166,15 @@ private:
     {
         auto detail = appender!string;
         writeOutcome(detail, *graph, outcome);
+        const note = blocks.freshness(t);
+        writeFreshness(detail, note);
         final switch (kindOf(outcome))
         {
             case OutcomeKind.succeeded:
-                tasks.succeed(t.value);
+                if (note.kind == FreshnessNote.Kind.none)
+                    tasks.succeed(t.value);
+                else
+                    tasks.succeed(t.value, detail[]);
                 break;
             case OutcomeKind.degraded:
                 tasks.succeed(t.value, detail[]);

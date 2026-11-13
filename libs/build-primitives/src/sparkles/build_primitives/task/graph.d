@@ -1,7 +1,8 @@
 /++
-Task graphs ([SPEC TDM5, TDD2, TDY3](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)):
-a builder, validation, stable topological order, edge-condition resolution,
-blocked propagation, and the dry-run projection.
+Task graphs ([SPEC TDM5, TDM15, TDD2, TDY3](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)):
+a builder, validation, stable topological order, the conflicts file claims
+derive, edge-condition resolution, blocked propagation, and the dry-run
+projection.
 
 A $(LREF TaskGraph) exists only validated. Its nodes are in presentation order
 — by $(REF PresentationKey, sparkles,build_primitives,task,model), then $(REF TaskId, sparkles,build_primitives,task,model) —
@@ -23,6 +24,8 @@ import sparkles.base.text.case_style : CaseStyle;
 import sparkles.base.text.wire_names : AnyFormat, WireCase;
 import sparkles.base.text.writers : writeEnumMemberName, writeValue;
 
+import sparkles.build_primitives.fileset.plan : plan;
+import sparkles.build_primitives.fileset.value : FilesetEvaluator, Filesets;
 import sparkles.build_primitives.task.action : writeActionSummary;
 import sparkles.build_primitives.task.model;
 
@@ -262,24 +265,47 @@ enum GraphErrorKind
     selfEdge,            /// an edge from a node to itself
     duplicateEdge,       /// two edges join the same pair
     cycle,               /// the edges form a cycle
+    invalidClaim,        /// a write claim's path is not a relative path, or a read claim has no arena
+    unorderedRead,       /// a node reads what another writes, and no path of edges orders them
 }
 
 /**
 Why $(LREF TaskGraphBuilder.build) refused. `ids` names the offending nodes:
 the duplicated id; the zero-weight node; an edge's `[prerequisite,
-dependent]`; or, for a cycle, its members from the lowest, each waiting on the
-one before it.
+dependent]`; for a cycle, its members from the lowest, each waiting on the
+one before it; the node of an invalid claim; or an unordered read's
+`[reader, writer]`. `path` is the claim's path, for the last two.
 */
 struct GraphError
 {
     GraphErrorKind kind; ///
     TaskId[] ids;        ///
+    string path;         ///
 
-    /// `cycle: a -> b -> a`, `duplicate-edge: a -> b`, `duplicate-id: a`.
+    /// `cycle: a -> b -> a`, `duplicate-edge: a -> b`, `duplicate-id: a`,
+    /// `unordered-read: a reads out/x, which b writes`.
     void toString(Writer)(ref Writer w) const
     {
         writeEnumMemberName!AnyFormat(w, kind);
         put(w, ": ");
+        if (kind == GraphErrorKind.unorderedRead && ids.length == 2)
+        {
+            put(w, ids[0].text);
+            put(w, " reads ");
+            put(w, path);
+            put(w, ", which ");
+            put(w, ids[1].text);
+            put(w, " writes");
+            return;
+        }
+        if (kind == GraphErrorKind.invalidClaim)
+        {
+            if (ids.length)
+                put(w, ids[0].text);
+            put(w, path.length ? " claims " : " claims a read set without an arena");
+            put(w, path);
+            return;
+        }
         foreach (i, id; ids)
         {
             if (i)
@@ -303,11 +329,26 @@ struct GraphEdge
     EdgeReason reason;       ///
 }
 
+/// A link the worktree holds, and the path it resolves to (design BGW11).
+struct LinkFact
+{
+    string link;   /// relative to the worktree root
+    string target; /// ditto
+}
+
 /// Collects nodes and edges in any order; $(LREF build) validates them.
 struct TaskGraphBuilder
 {
     private TaskNode[] nodes;
     private TaskEdge[] edges;
+    private LinkFact[] links;
+
+    /**
+    The arena every node's read claim is built in. The graph keeps it: a
+    read set means something only within its graph, as a task index does.
+    Nothing may add to it once $(LREF build) succeeds.
+    */
+    Filesets* files;
 
     /// Adds a node.
     void add(TaskNode node) @safe pure nothrow { nodes ~= node; }
@@ -315,11 +356,15 @@ struct TaskGraphBuilder
     /// Adds an edge.
     void add(TaskEdge edge) @safe pure nothrow { edges ~= edge; }
 
+    /// States that the worktree holds a link, so that a read set holding it
+    /// conflicts with a write of its target (TDM15).
+    void add(LinkFact link) @safe pure nothrow { links ~= link; }
+
     /**
     Validates and freezes the graph. Checks run in a fixed order — duplicate
-    ids, zero weights, unknown endpoints, self-edges, duplicate edges, cycles
-    — and each reports its lowest offender, so the same input always yields
-    the same error.
+    ids, zero weights, unknown endpoints, self-edges, duplicate edges, cycles,
+    invalid claims, unordered reads — and each reports its lowest offender,
+    so the same input always yields the same error.
     */
     PlanExpected!(TaskGraph, GraphError) build() @safe pure nothrow
     {
@@ -417,6 +462,11 @@ struct TaskGraphBuilder
         foreach (i; 1 .. graph.outStart_.length)
             graph.outStart_[i] += graph.outStart_[i - 1];
 
+        graph.files_ = files;
+        auto claims = deriveConflicts(graph, links);
+        if (claims.hasError)
+            return planErr!TaskGraph(claims.error);
+
         import core.lifetime : move;
 
         return planOk!GraphError(move(graph));
@@ -424,6 +474,141 @@ struct TaskGraphBuilder
 
     private static PlanExpected!(TaskGraph, GraphError) fail(GraphErrorKind kind, TaskId[] ids) @safe pure nothrow
         => planErr!TaskGraph(GraphError(kind, ids));
+}
+
+// Whether `path` is a claimable relative path: no leading or trailing `/`,
+// and no empty, `.` or `..` segment.
+private bool claimable(scope const(char)[] path) @safe pure nothrow @nogc
+{
+    if (path.length == 0)
+        return false;
+    size_t from;
+    foreach (i; 0 .. path.length + 1)
+    {
+        if (i < path.length && path[i] != '/')
+            continue;
+        const segment = path[from .. i];
+        if (segment.length == 0 || segment == "." || segment == "..")
+            return false;
+        from = i + 1;
+    }
+    return true;
+}
+
+// Whether `a` is `b` or lies beneath it, or the reverse.
+private bool overlaps(scope const(char)[] a, scope const(char)[] b) @safe pure nothrow @nogc
+{
+    static bool within(scope const(char)[] p, scope const(char)[] root)
+        => p == root || (p.length > root.length && p[0 .. root.length] == root && p[root.length] == '/');
+    return within(a, b) || within(b, a);
+}
+
+// Two write claims conflict when one path is the other or lies beneath a
+// tree the other claims.
+private bool writesConflict(const WriteClaim a, const WriteClaim b) @safe pure nothrow @nogc
+{
+    if (a.path == b.path)
+        return true;
+    static bool beneath(scope const(char)[] p, scope const(char)[] root)
+        => p.length > root.length && p[0 .. root.length] == root && p[root.length] == '/';
+    return (a.tree && beneath(b.path, a.path)) || (b.tree && beneath(a.path, b.path));
+}
+
+/*
+TDM15: validates the graph's file claims and records the pairs that must not
+run at once. A read set conflicts with a write claim unless its verdict
+proves otherwise (`reject` for a file, `skip` for a tree), or when it holds
+a link to the claimed path. A read of a write must be ordered by a path of
+edges; two writes that conflict are serialized.
+*/
+private PlanExpected!(bool, GraphError) deriveConflicts(ref TaskGraph graph, scope const(LinkFact)[] links)
+    @safe pure nothrow
+{
+    const n = graph.nodes_.length;
+    foreach (ref node; graph.nodes_)
+    {
+        if (node.files.reads.valid && graph.files_ is null)
+            return planErr!bool(GraphError(GraphErrorKind.invalidClaim, [node.id]));
+        foreach (w; node.files.writes)
+            if (!claimable(w.path))
+                return planErr!bool(GraphError(GraphErrorKind.invalidClaim, [node.id], w.path));
+    }
+
+    // An evaluator per read set; most nodes have none.
+    auto evaluators = new FilesetEvaluator*[n];
+    bool mayRead(size_t r, const WriteClaim w)
+    {
+        const reads = graph.nodes_[r].files.reads;
+        if (!reads.valid)
+            return false;
+        if (evaluators[r] is null)
+            evaluators[r] = new FilesetEvaluator(*graph.files_, reads);
+        auto ev = evaluators[r];
+        if (w.tree ? ev.mayHoldTree(*graph.files_, w.path) : ev.mayHoldFile(*graph.files_, w.path))
+            return true;
+        foreach (ref l; links)
+            if (overlaps(l.target, w.path) && ev.mayHoldFile(*graph.files_, l.link))
+                return true;
+        return false;
+    }
+
+    // Whether a path of edges leads from `from` to `to`.
+    auto seen = new uint[n];
+    uint visit;
+    bool reaches(TaskIndex from, TaskIndex to)
+    {
+        ++visit;
+        TaskIndex[] stack = [from];
+        seen[from.value] = visit;
+        while (stack.length)
+        {
+            const at = stack[$ - 1];
+            stack = stack[0 .. $ - 1];
+            if (at == to)
+                return true;
+            foreach (e; graph.outgoing(at))
+                if (seen[e.dependent.value] != visit)
+                {
+                    seen[e.dependent.value] = visit;
+                    stack ~= e.dependent;
+                }
+        }
+        return false;
+    }
+
+    auto pairs = new TaskIndex[][n];
+    foreach (w; 0 .. n)
+        foreach (claim; graph.nodes_[w].files.writes)
+            foreach (r; 0 .. n)
+            {
+                if (r == w)
+                    continue;
+                const tw = TaskIndex(cast(uint) w), tr = TaskIndex(cast(uint) r);
+                if (mayRead(r, claim) && !reaches(tw, tr) && !reaches(tr, tw))
+                    return planErr!bool(GraphError(GraphErrorKind.unorderedRead,
+                        [graph.nodes_[r].id, graph.nodes_[w].id], claim.path));
+                foreach (other; graph.nodes_[r].files.writes)
+                    if (writesConflict(claim, other))
+                    {
+                        pairs[w] ~= tr;
+                        pairs[r] ~= tw;
+                        break;
+                    }
+            }
+
+    graph.conflictStart_ = new uint[n + 1];
+    foreach (i, ref list; pairs)
+    {
+        list.sort();
+        size_t kept;
+        foreach (t; list)
+            if (kept == 0 || list[kept - 1] != t)
+                list[kept++] = t;
+        list = list[0 .. kept];
+        graph.conflictStart_[i + 1] = graph.conflictStart_[i] + cast(uint) kept;
+        graph.conflicts_ ~= list;
+    }
+    return planOk!GraphError(true);
 }
 
 /**
@@ -439,6 +624,17 @@ struct TaskGraph
     private uint[] outStart_;    // outgoing of i: outgoing_[outStart_[i] .. outStart_[i + 1]]
     private TaskIndex[] byId_;   // node indices sorted by id
     private TaskIndex[] topo_;   // stable topological order
+    private const(Filesets)* files_;
+    private TaskIndex[] conflicts_;  // of i: conflicts_[conflictStart_[i] .. conflictStart_[i + 1]]
+    private uint[] conflictStart_;
+
+    /// The arena of the nodes' read claims; `null` when no node reads.
+    const(Filesets)* files() const return @safe pure nothrow @nogc => files_;
+
+    /// The nodes whose file claims conflict with `index`'s, by index: none
+    /// of them may run while it does (TDM15).
+    const(TaskIndex)[] conflicts(TaskIndex index) const return @safe pure nothrow @nogc
+        => conflictStart_.length ? conflicts_[conflictStart_[index.value] .. conflictStart_[index.value + 1]] : null;
 
     /// The nodes, in presentation order.
     const(TaskNode)[] nodes() const return @safe pure nothrow @nogc => nodes_;
@@ -660,6 +856,80 @@ unittest
     b.add(edge("c", "a"));
     const g = b.build().value;
     assert(ids(g, g.topologicalOrder) == ["b", "c", "a"]);
+}
+
+/// TDM15: a read of a write must be ordered; conflicts come from the
+/// verdicts, links included, and only a proof separates a pair.
+@("build_primitives.task.graph.build.fileClaims")
+@safe
+unittest
+{
+    import sparkles.build_primitives.fileset.pattern : CasePolicy;
+
+    auto sets = new Filesets(CasePolicy.sensitive);
+    const docs = sets.glob("docs/**/*.md").value;
+    const sources = sets.glob("src/**/*.d").value;
+    const ignoredOnly = sets.intersection(sets.glob("build/**").value, sets.gitignored);
+
+    TaskNode with_(string name, Fileset reads, WriteClaim[] writes...)
+    {
+        auto n = node(name);
+        n.files = FileClaims(reads, writes.dup);
+        return n;
+    }
+
+    PlanExpected!(TaskGraph, GraphError) make(TaskNode[] nodes, TaskEdge[] edges = null,
+        LinkFact[] links = null)
+    {
+        TaskGraphBuilder b;
+        b.files = sets;
+        foreach (n; nodes)
+            b.add(n);
+        foreach (e; edges)
+            b.add(e);
+        foreach (l; links)
+            b.add(l);
+        return b.build();
+    }
+
+    auto rewrite = with_("rewrite", docs, WriteClaim("docs/index.md"));
+    auto check = with_("check", docs);
+    auto compile = with_("compile", sources);
+
+    // Neither precedes the other: rejected, naming both and the path.
+    auto unordered = make([rewrite, check, compile]);
+    assert(errorText(unordered.error) == "unordered-read: check reads docs/index.md, which rewrite writes");
+    // Either direction of a path of edges orders them; a reader of other
+    // files needs no edge.
+    assert(!make([rewrite, check, compile], [edge("rewrite", "check")]).hasError);
+    assert(!make([rewrite, check, node("mid")], [edge("check", "mid"), edge("mid", "rewrite")]).hasError);
+
+    // A write of a link's target conflicts with a set holding the link.
+    auto viaLink = make([with_("w", Fileset.init, WriteClaim("shared/spec.md")), with_("r", docs)], null,
+        [LinkFact("docs/spec.md", "shared/spec.md")]);
+    assert(errorText(viaLink.error) == "unordered-read: r reads shared/spec.md, which w writes");
+
+    // A `.gitignore` scope no resolution read may hold the path.
+    auto scoped = make([with_("w", Fileset.init, WriteClaim("build/out.o")), with_("r", ignoredOnly)]);
+    assert(scoped.error.kind == GraphErrorKind.unorderedRead);
+    assert(!make([with_("w", Fileset.init, WriteClaim("out/x.o")), with_("r", ignoredOnly)]).hasError);
+
+    // Write and write: recorded, both ways, a node with no claim in neither.
+    const g = make([with_("a", Fileset.init, WriteClaim("out", tree: true)),
+        with_("b", Fileset.init, WriteClaim("out/b.txt")), with_("c", Fileset.init, WriteClaim("outer")),
+        node("d")]).value;
+    assert(ids(g, g.conflicts(g.indexOf(id("a")))) == ["b"]);
+    assert(ids(g, g.conflicts(g.indexOf(id("b")))) == ["a"]);
+    assert(g.conflicts(g.indexOf(id("c"))).length == 0, "`outer` is not beneath `out`");
+    assert(g.conflicts(g.indexOf(id("d"))).length == 0);
+
+    // A claim names a relative path; a read set needs the graph's arena.
+    assert(errorText(make([with_("a", Fileset.init, WriteClaim("/etc/x"))]).error)
+        == "invalid-claim: a claims /etc/x");
+    assert(make([with_("a", Fileset.init, WriteClaim("a/../b"))]).error.kind == GraphErrorKind.invalidClaim);
+    TaskGraphBuilder bare;
+    bare.add(with_("a", docs));
+    assert(errorText(bare.build().error) == "invalid-claim: a claims a read set without an arena");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1130,6 +1400,28 @@ void writePlan(Writer)(ref Writer w, const ref TaskGraph graph, uint capacity)
             put(w, " failure=");
             writeEnumMemberName!AnyFormat(w, n.failurePolicy);
         }
+        // BGW19: the directories its read set starts from, `.` for the
+        // root, and what it writes, a tree with a trailing `/`.
+        if (n.files.reads.valid && graph.files !is null)
+        {
+            const roots = plan(*graph.files, n.files.reads);
+            put(w, " reads=");
+            if (roots.length == 0)
+                put(w, "nothing");
+            foreach (i; 0 .. roots.length)
+            {
+                if (i)
+                    put(w, ',');
+                put(w, roots[i].length ? roots[i] : ".");
+            }
+        }
+        foreach (i, claim; n.files.writes)
+        {
+            put(w, i ? "," : " writes=");
+            put(w, claim.path);
+            if (claim.tree)
+                put(w, '/');
+        }
         put(w, ": ");
         writeActionSummary(w, n.action);
         put(w, '\n');
@@ -1151,6 +1443,27 @@ void writePlan(Writer)(ref Writer w, const ref TaskGraph graph, uint capacity)
             writeEnumMemberName!AnyFormat(w, e.reason);
             put(w, ")\n");
         }
+
+    size_t pairs;
+    foreach (index; 0 .. cast(uint) graph.nodes.length)
+        foreach (other; graph.conflicts(TaskIndex(index)))
+            pairs += other.value > index;
+    if (pairs)
+    {
+        put(w, "conflicts (");
+        writeValue(w, pairs);
+        put(w, "):\n");
+        foreach (index; 0 .. cast(uint) graph.nodes.length)
+            foreach (other; graph.conflicts(TaskIndex(index)))
+                if (other.value > index)
+                {
+                    put(w, "  ");
+                    put(w, graph[TaskIndex(index)].id.text);
+                    put(w, " <-> ");
+                    put(w, graph[other].id.text);
+                    put(w, '\n');
+                }
+    }
 
     put(w, "kinds:");
     size_t[TaskKind.max + 1] counts;
@@ -1208,4 +1521,42 @@ unittest
         ~ "  test:sparkles.ui:unittest -> summary (on-completion, summary)\n"
         ~ "kinds: test=2 report=1\n"
         ~ "capacity: 8\n");
+}
+
+/// BGW19: a dry run prints what each node reads, by its read set's start
+/// roots, what it writes, and the pairs that may not run at once.
+@("build_primitives.task.graph.writePlan.claims")
+@safe
+unittest
+{
+    import sparkles.base.buffer : checkWriter;
+    import sparkles.build_primitives.fileset.pattern : CasePolicy;
+
+    auto sets = new Filesets(CasePolicy.sensitive);
+    TaskGraphBuilder builder;
+    builder.files = sets;
+    auto rewrite = node("docs:rewrite");
+    rewrite.files = FileClaims(sets.union_(sets.glob("docs/**/*.md").value, sets.glob("examples/*.d").value),
+        [WriteClaim("docs/index.md")]);
+    auto gen = node("gen");
+    gen.files = FileClaims(sets.glob("**/*.d").value, [WriteClaim("out", tree: true)]);
+    auto pack = node("pack");
+    pack.files = FileClaims(Fileset.init, [WriteClaim("out/pack.tar")]);
+    builder.add(rewrite);
+    builder.add(gen);
+    builder.add(pack);
+    builder.add(edge("gen", "pack"));
+    const g = builder.build().value;
+
+    checkWriter!((ref b) => writePlan(b, g, 2))(
+        "nodes (3):\n"
+        ~ "  docs:rewrite kind=test weight=2 reads=docs,examples writes=docs/index.md: inert docs:rewrite\n"
+        ~ "  gen kind=test weight=2 reads=. writes=out/: inert gen\n"
+        ~ "  pack kind=test weight=2 writes=out/pack.tar: inert pack\n"
+        ~ "edges (1):\n"
+        ~ "  gen -> pack (on-success, package-dependency)\n"
+        ~ "conflicts (1):\n"
+        ~ "  gen <-> pack\n"
+        ~ "kinds: test=3\n"
+        ~ "capacity: 2\n");
 }
