@@ -1372,16 +1372,31 @@ package struct BlockingJob
     Waker waker;           /// `owner`'s armed waker, copied at submission
     BlockingJob* next;     /// inbox link (worker push → owner drain)
     shared bool done;      /// set by the owner's drain, read by the caller
+
+    /// Test seam, declared in every build so a `-unittest` consumer agrees
+    /// with the library on the layout: runs on the worker after the job is
+    /// published and before its wake.
+    package void delegate() nothrow @nogc testAfterPublish;
 }
 
-/// Worker-thread side: pushes a finished job onto its owner's inbox and
-/// wakes that loop. Touches nothing of the scheduler but the shared inbox
-/// head; the waker is the job's own copy.
+/**
+Worker-thread side: pushes a finished job onto its owner's inbox and wakes
+that loop. Touches nothing of the scheduler but the shared inbox head; the
+waker is the job's own copy.
+
+Publishing hands the job back. The owner's loop may drain it at once — on
+any tick, woken by anything — and resume the caller, whose frame, the job's
+storage, is then reused or freed. So the waker is read before the push, and
+the job is not touched after it.
+*/
 package void postBlockingCompletion(BlockingJob* job) @trusted nothrow @nogc
 {
     import core.atomic : atomicLoad, cas;
 
+    const waker = job.waker;
     auto inbox = &job.owner._blockingInbox;
+    version (unittest)
+        auto afterPublish = job.testAfterPublish;
     for (;;)
     {
         auto old = atomicLoad(*inbox);
@@ -1389,7 +1404,10 @@ package void postBlockingCompletion(BlockingJob* job) @trusted nothrow @nogc
         if (cas(inbox, old, cast(shared(BlockingJob*)) job))
             break;
     }
-    job.waker.wake();
+    version (unittest)
+        if (afterPublish !is null)
+            afterPublish();
+    waker.wake();
 }
 
 /**
@@ -1840,6 +1858,70 @@ unittest
             s.park();
     });
     assert(!r.hasError);
+}
+
+version (Posix)
+@("sched.blockingInbox.postTouchesNoJobItHasPublished")
+@system
+unittest
+{
+    import core.atomic : atomicLoad, atomicStore;
+    import core.memory : pureFree;
+    import core.sys.posix.fcntl : F_SETFL, O_NONBLOCK, fcntl;
+    import core.sys.posix.unistd : close, pipe, read;
+    import core.time : msecs;
+    import sparkles.event_horizon.backend.concept : WakeCell, WakeTarget;
+    import sparkles.event_horizon.io : sleep;
+
+    Sched s;
+    schedOrSkip(s);
+
+    // What the caller's frame holds once it is the caller's again: a waker
+    // whose wake lands in a pipe of the test's, where it can be seen.
+    int[2] stale;
+    assert(pipe(stale) == 0);
+    scope (exit)
+    {
+        close(stale[0]);
+        close(stale[1]);
+    }
+    assert(fcntl(stale[0], F_SETFL, O_NONBLOCK) == 0);
+    auto staleCell = WakeCell.create(WakeTarget(stale[1]));
+    assert(staleCell !is null);
+    scope (exit) pureFree(staleCell);
+
+    shared bool reclaimed;
+    auto r = s.run(() {
+        assert(!s.ensureBlockingInboxWaker().hasError);
+        BlockingJob job;
+        job.owner = &s;
+        job.waiter = s.currentContext();
+        job.waker = s.blockingWaker;
+        // The worker stops between publishing the job and waking the loop
+        // until the caller has taken its frame back.
+        job.testAfterPublish = () nothrow @nogc {
+            while (!atomicLoad(reclaimed))
+                Thread.yield();
+        };
+        scope (exit) atomicStore(reclaimed, true); // never strand the worker
+        auto worker = new Thread({ postBlockingCompletion(&job); }).start();
+        // A loop woken by anything drains its inbox: a sibling's timer
+        // ticks it, and the caller resumes without the worker's wake,
+        // which cannot happen before `reclaimed`.
+        assert(!s.spawn(() {
+            while (!atomicLoad(job.done))
+                cast(void) sleep(s, 1.msecs);
+        }).hasError);
+        while (!atomicLoad(job.done))
+            s.park();
+        job.waker = Waker(staleCell);
+        atomicStore(reclaimed, true);
+        worker.join();
+    });
+    assert(!r.hasError);
+    ulong woken;
+    assert(read(stale[0], &woken, woken.sizeof) < 0,
+        "the worker read its wake from a job it had already handed back");
 }
 
 @("sched.defect.survivesTheDestructorOfAnAbortedRun")
