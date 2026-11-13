@@ -27,7 +27,8 @@ The shared motion tests use these worked examples through a fixed layout
 context, checking collapse, extension and retained affinity.
 
 The [runnable example](../../../../libs/ui/examples/visual-carets.d) uses a
-fixed RTL row and prints `Home byte: 4`, then `End byte: 0`. It demonstrates
+fixed RTL row and prints `Home byte: 4`, then `End byte: 0`; `LayoutContext`
+then derives the same two answers from the bidi layout. The fixed row demonstrates
 the generic context boundary; its fixed answers are not a paragraph layout
 implementation.
 
@@ -36,7 +37,43 @@ Home retains its logical-line/first-nonblank toggle. Word/document motion and
 deletion keep their existing semantics. Queries must answer for the supplied
 text revision; an old layout cannot supply offsets for changed source bytes.
 
-These hooks establish the generic stepper boundary. `EditorField` currently
-embeds `LogicalContext`; a production layout-backed field, shared rendering/hit
-geometry and live IME integration remain separate delivery work. The hooks
-alone do not establish rendered bidi or wrapping support.
+Vertical motion adds two optional queries. `caretColumn(text, line, caret)`
+measures a goal column with the caret's affinity, and `caretAt(text, line,
+column)` returns the nearest caret with the affinity that draws it there.
+Vertical motion always finds the head's row with its affinity, so a caret at
+a soft wrap moves from the row it is drawn on.
+
+## The cell-grid layout context
+
+`sparkles.ui.editor.layout.LayoutContext` implements every query from one
+`ParagraphLayout` per logical line. Base supplies the paragraph's bidi levels
+(UAX #9), line opportunities (UAX #14), grapheme boundaries and cluster
+widths. The layout wraps greedily at `LayoutOptions.wrapCells`, lets white
+space hang past a row's end, and orders each row's clusters by its L1 levels.
+A lone mirrored scalar in a right-to-left run records its L4 mirror.
+
+| Query               | Answer                                                                                               |
+| ------------------- | ---------------------------------------------------------------------------------------------------- |
+| `lineAt`            | The visual row holding the caret; at a soft wrap, `before` is the earlier row's end                  |
+| `horizontalCaret`   | Crosses the visually adjacent cluster; past a row's edge, continues on the next row in reading order |
+| `lineBoundaryCaret` | The row's visual left/right edge; a row without RTL text keeps the first-nonblank Home toggle        |
+| `caretAt`           | The caret stop nearest a cell column, attached to the row it lies on                                 |
+| `caretArea`         | Cells and visual rows from `originLine`/`originRow`, for input-method placement                      |
+
+A view draws the same rows with `visualRows`
+(`sparkles.ui.components.editor`), which projects a line's logical spans onto
+the layout. Clusters keep their span's styling, and carets or a preedit are
+drawn at the caret stop for their range's affinity. `layoutColumn` removes
+those inserted cells from a pointer column before `caretAt` resolves it.
+Drawing, hit-testing and motion therefore share one layout for a given text
+and wrap width. The context caches four paragraphs, keyed by byte-equal
+text and options.
+
+`EditorFieldOf!LayoutContext` is a field over this context; `EditorField`
+remains `EditorFieldOf!LogicalContext` for single-line and unwrapped fields.
+The Sparkles editor application uses the layout context for documents.
+
+The context works on the toolkit's cell grid. Proportional shaped flow,
+joining across separately drawn clusters and ligature carets belong to
+`sparkles:text-layout` and the renderer. Live IME, touch selection handles
+and device font acceptance remain separate delivery work.

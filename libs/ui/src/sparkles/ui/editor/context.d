@@ -13,6 +13,12 @@ The step retains the returned affinity and keeps the logical anchor when
 extending. Without this primitive, grapheme motion retains logical order.
 `lineBoundaryCaret(text, position, affinity, boundary) -> CaretTarget` may
 likewise supply the visual left/right edge of the wrapped row for Home/End.
+For vertical motion, `caretColumn(text, line, CaretTarget) -> size_t` measures
+a caret's goal column with its affinity, and `caretAt(text, line, column) ->
+CaretTarget` returns the nearest caret together with the side of a soft wrap
+or bidi boundary that draws it there. Vertical motion always resolves the
+head's row with its affinity. `LayoutContext` (`sparkles.ui.editor.layout`)
+answers all of these from one cell-grid layout.
 The context must answer for the supplied revision, never from stale geometry.
 
 Specification: `docs/specs/ui/editor.md` §2.

@@ -18,6 +18,7 @@ import sparkles.ui.editor.context : CaretTarget, LogicalContext;
 import sparkles.ui.editor.field : FieldTextPool;
 import sparkles.ui.editor.kill_ring : KillRing;
 import sparkles.ui.editor.selection : SelectionSet;
+import sparkles.ui.editor.layout : LayoutContext;
 import sparkles.ui.editor.state : EditorState;
 import sparkles.ui.editor.step : stepInPlace;
 
@@ -48,4 +49,13 @@ void main() @safe
     writeln("Home byte: ", state.selection.primary.head);
     stepInPlace(state, ring, input, EditCommand.lineBoundary(Boundary.end), context);
     writeln("End byte: ", state.selection.primary.head);
+
+    // The production context derives the same answers from the bidi layout.
+    auto laidOut = EditorState.create("אב");
+    laidOut.selection = SelectionSet.caret(2);
+    LayoutContext layout;
+    stepInPlace(laidOut, ring, input, EditCommand.lineBoundary(Boundary.start), layout);
+    writeln("Layout Home byte: ", laidOut.selection.primary.head);
+    stepInPlace(laidOut, ring, input, EditCommand.lineBoundary(Boundary.end), layout);
+    writeln("Layout End byte: ", laidOut.selection.primary.head);
 }

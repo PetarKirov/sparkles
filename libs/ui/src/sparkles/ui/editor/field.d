@@ -18,7 +18,7 @@ import sparkles.base.pool.text_pool : TextPool;
 import sparkles.input.events : CompositionEvent, InputTextTag, KeyEvent, TextId;
 import sparkles.text_buffer.text : Text;
 import sparkles.ui.editor.command : EditCommand, EditKind;
-import sparkles.ui.editor.context : LogicalContext;
+import sparkles.ui.editor.context : LogicalContext, isEditContext;
 import sparkles.ui.editor.effect : EditEffects, EffectKind, NoopReason;
 import sparkles.ui.editor.keys : EditorTarget, editorCommand;
 import sparkles.ui.editor.kill_ring : KillRing;
@@ -48,8 +48,9 @@ struct FieldResult
     EditEffects effects;
 }
 
-/// An editor embedded as a field.
-struct EditorField
+/// An editor embedded as a field, answering layout queries from `Context`.
+struct EditorFieldOf(Context)
+if (isEditContext!Context)
 {
     EditorState state;
     /// The host session's kill ring, or `null` for the field's own.
@@ -59,7 +60,7 @@ struct EditorField
     /// The layout's answers; a field without wrapping uses logical lines. Set
     /// `context.clipboardRead` when the host answers the field's clipboard
     /// requests (`EDY5`).
-    LogicalContext context;
+    Context context;
     /**
     The clipboard work the field's inputs asked for and its host has not yet
     served (`EDY5`): text to copy, and a read's request. A host that sees
@@ -73,17 +74,17 @@ struct EditorField
     private SharedPool pool;
 
     /// A field holding `text`, caret at its end.
-    static EditorField make(scope const(char)[] text = "", EditorOptions options = EditorOptions.init,
+    static EditorFieldOf make(scope const(char)[] text = "", EditorOptions options = EditorOptions.init,
         EditorTarget target = EditorTarget.terminal) @safe pure nothrow @nogc
     {
-        EditorField field;
+        EditorFieldOf field;
         field.state = EditorState.create(text, options);
         field.target = target;
         return field;
     }
 
     /// A single-line field (`EDT8`).
-    static EditorField singleLine(scope const(char)[] text = "",
+    static EditorFieldOf singleLine(scope const(char)[] text = "",
         EditorTarget target = EditorTarget.terminal) @safe pure nothrow @nogc
     {
         EditorOptions options;
@@ -204,6 +205,9 @@ struct EditorField
         return pool.get();
     }
 }
+
+/// A field over logical lines: the default for single-line and unwrapped fields.
+alias EditorField = EditorFieldOf!LogicalContext;
 
 /// One text a field already holds, served for whatever id its command names:
 /// an insert or a paste needs no pool, so no length limits it.
@@ -457,7 +461,7 @@ FieldClipboard!(Write, Read) fieldClipboard(Write, Read)(Write write, Read read)
 
 /// Declare what `clipboard` can do to `field`, so paste, copy and cut are
 /// offered only when the host carries them out.
-void useClipboard(Clipboard)(ref EditorField field, in Clipboard clipboard)
+void useClipboard(Clipboard, C)(ref EditorFieldOf!C field, in Clipboard clipboard)
 {
     field.context.clipboardWrite = clipboard.write !is null;
     field.context.clipboardRead = readsClipboard(clipboard);
@@ -498,7 +502,7 @@ Do `result`'s clipboard work: write the text it copied and answer the read
 it asked for with the clipboard's text. Returns the result with the
 answer's change folded in.
 */
-FieldResult serveClipboard(Clipboard)(ref EditorField field, FieldResult result,
+FieldResult serveClipboard(Clipboard, C)(ref EditorFieldOf!C field, FieldResult result,
     in Clipboard clipboard)
 {
     const answer = serveClipboard(field, clipboard);
@@ -513,7 +517,7 @@ Do the clipboard work `field` has pending: write the text it copied and
 answer its read with the clipboard's text. Returns the answer's result;
 not `handled` when nothing was read.
 */
-FieldResult serveClipboard(Clipboard)(ref EditorField field, in Clipboard clipboard)
+FieldResult serveClipboard(Clipboard, C)(ref EditorFieldOf!C field, in Clipboard clipboard)
 {
     if (field.pendingCopy.length && clipboard.write !is null)
     {
@@ -621,7 +625,7 @@ Without a mapper, a host offering `allocateClipboardRequest` supplies the
 identity directly and the field retains it for its answer. A boolean read
 result can reject synchronously; legacy void-returning hosts remain accepted.
 */
-void forwardClipboard(Host, Route = ClipboardRequestIdentity)(ref EditorField field,
+void forwardClipboard(Host, C, Route = ClipboardRequestIdentity)(ref EditorFieldOf!C field,
     ref Host host, scope Route route = Route.init)
 {
     if (field.pendingCopy.length)

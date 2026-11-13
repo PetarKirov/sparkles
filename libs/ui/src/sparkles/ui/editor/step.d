@@ -561,9 +561,18 @@ struct Stepper(Texts, Context)
         SharedBuffer!(EditRange, 4) moved;
         foreach (r; state.selection.ranges)
         {
-            auto line = lineAt(r.head);
-            const goal = r.goal != EditRange.noGoal ? r.goal : context.columnOf(text, line, r.head);
+            // A layout distinguishes a soft wrap's two sides by affinity.
+            auto line = context.lineAt(text, r.head, r.affinity);
+            size_t goal = r.goal;
+            if (goal == EditRange.noGoal)
+            {
+                static if (is(typeof(context.caretColumn(text, line, CaretTarget.init)) : size_t))
+                    goal = context.caretColumn(text, line, CaretTarget(r.head, r.affinity));
+                else
+                    goal = context.columnOf(text, line, r.head);
+            }
             size_t head = r.head;
+            Affinity affinity = Affinity.before;
             foreach (_; 0 .. steps)
             {
                 VisualLine next;
@@ -572,12 +581,22 @@ struct Stepper(Texts, Context)
                 if (!found)
                 {
                     head = direction < 0 ? 0 : text.length;
+                    affinity = direction < 0 ? Affinity.after : Affinity.before;
                     break;
                 }
                 line = next;
-                head = context.positionAt(text, line, goal);
+                static if (is(typeof(context.caretAt(text, line, goal)) == CaretTarget))
+                {
+                    const at = context.caretAt(text, line, goal);
+                    head = at.position;
+                    affinity = at.affinity;
+                }
+                else
+                    head = context.positionAt(text, line, goal);
             }
-            auto range = EditRange(extend ? r.anchor : head, head);
+            static if (!is(typeof(context.caretAt(text, line, goal)) == CaretTarget))
+                affinity = Affinity.before;
+            auto range = EditRange(extend ? r.anchor : head, head, affinity);
             range.goal = goal;
             moved.put(range);
         }

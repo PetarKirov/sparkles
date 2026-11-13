@@ -18,6 +18,7 @@ import sparkles.base.term_style : UnderlineStyle;
 import sparkles.input.events : CompositionStyle;
 import sparkles.text_buffer.text : Text;
 import sparkles.ui.editor.selection : EditRange;
+import sparkles.ui.editor.layout : ParagraphLayout;
 import sparkles.ui.editor.state : EditorState, ReadOnlySpan;
 import sparkles.ui.style : Slot;
 import sparkles.ui.geometry : SizeSpec;
@@ -162,6 +163,238 @@ private void preeditSpans(in EditorState state, in EditorViewOptions options, bo
                 }
         spans ~= span;
     }
+}
+
+/// One visual row of a laid-out line, ready to draw (`EAP17`).
+struct VisualRow
+{
+    /// The row's index in its paragraph.
+    size_t row;
+    /// Its spans, left to right.
+    TextSpan[] spans;
+    /// Inserted spans (carets, a preedit) as `[stop, cells]`, left to right:
+    /// drawn cells that are not the layout's.
+    size_t[2][] inserted;
+}
+
+/**
+The visual rows of one logical line: `logical` (from `editorLineSpans` or a
+decorated form of it, such as highlighted spans) projected onto `layout`.
+
+Each cluster draws with the styling of the span covering its source bytes, in
+the row's visual order; a right-to-left cluster is its own span, and a lone
+mirrored scalar draws its L4 mirror. Spans without source bytes — carets and
+a preedit — are drawn at the caret stop of their position, on the side of a
+soft wrap or bidi boundary that the range's affinity names.
+*/
+VisualRow[] visualRows(scope const(TextSpan)[] logical, in ParagraphLayout layout, in EditorState state)
+    @safe pure nothrow
+{
+    import sparkles.text_buffer.summary : Affinity;
+
+    static struct Group { size_t position; size_t first, last; size_t row, stop; }
+    Group[] groups;
+    size_t[] textSpans;
+    size_t cursor = layout.start;
+    foreach (i, ref span; logical)
+    {
+        if (span.srcStart != size_t.max && span.srcEnd - span.srcStart == span.text.length)
+        {
+            textSpans ~= i;
+            cursor = span.srcEnd;
+            continue;
+        }
+        if (groups.length && groups[$ - 1].position == cursor && groups[$ - 1].last == i)
+            groups[$ - 1].last = i + 1;
+        else
+            groups ~= Group(cursor, i, i + 1);
+    }
+    foreach (ref g; groups)
+    {
+        Affinity affinity = Affinity.before;
+        foreach (j, r; state.selection.ranges)
+            if (r.head == g.position && (j == state.selection.primaryIndex || affinity == Affinity.before))
+                affinity = r.affinity;
+        g.row = layout.rowOf(g.position, affinity);
+        g.stop = layout.stopOf(g.row, g.position, affinity);
+    }
+
+    VisualRow[] rows;
+    foreach (r; 0 .. layout.rows.length)
+    {
+        VisualRow row;
+        row.row = r;
+        const count = layout.rows[r].last - layout.rows[r].first;
+        size_t previous = size_t.max; // the logical span the last emitted LTR run came from
+        void insertAt(size_t k)
+        {
+            foreach (g; groups)
+                if (g.row == r && g.stop == k)
+                {
+                    size_t cells;
+                    foreach (s; logical[g.first .. g.last])
+                    {
+                        row.spans ~= s;
+                        cells += textCells(s.text);
+                    }
+                    row.inserted ~= [k, cells];
+                    previous = size_t.max;
+                }
+        }
+        foreach (k; 0 .. count)
+        {
+            insertAt(k);
+            const cluster = layout.visualCluster(r, k);
+            // The text span covering the cluster's first byte: text spans are
+            // in source order, so the last one starting at or before it.
+            size_t covering = size_t.max;
+            {
+                size_t lo = 0, hi = textSpans.length;
+                while (lo < hi)
+                {
+                    const mid = (lo + hi) / 2;
+                    if (logical[textSpans[mid]].srcStart <= cluster.start) lo = mid + 1;
+                    else hi = mid;
+                }
+                if (lo && cluster.start < logical[textSpans[lo - 1]].srcEnd)
+                    covering = textSpans[lo - 1];
+            }
+            if (covering == size_t.max)
+            {
+                previous = size_t.max;
+                continue; // hidden: a preedit replaces it
+            }
+            const span = logical[covering];
+            if (!cluster.rtl && previous == covering && row.spans.length
+                && row.spans[$ - 1].srcEnd == cluster.start && cluster.end <= span.srcEnd)
+            {
+                auto last = &row.spans[$ - 1];
+                last.text = span.text[last.srcStart - span.srcStart .. cluster.end - span.srcStart];
+                last.srcEnd = cluster.end;
+                continue;
+            }
+            TextSpan drawn = span;
+            drawn.srcStart = cluster.start;
+            drawn.srcEnd = cluster.end;
+            if (cluster.mirrored)
+                drawn.text = encodeScalar(cluster.mirrored);
+            else if (cluster.end <= span.srcEnd)
+                drawn.text = span.text[cluster.start - span.srcStart .. cluster.end - span.srcStart];
+            else
+            {
+                // A cluster split between spans draws whole, styled as its start.
+                char[] bytes = span.text[cluster.start - span.srcStart .. $].dup;
+                foreach (t; textSpans)
+                    if (logical[t].srcStart > span.srcStart && logical[t].srcStart < cluster.end)
+                        bytes ~= logical[t].text[0 .. (cluster.end < logical[t].srcEnd ? cluster.end : logical[t].srcEnd)
+                            - logical[t].srcStart];
+                drawn.text = bytes;
+            }
+            row.spans ~= drawn;
+            previous = cluster.rtl ? size_t.max : covering;
+        }
+        insertAt(count);
+        rows ~= row;
+    }
+    return rows;
+}
+
+/**
+The layout column under drawn column `column` of `row`: inserted cells to
+its left are not the layout's, and a column inside an inserted span is the
+stop it was inserted at.
+*/
+size_t layoutColumn(in VisualRow row, in ParagraphLayout layout, size_t column) @safe pure nothrow @nogc
+{
+    size_t shift;
+    foreach (inserted; row.inserted)
+    {
+        const at = layout.stopCells(row.row, inserted[0]) + shift;
+        if (column < at)
+            break;
+        if (column < at + inserted[1])
+            return at - shift;
+        shift += inserted[1];
+    }
+    return column - shift;
+}
+
+private size_t textCells(scope const(char)[] text) @safe pure nothrow
+{
+    import sparkles.base.text.seek : nextGraphemeBoundary;
+    import sparkles.ui.editor.context : clusterCells;
+
+    const whole = Text(text);
+    size_t cells;
+    for (size_t at; at < text.length;)
+    {
+        const next = nextGraphemeBoundary(text, at);
+        cells += clusterCells(whole, at, next);
+        at = next;
+    }
+    return cells;
+}
+
+private string encodeScalar(dchar c) @safe pure nothrow
+{
+    char[] bytes;
+    if (c < 0x80)
+        bytes = [cast(char) c];
+    else if (c < 0x800)
+        bytes = [cast(char)(0xC0 | c >> 6), cast(char)(0x80 | c & 0x3F)];
+    else if (c < 0x10000)
+        bytes = [cast(char)(0xE0 | c >> 12), cast(char)(0x80 | c >> 6 & 0x3F), cast(char)(0x80 | c & 0x3F)];
+    else
+        bytes = [cast(char)(0xF0 | c >> 18), cast(char)(0x80 | c >> 12 & 0x3F),
+            cast(char)(0x80 | c >> 6 & 0x3F), cast(char)(0x80 | c & 0x3F)];
+    return (() @trusted => cast(string) bytes)(); // unique and never written again
+}
+
+/// A mixed row draws Bet left of Alef, and the caret at its affinity's side.
+@("editor.view.visualRows.mixed")
+@safe pure nothrow unittest
+{
+    import sparkles.text_buffer.summary : Affinity;
+    import sparkles.ui.editor.layout : LayoutOptions, ParagraphLayout;
+    import sparkles.ui.editor.selection : SelectionSet;
+
+    auto state = EditorState.create("ab אב");
+    state.selection = SelectionSet.single(EditRange(3, 3, Affinity.after));
+    const layout = ParagraphLayout.of(state.text, 0, LayoutOptions.init);
+    const rows = visualRows(editorLineSpans(state, 0, EditorViewOptions.init), layout, state);
+    assert(rows.length == 1);
+    string drawn;
+    foreach (s; rows[0].spans)
+        drawn ~= s.text;
+    // Byte 3 after: before Alef, which is drawn rightmost.
+    assert(drawn == "ab בא" ~ caretGlyph, drawn);
+    assert(rows[0].inserted == [[5, 1]]);
+    assert(layoutColumn(rows[0], layout, 6) == 5);
+    // Before: after the space.
+    state.selection = SelectionSet.single(EditRange(3, 3, Affinity.before));
+    drawn = null;
+    foreach (s; visualRows(editorLineSpans(state, 0, EditorViewOptions.init), layout, state)[0].spans)
+        drawn ~= s.text;
+    assert(drawn == "ab " ~ caretGlyph ~ "בא", drawn);
+}
+
+/// Wrapped rows each draw their own clusters; selection styling follows the bytes.
+@("editor.view.visualRows.wrapped")
+@safe pure nothrow unittest
+{
+    import sparkles.ui.editor.layout : LayoutOptions, ParagraphLayout;
+    import sparkles.ui.editor.selection : SelectionSet;
+
+    auto state = EditorState.create("aaa bbb");
+    state.selection = SelectionSet.single(EditRange(2, 5));
+    const layout = ParagraphLayout.of(state.text, 0, LayoutOptions(4));
+    const rows = visualRows(editorLineSpans(state, 0, EditorViewOptions.init), layout, state);
+    assert(rows.length == 2);
+    string first, second;
+    foreach (s; rows[0].spans) first ~= s.text ~ (s.slot == Slot.selection ? "#" : "") ~ "|";
+    foreach (s; rows[1].spans) second ~= s.text ~ (s.slot == Slot.selection ? "#" : "") ~ "|";
+    assert(first == "aa|a #|", first);
+    assert(second == "b#|" ~ caretGlyph ~ "|bb|", second);
 }
 
 /// The editor as one node: a rich run for a single line, else a column of

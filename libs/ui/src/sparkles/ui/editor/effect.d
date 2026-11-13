@@ -83,6 +83,19 @@ struct EditEffects
         items[count++] = effect;
     }
 
+    /**
+    Assignment, declared so its attributes and mangling are fixed. Inferred,
+    a generic field in another package (built with `-allinst`) inferred it
+    `@trusted` where this package emitted `@safe`, and failed to link.
+    */
+    ref EditEffects opAssign(EditEffects source) return
+    {
+        foreach (i; 0 .. items.length)
+            items[i] = source.items[i];
+        count = source.count;
+        return this;
+    }
+
     const(EditEffect)[] opIndex() const return => items[0 .. count];
 
     size_t length() const scope => count;
