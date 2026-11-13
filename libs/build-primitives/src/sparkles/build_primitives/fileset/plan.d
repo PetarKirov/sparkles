@@ -58,7 +58,7 @@ struct Plan
 }
 
 /// Derives the start roots of `f` (FSA2, FSA6). Allocates; never fails.
-Plan plan(ref const Filesets sets, Fileset f) @safe nothrow @nogc
+Plan plan(ref const Filesets sets, Fileset f) @safe pure nothrow @nogc
 in (f.node < sets.nodes.length, "a fileset from another arena")
 {
     Lattice l;
@@ -144,7 +144,7 @@ each of its components from the fileset root, and returns the root's verdict.
 `scratch` must hold `ev.stateWords` words.
 */
 DirVerdict rootState(ref FilesetEvaluator ev, ref const Filesets sets, scope const(char)[] root,
-    scope ulong[] state, scope ulong[] scratch) @safe nothrow @nogc
+    scope ulong[] state, scope ulong[] scratch) @safe pure nothrow @nogc
 in (state.length >= ev.stateWords && scratch.length >= ev.stateWords)
 {
     ev.rootState(sets, state);
@@ -187,14 +187,14 @@ private struct Lattice
     HeapBuffer!Span prefixes;
     HeapBuffer!NodeSet sets_;
 
-    void build(ref const Filesets sets, uint root) @safe nothrow @nogc
+    void build(ref const Filesets sets, uint root) @safe pure nothrow @nogc
     {
         sets_.length = root + 1;
         foreach (i; 0 .. root + 1)
             node(sets, i);
     }
 
-    void node(ref const Filesets sets, uint i) @safe nothrow @nogc
+    void node(ref const Filesets sets, uint i) @safe pure nothrow @nogc
     {
         const n = sets.nodes[i];
         const start = prefixes.length;
@@ -233,7 +233,7 @@ private struct Lattice
         sets_[i] = NodeSet(start, prefixes.length - start, true);
     }
 
-    void globRoot(ref const Filesets sets, in PatternInfo p) @safe nothrow @nogc
+    void globRoot(ref const Filesets sets, in PatternInfo p) @safe pure nothrow @nogc
     {
         if (!p.anchored)
         {
@@ -254,14 +254,14 @@ private struct Lattice
         prefixes ~= Span(start, text.length - start);
     }
 
-    void append(NodeSet s) @safe nothrow @nogc
+    void append(NodeSet s) @safe pure nothrow @nogc
     {
         foreach (k; 0 .. s.length)
             prefixes ~= prefixes[s.start + k];
     }
 
     // Drops every prefix at or beneath another of the same set.
-    void minimize(size_t start) @safe nothrow @nogc
+    void minimize(size_t start) @safe pure nothrow @nogc
     {
         size_t kept = start;
         foreach (i; start .. prefixes.length)
@@ -325,7 +325,7 @@ bool pathBefore(scope const(char)[] a, scope const(char)[] b) @safe pure nothrow
     assert(!pathBefore("b", "b"));
 }
 
-private void sortRoots(ref Plan p) @safe nothrow @nogc
+private void sortRoots(ref Plan p) @safe pure nothrow @nogc
 {
     // Insertion sort: plans have a handful of roots.
     foreach (i; 1 .. p.roots_.length)

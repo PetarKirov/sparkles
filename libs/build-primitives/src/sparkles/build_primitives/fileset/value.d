@@ -419,9 +419,10 @@ struct FilesetEvaluator
     private Fileset root_;
     private size_t words;
     private uint scopeWord_ = uint.max;
+    private bool unresolvedMaybe_; // an undecided `gitignored` leaf answers `maybe` (BGW17)
 
     /// Prepares to evaluate `root` of `sets`. Allocates.
-    this(ref const Filesets sets, Fileset root) @safe nothrow @nogc
+    this(ref const Filesets sets, Fileset root) @safe pure nothrow @nogc
     in (root.node < sets.nodes.length, "a fileset from another arena")
     {
         root_ = root;
@@ -478,7 +479,7 @@ struct FilesetEvaluator
     ulong segmentMatches() const @safe pure nothrow @nogc => scratch_.get.segmentMatches;
 
     /// Writes the state of the fileset root into `state`.
-    void rootState(ref const Filesets sets, scope ulong[] state) @safe nothrow @nogc
+    void rootState(ref const Filesets sets, scope ulong[] state) @safe pure nothrow @nogc
     in (state.length >= words)
     {
         state[] = 0;
@@ -496,7 +497,7 @@ struct FilesetEvaluator
     }
 
     /// The verdict on a directory whose state is `state`.
-    DirVerdict dirVerdict(ref const Filesets sets, scope const ulong[] state) @safe nothrow @nogc
+    DirVerdict dirVerdict(ref const Filesets sets, scope const ulong[] state) @safe pure nothrow @nogc
     in (state.length >= words)
     {
         foreach (i; order_[])
@@ -545,17 +546,17 @@ struct FilesetEvaluator
     whose state is `parent`, and returns the child's verdict.
     */
     DirVerdict enter(ref const Filesets sets, scope const ulong[] parent, scope const(char)[] name,
-        scope ulong[] child) @safe nothrow @nogc
+        scope ulong[] child) @safe pure nothrow @nogc
         => enterIn(sets, null, parent, name, child);
 
     /// ditto, stepping the `gitignored` leaf through `scopes`, which must have
     /// room for the child's block (`IgnoreScopes.overflowed` says when not).
     DirVerdict enter(ref const Filesets sets, ref IgnoreScopes scopes, scope const ulong[] parent,
-        scope const(char)[] name, scope ulong[] child) @safe nothrow @nogc
+        scope const(char)[] name, scope ulong[] child) @safe pure nothrow @nogc
         => enterIn(sets, &scopes, parent, name, child);
 
     private DirVerdict enterIn(ref const Filesets sets, scope IgnoreScopes* scopes,
-        scope const ulong[] parent, scope const(char)[] name, scope ulong[] child) @safe nothrow @nogc
+        scope const ulong[] parent, scope const(char)[] name, scope ulong[] child) @safe pure nothrow @nogc
     in (parent.length >= words && child.length >= words)
     {
         foreach (i; order_[])
@@ -579,12 +580,12 @@ struct FilesetEvaluator
     /// The verdict on the non-directory `name` in a directory whose state is
     /// `state`, given `facts` (FSA4).
     FileVerdict fileVerdict(ref const Filesets sets, scope const ulong[] state,
-        scope const(char)[] name, EntryFacts facts) @safe nothrow @nogc
+        scope const(char)[] name, EntryFacts facts) @safe pure nothrow @nogc
         => fileVerdictIn(sets, null, state, name, facts);
 
     /// ditto, deciding the `gitignored` leaf through `scopes`.
     FileVerdict fileVerdict(ref const Filesets sets, ref IgnoreScopes scopes,
-        scope const ulong[] state, scope const(char)[] name, EntryFacts facts) @safe nothrow @nogc
+        scope const ulong[] state, scope const(char)[] name, EntryFacts facts) @safe pure nothrow @nogc
         => fileVerdictIn(sets, &scopes, state, name, facts);
 
     /**
@@ -593,7 +594,7 @@ struct FilesetEvaluator
     the fileset has no `gitignored` leaf, and beneath an excluded directory.
     */
     IgnoreDecisionRef ignoreDecision(ref const IgnoreScopes scopes, scope const ulong[] state,
-        scope const(char)[] name, bool isDir) @safe nothrow @nogc
+        scope const(char)[] name, bool isDir) @safe pure nothrow @nogc
     {
         if (scopeWord_ == uint.max || !scopes.ready)
             return IgnoreDecisionRef.init;
@@ -602,7 +603,7 @@ struct FilesetEvaluator
     }
 
     private FileVerdict fileVerdictIn(ref const Filesets sets, scope IgnoreScopes* scopes,
-        scope const ulong[] state, scope const(char)[] name, EntryFacts facts) @safe nothrow @nogc
+        scope const ulong[] state, scope const(char)[] name, EntryFacts facts) @safe pure nothrow @nogc
     in (state.length >= words)
     {
         foreach (i; order_[])
@@ -625,8 +626,9 @@ struct FilesetEvaluator
                     break;
                 case FilesetOp.gitignored:
                     const st = IgnoreState(state[n.state]);
-                    t = st.excluded || (scopes !is null && scopes.ready
-                        && scopes.excludesFile(st, name, *scratch_)) ? Tri.yes : Tri.no;
+                    const resolved = scopes !is null && scopes.ready;
+                    t = st.excluded || (resolved && scopes.excludesFile(st, name, *scratch_)) ? Tri.yes
+                        : !resolved && unresolvedMaybe_ ? Tri.maybe : Tri.no;
                     break;
                 case FilesetOp.union_, FilesetOp.intersection, FilesetOp.difference:
                     t = combine(n, tri[n.a], tri[n.b]);
@@ -642,7 +644,7 @@ struct FilesetEvaluator
     `facts`. Walks the path's directories; never fails (FSV5).
     */
     FileVerdict verdictOf(ref const Filesets sets, scope const(char)[] path, EntryFacts facts)
-        @safe nothrow @nogc
+        @safe pure nothrow @nogc
     {
         auto a = pathState[0 .. words], b = pathState[words .. 2 * words];
         rootState(sets, a);
@@ -669,7 +671,7 @@ struct FilesetEvaluator
     (`""` for the root): `skip` when no file beneath it can be a member.
     Walks the path's directories; never fails (FSV5).
     */
-    DirVerdict dirVerdictOf(ref const Filesets sets, scope const(char)[] path) @safe nothrow @nogc
+    DirVerdict dirVerdictOf(ref const Filesets sets, scope const(char)[] path) @safe pure nothrow @nogc
     {
         auto a = pathState[0 .. words], b = pathState[words .. 2 * words];
         rootState(sets, a);
@@ -693,10 +695,29 @@ struct FilesetEvaluator
         return d;
     }
 
+    /**
+    Whether the fileset may hold the file at `path`, as the task graph's
+    conflict check asks it (BGW17): only `reject` proves it cannot. No facts
+    are known of the entry, and a `gitignored` leaf counts as possibly
+    holding the path, since only a resolution reads its scopes.
+    */
+    bool mayHoldFile(ref const Filesets sets, scope const(char)[] path) @safe pure nothrow @nogc
+    {
+        unresolvedMaybe_ = true;
+        scope (exit)
+            unresolvedMaybe_ = false;
+        return verdictOf(sets, path, EntryFacts.init) != FileVerdict.reject;
+    }
+
+    /// Whether the fileset may hold a file beneath the directory `path`, or
+    /// the directory itself (BGW17): only `skip` proves it cannot.
+    bool mayHoldTree(ref const Filesets sets, scope const(char)[] path) @safe pure nothrow @nogc
+        => dirVerdictOf(sets, path) != DirVerdict.skip;
+
     /// Whether the file at `path` with the executable bit `executable` is a
     /// member (FSV5: a value, never an error).
     bool contains(ref const Filesets sets, scope const(char)[] path, bool executable = false)
-        @safe nothrow @nogc
+        @safe pure nothrow @nogc
         => verdictOf(sets, path, EntryFacts.stat(executable)) == FileVerdict.accept;
 
     /**
@@ -708,7 +729,7 @@ struct FilesetEvaluator
     not. Never fails (FSV5).
     */
     void judge(ref const Filesets sets, scope const(char)[] path, EntryFacts facts)
-        @safe nothrow @nogc
+        @safe pure nothrow @nogc
     {
         auto a = pathState[0 .. words], b = pathState[words .. 2 * words];
         rootState(sets, a);
@@ -744,7 +765,7 @@ struct FilesetEvaluator
         => tri[part.node] == Tri.yes;
 
     private void enterIgnored(ref const Filesets sets, in FilesetNode n, scope const ulong[] parent,
-        scope const(char)[] name, scope ulong[] child) @safe nothrow @nogc
+        scope const(char)[] name, scope ulong[] child) @safe pure nothrow @nogc
     {
         if (parent[n.state])
         {
@@ -764,7 +785,7 @@ struct FilesetEvaluator
     }
 
     private bool ignoresFile(ref const Filesets sets, in FilesetNode n, scope const ulong[] state,
-        scope const(char)[] name) @safe nothrow @nogc
+        scope const(char)[] name) @safe pure nothrow @nogc
     {
         if (state[n.state])
             return true;
@@ -793,6 +814,33 @@ struct FilesetEvaluator
     assert(ev.contains(sets, "src/x/b.d"));
     assert(!ev.contains(sets, "src/gen/c.d"));
     assert(!ev.contains(sets, "lib/a.d"));
+}
+
+/// BGW17's question: only `reject` and `skip` prove a path is not held, and
+/// a `.gitignore` scope no resolution read may hold anything.
+@("fileset.value.mayHold")
+@safe nothrow @nogc unittest
+{
+    auto sets = Filesets(CasePolicy.sensitive);
+    const sources = sets.glob("src/**/*.d").value;
+    auto ev = FilesetEvaluator(sets, sources);
+    assert(ev.mayHoldFile(sets, "src/a.d"));
+    assert(!ev.mayHoldFile(sets, "src/a.txt"));
+    assert(!ev.mayHoldFile(sets, "src"), "a file claim on a directory's name");
+    assert(ev.mayHoldTree(sets, "src/gen"));
+    assert(ev.mayHoldTree(sets, ""), "the root holds everything");
+    assert(!ev.mayHoldTree(sets, "build"));
+
+    // Undecided by metadata: possibly held.
+    auto ex = FilesetEvaluator(sets, sets.intersection(sets.glob("bin/*").value, sets.executable));
+    assert(ex.mayHoldFile(sets, "bin/run") && !ex.contains(sets, "bin/run"));
+
+    // Only the scopes a resolution reads decide these.
+    const ignoredSources = sets.intersection(sets.glob("src/**").value, sets.gitignored);
+    auto ig = FilesetEvaluator(sets, ignoredSources);
+    assert(ig.mayHoldFile(sets, "src/out.o"));
+    assert(!ig.contains(sets, "src/out.o"), "membership is unchanged");
+    assert(!ig.mayHoldFile(sets, "lib/out.o"));
 }
 
 /// One walk of a path answers for every part of a fileset.
