@@ -6,6 +6,19 @@ filter written in the fileset query language the
 under several names: `fscp` is `fsx cp`, and `fsls` is `fsx ls`
 ([specification](../../specs/fsx/SPEC.md)).
 
+## Installing
+
+```sh
+nix build .#fsx        # fsx, fscp, fsls
+nix build .#fsx-full   # and fsdiff
+```
+
+Both come from `apps/fsx/package.nix`, written as nixpkgs writes a package,
+so that it builds with nixpkgs alone (`callPackage`, nixpkgs' LDC and
+`buildDubPackage`). Phobos is linked in; at run time `fsx` needs the C
+library and libgcc, and, to read from an iroh peer, the iroh bridge, which
+the package builds and the program finds through its own run path.
+
 ## Copying
 
 ```sh

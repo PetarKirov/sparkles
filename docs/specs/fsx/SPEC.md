@@ -408,8 +408,8 @@ of the repository's flake. _Detection:_ `nix-build` of the file through
 and runs its tests.
 
 **`XP2` — A small closure.** The package **must** link Phobos and druntime
-statically, build with the `checked` build type, and depend at run time on
-nothing beyond the C library and, with the iroh bridge, the bridge.
+statically, build with the `checked` build type, and depend at run time on nothing beyond the C library, libgcc's unwinder
+and, with the iroh bridge, the bridge.
 _Detection:_ the closure of the default package lists only those, and its
 size is recorded in [testing](./testing.md).
 
