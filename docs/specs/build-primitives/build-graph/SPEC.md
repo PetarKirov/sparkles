@@ -517,7 +517,8 @@ format version retires them.
 
 **BGK2: The input manifest.** A compile **must** record a **manifest** of
 everything the compiler resolved. It lists every file the compiler read, each
-as a root-relative or store path with a content digest:
+as a root-relative or store path with a content digest, BLAKE3 over the bytes
+([D48](./decisions.md#d48-one-leaf-digest-blake3-accepted)):
 
 - its own sources;
 - the modules it imported;
@@ -564,7 +565,13 @@ tuple (device, inode, size, modification time, change time). A cached digest
 **must not** be trusted when the file's modification or change time is not
 older than the time the digest was recorded, minus two seconds; such a file is
 rehashed. This is git's rule for racily clean index entries, with a margin
-that covers coarse kernel timestamps.
+that covers coarse kernel timestamps. It is also the subtree cache's rule
+([FSC2 and FSC3](../filesets/SPEC.md#_12-the-subtree-cache-fsc)): one
+statement and one validator serve every reader of a file's digest, the
+manifest, an input state's id (BGW9 of the
+[fileset-native workspace](./fileset-native-workspace.md)) and a Nix source,
+and a file's content is hashed at most once per run, whichever of them needs
+it.
 
 - **The clock:** the recording time **must** be read from the clock of the
   file system that holds the file: the modification time of a probe file the
@@ -619,12 +626,18 @@ autosaves.
 missing, unparseable, or comes from a compiler that cannot list C headers or
 absent candidates, the action **must** key on its declared inputs plus the
 paths and content digests of every file under every import, C import and
-string import root it searches. Its result is published under that key and
-reported as conservatively keyed.
+string import root it searches: the input state id of its declared read set
+(BGW7 and BGW9 of the
+[fileset-native workspace](./fileset-native-workspace.md)), which needs no
+listing code of its own. Its result is published under that key and reported
+as conservatively keyed.
 
 **BGK8: Reads outside the declared roots.** A compile whose manifest lists a
 file outside all of the following **must** fail, and its result **must not**
-be published:
+be published. In the worktree, the test is membership in the action's
+declared read set (BGW7 of the
+[fileset-native workspace](./fileset-native-workspace.md)), whose roots these
+are:
 
 - the source, import, C import and string import roots of its variant and of
   its transitive dependencies, including the C import paths `pkg-config`
@@ -1053,8 +1066,10 @@ backend, plus the separate measurement output
 
 **BGN2: Sources.** A compile derivation's source inputs **must** be its declared
 inputs plus the complete file sets of the import, C import and string import
-roots it searches. Each enters the store as a content-addressed path that the
-build graph computes itself, hashing each file in the same pass that copies it,
+roots it searches: the tree of its declared read set's input state (BGW7 and
+BGW9 of the [fileset-native workspace](./fileset-native-workspace.md)). Each
+enters the store as a content-addressed path that the build graph computes
+itself, hashing each file in the same pass that copies it,
 so the derivation reads a snapshot (BGS11). Whole-repository source copies are
 not used.
 
@@ -1256,7 +1271,8 @@ itself, and the listing digests BGP1 records come from the resolution.
 **BGF6: Identity for digest caching.** BGK5's cache tuple and BGK7's stat
 proxies **must** come from the VFS's `Stat`, with the file identity and the
 change time requested in its mask
-([VFO6](../../base/vfs/SPEC.md#vfo6-stat)). A tuple decides only whether a file
-is read again; it never stands in for a handle.
+([VFO6](../../base/vfs/SPEC.md#vfo6-stat)). The tuple is the subtree cache's
+fingerprint ([FSC2](../filesets/SPEC.md#_12-the-subtree-cache-fsc)). A tuple
+decides only whether a file is read again; it never stands in for a handle.
 
 See [D44](./decisions.md#d44-the-build-graph-reaches-files-through-the-vfs-accepted).
