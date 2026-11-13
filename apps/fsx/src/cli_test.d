@@ -121,7 +121,7 @@ private Run run(string[] args...)
 
     const ticket = run("fscp", "--src", "iroh:blobadd6ooplaj7pgoz7sebzgm5oe5gpaqqyznbno4evdgft76adzf6nk",
         "--dst", dst);
-    assert(ticket.status == 1 && ticket.error.canFind("names an iroh ticket"), ticket.error);
+    assert(ticket.status == 1 && ticket.error.canFind("fscp: "), ticket.error);
 }
 
 /// XL1–XL3: sorted paths, NUL-separated, the long form, and the tree.

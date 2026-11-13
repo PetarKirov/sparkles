@@ -30,6 +30,27 @@ fscp: copied 5343 files (94.5 MiB) to ../snapshot in 382.62 ms (BlockingVfs)
 fscp: verified: castore blake3-zGwLWk1ZLsukDbY+H9EEk3KMR0o4gREUUiAp0vqoVPI=
 ```
 
+## From another machine
+
+`--src` takes a `sendme` ticket too, bare as `sendme send` prints it or as
+`iroh:<ticket>`. `fsx` reads the collection's names first, a few KiB, then
+evaluates the filter over them and downloads only the files it selects,
+each verified against its BLAKE3 digest as it arrives:
+
+```sh
+fscp --src blobadkwdeu5… --filter 'src/** - **/*_test.d' --dst ./ci
+```
+
+```text
+fscp: copied 31 files (742.9 KiB) of 52 from `ci` from the peer to ./ci in 24.55 ms (iroh; opening it read 2.9 KiB)
+fscp: verified: castore blake3-Letqr/k4yTNbC0ABAPCg8F4UsJGjJ2/y3oAC3IeZJUs=
+```
+
+The files land at their paths beneath the directory `sendme` sent, without
+its name, and without executable bits, which a collection does not carry.
+A filter over a ticket cannot ask git: `gitTracked()` and `gitignored()` are
+refused.
+
 ## Listing
 
 ```sh
