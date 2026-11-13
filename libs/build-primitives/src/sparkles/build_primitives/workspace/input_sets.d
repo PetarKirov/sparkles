@@ -392,6 +392,9 @@ struct InputSets
         links_.sort!((a, b) => a.target != b.target ? a.target < b.target : a.set < b.set);
     }
 
+    /// The union of `a` and `b`, built in the arena.
+    Fileset unionInArena(Fileset a, Fileset b) @safe pure nothrow @nogc => sets_.union_(a, b);
+
     /// The union of every set's inputs, built in the arena: what
     /// materializing all of them reads.
     Fileset allInputs() @safe pure nothrow @nogc
@@ -1240,6 +1243,57 @@ struct AffectedRequests
     string[] everywhere;
     /// The changed paths no set and no workspace input holds.
     string[] unclaimed;
+}
+
+/**
+The declared read set of `request` (BGW7): the workspace inputs, and the
+input set of every pair its closure holds, the root's included and those of
+the generators it runs (`addGenerators`). Its input state (BGW9) is the
+gate a result is reused through (BGW10), and the roots it lies beneath are
+the ones the build graph's BGK8 names. Built in the arena of `inputs`;
+reads no file.
+*/
+Fileset declaredReads(ref InputSets inputs, const ref Request request) @safe pure nothrow @nogc
+{
+    auto all = inputs.workspace;
+    foreach (pair; request.closure)
+    {
+        const at = inputs.indexOf(pair);
+        if (at >= 0)
+            all = inputs.unionInArena(all, inputs.inputs(at));
+    }
+    return all;
+}
+
+/// A request's declared read set holds what its closure's sets and the
+/// workspace inputs hold, and nothing another package's set alone holds.
+@("build_primitives.workspace.input_sets.declaredReads")
+@safe unittest
+{
+    import sparkles.build_primitives.workspace.package_graph : buildPackageGraph, recipe, RecipeRole;
+
+    const recipes = [
+        recipe("libs/a", `name "a"`),
+        recipe("libs/b", `name "b"
+dependency "sparkles:a" path="../.."`),
+    ];
+    const graph = buildPackageGraph("sparkles", recipes, RecipeRole.build, linux).value;
+    auto sets = inputSets(graph, recipes, linux, WorkspaceInputs(patterns: ["dub.selections.json"]));
+    const a = cast(uint) graph.indexOf(PackageId("sparkles:a"));
+    const b = cast(uint) graph.indexOf(PackageId("sparkles:b"));
+    const ofB = Request("b", [ConfiguredPackage(a, ""), ConfiguredPackage(b, "")], root: b);
+    const ofA = Request("a", [ConfiguredPackage(a, "")], root: a);
+    const readsB = declaredReads(sets, ofB), readsA = declaredReads(sets, ofA);
+    bool holds(Fileset f, string path)
+    {
+        auto ev = FilesetEvaluator(sets.sets, f);
+        ev.judge(sets.sets, path, EntryFacts.init);
+        return ev.selects(f);
+    }
+
+    assert(holds(readsB, "libs/a/source/x.d") && holds(readsB, "libs/b/source/y.d")
+        && holds(readsB, "dub.selections.json"));
+    assert(holds(readsA, "libs/a/source/x.d") && !holds(readsA, "libs/b/source/y.d"));
 }
 
 /**
