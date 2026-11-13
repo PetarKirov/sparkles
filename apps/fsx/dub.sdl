@@ -20,9 +20,18 @@ configuration "application" {
     targetType "executable"
 }
 
+// `fsdiff` (`XD`): the diff engine beside the rest.
+configuration "full" {
+    targetType "executable"
+    versions "FsxDiff"
+    dependency "sparkles:diff" path="../.."
+}
+
 configuration "unittest" {
     targetType "library"
     excludedSourceFiles "src/app.d"
+    versions "FsxDiff"
+    dependency "sparkles:diff" path="../.."
     dependency "sparkles:test-runner" path="../.."
 
     dflags "-checkaction=context" "-allinst"

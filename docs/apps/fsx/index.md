@@ -60,6 +60,19 @@ fsls --src . --filter 'src/**' --tree   # as a tree
 fsls --src . --filter 'src/**' -0 | xargs -0 wc -l
 ```
 
+## Comparing
+
+`fsdiff`, in the `full` build (`dub build :fsx -c full`), compares the
+members of one filter over two sources, either of them a ticket, by
+content id, and prints git's `--name-status` letters; `-p` adds a unified
+diff of each changed text file. It exits 0 when they are equal and 1 when
+they differ, as `diff` does. Against a ticket only the names are fetched,
+and with `-p` the changed files:
+
+```sh
+fsdiff . blobadkwdeu5… --filter 'src/**'
+```
+
 `--filter-file PATH` reads the filter from a file, `-` from standard input.
 What a subcommand produces goes to standard output; its reports, with
 `--stats` and `--tree-hashes`, go to standard error.
