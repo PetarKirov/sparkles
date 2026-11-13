@@ -112,6 +112,7 @@ struct SendSnapshot
     string collection;  /// the collection the explorer named, in hex
     ulong bytes;        ///
     size_t links;       /// links left out
+    size_t executables; /// files that arrive without their executable bit
 }
 
 /**
@@ -152,6 +153,7 @@ struct Sending
         s.query = query;
         s.collection = o.collection;
         s.links = o.collectionLinks;
+        s.executables = o.collectionExecutables;
         sent = s;
         stage = SendStage.asking;
     }

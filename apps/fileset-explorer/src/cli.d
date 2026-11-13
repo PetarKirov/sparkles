@@ -23,7 +23,7 @@ import launch : defaultQuery, explorerGui, launch;
 import render : renderFrame;
 import copy : CopyVfs;
 import send : BlobProvider, IrohProvider, openIrohProvider, SendStage, Sending;
-import stats : formatStats, statsRows;
+import stats : executableBits, formatStats, statsRows;
 
 /// The command line.
 @(Command("fileset-explorer",
@@ -197,6 +197,7 @@ int sendCommand(in Root root, string query, bool yes, BlobProvider delegate(out 
     }
     io.err(text("send: ", s.sent.files.length, " files (", humanBytes(s.sent.bytes), ")",
         s.sent.links ? text(", ", s.sent.links, s.sent.links == 1 ? " link" : " links", " left out") : "", "\n",
+        s.sent.executables ? text("send: ", executableBits(s.sent.executables), "\n") : "",
         "send: collection ", s.sent.collection, "\n",
         "send: anyone with the ticket can fetch them\n"));
     if (!yes)
