@@ -289,13 +289,15 @@ struct ResourceClaim
 ```
 
 **TDM7: Weighted admission.** The executor **must** own `--jobs N` weighted tokens.
-A node starts only when all its exclusive keys are free and `jobsWeight` tokens
-are available. A claim larger than total capacity is clamped to total capacity,
+A node starts only when all its exclusive keys are free, no node whose file
+claims conflict with its own is running (TDM15), and `jobsWeight` tokens are
+available. A claim larger than total capacity is clamped to total capacity,
 so it runs alone rather than deadlocking. A node whose fiber cannot be spawned
 fails at once as `Failed(spawnFailed)`, releasing what it claimed (T12).
 
 **TDM8: Admission order.** Ready nodes **must** be admitted in presentation order.
-A node that waits only for an exclusive key does not hold back later nodes. A
+A node that waits only for an exclusive key or a conflicting writer does not
+hold back later nodes. A
 node that waits for capacity stops admission of every later node until it
 starts. There is no backfilling past it, so a stream of light nodes cannot
 starve a heavy one.
@@ -303,13 +305,13 @@ starve a heavy one.
 **TDM9: Default weights.** Default weights are declared by work kind. A planner
 **may** override them for documented packages:
 
-| Work kind                              | Default weight                  |
-| -------------------------------------- | ------------------------------- |
-| Pure scan, parse, reduce, or git query | 1                               |
-| Build-graph actions                    | per the build graph's BGA8      |
-| One standalone or markdown example run | 2                               |
-| Known DMD-frontend-heavy package task  | 4                               |
-| Mutating docs rewrite                  | 1 plus `workspace-write:<path>` |
+| Work kind                              | Default weight              |
+| -------------------------------------- | --------------------------- |
+| Pure scan, parse, reduce, or git query | 1                           |
+| Build-graph actions                    | per the build graph's BGA8  |
+| One standalone or markdown example run | 2                           |
+| Known DMD-frontend-heavy package task  | 4                           |
+| Mutating docs rewrite                  | 1, writing its file (TDM15) |
 
 **TDM10: Capacity.** Without `--jobs`, capacity **must** be the smaller of
 `sparkles.base.hw_caps.hwParallelism()`, which already folds in CPU quotas,
@@ -319,10 +321,10 @@ starts its own threads, such as the test runner's `-t N` or a linker, takes its
 thread count from its claim, so task-level parallelism does not multiply into
 unbounded threads. A single LDC compile is single-threaded and needs no cap.
 
-Exclusive keys protect semantic resources, not implementation mutexes. Examples
-are `workspace-write:README.md`, `coverage-publish`, and a final destination
-artifact. stdout is not an exclusive task resource, because the reporter is its
-only writer.
+Exclusive keys protect semantic resources, not implementation mutexes, and
+resources that are not files: `coverage-publish` and a publication slot. A
+file a node writes is a file claim (TDM15). stdout is not an exclusive task
+resource, because the reporter is its only writer.
 
 ### 3.4 Outcomes
 
@@ -373,6 +375,8 @@ alias TaskEvent = SumType!(
     TaskFinished,
     CancellationRequested,
     RunFinished,
+    TaskFresh,
+    TaskStale,
 );
 ```
 
@@ -395,6 +399,55 @@ counted with its terminator so that empty lines count too, and spills to its
 task directory when necessary. Distinct task ids have distinct task
 directories, all under the run's root (T10). A failed task's diagnostic tail
 and spill path remain available until final reporting.
+
+### 3.6 File claims and freshness
+
+```d
+struct WriteClaim
+{
+    string path; // relative to the worktree root
+    bool tree;   // the directory `path` and everything beneath it
+}
+
+struct FileClaims
+{
+    Fileset reads;       // a fileset of the graph's arena; `Fileset.init` states nothing
+    WriteClaim[] writes;
+}
+```
+
+**TDM15: File claims.** A node **may** state the files it reads, as a
+fileset of the arena its graph owns, and the files and directory trees it
+writes ([BGW16](../build-graph/fileset-native-workspace.md)). Validation
+**must** derive the conflicts:
+
+- A read set conflicts with a write claim unless the set's verdict on the
+  claimed path, taken with no facts about the entry, proves it cannot hold
+  it: `reject` for a file, `skip` for a tree. A `.gitignore` scope that only
+  a resolution reads counts as possibly holding the path, and so does a set
+  holding a link the graph was told resolves to it.
+- Two write claims conflict when one path is the other or lies beneath a
+  tree the other claims.
+
+A node that reads what another writes **must** be ordered with it by a path
+of edges, in either direction; validation rejects a graph in which neither
+precedes the other, naming the reader, the path and the writer (T15). Nodes
+whose writes conflict never run at the same time (TDM7). A write claim's
+path is relative and normalized, or the graph is rejected. A node that
+states no claim conflicts with nothing.
+
+**TDM16: Freshness.** An action driver **may** say, on the node's fiber and
+before its action, whether a result recorded for the same action and inputs
+is reused. A node's identity never holds a content id (invariant 6); the
+driver computes the input identity. A fresh node emits `TaskFresh` with that
+identity, runs nothing and ends `Succeeded`. A node it calls stale emits
+`TaskStale` with the reason and the path the reason names, in the envelope's
+`text`, then runs. The reasons are the build graph's miss reasons
+([OBA8](../observability/SPEC.md#_4-action-metrics)), no recorded result,
+and a prerequisite that ran in this run, which makes stale a node the driver
+calls fresh. A node whose driver says nothing emits neither event. Reporters
+end the node's line with `, fresh` or `, ran:` and the reason, a path when
+there is one.
 
 ## 4. Event Horizon-only execution
 
@@ -624,10 +677,12 @@ and scans, platform evaluation and graph validation.
 - report success for tasks.
 
 **TDY3: Dry-run output.** The output **must** list selection reasons, nodes in
-presentation order, resource claims, redacted action summaries, and edges with
-their conditions and reasons. It ends with counts by kind and the total
-weighted capacity. A planning error exits nonzero. A valid dry run exits zero
-and emits no `TaskStarted` events.
+presentation order, resource claims, the directories each node's read set
+starts from and the paths it writes, redacted action summaries, edges with
+their conditions and reasons, and the pairs of nodes that may not run at
+once (TDM15). It ends with counts by kind and the total weighted capacity. A
+planning error exits nonzero. A valid dry run exits zero and emits no
+`TaskStarted` events.
 
 ## 9. Module layout
 
