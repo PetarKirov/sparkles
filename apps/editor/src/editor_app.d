@@ -52,11 +52,21 @@ private class DisplayedFrame
 {
     const WidgetTree tree;
     const Frame[] frames;
+    ulong document;
+    ulong dialogEpoch;
+    Text source;
+    Text pathSource;
+    ulong[] tabs;
 
-    this(const WidgetTree tree, const Frame[] frames) @safe pure nothrow
+    this(const WidgetTree tree, const Frame[] frames, Document document) @safe pure nothrow
     {
         this.tree = tree;
         this.frames = frames;
+        if (document !is null)
+        {
+            this.document = document.id;
+            source = Text(document.field.state.text);
+        }
     }
 }
 
@@ -937,7 +947,11 @@ struct EditorApp
     /// Retain the committed frame for event routing; no second layout/hit model.
     void paint(H)(ref H host, const WidgetTree tree, const Frame[] frames)
     {
-        displayed = new DisplayedFrame(tree, frames);
+        displayed = new DisplayedFrame(tree, frames,
+            recoveryExit || !tabs.length ? null : tabs[activeTab]);
+        foreach (tab; tabs) displayed.tabs ~= tab.id;
+        displayed.dialogEpoch = dialogEpoch;
+        if (pathDialog) displayed.pathSource = Text(pathInput.state.text);
         hits = hoverTargets(tree, frames);
     }
 
@@ -956,6 +970,11 @@ struct EditorApp
             return;
         }
         if (pointer.button != PointerButton.left && pointer.action != PointerAction.drag) return;
+        if (displayed is null || displayed.dialogEpoch != dialogEpoch)
+        {
+            selecting = false;
+            return;
+        }
         const hit = hits.hitAt(pointer.pos.x, pointer.pos.y);
         if (modal)
         {
@@ -964,7 +983,7 @@ struct EditorApp
                 if (hit == dialogConfirmHit + 2 * dialogEpoch) execute(CommandId(Command.confirm));
                 else if (hit == dialogCancelHit + 2 * dialogEpoch) execute(CommandId(Command.cancel));
                 else if (hit == dialogDiscardHit + dialogEpoch) execute(CommandId(Command.discard));
-                else if (pathDialog && displayed !is null)
+                else if (pathDialog && displayed.pathSource == pathInput.state.text)
                 {
                     const offset = sourceOffsetAt(displayed.tree, displayed.frames,
                         Point(cast(int) pointer.pos.x, cast(int) pointer.pos.y));
@@ -986,12 +1005,19 @@ struct EditorApp
             if (pointer.action == PointerAction.press) execute(CommandId(Command.restoreSession));
             return;
         }
-        if (hit >= tabHitBase && hit - tabHitBase < tabs.length)
+        if (displayed !is null && hit >= tabHitBase && hit - tabHitBase < displayed.tabs.length)
         {
-            if (pointer.action == PointerAction.press) activeTab = hit - tabHitBase;
+            if (pointer.action == PointerAction.press)
+                foreach (index, tab; tabs)
+                    if (tab.id == displayed.tabs[hit - tabHitBase]) { activeTab = index; break; }
             return;
         }
         if (displayed is null) return;
+        if (displayed.document != document.id || displayed.source != document.field.state.text)
+        {
+            selecting = false;
+            return;
+        }
         const offset = sourceOffsetAt(displayed.tree, displayed.frames,
             Point(cast(int) pointer.pos.x, cast(int) pointer.pos.y));
         if (offset < 0 || cast(size_t) offset > document.field.state.text.length) return;
@@ -1753,6 +1779,131 @@ struct EditorApp
             placed = true;
         }
     assert(placed);
+}
+
+/// A displayed source ledger cannot move the caret after its document revision changes.
+@("editor.app.pointerRejectsChangedRevision")
+@safe unittest
+{
+    import sparkles.input : Point, PointerAction, PointerButton, PointerEvent;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    EditorApp app;
+    scope (exit) app.dispose();
+    app.document.field.setText("abc");
+    RecordingHost host;
+    FrameSnapshot frame;
+    presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
+    app.paint(host, frame.tree, frame.frames);
+    Point point;
+    bool found;
+    foreach (i, node; frame.tree.nodes)
+        if (node.kind == WidgetKind.rich && node.spans.length && node.spans[0].text == "abc")
+        {
+            const origin = frame.frames[i].rect.origin;
+            point = Point(origin.x + 1, origin.y);
+            found = true;
+        }
+    assert(found);
+    app.document.field.insert("X");
+    app.handle(host, Event(PointerEvent(PointerAction.press, PointerButton.left, point)));
+    assert(app.document.field.state.selection.primary.head == 4);
+    presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
+    app.paint(host, frame.tree, frame.frames);
+    app.handle(host, Event(PointerEvent(PointerAction.press, PointerButton.left, point)));
+    assert(app.document.field.state.selection.primary.head == 1);
+}
+
+/// A displayed tab names its document even if an earlier tab closes before repaint.
+@("editor.app.pointerRetainsTabIdentity")
+@safe unittest
+{
+    import sparkles.input : Point, PointerAction, PointerButton, PointerEvent;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    EditorApp app;
+    scope (exit) app.dispose();
+    assert(app.openBytes("bravo", "B"));
+    const bravo = app.document.id;
+    assert(app.openBytes("charlie", "C"));
+    RecordingHost host;
+    FrameSnapshot frame;
+    presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
+    app.paint(host, frame.tree, frame.frames);
+    Point point;
+    bool found;
+    foreach (i, node; frame.tree.nodes)
+        if (node.text == "bravo")
+        {
+            const origin = frame.frames[i].rect.origin;
+            point = Point(origin.x + 1, origin.y);
+            found = true;
+        }
+    assert(found);
+    app.execute(CommandId(Command.previousTab));
+    app.execute(CommandId(Command.previousTab));
+    app.execute(CommandId(Command.closeTab));
+    app.execute(CommandId(Command.nextTab));
+    assert(app.document.id != bravo);
+    app.handle(host, Event(PointerEvent(PointerAction.press, PointerButton.left, point)));
+    assert(app.document.id == bravo && app.document.field.text == "B");
+}
+
+/// An old document frame cannot place a caret inside a newly opened path input.
+@("editor.app.pointerCannotCrossIntoNewDialog")
+@safe unittest
+{
+    import sparkles.input : Key, Point, PointerAction, PointerButton, PointerEvent;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    EditorApp app;
+    scope (exit) app.dispose();
+    app.document.field.setText("abc");
+    RecordingHost host;
+    FrameSnapshot frame;
+    presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
+    app.paint(host, frame.tree, frame.frames);
+    Point point;
+    bool found;
+    foreach (i, node; frame.tree.nodes)
+        if (node.kind == WidgetKind.rich && node.spans.length && node.spans[0].text == "abc")
+        {
+            const origin = frame.frames[i].rect.origin;
+            point = Point(origin.x + 1, origin.y);
+            found = true;
+        }
+    assert(found);
+    app.execute(CommandId(Command.saveAs));
+    foreach (c; "abc") app.handleKey(KeyEvent(Key.char_, c));
+    app.handle(host, Event(PointerEvent(PointerAction.press, PointerButton.left, point)));
+    app.handleKey(KeyEvent(Key.char_, 'd'));
+    auto tree = app.view(host);
+    bool unchangedCaret;
+    foreach (node; tree.nodes)
+        foreach (span; node.spans) unchangedCaret |= span.text == "abcd";
+    assert(unchangedCaret && app.document.field.text == "abc");
+    presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
+    app.paint(host, frame.tree, frame.frames);
+    found = false;
+    foreach (i, node; frame.tree.nodes)
+        if (node.kind == WidgetKind.rich && node.spans.length && node.spans[0].text == "abcd")
+        {
+            const origin = frame.frames[i].rect.origin;
+            point = Point(origin.x + 1, origin.y);
+            found = true;
+        }
+    assert(found);
+    app.handleKey(KeyEvent(Key.char_, 'e'));
+    app.handle(host, Event(PointerEvent(PointerAction.press, PointerButton.left, point)));
+    app.handleKey(KeyEvent(Key.char_, 'f'));
+    tree = app.view(host);
+    unchangedCaret = false;
+    foreach (node; tree.nodes)
+        foreach (span; node.spans) unchangedCaret |= span.text == "abcdef";
+    assert(unchangedCaret);
 }
 
 /// A full palette reserves the tab strip and header rather than collapsing their rows.

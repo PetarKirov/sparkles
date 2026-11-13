@@ -781,3 +781,21 @@ runnable example verifies successfully. The checked native build succeeds;
 an Xvfb Vulkan `--example code --languages --shot` capture shows installed
 language rows and the explicit Plain text choice. This is desktop input/view
 evidence; Android packaging and IME/provider acceptance remain open.
+
+### Displayed frame ownership — 2026-11-13
+
+Three app regressions first reproduced stale pointer routing through an old
+rendered frame. A document edit could move the caret using older source
+offsets; closing an earlier tab could make a visible tab target the wrong
+document; opening Save As could route an old document click into the new path
+input. A further phase reproduced stale path offsets after typing between
+frames.
+
+Paint now retains the displayed document identity, source snapshot, tab IDs,
+dialog epoch and path snapshot alongside its actual widget tree and frames.
+Document/path source hits require matching bytes, dialog transitions reject
+older hits, and tab activation resolves the displayed ID among live tabs.
+A freshly painted document remains selectable. All 60 editor tests pass.
+These checks preserve the current logical-line renderer's ownership boundary;
+shared bidi/wrapped layout, preedit geometry and live IME acceptance remain
+open under U.
