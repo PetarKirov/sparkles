@@ -28,7 +28,10 @@ enum VerifyMode : ubyte
 /// What to copy, where, and how.
 struct CopyOptions
 {
-    Root source;                         /// a directory
+    Root source;                         /// a directory, when `ticket` is empty
+    string ticket;                       /// an iroh source's ticket (`XR`)
+    bool noRelay;                        /// reach the peer at its direct addresses only
+    string bridgePath;                   /// the iroh bridge; its default search when empty
     string filter = "all()";             /// the query
     string dest;                         ///
     bool force;                          /// replace files and links in the way (`XC2`)
@@ -64,6 +67,8 @@ int copyCommand(in CopyOptions o, out string output, out string error)
     import sparkles.fileset_tools.verify : castoreText, digestMembers, firstDifference, MemberDigest;
 
     const p = o.program;
+    if (o.ticket.length)
+        return copyFromIroh(o, output, error);
     if (o.source.inMemory)
     {
         error = p ~ ": a tree held in memory has no files to copy\n";
@@ -262,4 +267,138 @@ private string listed(const(string)[] paths)
     if (paths.length > 20)
         s ~= text("  and ", paths.length - 20, " more\n");
     return s;
+}
+
+/**
+`copyCommand` for an iroh source (`XR`): the names first, the filter over
+them, the destination checked, then only the selected files, verified as
+they arrive and, once written, against the castore id assembled from the
+collection's digests (`XV3`).
+*/
+private int copyFromIroh(in CopyOptions o, ref string output, ref string error)
+{
+    import std.format : format;
+    import std.path : buildPath;
+    import core.time : MonoTime;
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : Rights;
+    import sparkles.event_horizon.sys : BlockingVfs;
+    import sparkles.iroh_send.bridge : loadIrohSend;
+    import sparkles.fileset_tools.copy : InTheWay, inTheWay;
+    import sparkles.fileset_tools.evaluate : evaluatePaths, humanBytes, Member;
+    import sparkles.fileset_tools.iroh_source : openIroh, receiveMembers, selectIroh;
+    import sparkles.fileset_tools.verify : castoreText, digestMembers, firstDifference;
+
+    const p = o.program;
+    const t0 = MonoTime.currTime;
+    auto lib = loadIrohSend(o.bridgePath);
+    if (lib.hasError)
+    {
+        error ~= text(p, ": an iroh source needs the iroh bridge: ", lib.error, "\n");
+        return 1;
+    }
+    auto opened = openIroh(lib.value, o.ticket, o.noRelay);
+    if (opened.hasError)
+    {
+        error ~= text(p, ": ", opened.error, "\n");
+        return 1;
+    }
+    auto source = opened.value;
+    scope (exit) source.close();
+    auto chosen = selectIroh(source.members, o.filter);
+    if (chosen.hasError)
+    {
+        error ~= text(p, ": ", o.filter, ": ", chosen.error, "\n");
+        return 1;
+    }
+    Member[] members;
+    string[] paths;
+    foreach (i; chosen.value)
+    {
+        members ~= Member(source.members[i].path, FsoKind.regular);
+        paths ~= source.members[i].path;
+    }
+    const from = source.label.length ? text("`", source.label, "` from the peer") : "the peer's collection";
+    if (o.stats)
+        error ~= text(p, ": ", from, " lists ", source.members.length, " files; the filter selects ",
+            members.length, "; opening it read ", humanBytes(source.openedBytes), "\n");
+
+    // Every destination path, before anything is fetched (`XC2`).
+    string[] clashes, directories;
+    const there = inTheWay(o.dest, members);
+    foreach (i, ref m; members)
+    {
+        const to = buildPath(o.dest, m.path);
+        if (o.dryRun)
+            output ~= to ~ "\n";
+        if (there[i] == InTheWay.directory)
+            directories ~= to;
+        else if (there[i] == InTheWay.entry)
+            clashes ~= to;
+    }
+    if (directories.length)
+    {
+        error ~= text(p, ": copied nothing: ", directories.length,
+            directories.length == 1 ? " directory is" : " directories are",
+            " where a member goes, and nothing replaces a directory:\n") ~ listed(directories);
+        return 1;
+    }
+    if (clashes.length && !o.force)
+    {
+        error ~= text(p, ": copied nothing: ", clashes.length, clashes.length == 1 ? " path exists" : " paths exist",
+            " (--force replaces them):\n") ~ listed(clashes);
+        return 1;
+    }
+    if (o.dryRun)
+    {
+        error ~= text(p, ": would copy ", members.length, members.length == 1 ? " file" : " files", " of ",
+            source.members.length, " from ", from, " to ", o.dest, "\n");
+        return 0;
+    }
+
+    auto got = receiveMembers(source, o.dest, chosen.value, o.force);
+    if (got.failure.length)
+    {
+        error ~= text(p, ": ", got.failure, "\n", p, ": what was copied is left at ", o.dest, "\n");
+        return 1;
+    }
+
+    // The copy, against the id the collection's digests name (`XV1`, `XV3`).
+    auto vfs = new BlockingVfs;
+    auto dst = openRoot!(Rights.readOnly)(vfs, o.dest, ambientAuthority());
+    if (dst.hasError)
+    {
+        error ~= text(p, ": ", o.dest, ": ", dst.error, "\n");
+        return 1;
+    }
+    string why;
+    const actual = digestMembers(dst.value.borrow, paths, why);
+    if (why.length)
+    {
+        error ~= text(p, ": cannot hash the copy: ", why, "\n");
+        return 1;
+    }
+    const want = castoreText(got.expected), have = castoreText(actual);
+    const differs = firstDifference(got.expected, actual);
+    if (differs.length || want != have)
+    {
+        error ~= text(p, ": the copy differs from the collection: ", differs.length ? differs : "the trees differ", "\n",
+            "  collection castore ", want.length ? want : "(none)", "\n",
+            "  copy       castore ", have.length ? have : "(none)", "\n",
+            p, ": the copy is left at ", o.dest, " for inspection\n");
+        return 1;
+    }
+    string names = text(p, ": verified: castore ", want, "\n");
+    if (o.treeHashes)
+    {
+        // Equal castore ids are equal trees: the copy's names are the source's.
+        const copied = evaluatePaths(o.dest, paths, withIds: true);
+        names ~= text(p, ": NarHash  ", copied.narHash, "\n", p, ": git tree ", copied.gitTree,
+            "\n", p, ": the NAR and git names are the copy's, which castore proved equal to the source\n");
+    }
+    const ms = (MonoTime.currTime - t0).total!"usecs" / 1000.0;
+    error ~= text(p, ": copied ", got.files, got.files == 1 ? " file (" : " files (", humanBytes(got.bytes),
+        ") of ", source.members.length, " from ", from, " to ", o.dest, format!" in %.2f ms"(ms),
+        " (iroh; opening it read ", humanBytes(source.openedBytes), ")\n") ~ names;
+    return 0;
 }
