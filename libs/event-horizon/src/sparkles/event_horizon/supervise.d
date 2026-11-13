@@ -2309,6 +2309,13 @@ import sparkles.test_runner.skip : skipTest;
 import sparkles.test_runner.attributes : serial;
 
 /// Event collector bound as a `ProcessEventSink`.
+///
+/// `events` records every event, `sample`s included; `lines` the line events
+/// alone, in order. A recorded line owns a copy of its bytes (the callback's
+/// slice is borrowed and gone once it returns), and `lineBytes[n]` is
+/// `lines[n].bytes`. Index `lineBytes` by line ordinal, never by a position
+/// in `events`: a host with a tree sampler (macOS, a cgroup v2 run)
+/// interleaves `sample` events between the lines.
 private struct EventLog
 {
     ProcessEvent[] events;
@@ -2317,9 +2324,15 @@ private struct EventLog
     {
         events ~= ev;
         if (ev.kind == ProcessEventKind.line)
-            lineBytes ~= ev.line.bytes.dup; // the spec-mandated copy
+        {
+            const owned = ev.line.bytes.dup; // the spec-mandated copy
+            events[$ - 1].line.bytes = owned;
+            lines ~= events[$ - 1].line;
+            lineBytes ~= owned;
+        }
     }
 
+    ProcessLine[] lines;
     const(ubyte)[][] lineBytes;
 
     /// `@trusted`: the collector provably outlives every supervised run
@@ -2609,12 +2622,11 @@ unittest
 
         const(ubyte)[][] lines;
         bool[] terminatedFlags;
-        foreach (i, ev; log.events)
-            if (ev.kind == ProcessEventKind.line
-                && ev.line.stream == ProcessStream.stdout_)
+        foreach (line; log.lines)
+            if (line.stream == ProcessStream.stdout_)
             {
-                lines ~= log.lineBytes[i].dup; // retained copy, per spec
-                terminatedFlags ~= ev.line.terminated;
+                lines ~= line.bytes; // the log's retained copy, per spec
+                terminatedFlags ~= line.terminated;
             }
         assert(lines.length == 4, "LF/CRLF/empty/final-partial");
         assert(lines[0] == cast(const(ubyte)[]) "one" && terminatedFlags[0]);
@@ -2633,9 +2645,8 @@ unittest
             SupervisedProcessConfig(), null, splitLog.sink());
         assert(split.hasValue);
         size_t helloLines;
-        foreach (ev; splitLog.events)
-            if (ev.kind == ProcessEventKind.line
-                && ev.line.bytes == cast(const(ubyte)[]) "hello world")
+        foreach (line; splitLog.lines)
+            if (line.bytes == cast(const(ubyte)[]) "hello world")
                 ++helloLines;
         assert(helloLines == 1, "split writes frame as ONE line");
     });
@@ -2772,14 +2783,13 @@ unittest
         assert(separate.hasValue);
         assert(separate.value.stderr_.length > 0);
         const(char)[][] outLines;
-        foreach (i, ev; log.events)
-            if (ev.kind == ProcessEventKind.line)
-            {
-                if (ev.line.stream == ProcessStream.stdout_)
-                    outLines ~= cast(const(char)[]) log.lineBytes[i].dup;
-                else
-                    assert((cast(const(char)[]) log.lineBytes[i])[0] == 'e');
-            }
+        foreach (line; log.lines)
+        {
+            if (line.stream == ProcessStream.stdout_)
+                outLines ~= cast(const(char)[]) line.bytes;
+            else
+                assert((cast(const(char)[]) line.bytes)[0] == 'e');
+        }
         assert(outLines == ["o1", "o2", "o3"], "per-stream order");
 
         // mergeStdout: one pipe, one total order, all reported as stdout_.
@@ -2794,13 +2804,12 @@ unittest
         assert(together.value.stdout_[]
             == cast(const(ubyte)[]) "o1\ne1\no2\n", "output order kept");
         const(char)[][] mergedOrder;
-        foreach (i, ev; mergedLog.events)
-            if (ev.kind == ProcessEventKind.line)
-            {
-                mergedOrder ~= cast(const(char)[]) mergedLog.lineBytes[i].dup;
-                assert(ev.line.stream == ProcessStream.stdout_,
-                    "merged lines report as stdout_");
-            }
+        foreach (line; mergedLog.lines)
+        {
+            mergedOrder ~= cast(const(char)[]) line.bytes;
+            assert(line.stream == ProcessStream.stdout_,
+                "merged lines report as stdout_");
+        }
         assert(mergedOrder == ["o1", "e1", "o2"]);
     });
     assert(!r.hasError);
