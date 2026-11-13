@@ -30,8 +30,8 @@ private struct Side
 }
 
 /// Compares the two sources `d` names; 0 when equal, 1 when they differ,
-/// 2 on trouble (`XD3`).
-int diffCommand(ref Diff d, ref string output, ref string error)
+/// 2 on trouble (`XD3`). With `terminal`, a patch is colored.
+int diffCommand(ref Diff d, ref string output, ref string error, bool terminal = false)
 {
     import std.algorithm.sorting : sort;
 
@@ -91,7 +91,7 @@ int diffCommand(ref Diff d, ref string output, ref string error)
             return 2;
         }
         foreach (p; changed)
-            output ~= patchOf(p, old[p], new_[p]);
+            output ~= patchOf(p, old[p], new_[p], terminal);
     }
     return differ ? 1 : 0;
 }
@@ -228,7 +228,7 @@ private ubyte[][string] contents(ref Side side, const(string)[] paths, ref strin
 
 // A unified diff of one file's two versions, or a line saying they are not
 // both text; colored as git colors it when standard output is a terminal.
-private string patchOf(string path, const(ubyte)[] old, const(ubyte)[] new_)
+private string patchOf(string path, const(ubyte)[] old, const(ubyte)[] new_, bool terminal)
 {
     import std.array : appender;
     import std.utf : validate, UTFException;
@@ -246,7 +246,7 @@ private string patchOf(string path, const(ubyte)[] old, const(ubyte)[] new_)
     auto doc = diffText(a, b, path, path);
     auto w = appender!string;
     emitPatch(doc, w);
-    return colored(w[]);
+    return terminal ? colored(w[]) : w[];
 }
 
 private string colored(string patch)
@@ -254,15 +254,6 @@ private string colored(string patch)
     import std.algorithm.searching : startsWith;
     import std.array : split;
 
-    version (Posix)
-    {
-        import core.sys.posix.unistd : isatty;
-
-        if (!isatty(1))
-            return patch;
-    }
-    else
-        return patch;
     string s;
     foreach (line; patch.split('\n')[0 .. $ - 1])
     {

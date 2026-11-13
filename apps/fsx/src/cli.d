@@ -149,7 +149,14 @@ int runFsx(string[] args)
     import std.stdio : stderr, stdout;
 
     string output, error;
-    const status = runFsxTo(args, output, error);
+    bool terminal;
+    version (Posix)
+    {
+        import core.sys.posix.unistd : isatty;
+
+        terminal = isatty(1) != 0;
+    }
+    const status = runFsxTo(args, output, error, terminal);
     stdout.rawWrite(output);
     stdout.flush();
     stderr.rawWrite(error);
@@ -158,9 +165,10 @@ int runFsx(string[] args)
 
 /**
 Parses and runs `args` (`XA1`–`XA3`). What would go to standard output is
-appended to `output`, the rest to `error`. A usage error exits 2.
+appended to `output`, the rest to `error`; `terminal` says that `output`
+goes to a terminal, so that a patch may be colored. A usage error exits 2.
 */
-int runFsxTo(string[] args, out string output, out string error)
+int runFsxTo(string[] args, out string output, out string error, bool terminal = false)
 {
     import std.array : appender;
     import sparkles.core_cli.args : CliError, parseCli, reportCliError;
@@ -189,7 +197,7 @@ int runFsxTo(string[] args, out string output, out string error)
     return parsed.value.command.match!(
         (ref Cp c) => runCp(c, output, error),
         (ref Ls l) => runLs(l, output, error),
-        (ref Diff d) => runDiff(d, output, error),
+        (ref Diff d) => runDiff(d, output, error, terminal),
     );
 }
 
@@ -321,13 +329,13 @@ private int runLs(ref Ls l, ref string output, ref string error)
     return listCommand(o, output, error);
 }
 
-private int runDiff(ref Diff d, ref string output, ref string error)
+private int runDiff(ref Diff d, ref string output, ref string error, bool terminal)
 {
     version (FsxDiff)
     {
         import diff_command : diffCommand;
 
-        return diffCommand(d, output, error);
+        return diffCommand(d, output, error, terminal);
     }
     else
         return diffUnavailable(error);
