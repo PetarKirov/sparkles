@@ -9,7 +9,9 @@ import sparkles.text_buffer.text : Text;
 import sparkles.ui.command_palette : PaletteChoice, PaletteEffect, PaletteEffectKind, PaletteInvocation, PaletteStatus;
 import sparkles.ui.command_palette_input : PaletteInput;
 import sparkles.ui.components.command_palette : PaletteViewOptions, viewCommandPalette;
-import sparkles.ui.components.editor : editorView, EditorViewOptions, scrollToPrimary;
+import sparkles.ui.components.editor : editorLineSpans, editorView, EditorViewOptions, layoutColumn, VisualRow, visualRows;
+import sparkles.ui.editor.context : CaretTarget;
+import sparkles.ui.editor.layout : ParagraphLayout, scrollToCaret;
 import sparkles.ui.components.lantern_view : BoxLayout, LabelArena, viewLantern;
 import sparkles.ui.editor.field : EditorField, forwardClipboard;
 import sparkles.ui.editor.command : EditCommand, EditKind;
@@ -48,6 +50,15 @@ import document_files : SaveAuthorization;
 import std.path : absolutePath, baseName;
 import session_runtime : RecoverySession;
 
+/// One drawn visual row: its widget, logical line, row and inserted cells.
+private struct RowHit
+{
+    size_t node;
+    size_t line;
+    size_t row;
+    const(size_t[2])[] inserted;
+}
+
 private class DisplayedFrame
 {
     const WidgetTree tree;
@@ -57,6 +68,9 @@ private class DisplayedFrame
     Text source;
     Text pathSource;
     ulong[] tabs;
+    /// The document's drawn rows and the wrap they were laid out at.
+    RowHit[] rows;
+    size_t wrapCells;
 
     this(const WidgetTree tree, const Frame[] frames, Document document) @safe pure nothrow
     {
@@ -934,6 +948,9 @@ struct EditorApp
         recoveryShutdownError = recovery.error;
     }
     private DisplayedFrame displayed;
+    /// The rows the last view drew, for the frame `paint` retains.
+    private RowHit[] shownRows;
+    private size_t shownWrap;
     private HoverTarget[] hits;
     private const(PaletteChoice!Command)[] paletteChoices;
     private bool selecting;
@@ -952,6 +969,8 @@ struct EditorApp
         foreach (tab; tabs) displayed.tabs ~= tab.id;
         displayed.dialogEpoch = dialogEpoch;
         if (pathDialog) displayed.pathSource = Text(pathInput.state.text);
+        displayed.rows = shownRows;
+        displayed.wrapCells = shownWrap;
         hits = hoverTargets(tree, frames);
     }
 
@@ -1013,22 +1032,52 @@ struct EditorApp
             return;
         }
         if (displayed is null) return;
-        if (displayed.document != document.id || displayed.source != document.field.state.text)
+        // The drawn rows answer only for the revision and wrap they were laid out at (EAP17).
+        if (displayed.document != document.id || displayed.source != document.field.state.text
+            || displayed.wrapCells != document.field.context.options.wrapCells)
         {
             selecting = false;
             return;
         }
-        const offset = sourceOffsetAt(displayed.tree, displayed.frames,
-            Point(cast(int) pointer.pos.x, cast(int) pointer.pos.y));
-        if (offset < 0 || cast(size_t) offset > document.field.state.text.length) return;
-        const at = cast(size_t) offset;
+        const point = Point(cast(int) pointer.pos.x, cast(int) pointer.pos.y);
+        // A press must land on a row; a drag beyond the rows follows the nearest one.
+        size_t chosen = size_t.max;
+        long nearest = long.max;
+        foreach (i, row; displayed.rows)
+        {
+            if (row.node >= displayed.frames.length) continue;
+            const rect = displayed.frames[row.node].rect;
+            const top = rect.origin.y, bottom = rect.origin.y + rect.size.height;
+            const distance = point.y < top ? top - point.y : point.y >= bottom ? point.y - bottom + 1 : 0;
+            if (distance < nearest) { nearest = distance; chosen = i; }
+        }
+        if (chosen == size_t.max || nearest && pointer.action == PointerAction.press) return;
+        const shown = displayed.rows[chosen];
+        const rect = displayed.frames[shown.node].rect;
+        const text = document.field.state.text;
+        auto context = &document.field.context;
+        CaretTarget at;
+        {
+            ref layout = context.paragraph(text, shown.line);
+            const column = point.x <= rect.origin.x ? 0
+                : layoutColumn(VisualRow(shown.row, null, shown.inserted.dup), layout, point.x - rect.origin.x);
+            at = context.caretAt(text, layout.rows[shown.row].line, column);
+        }
         if (pointer.action == PointerAction.press)
         {
-            selectionAnchor = pointer.mods.shift ? document.field.state.selection.primary.anchor : at;
+            selectionAnchor = pointer.mods.shift ? document.field.state.selection.primary.anchor : at.position;
             selecting = true;
             selectingDocument = document.id;
         }
-        if (selecting) document.field.run(EditCommand.setRange(selectionAnchor, at), MonoTime.currTime);
+        if (!selecting) return;
+        document.field.run(EditCommand.setRange(selectionAnchor, at.position), MonoTime.currTime);
+        // The hit's side of a soft wrap or bidi boundary is where the caret draws.
+        auto placed = document.field.state.selection.primary;
+        if (document.field.state.selection.length == 1 && placed.head == at.position)
+        {
+            placed.affinity = at.affinity;
+            document.field.state.selection = SelectionSet.single(placed);
+        }
     }
 
     private void receivePaste(in PasteEvent chunk) @safe
@@ -1427,6 +1476,7 @@ struct EditorApp
             (in WheelEvent wheel) {
                 const wanted = cast(long) document.firstLine + wheel.dy;
                 document.firstLine = wanted < 0 ? 0 : cast(size_t) wanted;
+                document.firstRow = 0;
                 document.followCaret = false;
             },
             (in EndOfInput _) { closeRequested(host); },
@@ -1587,24 +1637,48 @@ struct EditorApp
             const reserved = 5 + extraRows;
             const visible = host.size.height > reserved ? cast(size_t) host.size.height - reserved : 1;
             const count = document.field.state.text.lineCount;
+            // One cell stays free for the inline caret; rows wrap at the rest.
+            const width = host.size.width > 9 ? cast(size_t) host.size.width - 1 : 8;
+            auto context = &document.field.context;
+            context.options.wrapCells = width;
+            context.viewportLines = visible;
             if (document.firstLine >= count) document.firstLine = count ? count - 1 : 0;
             if (document.followCaret)
-                document.firstLine = scrollToPrimary(document.field.state, document.firstLine, visible);
+            {
+                const primary = document.field.state.selection.primary;
+                scrollToCaret(*context, document.field.state.text, CaretTarget(primary.head, primary.affinity),
+                    visible, document.firstLine, document.firstRow);
+            }
+            context.originLine = document.firstLine;
+            context.originRow = document.firstRow;
             const options = EditorViewOptions(firstLine: document.firstLine,
                 visibleLines: visible, placeholder: "Start typing…");
             const syntax = highlighting.snapshot(document.field.state.text, document.language, document.id);
             uint field;
-            if (syntax !is null && syntax.spans.length)
+            shownRows = null;
+            shownWrap = width;
+            if (document.field.state.text.length || document.field.state.composition.active)
             {
                 uint[] rows;
-                const stop = document.firstLine + visible < count ? document.firstLine + visible : count;
-                foreach (line; document.firstLine .. stop)
+                const text = document.field.state.text;
+                for (size_t line = document.firstLine; line < count && rows.length < visible; ++line)
                 {
-                    const start = document.field.state.text.lineStart(line);
-                    const end = document.field.state.text.lineEnd(line);
-                    const ink = syntaxWindow(syntax.source, syntax.spans, start, end, syntaxTheme, theme.pageFg);
-                    rows ~= b.add(Widget(kind: WidgetKind.rich, width: SizeSpec.grow(),
-                        spans: highlightedEditorLine(document.field.state, line, ink, options)));
+                    const start = text.lineStart(line);
+                    const end = text.lineEnd(line);
+                    const logical = syntax !is null && syntax.spans.length
+                        ? highlightedEditorLine(document.field.state, line,
+                            syntaxWindow(syntax.source, syntax.spans, start, end, syntaxTheme, theme.pageFg), options)
+                        : editorLineSpans(document.field.state, line, options);
+                    const layout = ParagraphLayout.of(text, line, context.options);
+                    foreach (row; visualRows(logical, layout, document.field.state))
+                    {
+                        if (line == document.firstLine && row.row < document.firstRow) continue;
+                        if (rows.length == visible) break;
+                        const node = b.add(Widget(kind: WidgetKind.rich, width: SizeSpec.grow(),
+                            height: SizeSpec.fixed(1), spans: row.spans, wrap: TextWrap.none));
+                        rows ~= node;
+                        shownRows ~= RowHit(node, line, row.row, row.inserted);
+                    }
                 }
                 field = b.add(Widget(kind: WidgetKind.column, children: rows, width: SizeSpec.grow()));
             }
@@ -1813,6 +1887,65 @@ struct EditorApp
     app.paint(host, frame.tree, frame.frames);
     app.handle(host, Event(PointerEvent(PointerAction.press, PointerButton.left, point)));
     assert(app.document.field.state.selection.primary.head == 1);
+}
+
+/// A long line draws as wrapped rows; a click on a later row and Up/Down follow those rows (EAP17).
+@("editor.app.wrappedRowsShareLayout")
+@safe unittest
+{
+    import sparkles.input : Point, PointerAction, PointerButton, PointerEvent;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
+    import sparkles.ui.geometry : Size;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    import sparkles.ui.editor.command : EditCommand;
+    EditorApp app;
+    scope (exit) app.dispose();
+    // At 20 columns, rows wrap at 19 cells: "alpha beta gamma " and "delta epsilon".
+    app.document.field.setText("alpha beta gamma delta epsilon");
+    app.document.field.run(EditCommand.setRange(0, 0));
+    RecordingHost host;
+    host.size = Size(20, 24);
+    FrameSnapshot frame;
+    presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
+    app.paint(host, frame.tree, frame.frames);
+    assert(app.displayed.rows.length == 2 && app.displayed.wrapCells == 19);
+    const second = frame.frames[app.displayed.rows[1].node].rect.origin;
+    app.handle(host, Event(PointerEvent(PointerAction.press, PointerButton.left, Point(second.x + 2, second.y))));
+    assert(app.document.field.state.selection.primary.head == 19, "column 2 of the second row");
+    app.document.field.run(EditCommand.line(-1));
+    assert(app.document.field.state.selection.primary.head == 2, "Up keeps the column on the first row");
+}
+
+/// RTL text draws in visual order; a click resolves through the same layout (EAP17, EAP18).
+@("editor.app.rtlRowHits")
+@safe unittest
+{
+    import sparkles.input : Point, PointerAction, PointerButton, PointerEvent;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    import sparkles.ui.editor.command : EditCommand;
+    EditorApp app;
+    scope (exit) app.dispose();
+    app.document.field.setText("ab אב");
+    app.document.field.run(EditCommand.setRange(0, 0));
+    RecordingHost host;
+    FrameSnapshot frame;
+    presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
+    app.paint(host, frame.tree, frame.frames);
+    assert(app.displayed.rows.length == 1);
+    const node = app.displayed.rows[0].node;
+    string drawn;
+    foreach (span; frame.tree.nodes[node].spans) drawn ~= span.text;
+    assert(drawn == "▏ab בא", drawn);
+    // Drawn cell 5 is Alef's left edge, layout column 4 past the caret cell: between Bet and Alef.
+    const origin = frame.frames[node].rect.origin;
+    app.handle(host, Event(PointerEvent(PointerAction.press, PointerButton.left, Point(origin.x + 5, origin.y))));
+    assert(app.document.field.state.selection.primary.head == 5);
+    // Visual Right from there crosses Alef, logically backwards to byte 3.
+    app.document.field.run(EditCommand.grapheme(1));
+    assert(app.document.field.state.selection.primary.head == 3);
 }
 
 /// A displayed tab names its document even if an earlier tab closes before repaint.

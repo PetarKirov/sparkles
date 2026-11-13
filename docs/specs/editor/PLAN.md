@@ -39,7 +39,7 @@ accepted. Each implementation commit must build and pass its relevant tests.
 | P — Shared command palette        | EAP8–EAP11                                        | Display-independent state and catalog, shared widget view, invocation-target/context/identity/lifecycle scenarios, recording and TUI/Vulkan adapters; one public-behavior red→green slice at a time | partial: shared view/input and effective-shortcut tests pass; backend parity pending                                            |
 | A — Thin editor shell             | EAP1–EAP7, EAP27–EAP28                            | Standard CLI/build identity, editable examples, tabs, command guide/palette and basic inspector; app recording-flow and native smoke evidence                                                       | partial: shell, tabs, editable examples, commands, clipboard, pointer and native/TUI smoke; full tools pending                  |
 | H — Highlighting and presentation | EAP12–EAP16                                       | Shared per-line highlighted presentation with editor decorations, revision-safe background work, themes and generated settings; active-line and preview/cancel scenarios                            | partial: syntax/editor overlay, background revisions, theme preview and language picker verified; font/settings pending         |
-| U — Layout and input              | EAP17–EAP20                                       | Shared layout-backed navigation/hit-testing, Unicode corpus, terminal touch extraction and live IME on required native targets                                                                      | partial: generic visual-motion hooks verified; production layout, touch and live IME pending                                    |
+| U — Layout and input              | EAP17–EAP20                                       | Shared layout-backed navigation/hit-testing, Unicode corpus, terminal touch extraction and live IME on required native targets                                                                      | partial: cell-grid bidi/wrap layout drives app drawing, hits and motion; real-font acceptance, touch and live IME pending       |
 | F — Real documents                | EAP21–EAP25                                       | UTF-8 fidelity, safe desktop saves, system document access on Android, conflict and dirty-close decisions; fault/provider tests and real-device evidence                                            | partial: native open/save/conflict and dirty-close tests pass; live close/provider acceptance pending                           |
 | R — Session recovery              | EAP26                                             | Owner-accepted checkpoint/loss policy, versioned settings/session storage, dirty-buffer recovery and interruption/corruption tests; no implicit writes to originals                                 | partial: native checkpoint/restore and exit verified; settings, lifecycle/resource limits and device latency acceptance pending |
 | V — Acceptance and measurements   | EAP2, EAP27–EAP30 and all earlier obligations     | Required target matrix, 1/10 MiB and long-line workloads, independent adversarial review, docs and per-commit build checks                                                                          | not started                                                                                                                     |
@@ -75,13 +75,14 @@ checkpoint. Correctness failures found while validating an earlier slice take
 precedence over the next feature. The milestone gates above remain authoritative;
 a library preparation commit does not close an app or device acceptance gate.
 
-1. **Shared layout and input geometry (U, S0).** Complete the real-font
-   mixed-direction/wrapping experiment. Supply one revision-bound result for
-   drawing, visual caret movement, row edges, pointer hits, selections and IME
-   rectangles. The generic stepper now accepts visual-motion hooks; the app's
-   field still needs a production layout context. Preserve the accepted visual
-   collapse, fixed logical anchor and affinity policies. Reuse base Unicode
-   and font shaping and respect the separate text-layout composition boundary.
+1. **Shared layout and input geometry (U, S0).** `LayoutContext` now supplies
+   one byte-keyed cell-grid result for drawing, visual caret movement, row
+   edges, wrapped vertical motion, pointer hits and IME rectangles in the
+   app. Remaining: the Unicode corpus replay through the app, the real-font
+   GPU comparison of rendered hits, and bounded long-paragraph work (each
+   query lays out its whole paragraph; measure under V before claiming the
+   1 MiB single-line workload). Shaped proportional flow stays with
+   `sparkles:text-layout`.
 2. **Generated settings and document fonts (H).** Extract the reusable font
    discovery/preparation and picker mechanisms from text-lab. Add the
    monospace-filtered list and show-all option, real family styles, declared
@@ -166,12 +167,14 @@ evidence for a promised capability.
   hook. Native background recovery, retention, startup restore/adoption and
   exit flush pass tests and a live X11 process-interruption round trip.
   Background language discovery and per-tab manual overrides pass app/library
-  tests. Generated settings/fonts, complete recovery acceptance
-  and Unicode layout/touch/IME remain open.
+  tests. The cell-grid bidi/wrap layout context drives document drawing,
+  hits and motion. Generated settings/fonts, complete recovery acceptance
+  and the Unicode corpus, real-font hits, touch and IME remain open.
 - Evidence and reviews: [testing §6](./testing.md#6-evidence-ledger).
-- Next executable action: finish the shared visual-layout experiment/context
-  integration, then generated settings/fonts, while retaining the remaining
-  recovery lifecycle/resource and device-latency gates.
+- Next executable action: generated settings/fonts (sequence item 2), after
+  replaying the Unicode corpus through the layout-backed app field. The cell-grid
+  bidi/wrap layout drives app drawing, hits and motion; recovery
+  lifecycle/resource and device-latency gates remain.
   CLI session writes and explicit restore offers are enabled; older durable
   generations remain until a newer write is acknowledged. Settings, Unicode, provider
   and workload gates remain open;

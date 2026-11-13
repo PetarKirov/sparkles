@@ -851,3 +851,41 @@ byte 0 for the fixed RTL row. This is preparation for U:
 `EditorField` still embeds `LogicalContext`, and real-font layout, wrapped
 row/vertical affinity, shared rendered geometry, touch and live IME remain
 unimplemented acceptance work. It does not establish bidi rendering in the app.
+
+### Cell-grid paragraph layout and shared row geometry — 2026-11-14
+
+`sparkles.ui.editor.layout` lays out each logical line as one bidi
+paragraph on the toolkit's cell grid. Base supplies UAX #9 paragraph and
+line levels, UAX #14 opportunities, grapheme boundaries and cluster widths;
+the layout wraps greedily, lets white space hang and orders each row's
+clusters with L2. `LayoutContext` answers every editor query from it.
+Vertical motion now resolves the head's row with its affinity and accepts
+`caretColumn`/`caretAt`, so a caret at a soft wrap keeps its drawn row.
+
+Worked examples, independent of the implementation's output, fix the
+expected answers. `ab אב` draws Bet before Alef with clusters at bytes
+0, 1, 2, 5, 3. Byte 3 is stop 3 with `before` and stop 5 with `after`; EOF
+draws at Bet's left edge. Visual Right from byte 2 visits (3, before),
+(5, after), (3, after), then stops at the row's edge; Left returns through
+(5, before), (7, before) and (2, after). In `א 12` the digits keep their
+order left of Alef. `א(ב)` mirrors both brackets; `a(b)` mirrors none.
+`aaa bbb ccc` at 7 cells wraps after the second space, and `世界世界` at
+5 cells wraps by cells. `aaa bbb\nc` at 4 cells crosses the soft wrap
+without resting twice on byte 4, and the logical break lands at byte 8 after.
+An RTL row's Home and End are bytes 4 and 0; an LTR row keeps smart Home.
+
+`visualRows` projects a line's logical, highlighted or selected spans onto
+those rows, drawing carets at their affinity's stop. In the application,
+`EditorFieldOf!LayoutContext` drives documents. The view wraps at the host
+width less the caret cell, scrolls by visual rows and records drawn rows with
+the wrap width. Pointer placement resolves through `layoutColumn` and
+`caretAt`, after the existing revision check and a wrap-width check. App
+tests click column 2 of the second wrapped row (byte 19) and then move Up to
+byte 2. They draw `ab אב` as `▏ab בא`, resolve drawn cell 5 to byte 5, and
+move visually Right to byte 3.
+
+These results establish cell-grid bidi/wrapping for the editor's drawing,
+hit-testing and motion. They do not establish shaped proportional flow,
+cross-cluster Arabic joining in the GPU renderer or live IME placement.
+Real-font device acceptance and touch handles also remain open. Cluster
+order, not a fixture image, is the oracle: no screenshot is claimed.

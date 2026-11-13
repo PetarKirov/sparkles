@@ -2,7 +2,8 @@
 module editor_document;
 
 import sparkles.text_buffer.text : Text;
-import sparkles.ui.editor.field : EditorField;
+import sparkles.ui.editor.field : EditorFieldOf;
+import sparkles.ui.editor.layout : LayoutContext;
 import document_text : DocumentBytes, encodeDocument;
 
 /// A tab owns its reference-counted field; arrays contain tab references, never Text values.
@@ -10,9 +11,12 @@ class Document
 {
     ulong id;
     string name;
-    EditorField field;
+    /// Wrapped, bidi-aware rows: motion, drawing and hits share one layout (`EAP17`).
+    EditorFieldOf!LayoutContext field;
     Text saved;
     size_t firstLine;
+    /// The first shown visual row of `firstLine`.
+    size_t firstRow;
     bool followCaret = true;
     string language = "text";
     bool bom;
@@ -25,7 +29,7 @@ class Document
     {
         this.id = id;
         this.name = name;
-        field = EditorField.make(content);
+        field = typeof(field).make(content);
         saved = field.state.text;
     }
 
