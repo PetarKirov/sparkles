@@ -100,7 +100,9 @@ struct CommandContext
         if (command.operation == Command.discard) return closing;
         const dialogCommand = command.operation == Command.confirm || command.operation == Command.cancel;
         if (modal != dialogCommand) return false;
-        return command.operation != Command.edit || (target == document && document != 0);
+        const documentCommand = command.operation == Command.edit || command.operation == Command.save
+            || command.operation == Command.saveAs || command.operation == Command.closeTab;
+        return !documentCommand || (target == document && document != 0);
     }
 
     bool reachable(Scope scope_) const scope @safe pure nothrow @nogc

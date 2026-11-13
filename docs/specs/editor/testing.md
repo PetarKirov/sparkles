@@ -744,3 +744,13 @@ respective tabs; the process then completes explicit discard/exit with status
 zero. This proves the native read path as well as app ownership. Transfer
 timeouts, provider withdrawal/reuse, Wayland and Android acceptance remain
 separate input gates; a stalled provider currently occupies one bounded slot.
+
+### Palette command context — 2026-11-13
+
+Global theme acceptance now uses the same availability policy as palette
+discovery rather than rejecting every command after a tab change. A regression
+first reproduced a preview that looked accepted but reverted on the next
+palette opening. The repaired flow accepts the theme and restores the command
+catalog. Save, Save As, tab closure and editing remain bound to the captured
+document; switching tabs before accepting Save As cannot open a path dialog
+for the new document. All 55 editor tests pass.

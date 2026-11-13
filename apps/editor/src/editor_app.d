@@ -1281,9 +1281,10 @@ struct EditorApp
     {
         if (effect.kind == PaletteEffectKind.execute)
         {
-            if (effect.invocation.target != document.id)
+            if (!context.available(effect.command, effect.invocation.target))
             {
-                status = "The command's document is no longer active.";
+                endPicker(false);
+                status = "The command is no longer available in this context.";
                 return;
             }
             const wasChoosing = choosingTheme;
@@ -1749,6 +1750,43 @@ struct EditorApp
     app.handleKey(KeyEvent(Key.enter));
     assert(app.themeName == "github-light" && !app.commands.palette.active);
     assert(app.document.field.text == "untouched");
+}
+
+/// A global theme choice survives tab changes and returns to the command catalog.
+@("editor.app.globalThemeAcceptAcrossTabs")
+@safe unittest
+{
+    import sparkles.input : Key;
+    EditorApp app;
+    assert(app.useTheme("github-dark"));
+    app.execute(CommandId(Command.themes));
+    app.commands.insert("github-light", app.context);
+    app.previewPicker();
+    app.execute(CommandId(Command.newTab));
+    app.handleKey(KeyEvent(Key.enter));
+    assert(app.themeName == "github-light" && !app.commands.palette.active);
+    app.execute(CommandId(Command.palette));
+    app.commands.insert("Toggle inspector", app.context);
+    app.handleKey(KeyEvent(Key.enter));
+    assert(app.inspector && app.themeName == "github-light");
+}
+
+/// Save As cannot migrate from the palette's captured tab to a newly active tab.
+@("editor.app.paletteSaveRetainsDocumentContext")
+@safe unittest
+{
+    import sparkles.input : Key;
+    EditorApp app;
+    app.document.field.insert("original");
+    app.execute(CommandId(Command.palette));
+    app.commands.insert("Save as", app.context);
+    app.execute(CommandId(Command.newTab));
+    app.handleKey(KeyEvent(Key.enter));
+    assert(app.commands.palette.active && !app.pathDialog);
+    assert(app.document.field.empty && app.status.length);
+    app.handleKey(KeyEvent(Key.escape));
+    app.execute(CommandId(Command.previousTab));
+    assert(app.document.field.text == "original");
 }
 
 /// Enter honors each selected line's convention; undo restores the exact BOM/mixed-ending bytes.
