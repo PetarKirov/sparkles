@@ -1040,7 +1040,7 @@ struct EditorApp
         return false;
     }
 
-    private uint routeClipboard(ClipboardRead owner, uint request) @safe
+    private uint routeClipboard(H)(ref H host, ClipboardRead owner, uint request)
     {
         owner.request = request;
         if (!clipboardOwnerValid(owner)) return 0;
@@ -1049,12 +1049,16 @@ struct EditorApp
         foreach (ticket, pending; clipboardReads)
             if (!clipboardOwnerValid(pending)) stale[count++] = ticket;
         foreach (ticket; stale[0 .. count]) clipboardReads.remove(ticket);
-        if (clipboardReads.length == stale.length || nextClipboardRead == uint.max)
+        if (clipboardReads.length == stale.length)
         {
             status = "The clipboard request could not be tracked; retry after pending reads finish.";
             return 0;
         }
-        const ticket = ++nextClipboardRead;
+        uint ticket;
+        static if (__traits(compiles, host.allocateClipboardRequest()))
+            ticket = host.allocateClipboardRequest();
+        else if (nextClipboardRead != uint.max) ticket = ++nextClipboardRead;
+        if (!ticket) { status = "Clipboard request identities are exhausted."; return 0; }
         clipboardReads[ticket] = owner;
         return ticket;
     }
@@ -1358,12 +1362,14 @@ struct EditorApp
             (in EndOfInput _) { closeRequested(host); },
             (in _) {});
         forwardClipboard(document.field, host,
-            (uint request) => routeClipboard(ClipboardRead(document: document.id), request));
+            (uint request) => routeClipboard(host, ClipboardRead(document: document.id), request));
         forwardClipboard(commands.query, host,
-            (uint request) => commands.palette.active ? routeClipboard(ClipboardRead(document.id,
+            (uint request) => commands.palette.active ? routeClipboard(host, ClipboardRead(document.id,
                 commands.palette.snapshot.ticket.value), request) : 0u);
         forwardClipboard(pathInput, host,
-            (uint request) => pathDialog ? routeClipboard(ClipboardRead(document.id, 0, dialogEpoch), request) : 0u);
+            (uint request) => pathDialog ? routeClipboard(host, ClipboardRead(document.id, 0, dialogEpoch), request) : 0u);
+        static if (__traits(compiles, host.takeClipboardError()))
+            if (const error = host.takeClipboardError()) status = error;
         if (quitRequested) host.quit();
     }
 

@@ -27,6 +27,7 @@ module sparkles.ui_app.native_loop;
 version (UiAppGuiVulkan):
 
 import sparkles.ui_app.prepared_specimen : PreparedSpecimenFont;
+import sparkles.ui_app.clipboard_reads : ClipboardReads;
 import sparkles.ui_app.specimen_font : sameSpecimenRequest, SpecimenFontRequest, SpecimenLatencyStats;
 
 import core.time : dur, Duration, MonoTime, msecs, nsecs, seconds, usecs;
@@ -820,11 +821,13 @@ struct NativeSession
     const(EffectRegistry)* effectRegistry;
     MonoTime effectEpoch; /// ditto — when the live clock started
     void delegate(scope const(char)[]) @system setClipboard; ///
-    void delegate(uint request) @system readClipboard;       ///
     /// Takes the window full screen or back; null where the window
     /// system cannot.
     void delegate(bool on) @system setFullscreen;
     bool fullscreen; /// as last asked for, or as the window system reports
+    uint delegate() @safe nothrow @nogc allocateClipboard; /// shared read identities
+    bool delegate(uint) @system readClipboard; /// bounded asynchronous reads
+    string delegate() @safe nothrow @nogc takeClipboardError; /// consumed diagnostic
     void delegate(int px) @system setFontSize;               ///
     void delegate(bool on) @system setTextInput;             ///
     /// The fingers down, as the last drain left them.
@@ -1066,12 +1069,21 @@ struct NativeHost
     /// Offers `text` as the clipboard's (`HST8`).
     void clipboard(in char[] text) @system => session_.setClipboard(text);
 
-    /**
-    Reads the clipboard for request `request` (`INP25`): the text streams
-    from the window system, and arrives after a later drain as `PasteEvent`s
-    carrying `request` — one empty paste when the clipboard holds no text.
-    */
-    void readClipboard(uint request) @system => session_.readClipboard(request);
+    /// Allocate one identity across all clipboard consumers in this host session.
+    uint allocateClipboardRequest() @safe nothrow @nogc
+        => session_.allocateClipboard is null ? 0 : session_.allocateClipboard();
+
+    /// Begin a native read; false rejects it synchronously without retaining a pending answer.
+    bool readClipboard(uint request) @system
+    {
+        const accepted = session_.readClipboard !is null && session_.readClipboard(request);
+        if (accepted) requestFrame();
+        return accepted;
+    }
+
+    /// Consume a clipboard failure without exposing transferred text.
+    string takeClipboardError() @safe nothrow @nogc
+        => session_.takeClipboardError is null ? null : session_.takeClipboardError();
 
     /// Retitles the window: the window system's title, and the bar's where
     /// the host draws the frame.
@@ -1659,6 +1671,17 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     import sparkles.ui.interp.immediate : paint;
 
     NativeSession session;
+    auto clipboardReads = new ClipboardReads;
+    scope (exit) clipboardReads.close(wsi);
+    // Offers can arrive with the first configure, before application setup.
+    void noteClipboard(in WindowEvent event) @safe
+    {
+        event.payload.match!((in sparkles.wsi.events.DataOfferEvent offer) {
+            wsi.withText(offer.mimeType, (scope const(char)[] mime) {
+                clipboardReads.note(offer.offer, offer.action, mime);
+            });
+        }, (in _) {});
+    }
     // `--debug log-events`: each event as the drain delivers it — text read there,
     // the one place it can be (`ED8`) — and the counts by kind when the
     // window closes.
@@ -1760,21 +1783,6 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         if (cfg.native.debugging.frameTrace.length)
             writeFrameTrace(*history, traceNames, cfg.native.debugging.frameTrace);
 
-    // The clipboard's offers (`INP25`), from the first drain on: X11
-    // announces an owner from before the window opened while the window
-    // is still being configured. On the heap: a transfer's sink must
-    // outlive it (`DT2`), and the window system may still hold one when
-    // this function returns.
-    auto clip = new ClipboardRead;
-    void noteOffer(in WindowEvent e)
-    {
-        e.payload.match!((in DataOfferEvent d) {
-            cast(void) wsi.withText(d.mimeType, (scope const(char)[] type, bool) @safe {
-                clip.note(d, type);
-            });
-        }, (in _) {});
-    }
-
     // ── the first configure ──
     SurfaceMetrics metrics;
     bool ready, closeRequested;
@@ -1785,7 +1793,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             break;
         cast(void) wsi.drain((WindowEvent e) {
             noteEvent(e);
-            noteOffer(e);
+            noteClipboard(e);
             if (e.window != window)
                 return;
             e.payload.match!(
@@ -2409,7 +2417,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 return false;
             cast(void) wsi.drain((WindowEvent e) {
                 noteEvent(e);
-                noteOffer(e);
+                noteClipboard(e);
                 if (e.window != window)
                     return;
                 e.payload.match!(
@@ -2530,27 +2538,22 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             cast(void) wsi.setTitle(window, session.title);
     };
     session.setClipboard = (scope const(char)[] text) {
-        cast(void) wsi.offerClipboard(window, "text/plain;charset=utf-8",
+        auto offered = wsi.offerClipboard(window, "text/plain;charset=utf-8",
             cast(const(ubyte)[]) text);
+        if (offered.hasValue)
+            clipboardReads.note(offered.value, sparkles.wsi.events.DataOfferAction.offered,
+                "text/plain;charset=utf-8");
     };
     static if (__traits(hasMember, Wsi, "setFullscreen"))
         session.setFullscreen = (bool on) {
             if (!wsi.setFullscreen(window, on).hasError)
                 session.fullscreen = on;
         };
-    session.readClipboard = (uint request) {
-        clip.ask(request);
-        if (clip.inFlight)
-            return; // the running read answers this request
-        static if (__traits(hasMember, Wsi, "receive"))
-            if (const type = clip.textType)
-                if (!wsi.receive(clip.offer, type, *clip).hasError)
-                {
-                    clip.inFlight = true;
-                    return;
-                }
-        clip.answerEmpty();
-    };
+    session.allocateClipboard = () @safe nothrow @nogc { return clipboardReads.allocate(); };
+    session.readClipboard = (uint request) { return clipboardReads.read(wsi, request); };
+    session.takeClipboardError = () @safe nothrow @nogc { return clipboardReads.takeError(); };
+    host.capabilities.clipboardRead = __traits(hasMember, Wsi, "receive");
+    input.capabilities.clipboardRead = __traits(hasMember, Wsi, "receive");
     // The user's size: kept by the machine across later scale changes
     // (`RES55`).
     session.setFontSize = (int px) {
@@ -2953,6 +2956,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         bool delivered;
         cast(void) wsi.drain((WindowEvent e) @trusted {
             noteEvent(e);
+            noteClipboard(e);
             // `@trusted` for the one call it exists for: the WSI asks for a
             // `@safe` sink, and the event goes to the application, whose
             // handler it cannot vouch for. Text is read only here (`ED8`).
@@ -2980,6 +2984,9 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 }
             }
             e.payload.match!(
+                (in sparkles.wsi.events.DataOfferEvent offer) {
+                    input_ = false;
+                },
                 (in WindowStateChangedEvent w) {
                     // A frame drawn from now on looks its title face up now,
                     // not in its first frame (a no-op once looked up).
@@ -3017,10 +3024,6 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 (in OccludedEvent o) { lc.occluded(o.occluded); input_ = false; },
                 (in CloseRequestedEvent _) { requestWindowClose(); input_ = false; },
                 (in MemoryPressureEvent m) { lc.memoryPressure(m.critical); input_ = false; },
-                (in DataOfferEvent _) {
-                    noteOffer(e);
-                    input_ = false;
-                },
                 (in _) {});
             if (input_)
             {
@@ -3036,10 +3039,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             });
         session.touches = input.contacts;
         flushInput!handle(host, input, delivered);
-        // `INP25`: a clipboard read that ended in this drain (or had
-        // nothing to read) is answered after its input, as a tagged paste.
-        clip.deliver((Event x) {
-            handle(host, x);
+        clipboardReads.poll((in Event event) @trusted {
+            handle(host, withRealSize(event, host.size));
             delivered = true;
         });
         version (Android) {} else version (linux)
@@ -3529,9 +3530,6 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             timeout = gestureTick;
         if (cfg.idleTimeoutMs >= 0 && cfg.idleTimeoutMs.msecs < timeout)
             timeout = cfg.idleTimeoutMs.msecs;
-        // An answer already in hand (an empty clipboard) goes out now.
-        if (clip.ready)
-            timeout = Duration.zero;
         // The turn's ingest budget: bytes a stream source holds go to its
         // sink first, and while any remain the loop does not wait (`OPL5`).
         ingest.beginTurn();
@@ -3594,180 +3592,6 @@ private void configureGestures(ref WsiInput input, in CellFont font) @safe pure 
     input.gestures.cfg.cellH = font.cellH;
     input.gestures.cfg.cellW = font.cellW;
     input.gestures.cfg.fractional = input.fractionalScroll;
-}
-
-/**
-The native host's clipboard reads (`INP25`): the clipboard's offer as the
-window system last announced it, with its best text type, and the one read in
-flight. A read streams the offer's text into `bytes` (`DT2`, this is the
-sink); the loop answers the request after the drain the transfer ends in.
-*/
-private struct ClipboardRead
-{
-    import sparkles.wsi : DataOfferAction, DataOfferEvent, OfferId,
-        TransferId, TransferStatus;
-
-    OfferId offer;        /// the clipboard's offer, as last announced
-    char[64] mime = 0;    /// its best text type (see `rankText`)
-    size_t mimeLength;    /// ditto
-    int rank;             /// ditto, 0: no text
-    char[] bytes;         /// what the transfer has delivered
-    uint request;         /// the read being answered (0: none)
-    bool inFlight;        /// a transfer is running
-    bool ready;           /// `request`'s answer waits for the loop
-
-    /// How good a text type `mime` is: every backend names UTF-8 text
-    /// `text/plain;charset=utf-8`; Wayland peers may offer bare `text/plain`.
-    static int rankText(scope const(char)[] mime) @safe pure nothrow @nogc
-        => mime == "text/plain;charset=utf-8" ? 2 : mime == "text/plain" ? 1 : 0;
-
-    /// One `DataOfferEvent` and its MIME type: a new offer replaces the old.
-    void note(in DataOfferEvent d, scope const(char)[] type) @safe pure nothrow @nogc
-    {
-        if (d.action != DataOfferAction.offered)
-        {
-            if (d.action == DataOfferAction.withdrawn && d.offer == offer)
-                rank = 0;
-            return;
-        }
-        if (d.offer != offer)
-        {
-            offer = d.offer;
-            rank = 0;
-        }
-        const r = rankText(type);
-        if (r > rank && type.length <= mime.length)
-        {
-            mime[0 .. type.length] = type;
-            mimeLength = type.length;
-            rank = r;
-        }
-    }
-
-    /// The text type to receive, or null when the clipboard holds no text.
-    const(char)[] textType() const return @safe pure nothrow @nogc
-        => rank ? mime[0 .. mimeLength] : null;
-
-    /// Asks for `request`'s answer; a read already in flight answers the
-    /// newest request instead.
-    void ask(uint request_) @safe pure nothrow
-    {
-        request = request_;
-        if (!inFlight)
-            bytes.length = 0;
-    }
-
-    /// The answer is the empty text (no text offered, or the read failed).
-    void answerEmpty() @safe pure nothrow
-    {
-        bytes.length = 0;
-        inFlight = false;
-        ready = request != 0;
-    }
-
-    /// `DT2`'s sink: the transfer's bytes, then its end.
-    void chunk(TransferId, scope const(ubyte)[] piece) @safe nothrow
-    {
-        bytes ~= cast(const(char)[]) piece;
-    }
-
-    /// ditto
-    void finish(TransferId, TransferStatus status) @safe nothrow
-    {
-        inFlight = false;
-        if (status != TransferStatus.completed)
-            bytes.length = 0;
-        ready = request != 0;
-    }
-
-    /// Hands the answer to `sink` as tagged paste chunks, once.
-    void deliver(Sink)(scope Sink sink)
-    {
-        import sparkles.input.events : pasteChunks;
-
-        if (!ready)
-            return;
-        const answering = request;
-        ready = false;
-        request = 0;
-        // Gathered first: the chunker is `@safe`, the application's handler
-        // need not be.
-        Event[] answer;
-        pasteChunks(bytes, (Event e) @safe { answer ~= e; }, answering);
-        bytes.length = 0;
-        foreach (e; answer)
-            sink(e);
-    }
-}
-
-/// The best text type wins, a new offer forgets the last one's, and only
-/// this offer's withdrawal clears it.
-@("ui_app.native_loop.ClipboardRead.tracksTheTextOffer")
-@safe pure nothrow
-unittest
-{
-    import sparkles.wsi : DataOfferAction, DataOfferEvent, OfferId;
-
-    ClipboardRead c;
-    const a = OfferId(1, 1), b = OfferId(2, 1);
-    c.note(DataOfferEvent(a, DataOfferAction.offered), "text/html");
-    assert(c.textType is null);
-    c.note(DataOfferEvent(a, DataOfferAction.offered), "text/plain");
-    c.note(DataOfferEvent(a, DataOfferAction.offered), "text/plain;charset=utf-8");
-    c.note(DataOfferEvent(a, DataOfferAction.offered), "text/plain");
-    assert(c.textType == "text/plain;charset=utf-8");
-    c.note(DataOfferEvent(b, DataOfferAction.offered), "image/png");
-    assert(c.textType is null, "another application copied an image");
-    c.note(DataOfferEvent(b, DataOfferAction.offered), "text/plain");
-    c.note(DataOfferEvent(a, DataOfferAction.withdrawn), "text/plain");
-    assert(c.textType == "text/plain", "a stale offer's withdrawal is not this one's");
-    c.note(DataOfferEvent(b, DataOfferAction.withdrawn), "text/plain");
-    assert(c.textType is null);
-}
-
-/// A read streams into the sink and is answered once, tagged; a failed
-/// transfer answers empty; a second request while one is in flight takes
-/// over the answer.
-@("ui_app.native_loop.ClipboardRead.answersTheRequest")
-@safe nothrow
-unittest
-{
-    import sparkles.input.events : match, PasteEvent;
-    import sparkles.wsi : TransferId, TransferStatus;
-
-    ClipboardRead c;
-    char[64] got = 0;
-    size_t n;
-    uint tag;
-    bool last;
-    void collect(Event e) @safe nothrow
-    {
-        const p = e.match!((in PasteEvent p) => p, _ => PasteEvent.init);
-        foreach (ch; p.text[])
-            got[n++] = ch;
-        tag = p.request;
-        last = p.last;
-    }
-
-    c.ask(7);
-    c.inFlight = true;
-    c.ask(8);
-    c.chunk(TransferId.init, cast(const(ubyte)[]) "héllo");
-    c.deliver(&collect);
-    assert(n == 0, "nothing before the transfer ends");
-    c.finish(TransferId.init, TransferStatus.completed);
-    c.deliver(&collect);
-    assert(got[0 .. n] == "héllo" && tag == 8 && last);
-    n = 0;
-    c.deliver(&collect);
-    assert(n == 0, "answered once");
-
-    c.ask(9);
-    c.inFlight = true;
-    c.chunk(TransferId.init, cast(const(ubyte)[]) "partial");
-    c.finish(TransferId.init, TransferStatus.failed);
-    c.deliver(&collect);
-    assert(n == 0 && tag == 9 && last, "a failed read answers empty");
 }
 
 // The loop's halves an application sees — input in, a frame's operations
@@ -3862,7 +3686,7 @@ void replayNative(alias present, alias handle, Texts)(ref NativeSession session,
     if (session.setClipboard is null)
         session.setClipboard = (scope const(char)[]) {};
     if (session.readClipboard is null)
-        session.readClipboard = (uint) {};
+        session.readClipboard = (uint) => false;
     if (session.setFontSize is null)
         session.setFontSize = (int) {};
     if (session.setTextInput is null)

@@ -2310,6 +2310,10 @@
             "link": "/libs/ui-app/reference/application-close"
           },
           {
+            "text": "Clipboard reads",
+            "link": "/libs/ui-app/reference/clipboard"
+          },
+          {
             "text": "Specimen font hosting",
             "link": "/libs/ui-app/reference/specimen-fonts"
           },

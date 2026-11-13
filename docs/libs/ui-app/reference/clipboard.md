@@ -1,0 +1,40 @@
+# Clipboard reads
+
+The native Vulkan host offers `readClipboard(request)` alongside clipboard
+writes. A read returns `true` when accepted and later delivers `PasteEvent`
+chunks carrying that request. The final chunk has `last == true`; an empty
+clipboard produces one empty final chunk. A synchronous `false` result leaves
+no pending native transfer.
+
+`allocateClipboardRequest()` supplies increasing identities shared by every
+consumer of the host session. `forwardClipboard(field, host)` uses that
+allocator when present and updates the field's expected reply identity.
+Consumers that provide their own request mapper must allocate from the same
+host namespace, retain the requesting input's identity and translate the
+answer back to its local request. Reused or decreasing native request IDs
+are rejected.
+
+The native adapter retains eight independent transfers, each limited to
+16 MiB. Clipboard bytes become paste events only after the complete transfer
+finishes and passes UTF-8 validation. Oversized, malformed or failed transfers
+complete with empty tagged data and a diagnostic; partial text is never
+inserted. `takeClipboardError()` consumes the latest diagnostic without
+exposing clipboard contents. Native transfer buffers are released explicitly
+after delivery or cancellation.
+
+Offers arriving during initial window configuration are retained before app
+setup. Clipboard reads remain independent of font or GPU resources, and sink
+references are cancelled before their storage is released during host teardown.
+The adapter does not impose a transfer timeout; a stalled provider occupies a
+bounded slot until completion or host closure.
+
+The editor retains the document ID, palette ticket or dialog epoch for each
+read. A delayed reply can update its original live tab without moving focus;
+a closed or cancelled input cannot consume it. Terminal-emulator paste uses
+unsolicited events (`request == 0`); explicit terminal clipboard reads depend
+on the terminal host's capabilities.
+
+`apps/editor/tools/native-close-probe.d --clipboard` runs a private X11
+provider that delays two transfers and completes them in reverse order.
+The resulting checkpoint must retain each tab's intended text. This is X11
+evidence; Wayland and Android clipboard acceptance remain separate gates.

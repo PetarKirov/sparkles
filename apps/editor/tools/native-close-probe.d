@@ -28,13 +28,15 @@ import session_archive : readSessionGeneration, sessionGenerationOfName;
 
 int main(string[] args) @system
 {
-    if (args.length == 1)
+    if (args.length == 1 || (args.length == 2 && args[1] == "--clipboard"))
     {
-        const result = execute(["xvfb-run", "-a", thisExePath, "--private-server"]);
+        auto command = ["xvfb-run", "-a", thisExePath, "--private-server"];
+        if (args.length == 2) command ~= "--clipboard";
+        const result = execute(command);
         write(result.output);
         return result.status;
     }
-    assert(args.length == 2 && args[1] == "--private-server");
+    assert((args.length == 2 || args.length == 3) && args[1] == "--private-server");
     auto connection = xcb_connect(null, null);
     assert(connection !is null && !xcb_connection_has_error(connection));
     scope (exit) xcb_disconnect(connection);
@@ -88,7 +90,7 @@ int main(string[] args) @system
         Thread.sleep(400.msecs);
     }
     findWindow();
-    void key(ubyte code) @system
+    void key(ubyte code, ushort modifiers = 0) @system
     {
         xcb_key_press_event_t event;
         event.response_type = XCB_KEY_PRESS;
@@ -96,6 +98,7 @@ int main(string[] args) @system
         event.root = root;
         event.event = window;
         event.same_screen = 1;
+        event.state = modifiers;
         xcb_send_event(connection, 0, window, XCB_EVENT_MASK_KEY_PRESS, cast(const(char)*) &event);
         event.response_type = XCB_KEY_RELEASE;
         xcb_send_event(connection, 0, window, XCB_EVENT_MASK_KEY_RELEASE, cast(const(char)*) &event);
@@ -137,6 +140,104 @@ int main(string[] args) @system
             Thread.sleep(10.msecs);
         }
         assert(hasDraft(expected), "Expected recovery contents were not checkpointed: " ~ expected ~ "\n" ~ readText(log.name));
+    }
+    if (args.length == 3 && args[2] == "--clipboard")
+    {
+        const clipboard = atom("CLIPBOARD"), targets = atom("TARGETS"), utf8 = atom("UTF8_STRING");
+        const owner = xcb_generate_id(connection);
+        xcb_create_window(connection, 0, owner, root, -1, -1, 1, 1, 0,
+            XCB_WINDOW_CLASS_INPUT_ONLY, XCB_COPY_FROM_PARENT, 0, null);
+        xcb_set_selection_owner(connection, owner, clipboard, XCB_CURRENT_TIME);
+        xcb_flush(connection);
+        xcb_selection_request_event_t[] requests;
+        bool advertised;
+        void answer(in xcb_selection_request_event_t request, string value, bool advertise = false)
+        {
+            const property = request.property == XCB_NONE ? request.target : request.property;
+            if (advertise)
+            {
+                uint[2] supported = [targets, utf8];
+                xcb_change_property(connection, XCB_PROP_MODE_REPLACE, request.requestor,
+                    property, XCB_ATOM_ATOM, 32, 2, supported.ptr);
+            }
+            else xcb_change_property(connection, XCB_PROP_MODE_REPLACE, request.requestor,
+                property, utf8, 8, cast(uint) value.length, value.ptr);
+            xcb_selection_notify_event_t response;
+            response.response_type = XCB_SELECTION_NOTIFY;
+            response.time = request.time;
+            response.requestor = request.requestor;
+            response.selection = request.selection;
+            response.target = request.target;
+            response.property = property;
+            xcb_send_event(connection, 0, request.requestor, XCB_EVENT_MASK_NO_EVENT,
+                cast(const(char)*) &response);
+            xcb_flush(connection);
+        }
+        void pump()
+        {
+            while (auto event = xcb_poll_for_event(connection))
+            {
+                scope (exit) free(event);
+                if ((event.response_type & 0x7F) != XCB_SELECTION_REQUEST) continue;
+                const request = *cast(xcb_selection_request_event_t*) event;
+                if (request.target == targets) { answer(request, "", true); advertised = true; }
+                else { assert(request.target == utf8); requests ~= request; }
+            }
+        }
+        const offerDeadline = MonoTime.currTime + 5.seconds;
+        while (!advertised && MonoTime.currTime < offerDeadline) { pump(); Thread.sleep(10.msecs); }
+        assert(advertised, "The native backend did not discover the private clipboard offer.");
+        Thread.sleep(100.msecs);
+        void awaitRequest(size_t count)
+        {
+            const deadline = MonoTime.currTime + 5.seconds;
+            while (requests.length < count && MonoTime.currTime < deadline)
+            {
+                assert(!tryWait(child).terminated, readText(log.name));
+                pump();
+                Thread.sleep(10.msecs);
+            }
+            assert(requests.length == count, "The native host did not request clipboard contents.");
+        }
+        key(55, XCB_MOD_MASK_CONTROL); // Ctrl+V in the first tab; hold its reply.
+        awaitRequest(1);
+        key(57, XCB_MOD_MASK_CONTROL); // Ctrl+N creates a second tab.
+        Thread.sleep(100.msecs);
+        key(55, XCB_MOD_MASK_CONTROL);
+        awaitRequest(2);
+        answer(requests[1], "from B");
+        awaitDraft("from B");
+        answer(requests[0], "from A");
+        bool paired;
+        const pairDeadline = MonoTime.currTime + 5.seconds;
+        while (!paired && MonoTime.currTime < pairDeadline)
+        {
+            foreach (archive; dirEntries(state, SpanMode.shallow))
+            {
+                if (!archive.isDir) continue;
+                foreach (file; dirEntries(archive.name, SpanMode.shallow))
+                {
+                    const generation = sessionGenerationOfName(baseName(file.name));
+                    if (!generation) continue;
+                    const record = readSessionGeneration(archive.name, generation);
+                    if (record.hasValue && record.value.tabs.length == 2
+                        && record.value.tabs[0].content == "from A"
+                        && record.value.tabs[1].content == "from B") paired = true;
+                }
+            }
+            Thread.sleep(10.msecs);
+        }
+        assert(paired, "Out-of-order native clipboard replies did not retain their requesting tabs.");
+        closeWindow();
+        Thread.sleep(100.msecs);
+        key(40);
+        Thread.sleep(100.msecs);
+        key(40);
+        const deadline = MonoTime.currTime + 5.seconds;
+        while (!tryWait(child).terminated && MonoTime.currTime < deadline) Thread.sleep(10.msecs);
+        assert(tryWait(child).terminated && tryWait(child).status == 0, readText(log.name));
+        writeln("out-of-order native X11 clipboard replies retained their requesting tabs");
+        return 0;
     }
     key(38); // Xvfb's default XKB map: a.
     awaitDraft("a");

@@ -617,6 +617,9 @@ An optional `route` maps the field-local request into a host-wide identity.
 The caller translates replies back to the captured local request before
 calling paste. Returning zero declines the read and invalidates its pending
 answer, without sending an ambiguous request to the host.
+Without a mapper, a host offering `allocateClipboardRequest` supplies the
+identity directly and the field retains it for its answer. A boolean read
+result can reject synchronously; legacy void-returning hosts remain accepted.
 */
 void forwardClipboard(Host, Route = ClipboardRequestIdentity)(ref EditorField field,
     ref Host host, scope Route route = Route.init)
@@ -632,9 +635,24 @@ void forwardClipboard(Host, Route = ClipboardRequestIdentity)(ref EditorField fi
     if (field.pendingRead)
         static if (__traits(compiles, host.readClipboard(1u)))
         {
-            const request = route(field.pendingRead);
-            if (request) host.readClipboard(request);
-            else if (field.state.record.pendingRequest == field.pendingRead)
+            uint request;
+            static if (is(Route == ClipboardRequestIdentity)
+                && __traits(compiles, host.allocateClipboardRequest()))
+            {
+                request = host.allocateClipboardRequest();
+                if (field.state.record.pendingRequest == field.pendingRead)
+                    field.state.record.pendingRequest = request;
+            }
+            else request = route(field.pendingRead);
+            const pending = field.state.record.pendingRequest;
+            bool accepted;
+            if (request)
+            {
+                static if (is(typeof(host.readClipboard(request)) == bool))
+                    accepted = host.readClipboard(request);
+                else { host.readClipboard(request); accepted = true; }
+            }
+            if (!accepted && field.state.record.pendingRequest == pending)
                 field.state.record.pendingRequest = 0;
         }
     field.pendingRead = 0;
@@ -693,6 +711,37 @@ unittest
     forwardClipboard(field, host, (uint request) => 0u);
     assert(host.asked == 77 && !field.paste("declined", cancelled).changed);
     assert(field.text == "accepted");
+}
+
+/// A host allocator separates default consumers, and a rejected read invalidates its answer.
+@("editor.field.forwardClipboard.hostNamespace")
+@safe pure nothrow unittest
+{
+    import sparkles.input.events : Key, Mods;
+    static struct Host
+    {
+        uint next;
+        uint[] requests;
+        bool accept = true;
+        uint allocateClipboardRequest() @safe pure nothrow @nogc => ++next;
+        bool readClipboard(uint request) @safe pure nothrow
+        { requests ~= request; return accept; }
+    }
+    Host host;
+    auto first = FieldSetup(EditorTarget.window, true, true).singleLine();
+    auto second = FieldSetup(EditorTarget.window, true, true).singleLine();
+    const paste = KeyEvent(Key.char_, 'v', Mods(ctrl: true));
+    first.key(paste);
+    second.key(paste);
+    forwardClipboard(first, host);
+    forwardClipboard(second, host);
+    assert(host.requests == [1u, 2u]);
+    assert(!second.paste("wrong", 1).changed);
+    assert(first.paste("A", 1).changed && second.paste("B", 2).changed);
+    host.accept = false;
+    first.key(paste);
+    forwardClipboard(first, host);
+    assert(!first.paste("rejected", 3).changed && first.text == "A");
 }
 
 /// EDI3 through a field: the host reads the preedit from its pool and the

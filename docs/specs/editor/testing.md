@@ -719,3 +719,28 @@ a read errand. Recording-host read scenarios therefore establish owner policy,
 not native clipboard acceptance. Native read plumbing and a delayed X11
 provider scenario are the next input slice; Wayland/Android parity also remains
 required.
+
+### Native clipboard delivery — 2026-11-13
+
+The Vulkan host now offers asynchronous clipboard reads and one increasing
+request namespace shared by its input consumers. Eight independently retained
+transfers are bounded to 16 MiB each; only complete valid UTF-8 is delivered.
+Malformed, oversized or failed transfers complete without inserting a prefix
+and expose a diagnostic without clipboard contents. Teardown cancels sink
+references before releasing their buffers. Offers received during initial
+window configuration remain available to the application.
+
+The checked Vulkan build passes, alongside 151 host tests, 828 UI tests and
+53 editor tests. Adapter tests cover reversed completion order, malformed and
+oversized payloads, capacity rejection and cancellation. The shared input
+helper test checks host-wide identities across independent fields and rejects
+answers after synchronous read failure.
+
+The private X11 provider in
+`dub run --single apps/editor/tools/native-close-probe.d -- --clipboard`
+holds two real selection requests and answers the second before the first.
+The resulting durable checkpoint contains `from A` and `from B` in their
+respective tabs; the process then completes explicit discard/exit with status
+zero. This proves the native read path as well as app ownership. Transfer
+timeouts, provider withdrawal/reuse, Wayland and Android acceptance remain
+separate input gates; a stalled provider currently occupies one bounded slot.
