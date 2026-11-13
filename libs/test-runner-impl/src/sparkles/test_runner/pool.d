@@ -62,11 +62,15 @@ Worker takeWorker()
 }
 
 /// Ends `w`, one worker at a time; every exit after the first merges its
-/// coverage into what the earlier ones wrote (TRS4, TRS5).
+/// coverage into what the earlier ones wrote (TRS4, TRS5). A worker that
+/// already died is only waited for: its readers finish before the runner's
+/// druntime terminates (see `Worker.joinReaders`).
 void retire(Worker w)
 {
-    if (w is null || w.dead)
+    if (w is null)
         return;
+    if (w.dead)
+        return w.joinReaders();
     synchronized (exitLock)
     {
         w.exit(coverageMerge: anyExited || callerMerges);
@@ -125,7 +129,10 @@ Thread[] startTestWorkers(Test[] tests, size_t nThreads,
                     if (i >= tests.length)
                         break;
                     if (w is null || w.dead)
+                    {
+                        retire(w); // a crashed one's readers, before it is dropped
                         w = takeWorker();
+                    }
                     onResult(w.run(tests[i].id, mainThread));
                 }
             catch (Throwable t)
