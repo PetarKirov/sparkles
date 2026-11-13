@@ -74,6 +74,8 @@ final class Worker
     private RunnerEvent[] queue;
     private StrayHandler onStray;
     private bool outputClosed;
+    private bool processEnded; // the frames reader has reaped the worker
+    private Thread framesReader;
     private Thread outputReader;
 
     /// Whether the process has ended.
@@ -104,9 +106,9 @@ final class Worker
             config.preExecFunction = &restoreBrokenPipes;
         }
         pipes = pipeProcess(workerArguments(binary, druntimeOptions), Redirect.all, null, config);
-        auto frames = new Thread(&readFrames);
-        frames.isDaemon = true;
-        frames.start();
+        framesReader = new Thread(&readFrames);
+        framesReader.isDaemon = true;
+        framesReader.start();
         outputReader = new Thread(&readOutput);
         outputReader.isDaemon = true;
         outputReader.start();
@@ -199,6 +201,7 @@ final class Worker
             while (!session.over)
                 changed.wait();
         dead = true;
+        joinReaders();
         RunnerEvent[] batch;
         synchronized (mutex)
         {
@@ -216,6 +219,26 @@ final class Worker
             else if (e.kind == EventKind.workerEnded && e.text != describeEnding(0))
                 throw WorkerDied.outside(e.text, "after it was asked to exit");
         }
+    }
+
+    /**
+    Waits for the two channel readers to finish, once the worker process has
+    ended; a worker still running (one given up on after a protocol error)
+    keeps them. They are daemon threads, which druntime does not join: one
+    still finishing when the runner's `main` returns races druntime's
+    termination, which destroys the thread-list lock the exiting thread
+    takes — macOS aborts with "Error: pthread_mutex_destroy failed.", Linux
+    dies of SIGSEGV. Each stops within `deadCutoff` of the worker's end
+    (TRP28), so the wait is bounded. Idempotent.
+    */
+    void joinReaders()
+    {
+        synchronized (mutex)
+            if (!processEnded)
+                return;
+        foreach (reader; [framesReader, outputReader])
+            if (reader !is null)
+                cast(void) reader.join(rethrow: false);
     }
 
     /// Writes `bytes` to the worker's commands; `false` when nothing reads
@@ -374,6 +397,7 @@ final class Worker
         pipes.stdout.close();
         synchronized (mutex)
         {
+            processEnded = true;
             session.feedEnd(describeEnding(status));
             publish();
             // Likewise for the output pipe: stop at end of file or at the

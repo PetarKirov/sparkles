@@ -600,6 +600,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     // case keeps its id (TRP26).
     Worker restartBenchWorker()
     {
+        retire(worker); // the crashed one: its readers, before it is dropped
         auto fresh = takeWorker();
         MetricsListing unused;
         cast(void) probe(fresh, benchOptions, false, unused);
