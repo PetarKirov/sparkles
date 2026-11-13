@@ -31,6 +31,7 @@ import sparkles.base.text.wire_names : AnyFormat, WireCase;
 import sparkles.base.text.writers : writeEnumMemberName, writeValue;
 
 import sparkles.build_primitives.task.model : PlanExpected, planErr, planOk;
+import sparkles.build_primitives.resolve.tree : ResolveTree;
 import sparkles.build_primitives.workspace.discovery : Workspace;
 import sparkles.build_primitives.workspace.input_sets : ConfiguredPackage, InputSets, Request;
 import sparkles.build_primitives.workspace.package_graph : normalizeRepoPath, PackageEdge, PackageGraph, PackageId,
@@ -639,6 +640,9 @@ struct FocusOptions
     BuildPlatform platform;
     /// The source directory of each registry package.
     RegistrySources registry;
+    /// The environment variables a recipe value may refer to: the process's
+    /// (`processEnvironment`) for a command.
+    string[string] environment;
 }
 
 import sparkles.build_primitives.workspace.input_sets : WorkspaceInputs;
@@ -691,13 +695,17 @@ PlanExpected!(PackagePlan, SelectionError) planPackages(string repoRoot, RecipeR
         dependencies: options.dependencies, dependents: options.dependents);
     if (options.since)
     {
+        import sparkles.build_primitives.resolve.tree : systemTree;
+
+        // One tree for every resolution: each recipe is read through it.
+        auto tree = systemTree();
         auto since = gitChangesSince(repoRoot, options.sinceRef);
         if (since.hasError)
             return planErr!PackagePlan(since.error);
         plan.since = move(since.value);
 
-        auto inputs = workspaceInputSets(repoRoot, plan.graph, workspace.value, options, hostTokens);
-        plan.requests = packageRequests(repoRoot, plan.graph, inputs, role, options, hostTokens);
+        auto inputs = workspaceInputSets(repoRoot, tree, plan.graph, workspace.value, options, hostTokens);
+        plan.requests = packageRequests(repoRoot, tree, plan.graph, inputs, role, options, hostTokens);
         request.changes = seedsByClaims(inputs, plan.graph, plan.requests, plan.since.changes);
     }
 
@@ -711,7 +719,7 @@ PlanExpected!(PackagePlan, SelectionError) planPackages(string repoRoot, RecipeR
 /// The input sets of `graph`'s packages, read from `workspace`, with the
 /// workspace inputs: what `options` states, the recipes read, and the planner's
 /// inputs (D54), the planner's libraries resolved for `options.platform`.
-InputSets workspaceInputSets(string repoRoot, const ref PackageGraph graph,
+InputSets workspaceInputSets(string repoRoot, ResolveTree tree, const ref PackageGraph graph,
     const ref Workspace workspace, const ref FocusOptions options, scope const(string)[] hostTokens) @safe
 {
     import sparkles.build_primitives.workspace.input_sets : inputSets;
@@ -726,7 +734,7 @@ InputSets workspaceInputSets(string repoRoot, const ref PackageGraph graph,
         const at = graph.indexOf(PackageId(library));
         if (at < 0)
             continue;
-        auto r = resolveRequest(repoRoot, graph, cast(uint) at, testRoot: false, options);
+        auto r = resolveRequest(repoRoot, tree, graph, cast(uint) at, testRoot: false, options);
         stated.planner ~= r.closure;
         if (r.unresolved.length)
             stated.planner ~= ConfiguredPackage(cast(uint) at, "");
@@ -734,7 +742,7 @@ InputSets workspaceInputSets(string repoRoot, const ref PackageGraph graph,
     const planner = graph.indexOf(PackageId(options.plannerPackage));
     if (planner >= 0)
     {
-        auto r = resolveRequest(repoRoot, graph, cast(uint) planner, testRoot: false, options);
+        auto r = resolveRequest(repoRoot, tree, graph, cast(uint) planner, testRoot: false, options);
         foreach (pair; r.closure)
             if (pair.package_ == planner)
                 stated.planner ~= pair;
@@ -745,8 +753,8 @@ InputSets workspaceInputSets(string repoRoot, const ref PackageGraph graph,
 // One request per package, by graph index (BGW12, D47), each holding what
 // the generators it runs read (D53). A generator's request is resolved once
 // for all of them.
-private Request[] packageRequests(string repoRoot, const ref PackageGraph graph, ref InputSets inputs,
-    RecipeRole role, const ref FocusOptions options, scope const(string)[] hostTokens) @safe
+private Request[] packageRequests(string repoRoot, ResolveTree tree, const ref PackageGraph graph,
+    ref InputSets inputs, RecipeRole role, const ref FocusOptions options, scope const(string)[] hostTokens) @safe
 {
     import sparkles.build_primitives.workspace.input_sets : addGenerators;
 
@@ -756,7 +764,7 @@ private Request[] packageRequests(string repoRoot, const ref PackageGraph graph,
         const key = ConfiguredPackage(package_, configuration);
         if (auto found = key in generated)
             return *found;
-        return generated[key] = resolveRequest(repoRoot, graph, package_, testRoot: false, options,
+        return generated[key] = resolveRequest(repoRoot, tree, graph, package_, testRoot: false, options,
             configuration);
     }
 
@@ -765,7 +773,7 @@ private Request[] packageRequests(string repoRoot, const ref PackageGraph graph,
     {
         Request r;
         if (p.platforms.allows(hostTokens))
-            r = resolveRequest(repoRoot, graph, cast(uint) i, testRoot: role == RecipeRole.test, options);
+            r = resolveRequest(repoRoot, tree, graph, cast(uint) i, testRoot: role == RecipeRole.test, options);
         else
         {
             r.name = p.id.name;
@@ -786,11 +794,10 @@ private Request[] packageRequests(string repoRoot, const ref PackageGraph graph,
 
 // The request for package `index` of `graph`, in `configuration` (null for
 // its default); unresolved, with an empty closure, when resolution fails.
-private Request resolveRequest(string repoRoot, const ref PackageGraph graph, uint index, bool testRoot,
-    const ref FocusOptions options, string configuration = null) @safe
+private Request resolveRequest(string repoRoot, ResolveTree tree, const ref PackageGraph graph, uint index,
+    bool testRoot, const ref FocusOptions options, string configuration = null) @safe
 {
     import sparkles.build_primitives.resolve.configure : resolve, ResolveRequest;
-    import sparkles.build_primitives.resolve.driver : SystemDriver;
     import sparkles.build_primitives.resolve.platform : BuildPlatform;
     import sparkles.build_primitives.workspace.input_sets : requestOf;
 
@@ -802,7 +809,9 @@ private Request resolveRequest(string repoRoot, const ref PackageGraph graph, ui
         platform: platform, testRoot: testRoot);
     foreach (name, source; options.registry)
         request.registry[name] = source;
-    const resolved = resolve(request, new SystemDriver);
+    foreach (name, value; options.environment)
+        request.environment[name] = value;
+    const resolved = resolve(request, tree);
     if (resolved.hasError)
     {
         Request r;

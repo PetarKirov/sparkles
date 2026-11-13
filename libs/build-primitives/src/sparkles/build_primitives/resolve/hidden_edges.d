@@ -12,9 +12,9 @@ module sparkles.build_primitives.resolve.hidden_edges;
 
 import std.algorithm.searching : canFind;
 import std.conv : text;
-
-import sparkles.build_primitives.resolve.driver : ResolveDriver;
 import sparkles.build_primitives.resolve.paths : isAbsolutePath, normalizedPath;
+
+import sparkles.build_primitives.resolve.tree : ResolveTree;
 import sparkles.build_primitives.resolve.project : Package;
 import sparkles.build_primitives.resolve.recipe : SettingsTemplate;
 import sparkles.build_primitives.workspace.package_graph : longestPrefixOwner;
@@ -58,9 +58,9 @@ the most deeply nested owner winning). A value naming `$PACKAGE_DIR` is read
 relative to `p`; a value naming any other variable is skipped, since it names
 no tree location this check can know.
 */
-HiddenEdge[] hiddenEdges(const Package p, const PackageLocation[] all, ResolveDriver driver) @safe
+HiddenEdge[] hiddenEdges(const Package p, const PackageLocation[] all, ResolveTree tree) @safe
 {
-    const lines = DirectiveLines(p.recipe, driver);
+    const lines = DirectiveLines(p.recipe, tree);
     const top = p.settings.dependencies.keys;
     if (p.configurations.length == 0)
         return hiddenIn(p, p.settings, null, top, all, lines);
@@ -150,12 +150,12 @@ private struct DirectiveLines
     private Occurrence[] occurrences;
     private string json;
 
-    this(string recipe, ResolveDriver driver) @safe
+    this(string recipe, ResolveTree tree) @safe
     {
         import sparkles.wired.sdl : SdlNode, SdlScalarKind, parseSdlDocument, sdlDubRecipe;
 
         string source;
-        if (!driver.readText(recipe, source))
+        if (!tree.readText(recipe, source))
             return;
         if (recipe.length >= 5 && recipe[$ - 5 .. $] == ".json")
         {
@@ -241,10 +241,10 @@ private struct DirectiveLines
 @("build_primitives.resolve.hidden_edges.hiddenEdges.reportsUndeclaredReaches")
 @safe unittest
 {
-    import sparkles.build_primitives.resolve.driver : MemoryDriver;
+    import sparkles.build_primitives.resolve.tree : memoryTree;
     import sparkles.build_primitives.resolve.project : loadProject;
 
-    auto driver = new MemoryDriver([
+    string[string] files = [
         "/r/dub.sdl": "name \"r\"\nsubPackage \"a\"\nsubPackage \"b\"\nsubPackage \"other\"\n",
         "/r/a/dub.sdl": `name "a"
 importPaths "../other/src"
@@ -262,12 +262,13 @@ importPaths "../other/src" "src"
         "/r/b/src/b.d": "",
         "/r/other/dub.sdl": "name \"other\"\n",
         "/r/other/src/o.d": "",
-    ]);
+    ];
+    auto tree = memoryTree(files);
     const all = [PackageLocation("r:a", "/r/a"), PackageLocation("r:b", "/r/b"),
         PackageLocation("r:other", "/r/other")];
 
-    auto a = loadProject("/r", ":a", driver, null);
-    const edges = hiddenEdges(a.root, all, driver);
+    auto a = loadProject("/r", ":a", tree, null);
+    const edges = hiddenEdges(a.root, all, tree);
     assert(edges.length == 2, text(edges));
     assert(edges[0] == HiddenEdge("r:a", "/r/a/dub.sdl", 2, null, "importPaths", "../other/src", "r:other"),
         text(edges[0]));
@@ -277,17 +278,17 @@ importPaths "../other/src" "src"
         ~ "without a dependency on it");
 
     // A declared dependency makes the same reach visible.
-    auto b = loadProject("/r", ":b", driver, null);
-    assert(hiddenEdges(b.root, all, driver).length == 0);
+    auto b = loadProject("/r", ":b", tree, null);
+    assert(hiddenEdges(b.root, all, tree).length == 0);
 }
 
 @("build_primitives.resolve.hidden_edges.hiddenEdges.inlineAndJson")
 @safe unittest
 {
-    import sparkles.build_primitives.resolve.driver : MemoryDriver;
+    import sparkles.build_primitives.resolve.tree : memoryTree;
     import sparkles.build_primitives.resolve.project : loadProject;
 
-    auto driver = new MemoryDriver([
+    string[string] files = [
         "/r/dub.sdl": `name "r"
 subPackage {
     name "in"
@@ -299,43 +300,46 @@ subPackage "j"
 `,
         "/r/other/dub.sdl": "name \"other\"\n",
         "/r/j/dub.json": "{\n  \"name\": \"j\",\n  \"importPaths\": [\n    \"../other/src\"\n  ]\n}\n",
-    ]);
+    ];
+    auto tree = memoryTree(files);
     const all = [PackageLocation("r", "/r"), PackageLocation("r:other", "/r/other"),
         PackageLocation("r:j", "/r/j")];
-    auto inline = loadProject("/r", ":in", driver, null);
-    const inlineEdges = hiddenEdges(inline.root, all, driver);
+    auto inline = loadProject("/r", ":in", tree, null);
+    const inlineEdges = hiddenEdges(inline.root, all, tree);
     assert(inlineEdges.length == 1 && inlineEdges[0].line == 5 && inlineEdges[0].reached == "r:other",
         text(inlineEdges));
-    auto json = loadProject("/r", ":j", driver, null);
-    const jsonEdges = hiddenEdges(json.root, all, driver);
+    auto json = loadProject("/r", ":j", tree, null);
+    const jsonEdges = hiddenEdges(json.root, all, tree);
     assert(jsonEdges.length == 1 && jsonEdges[0].line == 4, text(jsonEdges));
 
     // An inline subpackage's directory is its base's: a reach into the base
     // package's files is no reach into another package.
-    driver.files["/r/dub.sdl"] = "name \"r\"\nsubPackage {\n    name \"own\"\n    importPaths \"src\"\n}\n";
-    auto own = loadProject("/r", ":own", driver, null);
-    assert(hiddenEdges(own.root, [PackageLocation("r", "/r"), PackageLocation("r:own", "/r")], driver)
+    files["/r/dub.sdl"] = "name \"r\"\nsubPackage {\n    name \"own\"\n    importPaths \"src\"\n}\n";
+    tree = memoryTree(files);
+    auto own = loadProject("/r", ":own", tree, null);
+    assert(hiddenEdges(own.root, [PackageLocation("r", "/r"), PackageLocation("r:own", "/r")], tree)
         .length == 0);
 }
 
 @("build_primitives.resolve.hidden_edges.hiddenEdges.testRootCopiesItsConfiguration")
 @safe unittest
 {
-    import sparkles.build_primitives.resolve.driver : MemoryDriver;
+    import sparkles.build_primitives.resolve.tree : memoryTree;
     import sparkles.build_primitives.resolve.platform : BuildPlatform;
     import sparkles.build_primitives.resolve.project : addTestRunnerConfiguration, loadProject;
 
     // `dub test`'s generated configuration copies `unittest`: its reaches are
     // reported once, at the `unittest` configuration's line.
-    auto driver = new MemoryDriver([
+    string[string] files = [
         "/r/dub.sdl": "name \"r\"\nsubPackage \"a\"\nsubPackage \"other\"\n",
         "/r/a/dub.sdl": "name \"a\"\nconfiguration \"unittest\" {\n    importPaths \"../other/src\"\n}\n",
         "/r/a/source/a.d": "",
         "/r/other/dub.sdl": "name \"other\"\n",
-    ]);
-    auto a = loadProject("/r", ":a", driver, null);
+    ];
+    auto tree = memoryTree(files);
+    auto a = loadProject("/r", ":a", tree, null);
     addTestRunnerConfiguration(a, BuildPlatform(["linux", "posix"], ["x86_64"], "ldc", "ldc2", 2111, "1.41.0"));
     const edges = hiddenEdges(a.root, [PackageLocation("r:a", "/r/a"), PackageLocation("r:other", "/r/other")],
-        driver);
+        tree);
     assert(edges.length == 1 && edges[0].configuration == "unittest" && edges[0].line == 3, text(edges));
 }

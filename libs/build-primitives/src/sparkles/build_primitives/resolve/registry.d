@@ -11,7 +11,7 @@ module sparkles.build_primitives.resolve.registry;
 
 import std.conv : text;
 
-import sparkles.build_primitives.resolve.driver : ResolveDriver;
+import sparkles.build_primitives.resolve.tree : ResolveTree;
 import sparkles.build_primitives.resolve.project : RegistrySource, RegistrySources;
 import sparkles.build_primitives.task.model : PlanExpected, planErr, planOk;
 
@@ -27,7 +27,7 @@ struct LockedPackage
 
 /// Reads the packages `locks` pin. The same package pinned twice must be
 /// pinned identically.
-PlanExpected!(LockedPackage[], string) readDubLocks(const string[] locks, ResolveDriver driver) @safe
+PlanExpected!(LockedPackage[], string) readDubLocks(const string[] locks, ResolveTree tree) @safe
 {
     import std.json : JSONException, JSONType, parseJSON;
 
@@ -35,7 +35,7 @@ PlanExpected!(LockedPackage[], string) readDubLocks(const string[] locks, Resolv
     foreach (lock; locks)
     {
         string source;
-        if (!driver.readText(lock, source))
+        if (!tree.readText(lock, source))
             return planErr!(LockedPackage[])(text("cannot read the DUB lock ", lock));
         try
         {
@@ -83,7 +83,7 @@ flake's `dub-sources` output builds from the locks
 from the tree is an error.
 */
 PlanExpected!(RegistrySources, string) nixRegistrySources(const LockedPackage[] packages,
-    string sources, ResolveDriver driver) @safe
+    string sources, ResolveTree tree) @safe
 {
     import sparkles.build_primitives.resolve.paths : joinedPath;
 
@@ -91,7 +91,7 @@ PlanExpected!(RegistrySources, string) nixRegistrySources(const LockedPackage[] 
     foreach (ref p; packages)
     {
         const directory = joinedPath(sources, ".dub", "packages", p.name, p.version_, p.name);
-        if (!driver.isDirectory(directory))
+        if (!tree.isDirectory(directory))
             return planErr!RegistrySources(text("`", p.name, "` ", p.version_, " (", p.lock,
                 ") is not in the DUB sources at ", sources));
         result[p.name] = RegistrySource(directory, p.version_, p.repository);
@@ -102,23 +102,24 @@ PlanExpected!(RegistrySources, string) nixRegistrySources(const LockedPackage[] 
 @("build_primitives.resolve.registry.readDubLocks.andNixSources")
 @safe unittest
 {
-    import sparkles.build_primitives.resolve.driver : MemoryDriver;
+    import sparkles.build_primitives.resolve.tree : memoryTree;
 
-    auto driver = new MemoryDriver([
+    string[string] files = [
         "/r/a.json": `{"dependencies": {"expected": {"version": "0.4.1", "sha256": "x"}}}`,
         "/r/b.json": `{"dependencies": {"eve": {"version": "c72f", "repository": "https://e", "sha256": "y"},
             "expected": {"version": "0.4.1", "sha256": "x"}}}`,
         "/r/bad.json": `{"dependencies": {"expected": {"version": "0.5.0", "sha256": "z"}}}`,
         "/s/.dub/packages/expected/0.4.1/expected/dub.json": "{}",
-    ]);
-    const locked = readDubLocks(["/r/a.json", "/r/b.json"], driver);
+    ];
+    auto tree = memoryTree(files);
+    const locked = readDubLocks(["/r/a.json", "/r/b.json"], tree);
     assert(locked.hasValue, locked.error);
     // Sorted by name.
     assert(locked.value.length == 2 && locked.value[0].repository == "https://e");
-    assert(readDubLocks(["/r/a.json", "/r/bad.json"], driver).hasError);
-    assert(readDubLocks(["/r/absent.json"], driver).hasError);
+    assert(readDubLocks(["/r/a.json", "/r/bad.json"], tree).hasError);
+    assert(readDubLocks(["/r/absent.json"], tree).hasError);
 
-    const sources = nixRegistrySources(locked.value[1 .. 2], "/s", driver);
+    const sources = nixRegistrySources(locked.value[1 .. 2], "/s", tree);
     assert(sources.hasValue && sources.value["expected"] == RegistrySource("/s/.dub/packages/expected/0.4.1/expected", "0.4.1"));
-    assert(nixRegistrySources(locked.value, "/s", driver).hasError);
+    assert(nixRegistrySources(locked.value, "/s", tree).hasError);
 }
