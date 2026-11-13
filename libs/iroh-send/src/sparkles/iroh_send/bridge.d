@@ -17,6 +17,9 @@ $(LI $(LREF IrohSend.start) starts a $(LREF SendSession), which runs on the
     library's own threads; $(LREF SendSession.poll) reads where it is.)
 $(LI $(LREF IrohSend.collection) names the collection of a list of files
     with no network, as the send would.)
+$(LI $(LREF IrohSend.receive) opens a collection a peer serves: its names,
+    digests and proved sizes first, then the chosen files' verified bytes,
+    as $(LREF Receiver.next) hands them out (`fsx` `XR`, docs/specs/fsx).)
 )
 */
 module sparkles.iroh_send.bridge;
@@ -24,7 +27,7 @@ module sparkles.iroh_send.bridge;
 import sparkles.base.expected : Expected, err, ok;
 
 /// The interface version this module speaks; a library with another is refused.
-enum uint irohSendAbi = 2;
+enum uint irohSendAbi = 3;
 
 /// The library's file name; `dlopen` searches for it when no path is given.
 enum string irohSendLibraryName = "libsparkles_iroh_send.so";
@@ -62,10 +65,45 @@ struct SendState
     string error;     /// why it failed
 }
 
+/// One file of a collection a peer serves.
+struct ReceiveEntry
+{
+    string name;    /// as the collection lists it, the label first
+    ubyte[32] hash; /// BLAKE3 of its bytes
+}
+
+/// What `Receiver.next` handed out.
+enum ReceiveEvent : int
+{
+    done = 0,   /// every chosen file has ended
+    start = 1,  /// a file begins: `index`, and the size the peer states in `length`
+    data = 2,   /// `length` verified bytes of file `index` at `offset`
+    end = 3,    /// file `index` has ended, its last chunk verified, so its size proved
+    error = -1, /// `Receiver.error` says why; nothing more follows
+}
+
+/// The bytes read from the peer so far.
+struct ReceiveStats
+{
+    ulong payloadBytesRead; /// file and metadata bytes
+    ulong otherBytesRead;   /// hashes and headers
+}
+
 /// The loaded library.
 struct IrohSend
 {
     private Api api;
+
+    /**
+    Connects to the node `ticket` names and reads its collection's names and
+    digests (`XR2`), and nothing else. The receiver holds
+    the reason when that fails, and lists nothing.
+    */
+    Receiver receive(string ticket, bool noRelay = false) @trusted
+    {
+        auto r = api.receive_open(cast(const(ubyte)*) ticket.ptr, ticket.length, noRelay ? 1 : 0);
+        return Receiver(api, r);
+    }
 
     /**
     Starts sending `files`, keeping the library's store beneath
@@ -155,6 +193,77 @@ struct SendSession
 }
 
 /**
+A collection a peer serves, open; `close` ends it and frees it.
+
+After `fetch`, `next` hands out the chosen files in the collection's order:
+each one's `start`, its `data` in order, every piece verified against the
+file's BLAKE3 tree before it is handed out (`XR4`), and its `end`.
+*/
+struct Receiver
+{
+    private Api api;
+    private void* receiver;
+
+    /// Why it failed, or `null`.
+    string error() @trusted
+    {
+        char[512] buf;
+        const n = api.receive_text(receiver, cast(ubyte*) buf.ptr, buf.length);
+        if (n == 0)
+            return null;
+        if (n <= buf.length)
+            return buf[0 .. n].idup;
+        auto big = new char[n];
+        api.receive_text(receiver, cast(ubyte*) big.ptr, big.length);
+        return cast(string) big;
+    }
+
+    /// The collection's files, in its order.
+    ReceiveEntry[] entries() @trusted
+    {
+        auto list = new ReceiveEntry[api.receive_count(receiver)];
+        foreach (i, ref e; list)
+        {
+            CEntry c;
+            api.receive_entry(receiver, i, &c);
+            e = ReceiveEntry(c.name[0 .. c.nameLength].idup, c.hash);
+        }
+        return list;
+    }
+
+    /// Asks for the files at `indices`, ascending, whole (`XR3`).
+    Expected!(bool, string) fetch(const(ulong)[] indices) @trusted
+    {
+        if (api.receive_fetch(receiver, indices.ptr, indices.length) == 0)
+            return ok!string(true);
+        return err!bool(error());
+    }
+
+    /// Waits for what arrives next; `data` writes into `buffer`.
+    ReceiveEvent next(out ulong index, out ulong offset, ubyte[] buffer, out size_t length) @trusted
+    {
+        return cast(ReceiveEvent) api.receive_next(receiver, &index, &offset, buffer.ptr, buffer.length, &length);
+    }
+
+    /// The bytes read so far.
+    ReceiveStats stats() @trusted
+    {
+        CReceiveStats s;
+        api.receive_stats(receiver, &s);
+        return ReceiveStats(s.payloadBytesRead, s.otherBytesRead);
+    }
+
+    /// Closes the connection; the receiver is then gone.
+    void close() @trusted
+    {
+        if (receiver is null)
+            return;
+        api.receive_close(receiver);
+        receiver = null;
+    }
+}
+
+/**
 Opens the iroh bridge: at `path`, else at `$SPARKLES_IROH_SEND_LIB`, else by
 its bare name, which the dynamic loader searches for. Fails with the
 loader's reason, or when the library speaks another interface version.
@@ -228,6 +337,28 @@ private extern (C) nothrow @nogc
     alias StopFn = void function(void*);
     alias CollectionFn = int function(const(CFile)*, size_t, ubyte*, char*, size_t, size_t*);
     alias AndroidContextFn = void function(void*, void*);
+
+    struct CEntry
+    {
+        const(char)* name;
+        size_t nameLength;
+        ubyte[32] hash;
+    }
+
+    struct CReceiveStats
+    {
+        ulong payloadBytesRead;
+        ulong otherBytesRead;
+    }
+
+    alias ReceiveOpenFn = void* function(const(ubyte)*, size_t, uint);
+    alias ReceiveCountFn = size_t function(const(void)*);
+    alias ReceiveEntryFn = void function(const(void)*, size_t, CEntry*);
+    alias ReceiveStatsFn = void function(const(void)*, CReceiveStats*);
+    alias ReceiveTextFn = size_t function(const(void)*, ubyte*, size_t);
+    alias ReceiveFetchFn = int function(void*, const(ulong)*, size_t);
+    alias ReceiveNextFn = int function(void*, ulong*, ulong*, ubyte*, size_t, size_t*);
+    alias ReceiveCloseFn = void function(void*);
 }
 
 private struct Api
@@ -239,10 +370,19 @@ private struct Api
     StopFn stop;
     CollectionFn collection;
     AndroidContextFn android_context;
+    ReceiveOpenFn receive_open;
+    ReceiveCountFn receive_count;
+    ReceiveEntryFn receive_entry;
+    ReceiveStatsFn receive_stats;
+    ReceiveTextFn receive_text;
+    ReceiveFetchFn receive_fetch;
+    ReceiveNextFn receive_next;
+    ReceiveCloseFn receive_close;
 }
 
 // Each member's exported name, after `sparkles_iroh_`.
-private enum string symbolOf(string member) = member == "collection" ? "collection" : "send_" ~ member;
+private enum string symbolOf(string member) = member == "collection" ? "collection"
+    : member.length > 8 && member[0 .. 8] == "receive_" ? member : "send_" ~ member;
 
 private CFile[] cFiles(in SendFile[] files) @trusted
 {
@@ -372,4 +512,108 @@ its name, and nothing else; the ticket's hash is the collection's name.
     foreach (name, contents; want)
         assert(readText(buildPath(dst, "fileset", name)) == contents, name);
     assert(session.poll().bytesSent > 100_000, "the provider counted what it sent");
+}
+
+/**
+`fsx` M4's spike (`XR2`, `XR3`, docs/specs/fsx): a collection of 50 files is
+opened with its names and digests and no byte of any file; one large file
+fetched alone arrives whole and verified, and the provider sends little
+beyond it.
+*/
+@("iroh_send.XR.receiveSpike")
+@system unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs, seconds, MonoTime;
+    import std.conv : text;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.format : format;
+    import std.path : buildPath;
+
+    import sparkles.base.hash.blake3 : blake3;
+    import sparkles.test_runner.skip : skipTest;
+
+    auto lib = bridge();
+    if (lib.hasError)
+        return skipTest(lib.error);
+    const base = buildPath(tempDir, "iroh-receive-spike");
+    const src = buildPath(base, "src"), store = buildPath(base, "store");
+    mkdirRecurse(src);
+    mkdirRecurse(store);
+    scope (exit) rmdirRecurse(base);
+
+    enum n = 50, bigIndex = 17;
+    SendFile[] files;
+    ubyte[][] contents;
+    foreach (i; 0 .. n)
+    {
+        auto bytes = new ubyte[i == bigIndex ? 300_000 : 100 + 37 * i];
+        foreach (k, ref b; bytes)
+            b = cast(ubyte)(k * 31 + i);
+        const name = format!"f%02d"(i);
+        write(buildPath(src, name), bytes);
+        files ~= SendFile("spike/" ~ name, buildPath(src, name));
+        contents ~= bytes;
+    }
+
+    auto session = lib.value.start(files, store, noRelay: true);
+    scope (exit) session.stop();
+    SendState st;
+    const deadline = MonoTime.currTime + 60.seconds;
+    do
+    {
+        Thread.sleep(50.msecs);
+        st = session.poll();
+    }
+    while (st.phase < SendPhase.serving && MonoTime.currTime < deadline);
+    assert(st.phase == SendPhase.serving, st.error);
+
+    auto r = lib.value.receive(st.ticket, noRelay: true);
+    scope (exit) r.close();
+    assert(r.error is null, r.error);
+    const entries = r.entries();
+    assert(entries.length == n);
+    foreach (i, ref e; entries)
+    {
+        assert(e.name == format!"spike/f%02d"(i), e.name);
+        assert(e.hash == blake3(contents[i]), e.name);
+    }
+    // The names and the sequence only: a few KiB, against the files' 380 KB.
+    const opened = r.stats();
+    assert(opened.payloadBytesRead < 4096, text(opened));
+
+    assert(r.fetch([ulong(bigIndex)]).hasValue);
+    ubyte[] got;
+    auto buffer = new ubyte[64 * 1024];
+    ulong index, offset;
+    size_t length;
+    bool started, ended;
+    for (;;)
+    {
+        const ev = r.next(index, offset, buffer, length);
+        if (ev == ReceiveEvent.done)
+            break;
+        assert(ev != ReceiveEvent.error, r.error);
+        assert(index == bigIndex);
+        if (ev == ReceiveEvent.start)
+        {
+            started = true;
+            assert(length == contents[bigIndex].length);
+        }
+        else if (ev == ReceiveEvent.data)
+        {
+            assert(offset == got.length, "in order");
+            got ~= buffer[0 .. length];
+        }
+        else
+            ended = true;
+    }
+    assert(started && ended);
+    assert(got == contents[bigIndex], "the file, whole");
+
+    // The provider sent the file, the names and the sequence, and nothing of
+    // the 49 others.
+    Thread.sleep(200.msecs);
+    const sent = session.poll().bytesSent;
+    assert(sent >= 300_000 && sent < 300_000 + 4096, text(sent));
 }

@@ -72,7 +72,8 @@ in
         cargo = toolchain;
       };
 
-      cargoDeps = rustPlatform.importCargoLock { lockFile = "${pkgs.sendme.src}/Cargo.lock"; };
+      lock = pkgs.callPackage ../sparkles-iroh-send-lock.nix { };
+      cargoDeps = rustPlatform.importCargoLock { lockFile = lock; };
       bridge = ../../../libs/iroh-send/rust;
 
       # Rust's spelling of each ABI's target.
@@ -94,8 +95,9 @@ in
           ];
 
           postPatch = ''
-            cp ${bridge}/sparkles_iroh_send.rs ${bridge}/iroh_collection.rs src/
+            cp ${bridge}/sparkles_iroh_send.rs ${bridge}/sparkles_iroh_receive.rs ${bridge}/iroh_collection.rs src/
             cat ${bridge}/targets.toml >> Cargo.toml
+            cp ${lock} Cargo.lock
           '';
 
           # Every shipped library 16 KB-aligned (`pageAlignFlags`).
