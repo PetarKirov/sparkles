@@ -447,3 +447,39 @@ bool enablePrivilege(string name, bool enable) @trusted
     auto empty = root.value.openFile!(OpenMode.read)("empty");
     assert(empty.value.map().value.bytes.length == 0);
 }
+
+/// VFB9: `pathOf` names the directory a handle holds, `\\?\` dropped and `/`
+/// between components; `symlinkTo` stores an absolute link through it, which
+/// reads back as that path and resolves to the file.
+@("vfs.nt.VFB9.pathOf")
+@system unittest
+{
+    import std.algorithm.searching : endsWith;
+    import std.file : readText;
+    import sparkles.test_runner.skip : skipTest;
+
+    static assert(hasPathOf!BlockingVfs);
+    const dir = scratchDir("pathof");
+    scope (exit) rmdirRecurse(dir);
+    mkdirRecurse(buildPath(dir, "store", "p"));
+    write(buildPath(dir, "store", "p", "q"), "x");
+    mkdirRecurse(buildPath(dir, "out"));
+
+    auto v = new BlockingVfs;
+    auto store = openRoot!(Rights.readOnly)(v, buildPath(dir, "store"), ambientAuthority());
+    char[4096] buffer;
+    auto n = v.pathOf(store.value.backendHandle, buffer[]);
+    assert(!n.hasError, n.error.to!string);
+    const path = buffer[0 .. n.value].idup;
+    assert(path.length > 3 && path[1] == ':' && path[2] == '/' && path.endsWith("/store"), path);
+    assert(path.indexOf('\\') < 0 && path.indexOf("?") < 0, path);
+
+    auto dest = openRoot!(Rights.all)(v, buildPath(dir, "out"), ambientAuthority());
+    const made = dest.value.symlinkTo("s", store.value, "p/q");
+    if (made.hasError && made.error.kind == ErrorKind.permission)
+        return skipTest("creating a symbolic link needs a privilege or developer mode here");
+    assert(!made.hasError, made.error.to!string);
+    assert(dest.value.readlinkAt("s", buffer[]).value == path ~ "/p/q");
+    if (!underWine) // Wine stores the link but does not always resolve an absolute one
+        assert(readText(buildPath(dir, "out", "s")) == "x");
+}

@@ -28,6 +28,10 @@ import sparkles.base.vfs.types : Access, Disposition, DotDotPolicy, EntryKind, M
 import sparkles.event_horizon.sys.nt;
 import sparkles.event_horizon.sys.nt_time : ntTimeToUnixNs;
 
+// Not declared by druntime: the path the system names an open handle by.
+private extern (Windows) uint GetFinalPathNameByHandleW(HANDLE file, wchar* path, uint length, uint flags)
+    nothrow @nogc @system;
+
 /// The context a backend gives when its kernel resolver turned out to be
 /// withdrawn during a call (VFR5).
 enum kernelWithdrawnContext = "the kernel resolver is no longer available";
@@ -265,9 +269,57 @@ struct BlockingVfs
         return ioOk(n.value);
     }
 
-    /// Creates the link `name` in `dir` with the relative `target`. A target
-    /// that names an existing directory makes a directory link. Windows needs
-    /// a privilege or developer mode for this; without one it fails with
+    /**
+    The absolute path of the directory `dir` holds, as the system names it
+    (VFB9): `GetFinalPathNameByHandleW`, its `\\?\` prefix dropped (`\\?\UNC\`
+    becoming `\\`), in UTF-8 with `/` between components, as `readlinkAt`
+    writes a target.
+    */
+    IoResult!size_t pathOf(Handle dir, scope char[] buffer) @safe nothrow @nogc
+    {
+        wchar[maxSplicedPathLength + 1] w;
+        const n = (() @trusted => GetFinalPathNameByHandleW(cast(HANDLE) dir.raw, w.ptr,
+            cast(uint) w.length, 0))();
+        if (n == 0)
+        {
+            import core.sys.windows.winbase : GetLastError;
+
+            return ioErr!size_t(IoError(ErrorKind.other, GetLastError(), OpKind.statAt,
+                IoErrorStage.completion, "GetFinalPathNameByHandleW failed"));
+        }
+        if (n >= w.length)
+            return ioErr!size_t(ErrorKind.nameTooLong, OpKind.statAt);
+        const(wchar)[] path = w[0 .. n];
+        bool unc;
+        if (path.length >= 8 && path[0 .. 8] == `\\?\UNC\`w)
+        {
+            path = path[8 .. $];
+            unc = true;
+        }
+        else if (path.length >= 4 && path[0 .. 4] == `\\?\`w)
+            path = path[4 .. $];
+        size_t at;
+        if (unc)
+        {
+            if (buffer.length < 2)
+                return ioErr!size_t(ErrorKind.nameTooLong, OpKind.statAt);
+            buffer[0 .. 2] = "//";
+            at = 2;
+        }
+        auto m = utf16ToUtf8(path, buffer[at .. $]);
+        if (m.hasError)
+            return ioErr!size_t(ErrorKind.nameTooLong, OpKind.statAt);
+        foreach (ref c; buffer[at .. at + m.value])
+            if (c == '\\')
+                c = '/';
+        return ioOk(at + m.value);
+    }
+
+    /// Creates the link `name` in `dir` with `target`: a relative one, or an
+    /// absolute one (`C:\…`, `\\server\…`) that `symlinkTo` made through a
+    /// granted directory (VFO10), stored with its NT name. A target that
+    /// names an existing directory makes a directory link. Windows needs a
+    /// privilege or developer mode for this; without one it fails with
     /// `permission`.
     IoResult!void symlinkAt(Handle dir, scope const(char)[] name, scope const(char)[] target)
         @safe nothrow @nogc
@@ -279,7 +331,23 @@ struct BlockingVfs
         foreach (ref c; wt[0 .. tn])
             if (c == '/')
                 c = '\\';
-        const directory = isDirectoryRelative(dir, wt[0 .. tn]);
+        // An absolute target is named to NT as `\??\C:\…` or `\??\UNC\server\…`.
+        const drive = tn >= 3 && wt[1] == ':' && wt[2] == '\\';
+        const unc = tn >= 2 && wt[0] == '\\' && wt[1] == '\\';
+        wchar[maxSplicedPathLength + 8] wn;
+        size_t nn;
+        if (drive || unc)
+        {
+            const prefix = unc ? `\??\UNC`w : `\??\`w;
+            const rest = unc ? wt[1 .. tn] : wt[0 .. tn];
+            if (prefix.length + rest.length > wn.length)
+                return ioErr!void(ErrorKind.nameTooLong, OpKind.symlinkAt);
+            wn[0 .. prefix.length] = prefix[];
+            wn[prefix.length .. prefix.length + rest.length] = rest[];
+            nn = prefix.length + rest.length;
+        }
+        const absolute = nn > 0;
+        const directory = absolute ? isDirectoryAt(wn[0 .. nn]) : isDirectoryRelative(dir, wt[0 .. tn]);
         size_t h;
         const s = ntOpenName(dir.raw, name, FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | DELETE
             | SYNCHRONIZE, (directory ? FILE_DIRECTORY_FILE : FILE_NON_DIRECTORY_FILE)
@@ -287,7 +355,8 @@ struct BlockingVfs
         if (!ntSuccess(s))
             return ioErr!void(ntError(s, OpKind.symlinkAt));
         ubyte[16 * 1024] data;
-        const length = (() @trusted => symlinkReparseData(data[], wt[0 .. tn]))();
+        const length = (() @trusted => absolute ? symlinkReparseData(data[], wn[0 .. nn], wt[0 .. tn], false)
+            : symlinkReparseData(data[], wt[0 .. tn], wt[0 .. tn], true))();
         IO_STATUS_BLOCK io;
         const f = (() @trusted => NtFsControlFile(cast(HANDLE) h, null, null, null, &io,
             FSCTL_SET_REPARSE_POINT, data.ptr, cast(ULONG) length, null, 0))();
@@ -708,6 +777,18 @@ private:
             : EntryKind.regular;
     }
 
+    // Whether the NT name `target` (`\??\C:\…`) is a directory.
+    bool isDirectoryAt(scope const(wchar)[] target) @safe nothrow @nogc
+    {
+        size_t h;
+        const s = ntOpen(0, target, FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+            FILE_OPEN_FOR_BACKUP_INTENT | FILE_SYNCHRONOUS_IO_NONALERT, 0, FILE_OPEN, null, h);
+        if (!ntSuccess(s))
+            return false;
+        scope (exit) close(Handle(h));
+        return kindOf(h) == EntryKind.directory;
+    }
+
     bool isDirectoryRelative(Handle dir, scope const(wchar)[] target) @safe nothrow @nogc
     {
         size_t h;
@@ -854,23 +935,25 @@ const(wchar)[] reparseTarget(return scope ubyte[] data) @system nothrow @nogc
     return (cast(const(wchar)*)(pathBuffer + offset))[0 .. length / 2];
 }
 
-/// Fills a relative symbolic-link reparse buffer; returns its length.
-size_t symlinkReparseData(scope ubyte[] data, scope const(wchar)[] target) @system nothrow @nogc
+/// Fills a symbolic-link reparse buffer with its NT name and its printed one,
+/// flagged relative or not; returns its length.
+size_t symlinkReparseData(scope ubyte[] data, scope const(wchar)[] substitute, scope const(wchar)[] print,
+    bool relative) @system nothrow @nogc
 {
-    const bytes = cast(ushort)(target.length * 2);
+    const sub = cast(ushort)(substitute.length * 2), pr = cast(ushort)(print.length * 2);
     *cast(uint*) data.ptr = IO_REPARSE_TAG_SYMLINK;
-    *cast(ushort*)(data.ptr + 4) = cast(ushort)(12 + 2 * bytes);
+    *cast(ushort*)(data.ptr + 4) = cast(ushort)(12 + sub + pr);
     *cast(ushort*)(data.ptr + 6) = 0;
     auto header = cast(ushort*)(data.ptr + 8);
-    header[0] = 0;          // substitute name offset
-    header[1] = bytes;      // substitute name length
-    header[2] = bytes;      // print name offset
-    header[3] = bytes;      // print name length
-    *cast(uint*)(data.ptr + 16) = SYMLINK_FLAG_RELATIVE;
+    header[0] = 0;   // substitute name offset
+    header[1] = sub; // substitute name length
+    header[2] = sub; // print name offset
+    header[3] = pr;  // print name length
+    *cast(uint*)(data.ptr + 16) = relative ? SYMLINK_FLAG_RELATIVE : 0;
     auto names = cast(wchar*)(data.ptr + 20);
-    names[0 .. target.length] = target[];
-    names[target.length .. 2 * target.length] = target[];
-    return 20 + 2 * bytes;
+    names[0 .. substitute.length] = substitute[];
+    names[substitute.length .. substitute.length + print.length] = print[];
+    return 20 + sub + pr;
 }
 
 /// A protected DACL that admits only the process's user (VFN12).
