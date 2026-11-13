@@ -625,6 +625,12 @@ so an edit to the catalog itself selects no package, as before.
 **Revisit when** ui-app's suite joins the Windows leg, or selection learns
 to map a link's target to the package that holds the link.
 
+The second condition is met: selection records a link's target as claimed by
+every input set that holds the link (BGW11 of the
+[fileset-native workspace](./fileset-native-workspace.md)), so an edit to the
+catalog selects `ui-app`'s tests. The choice stands; the Windows condition
+remains.
+
 ## D25: The migration comparison snippets (accepted)
 
 **Question.** `ci --example-files` runs
