@@ -578,10 +578,12 @@ git's SHA-1 tree id, its Nix SRI form and its SWHID
 ([`CAG3`](../build-primitives/content-addressing/SPEC.md#_5-git-trees-cag));
 and iroh's collection labelled with the root directory's name
 ([`CAI1`](../build-primitives/content-addressing/SPEC.md#_8-iroh-s-collection-cai)),
-with the number of links a collection leaves out when there are any. A
-name that cannot be computed **must** say why in its place. _Detection:_ on
-an in-memory tree, the Stats lines hold each name as the library computes it
-alone, and a tree with a link reports it left out of the collection.
+with the number of links a collection leaves out and of the executable
+files that arrive without their executable bit, a collection holding names
+and contents only, when there are any. A name that cannot be computed
+**must** say why in its place. _Detection:_ on an in-memory tree, the Stats
+lines hold each name as the library computes it alone, and a tree with a
+link and an executable file reports the link left out and the bit dropped.
 
 **`FXS2` — A name is copied by choosing it.** A click or a tap on a name's
 line in the Stats tab **must** copy the name to the clipboard and say so on
@@ -592,7 +594,8 @@ copies the line below.
 
 **`FXS3` — Sending asks first.** `s` in the Stats tab, or its Send button on
 the touch layout, **must** first show what would be sent: the number of
-files, their size, the links left out, and the collection's name, computing
+files, their size, the links left out, the files that arrive without their
+executable bit, and the collection's name, computing
 the ids if they are not computed yet. Nothing **must** leave the machine
 until the user confirms with Enter or the Send button; Escape or Cancel
 **must** return without starting the provider. _Rationale:_ anyone who holds
@@ -680,7 +683,8 @@ a query that does not parse exits 1.
 
 **`FXC3` — `send` is the Send button.** `send` **must** do what Send does
 (`FXS3`–`FXS6`, `FXS8`): compute the names, print what would be sent (the
-files, their size, the links left out, the collection and that anyone with
+files, their size, the links left out, the files that arrive without their
+executable bit, the collection and that anyone with
 the ticket can fetch them) and ask to go on. On a terminal it asks yes or
 no; `--yes` skips the question, and without a terminal and without `--yes`
 it **must** refuse, exiting 1, rather than send unasked. Once confirmed it

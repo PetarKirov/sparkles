@@ -54,7 +54,7 @@ private auto alone(S)(string literal)
 @("fileset_explorer.FXS1.namesInStats")
 @system unittest
 {
-    enum literal = "src/a.d = module a;\nsrc/b.d = module b;\nREADME.md = hi\nl -> src/a.d\n";
+    enum literal = "src/a.d = module a;\nsrc/b.d = module b;\nREADME.md = hi\nl -> src/a.d\nrun +x = #!\n";
     auto app = new ExplorerApp(Root(literal: literal, name: "t"), "all()");
     const o = app.shown;
     assert(o.hasIds);
@@ -72,6 +72,8 @@ private auto alone(S)(string literal)
     foreach (name; [o.castore, o.narHash, o.storePath, o.gitTree, o.gitSri, o.swhid, o.collection])
         assert(frame.canFind(name), name ~ "\n" ~ frame);
     assert(frame.canFind("iroh skips  1 link"), frame);
+    assert(o.collectionExecutables == 1);
+    assert(frame.canFind("iroh drops  1 file arrives without its executable bit"), frame);
 }
 
 /// FXS1: a name that cannot be computed says why in its place.
@@ -211,8 +213,12 @@ private ExplorerApp* sender(ref Fixture f, Scripted provider)
 {
     import std.path : buildPath;
 
+    import std.conv : octal;
+    import std.file : setAttributes;
+
     auto f = Fixture.make("asks");
     scope (exit) f.remove();
+    setAttributes(buildPath(f.dir, "sub", "c.txt"), octal!755);
     auto provider = new Scripted;
     provider.script = [SendState.init];
     auto app = sender(f, provider);
@@ -220,6 +226,7 @@ private ExplorerApp* sender(ref Fixture f, Scripted provider)
     const asking = renderFrame(*app, "\t\ts", wide);
     assert(app.sending.stage == SendStage.asking);
     assert(asking.canFind("files       3 (") && asking.canFind("left out    1 link"), asking);
+    assert(asking.canFind("iroh drops  1 file arrives without its executable bit"), asking);
     assert(asking.canFind(app.shown.collection) && asking.canFind("anyone with the ticket"), asking);
     renderFrame(*app, "<Esc>", wide);
     assert(app.sending.stage == SendStage.idle && provider.starts == 0, "Escape sent nothing");

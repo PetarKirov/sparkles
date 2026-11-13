@@ -39,7 +39,7 @@ import sparkles.ui.wrap : TextWrap;
 
 import evaluate : autoIdBytes, evaluate, humanBytes, Outcome, Root;
 import send : SendStage, Sending, shareText;
-import stats : nameKeys, nameValueOf, statsKeyWidth, statsRows;
+import stats : executableBits, nameKeys, nameValueOf, statsKeyWidth, statsRows;
 import help : helpSource, namedTrees, runFileset, TryBlock, tryBlocks, TryOutcome;
 import export_tab : exportFor, highlightCode, languageOf, targets;
 import sparkles.build_primitives.fileset.emit : Emitted, NixGlobs, Target, targetName;
@@ -1396,6 +1396,8 @@ struct ExplorerApp
                 rows ~= ["files", text(sending.sent.files.length, " (", humanBytes(sending.sent.bytes), ")")];
                 if (sending.sent.links)
                     rows ~= ["left out", text(sending.sent.links, sending.sent.links == 1 ? " link" : " links")];
+                if (sending.sent.executables)
+                    rows ~= ["iroh drops", executableBits(sending.sent.executables)];
                 rows ~= ["iroh", sending.sent.collection];
                 rows ~= ["ask", touch ? "anyone with the ticket can fetch them"
                     : "anyone with the ticket can fetch them · ⏎ send · Esc cancel"];
@@ -1479,7 +1481,7 @@ struct ExplorerApp
                 s = Slot.accentPrimary;
             else if ((kv[0] == "unreadable" || kv[0] == "state") && kv[1] != "0")
                 s = kv[0] == "state" && sending.stage == SendStage.running ? Slot.success : Slot.error;
-            else if ((kv[0] == "empty dirs" && kv[1] != "0") || kv[0] == "sent query" || kv[0] == "iroh skips"
+            else if ((kv[0] == "empty dirs" && kv[1] != "0") || kv[0] == "sent query" || kv[0] == "iroh skips" || kv[0] == "iroh drops"
                     || kv[0] == "left out" || kv[0] == "ask")
                 s = Slot.warn;
             else if (kv[0] == "ids" || kv[0] == "send" || kv[0] == "keys")

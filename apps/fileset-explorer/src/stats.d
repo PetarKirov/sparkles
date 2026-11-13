@@ -72,6 +72,8 @@ string[2][] statsRows(ref const Outcome shown, ref const Outcome latest, string 
         }
         if (o.collectionLinks)
             rows ~= ["iroh skips", text(o.collectionLinks, o.collectionLinks == 1 ? " link" : " links")];
+        if (o.collectionExecutables)
+            rows ~= ["iroh drops", executableBits(o.collectionExecutables)];
     }
     else
         rows ~= ["ids", "over " ~ humanBytes(autoIdBytes) ~ idsHint];
@@ -116,4 +118,21 @@ string formatStats(in string[2][] rows) @safe
 {
     assert(formatStats([["members", "3"], ["", ""], ["", "by extension"], ["  .d", "2"]])
         == "members     3\n\nby extension\n  .d        2\n");
+}
+
+/// What a collection loses of `n` executable files: iroh's collection holds
+/// names and contents only, so `sendme receive` writes them without the bit.
+string executableBits(size_t n) @safe pure
+{
+    import std.conv : text;
+
+    return text(n, n == 1 ? " file arrives without its" : " files arrive without their", " executable bit");
+}
+
+///
+@("fileset_explorer.stats.executableBits")
+@safe pure unittest
+{
+    assert(executableBits(1) == "1 file arrives without its executable bit");
+    assert(executableBits(14) == "14 files arrive without their executable bit");
 }

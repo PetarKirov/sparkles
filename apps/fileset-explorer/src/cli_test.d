@@ -203,8 +203,12 @@ private SendState serving(string collection, string ticket)
 {
     import std.path : buildPath;
 
+    import std.conv : octal;
+    import std.file : setAttributes;
+
     auto f = Fixture.make("send", ["a.d": "module a;", "sub/b.md": "# b"]);
     scope (exit) f.remove();
+    setAttributes(buildPath(f.dir, "a.d"), octal!755);
     const collection = new ExplorerApp(Root(dir: f.dir), "all()").shown.collection; // the ids, live
     auto provider = new Scripted;
     provider.script = [serving(collection, "blobCLI")];
@@ -218,6 +222,7 @@ private SendState serving(string collection, string ticket)
         SendFile("proj/sub/b.md", buildPath(f.dir, "sub/b.md"))], text(provider.started));
     const err = r.err.join;
     assert(err.canFind("send: 2 files") && err.canFind("send: collection " ~ collection)
+        && err.canFind("send: 1 file arrives without its executable bit\n")
         && err.canFind("anyone with the ticket") && err.canFind("send: serving")
         && err.canFind("1 connected") && err.canFind("send: stopped"), err);
 }

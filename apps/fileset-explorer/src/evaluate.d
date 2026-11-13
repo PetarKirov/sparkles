@@ -131,6 +131,7 @@ struct Outcome
     string collection;      /// iroh's collection, in hex; empty with `collectionError`
     string collectionError; /// why the fileset has no collection (`CAI3`)
     size_t collectionLinks; /// links a collection leaves out (`CAI2`)
+    size_t collectionExecutables; /// files whose executable bit a collection cannot carry
     CollectionFile[] collectionFiles; /// its files, in its order, paths from the root
     string label;           /// the collection's label
     string[2][] extensions; /// the commonest extensions, `[ext, count]`, most first
@@ -251,6 +252,8 @@ private void resolveInto(V, Rights R)(DirRef!(V, R) dir, in Root root, ref Outco
             {
                 o.collection = toHex(c.value.root)[].idup;
                 o.collectionLinks = c.value.links;
+                foreach (ref m; o.found.members)
+                    o.collectionExecutables += m.kind == FsoKind.regular && m.executable;
                 o.collectionFiles = c.value.files;
             }
             else
