@@ -13,7 +13,6 @@ module sparkles.build_primitives.content_addressing.testing;
 
 import std.conv : text;
 import std.digest.sha : SHA1, SHA256;
-import std.file : rmdirRecurse;
 import std.meta : AliasSeq;
 import std.random : Mt19937, uniform;
 import std.string : indexOf, lineSplitter, strip;
@@ -33,7 +32,7 @@ import sparkles.build_primitives.fileset.machine : ResolutionLimits;
 import sparkles.build_primitives.fileset.pattern : CasePolicy;
 import sparkles.build_primitives.fileset.scheme : FsoRef;
 import sparkles.build_primitives.fileset.testing : RecordingExecutor, fixtureSet, materialize, openFixture,
-    randomTree, schemeResolve, scratchFoldsCase, scratchTree;
+    randomTree, removeScratchTree, schemeResolve, scratchFoldsCase, scratchTree;
 import sparkles.build_primitives.fileset.value : Filesets;
 import sparkles.test_runner.skip : skipTest;
 
@@ -119,7 +118,7 @@ string membersOf(string literal) @safe pure
 string onDisk(string tree, string label, string delegate(string dir) @system oracle) @system
 {
     const dir = scratchTree(label);
-    scope (exit) rmdirRecurse(dir);
+    scope (exit) removeScratchTree(dir);
     materialize(membersOf(tree), dir);
     return oracle(dir);
 }
@@ -901,7 +900,7 @@ test is skipped.
         sizes ~= uniform(0, 40 * chunkGroupSize, rng);
 
     const dir = scratchTree("bao");
-    scope (exit) rmdirRecurse(dir);
+    scope (exit) removeScratchTree(dir);
     string[] paths;
     ubyte[][] contents;
     foreach (i, size; sizes)
