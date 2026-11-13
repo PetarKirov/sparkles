@@ -865,6 +865,28 @@ string scratchTree(string label) @system
 }
 
 /**
+Removes a `scratchTree` and everything in it.
+
+On Windows a file with the read-only attribute cannot be deleted, and git
+sets it on every object it writes, so the attribute is cleared first.
+*/
+void removeScratchTree(string dir) @system
+{
+    import std.file : rmdirRecurse;
+
+    version (Windows)
+    {
+        import core.sys.windows.winnt : FILE_ATTRIBUTE_READONLY;
+        import std.file : SpanMode, dirEntries, setAttributes;
+
+        foreach (e; dirEntries(dir, SpanMode.depth, followSymlink: false))
+            if (e.attributes & FILE_ATTRIBUTE_READONLY)
+                setAttributes(e.name, e.attributes & ~FILE_ATTRIBUTE_READONLY);
+    }
+    rmdirRecurse(dir);
+}
+
+/**
 Whether the filesystem of `scratchTree` folds names: on one that ignores case
 (by default macOS's APFS and Windows' NTFS), `A` and `a` are one entry, so
 a tree holding both cannot be materialized there.
