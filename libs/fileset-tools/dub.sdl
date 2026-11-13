@@ -13,6 +13,8 @@ dflags "-preview=in" "-preview=dip1000"
 // No UI package (`XA6`, docs/specs/fsx): `fsx` links this library alone.
 configuration "library" {
     targetType "library"
+    // The iroh bridge, loaded at run time (`XR1`): nothing links Rust.
+    dependency "sparkles:iroh-send" path="../.."
     dependency "sparkles:base" path="../.."
     dependency "sparkles:build-primitives" path="../.."
     dependency "sparkles:event-horizon-sys" path="../.."
@@ -21,6 +23,7 @@ configuration "library" {
 
 configuration "unittest" {
     dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:iroh-send" path="../.."
     dependency "sparkles:base" path="../.."
     dependency "sparkles:build-primitives" path="../.."
     dependency "sparkles:event-horizon-sys" path="../.."

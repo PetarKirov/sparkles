@@ -274,8 +274,10 @@ tree id ([`CAN1`](../build-primitives/content-addressing/SPEC.md#_4-nar-can),
 print every name for the source and for the destination, and require each
 pair to be equal. When a link would hold a granted root's real path rather
 than the source's target, no copy can have the source's names, and
-`--tree-hashes` **must** refuse before writing anything, naming the link. For an iroh source these two are computed from the bytes
-as they arrive, as neither is known before. _Detection:_ with
+`--tree-hashes` **must** refuse before writing anything, naming the link. For an iroh source they **must** be the copy's, printed
+once the copy's castore id equals the one the collection's digests name:
+equal castore ids are equal trees, so the copy's NAR and git names are the
+source's. _Detection:_ with
 `--tree-hashes` the report lists the three names twice, equal, matching
 what `fileset-explorer stats --ids` names for the same members.
 
@@ -289,7 +291,9 @@ every member written.
 **`XV6` — The report.** `--stats` **must** print the source's Stats report,
 the lines the explorer's Stats tab shows for the same members
 ([`FXC2`](../fileset-explorer/SPEC.md)), on standard error before the copy
-starts. _Detection:_ the lines equal `fileset-explorer stats` for the same
+starts. For an iroh source, whose sizes and ids need the files, it
+**must** say how many files the collection lists, how many the filter
+selects, and what opening it read. _Detection:_ the lines equal `fileset-explorer stats` for the same
 source and filter.
 
 ## 6. Listing (`XL`)
@@ -304,7 +308,8 @@ bytes; with `--null` it splits on NUL into the same list.
 
 **`XL2` — The long form.** `-l`/`--long` **must** print, for each member, its
 kind and executable bit as `f`, `x` or `l`, its size in bytes, its path,
-and for a link `->` and its target, separated by tabs. _Detection:_ a
+and for a link `->` and its target, separated by tabs. Over an iroh
+source the size is `-`, as only the file proves it. _Detection:_ a
 fixture with an executable file, a plain file and a link gives three rows
 whose fields are exactly those values.
 
