@@ -3007,7 +3007,7 @@ struct DigestFold
 @system unittest
 {
     import std.datetime.systime : SysTime;
-    import std.file : rmdirRecurse, setAttributes, setTimes;
+    import std.file : setAttributes, setTimes;
     import std.path : buildPath;
 
     import sparkles.base.vfs.handles : ambientAuthority, openRoot;
@@ -3015,21 +3015,25 @@ struct DigestFold
     import sparkles.event_horizon.sys : BlockingVfs;
 
     enum literal = "src/a.d\nsrc/b.d\nbin/run +x\nbin/tool +x\n";
-    string[] resolveWithModes(uint fileMode, uint exeMode, long stamp, Fileset delegate(ref Filesets) make)
+    string[] resolveWithModes(uint fileMode, uint exeMode, long unixStamp, Fileset delegate(ref Filesets) make)
     {
         const dir = scratchTree("fso3");
-        scope (exit) rmdirRecurse(dir);
+        scope (exit) removeScratchTree(dir);
         materialize(literal, dir);
+        // A time FILETIME can hold (from 1601 on), and on Windows
+        // `setAttributes` takes `FILE_ATTRIBUTE_*` flags, not a mode
+        // (`octal!755` holds the read-only one): only timestamps vary there.
+        const stamp = SysTime.fromUnixTime(unixStamp);
+        void apply(string p, uint mode)
+        {
+            version (Posix)
+                setAttributes(buildPath(dir, p), mode);
+            setTimes(buildPath(dir, p), stamp, stamp);
+        }
         foreach (p; ["src/a.d", "src/b.d"])
-        {
-            setAttributes(buildPath(dir, p), fileMode);
-            setTimes(buildPath(dir, p), SysTime(stamp), SysTime(stamp));
-        }
+            apply(p, fileMode);
         foreach (p; ["bin/run", "bin/tool"])
-        {
-            setAttributes(buildPath(dir, p), exeMode);
-            setTimes(buildPath(dir, p), SysTime(stamp), SysTime(stamp));
-        }
+            apply(p, exeMode);
         auto vfs = new BlockingVfs;
         auto root = openRoot!(Rights.readOnly)(vfs, dir, ambientAuthority());
         auto sets = Filesets(CasePolicy.sensitive);
@@ -3041,12 +3045,14 @@ struct DigestFold
     }
 
     Fileset delegate(ref Filesets)[] makers = [delegate(ref Filesets s) => s.everything,
-        delegate(ref Filesets s) => s.executable,
         delegate(ref Filesets s) => s.difference(s.everything, s.executable)];
+    // Windows has no executable bit, so nothing is a member of `executable`.
+    version (Posix)
+        makers ~= delegate(ref Filesets s) => s.executable;
     foreach (make; makers)
     {
         const a = resolveWithModes(octal!644, octal!755, 0, make);
-        const b = resolveWithModes(octal!600, octal!700, 1_000_000_000_000_000, make);
+        const b = resolveWithModes(octal!600, octal!700, 2_000_000_000, make);
         assert(a.length && a == b, a.join(",") ~ " | " ~ b.join(","));
     }
 }
