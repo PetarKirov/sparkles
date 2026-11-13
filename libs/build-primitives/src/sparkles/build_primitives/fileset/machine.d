@@ -455,7 +455,7 @@ struct Resolution
             bool empty() const @safe pure nothrow @nogc => order.length == 0;
             size_t length() const @safe pure nothrow @nogc => order.length;
             void popFront() @safe pure nothrow @nogc { order = order[1 .. $]; }
-            UnitEntry front() const return @safe pure nothrow @nogc
+            UnitEntry front() const return scope @safe pure nothrow @nogc
             {
                 const e = &es[order[0]];
                 UnitEntry u;

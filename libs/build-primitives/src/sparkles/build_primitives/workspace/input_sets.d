@@ -46,6 +46,7 @@ import sparkles.build_primitives.fileset.pattern : CasePolicy;
 import sparkles.build_primitives.fileset.plan : Plan, plan;
 import sparkles.build_primitives.fileset.value : EntryFacts, Fileset, FilesetEvaluator, Filesets;
 import sparkles.build_primitives.resolve.configure : Resolution;
+import sparkles.build_primitives.workspace.input_state : LinkRead, LinkTargetKind;
 import sparkles.build_primitives.workspace.package_graph : normalizeRepoPath, PackageGraph, PackageId,
     SubPackageRecipe;
 
@@ -63,6 +64,21 @@ struct ConfiguredPackage
             return package_ < other.package_ ? -1 : 1;
         return configuration < other.configuration ? -1 : configuration > other.configuration ? 1 : 0;
     }
+}
+
+/// A link a set holds, and the target in the worktree it therefore claims
+/// (BGW11).
+struct LinkClaim
+{
+    string link;    /// the link's repository-relative path
+    string target;  /// what it names, repository-relative
+    bool directory; /// the target is a directory: every path beneath it is claimed
+    uint set;       /// the set holding the link
+
+    /// Whether the claim covers the repository-relative `path`.
+    bool holds(scope const(char)[] path) const @safe pure nothrow @nogc
+        => path == target || (directory && (target.length == 0 || (path.length > target.length
+            && path[0 .. target.length] == target && path[target.length] == '/')));
 }
 
 /**
@@ -255,6 +271,7 @@ struct InputSets
     private string[] workspaceRoots_;
     private FilesetEvaluator workspaceJudge_;
     private bool workspaceJudging_;
+    private LinkClaim[] links_; // sorted by target
 
     /// The recipe entries no set could hold, by package, then configuration,
     /// then recipe order; each once.
@@ -325,7 +342,9 @@ struct InputSets
 
     /**
     Calls `sink(index)` for each set that holds the repository-relative
-    `path`, in key order. Reads no file: a path need not exist.
+    `path`, in key order, and then for each other set holding a link to it
+    (`claimLinkTargets`), in key order. Reads no file: a path need not
+    exist.
 
     The start roots are the index: only a set with a root above `path` is
     evaluated, so a query costs what the few sets reaching that directory
@@ -333,10 +352,62 @@ struct InputSets
     */
     void eachClaimant(Sink)(scope const(char)[] path, scope Sink sink)
     {
+        import std.algorithm.searching : canFind;
+        import std.algorithm.sorting : sort;
+
         foreach (i, f; inputs_)
-            if (reaches(roots_[i], path) && judge(i, path).selects(f))
+            if (claimsByPattern(i, path))
                 sink(i);
+        // Then the sets holding a link to it (BGW11), each once, in key order.
+        uint[] viaLinks;
+        foreach (ref c; links_)
+            if (c.holds(path) && !viaLinks.canFind(c.set) && !claimsByPattern(c.set, path))
+                viaLinks ~= c.set;
+        viaLinks.sort();
+        foreach (i; viaLinks)
+            sink(i);
     }
+
+    /**
+    Records the targets of `links`, read by materializing the sets, as
+    claimed by every set that holds the link (BGW11): a pattern claims a
+    link and not what it names, and only a resolution knows a link's
+    target. A link to a file claims that file; one to a directory, every
+    path beneath it. A link whose target lies outside the worktree, or
+    names nothing, claims nothing. Replaces the links recorded before.
+    */
+    void claimLinkTargets(scope const(LinkRead)[] links) @safe nothrow
+    {
+        import std.algorithm.sorting : sort;
+
+        links_ = null;
+        foreach (ref l; links)
+        {
+            if (l.kind != LinkTargetKind.file && l.kind != LinkTargetKind.directory)
+                continue;
+            foreach (i; 0 .. inputs_.length)
+                if (claimsByPattern(i, l.path))
+                    links_ ~= LinkClaim(l.path, l.resolved, l.kind == LinkTargetKind.directory, cast(uint) i);
+        }
+        links_.sort!((a, b) => a.target != b.target ? a.target < b.target : a.set < b.set);
+    }
+
+    /// The union of every set's inputs, built in the arena: what
+    /// materializing all of them reads.
+    Fileset allInputs() @safe pure nothrow @nogc
+    {
+        Fileset all = sets_.nothing;
+        foreach (f; inputs_)
+            all = sets_.union_(all, f);
+        return all;
+    }
+
+    /// The link targets recorded as claimed, by target.
+    const(LinkClaim)[] linkClaims() const return @safe pure nothrow @nogc => links_;
+
+    // Whether set `index`'s patterns hold `path`.
+    private bool claimsByPattern(size_t index, scope const(char)[] path) @safe nothrow
+        => reaches(roots_[index], path) && judge(index, path).selects(inputs_[index]);
 
     /// The directories the workspace inputs lie beneath, in path order.
     const(string)[] workspaceRoots() const return @safe pure nothrow @nogc => workspaceRoots_;
@@ -1612,6 +1683,20 @@ unittest
 
     assert(claimants("libs/test-harness/src/sparkles/test_harness/package.d").canFind("profiling-counters:unittest"));
     assert(claimants("libs/font/test/sparkles/font/fixtures.d").canFind("font-oracle:unittest"));
+
+    // BGW11: `ui-app`'s spec is a link to its catalog under `docs/`. The
+    // pattern claims the link and not the catalog, until the links the sets
+    // hold are read.
+    {
+        import std.algorithm.searching : startsWith;
+        import sparkles.build_primitives.workspace.select : claimLinks;
+
+        const catalog = "docs/specs/ui-app/resilience.md";
+        assert(claimants(catalog) == [], claimants(catalog).text);
+        claimLinks(root, sets);
+        assert(claimants(catalog).canFind!(c => c.startsWith("ui-app:")), claimants(catalog).text);
+        assert(sets.linkClaims.canFind!(c => c.link == "libs/ui-app/spec/resilience.md"), sets.linkClaims.text);
+    }
 
     // The shader generators are typed (D53): each compiles its package's
     // `shaders` configuration with `shader-compile` into `generated/shaders`.

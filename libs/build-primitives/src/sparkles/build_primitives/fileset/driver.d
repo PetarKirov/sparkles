@@ -83,7 +83,7 @@ struct InlineExecutor
     }
 
     /// Returns: nothing spawned is left running.
-    void join()
+    void join() @safe pure nothrow @nogc
     {
     }
 }
