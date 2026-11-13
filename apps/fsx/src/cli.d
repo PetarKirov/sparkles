@@ -12,6 +12,7 @@ import std.sumtype : match, SumType;
 import sparkles.core_cli.args : Command, Option, Subcommands;
 
 import sparkles.fileset_tools.copy : CopyVfs;
+import sparkles.fileset_tools.source : SourceKind, SourceName;
 
 /// The command line.
 @(Command("fsx", shortDescription:
@@ -118,6 +119,9 @@ mixin template SourceOptions()
     @(Option("filter-file", description: "A file holding the query; - reads standard input.",
         placeholder: "PATH"))
     string filterFile;
+
+    @(Option("no-relay", description: "Reach an iroh peer at its direct addresses only."))
+    bool noRelay;
 }
 
 /// The subcommand a program name stands for (`XA1`): `fscp` is `cp`.
@@ -242,25 +246,20 @@ string filterOf(string filter, string filterFile, string program, out string why
     }
 }
 
-/// The local directory `src` names, or `null` beside the reason (`XS1`).
-string localSource(string src, string program, out string why)
+/// The source `src` names (`XS1`); `false` beside the reason when none.
+bool sourceOf(string src, string program, out SourceName source, out string why)
 {
     import std.file : exists;
-    import sparkles.fileset_tools.source : parseSource, SourceKind;
+    import sparkles.fileset_tools.source : parseSource;
 
     auto parsed = parseSource(src, (string p) @trusted => exists(p));
     if (!parsed.ok)
     {
         why = program ~ ": --src " ~ parsed.error ~ "\n";
-        return null;
+        return false;
     }
-    if (parsed.source.kind == SourceKind.iroh)
-    {
-        why = program ~ ": --src names an iroh ticket; reading from an iroh peer needs the bridge's "
-            ~ "receive half, which this build does not have yet\n";
-        return null;
-    }
-    return parsed.source.path;
+    source = parsed.source;
+    return true;
 }
 
 private int runCp(ref Cp c, ref string output, ref string error)
@@ -272,11 +271,15 @@ private int runCp(ref Cp c, ref string output, ref string error)
     const filter = filterOf(c.filter, c.filterFile, "fscp", error, status);
     if (filter is null)
         return status;
-    const dir = localSource(c.src, "fscp", error);
-    if (dir is null)
+    SourceName source;
+    if (!sourceOf(c.src, "fscp", source, error))
         return 1;
     CopyOptions o;
-    o.source = Root(dir: dir);
+    if (source.kind == SourceKind.iroh)
+        o.ticket = source.ticket;
+    else
+        o.source = Root(dir: source.path);
+    o.noRelay = c.noRelay;
     o.filter = filter;
     o.dest = c.dst;
     o.force = c.force;
@@ -302,11 +305,13 @@ private int runLs(ref Ls l, ref string output, ref string error)
     const filter = filterOf(l.filter, l.filterFile, "fsls", error, status);
     if (filter is null)
         return status;
-    const dir = localSource(l.src, "fsls", error);
-    if (dir is null)
+    SourceName source;
+    if (!sourceOf(l.src, "fsls", source, error))
         return 1;
     ListOptions o;
-    o.dir = dir;
+    o.dir = source.path;
+    o.ticket = source.ticket;
+    o.noRelay = l.noRelay;
     o.filter = filter;
     o.nul = l.nul;
     o.long_ = l.long_;
