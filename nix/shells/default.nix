@@ -419,7 +419,7 @@
         # addressing CAI1): the library the explorer loads, the collection
         # oracle, and `sendme` itself as the receiver. Dev tier, not CI: the
         # bridge compiles iroh, and the tests that need them skip when unset.
-        export SPARKLES_IROH_SEND_LIB=${config.packages.sparkles-iroh-send}/lib/libsparkles_iroh_send.so
+        export SPARKLES_IROH_SEND_LIB=${config.packages.sparkles-iroh-send}/lib/libsparkles_iroh_send${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}
         export SPARKLES_IROH_COLLECTION=${lib.getExe config.packages.sparkles-iroh-send}
         export SPARKLES_SENDME=${lib.getExe pkgs.sendme}
 
