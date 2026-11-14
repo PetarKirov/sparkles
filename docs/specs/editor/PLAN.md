@@ -77,10 +77,12 @@ a library preparation commit does not close an app or device acceptance gate.
 
 1. **Shared layout and input geometry (U, S0).** `LayoutContext` now supplies
    one byte-keyed cell-grid result for drawing, visual caret movement, row
-   edges, wrapped vertical motion, pointer hits and IME rectangles in the
-   app. Remaining: the Unicode corpus replay through the app, the real-font
-   GPU comparison of rendered hits, and bounded long-paragraph work (each
-   query lays out its whole paragraph; measure under V before claiming the
+   edges, wrapped vertical motion and pointer hits in the app, and computes
+   the IME caret area with affinity. Remaining: delivering that area to the
+   host (it is not yet sent), the Unicode corpus replay through the app, the
+   real-font GPU comparison of rendered hits, and bounded long-paragraph work
+   (each query lays out its whole paragraph; scrolling and the IME area lay
+   out at most a viewport of lines; measure under V before claiming the
    1 MiB single-line workload). Shaped proportional flow stays with
    `sparkles:text-layout`.
 2. **Generated settings and document fonts (H).** Extract the reusable font

@@ -52,13 +52,13 @@ widths. The layout wraps greedily at `LayoutOptions.wrapCells`, lets white
 space hang past a row's end, and orders each row's clusters by its L1 levels.
 A lone mirrored scalar in a right-to-left run records its L4 mirror.
 
-| Query               | Answer                                                                                               |
-| ------------------- | ---------------------------------------------------------------------------------------------------- |
-| `lineAt`            | The visual row holding the caret; at a soft wrap, `before` is the earlier row's end                  |
-| `horizontalCaret`   | Crosses the visually adjacent cluster; past a row's edge, continues on the next row in reading order |
-| `lineBoundaryCaret` | The row's visual left/right edge; a row without RTL text keeps the first-nonblank Home toggle        |
-| `caretAt`           | The caret stop nearest a cell column, attached to the row it lies on                                 |
-| `caretArea`         | Cells and visual rows from `originLine`/`originRow`, for input-method placement                      |
+| Query               | Answer                                                                                                                                                                    |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lineAt`            | The visual row holding the caret; at a soft wrap, `before` is the earlier row's end                                                                                       |
+| `horizontalCaret`   | Crosses the visually adjacent cluster; past a row's edge, the paragraph's next row in reading order, then the next line (Right) or previous line (Left) in document order |
+| `lineBoundaryCaret` | The row's visual left/right edge; a row without RTL text keeps the first-nonblank Home toggle                                                                             |
+| `caretAt`           | The caret stop nearest a cell column, attached to the row it lies on; at a bidi stop, the clicked cluster's side                                                          |
+| `caretArea`         | Cells and visual rows from `originLine`/`originRow`, for input-method placement                                                                                           |
 
 A view draws the same rows with `visualRows`
 (`sparkles.ui.components.editor`), which projects a line's logical spans onto

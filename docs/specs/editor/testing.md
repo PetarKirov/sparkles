@@ -889,3 +889,50 @@ hit-testing and motion. They do not establish shaped proportional flow,
 cross-cluster Arabic joining in the GPU renderer or live IME placement.
 Real-font device acceptance and touch handles also remain open. Cluster
 order, not a fixture image, is the oracle: no screenshot is claimed.
+
+### Independent layout review and repairs — 2026-11-14
+
+A fresh read-only `agy` session (Argon Medium, plan mode) reviewed commits
+`80f7f5223` and `7659d4d10` and reported thirteen findings. Each was
+re-derived from the code before repair; each repair has a regression test
+named `editor.layout.review.*`, `editor.view.visualRows.compositionHidesSelection`
+or `editor.step.layoutRows.killAndAddCursor`.
+
+Confirmed and repaired: the IME area aborted on a scroll origin past
+deleted lines; X9-removed clusters (ZWSP, word joiner) split right-to-left
+runs; a lone CR, NEL or U+2029 inside a line disabled bidi for the line, so
+each paragraph separator now ends a separately resolved paragraph; no click
+could reach the logical end of `ab אב`, so a click now takes the clicked
+cluster's side of an ambiguous stop. Backward selections collapsed to the
+wrong edge. Held Right bounced between an LTR and an RTL line, so crossing
+lines now follows document order. A row after a soft break could exceed the
+width. A preedit over a selection shifted hits by the hidden text. Kill-line
+and add-cursor ignored the caret's wrapped or RTL row, and the IME area
+ignored affinity. The wheel scrolled logical lines, and the wrap width
+ignored the root padding. Scrolling and the IME area laid out every line to
+a distant caret and now lay out at most a viewport. Smart Home left an
+all-blank row and reported a no-op as motion.
+
+Policy, not defect: End on a mixed LTR row goes to the visual right edge
+(EAD9), not the logical end, and Shift+Right extension follows visual stops
+from the fixed logical anchor. A byte at a bidi soft wrap may be visited at
+two distinct cells; the doc comment that claimed otherwise was corrected.
+The plan's claim that the app uses IME rectangles was an overstatement: the
+area is computed but not yet delivered to the host.
+
+855 UI and 62 editor tests pass after the repairs.
+
+### Caret area delivery to the window system — 2026-11-14
+
+The caret's drawn cell now reaches the window system. After each paint the
+editor computes the primary caret's cell from the painted rows. It uses the
+layout column, the inserted cells before it and a preedit's cursor, then
+calls the host's `textInputArea`. The native host converts cells to device
+pixels from the cells' origin, and the Wayland backend sends
+text-input-v3's `set_cursor_rectangle` in surface-local units. It resends
+the rectangle with each `enable` on text-input focus. The app test
+`editor.app.textInputAreaFollowsDrawnCaret` checks the reported cell after
+the bidi stop in `ab אב` and after `に` inside a preedit. The editor asks
+for text input once, and again only after the text is tapped. This is
+plumbing evidence; candidate placement with a live input method on GNOME
+and Android remains the EAP20 gate.

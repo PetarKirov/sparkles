@@ -305,30 +305,6 @@ struct ParagraphLayout
             firstToken.put(tokens.length);
         }
 
-        // Paragraph levels (UAX #9 P–W–N–I).
-        UniqueBuffer!(ubyte, 64) paragraphLevels;
-        BidiWorkspace bidi;
-        UniqueBuffer!(BidiCell, 1) bidiCells;
-        UniqueBuffer!(size_t, 1) bidiSequence, bidiOrder;
-        BidiParagraph paragraph;
-        if (needsBidi)
-        {
-            bidiCells.length = tokens.length;
-            bidiSequence.length = tokens.length;
-            bidiOrder.length = tokens.length;
-            bidi.cells = bidiCells[];
-            bidi.sequence = bidiSequence[];
-            bidi.visualToLogical = bidiOrder[];
-            const result = resolveBidiParagraph(tokens[], options.direction, bidi);
-            if (result.outcome.succeeded)
-            {
-                paragraph = result.paragraph;
-                baseLevel = paragraph.baseLevel;
-            }
-            else
-                needsBidi = false;
-        }
-
         // Rows: greedy over UAX #14 opportunities; white space may hang.
         UniqueBuffer!(UnicodeBoundary, 64) breaks;
         if (options.wrapCells && clusters.length)
@@ -356,6 +332,13 @@ struct ParagraphLayout
                 width = 0;
                 foreach (k; stop .. c) width += clusters[k].cells;
                 lastBreak = size_t.max;
+                // What followed the opportunity may itself not fit with this cluster.
+                if (c > rowFirst && width + cells > options.wrapCells)
+                {
+                    addRow(rowFirst, c);
+                    rowFirst = c;
+                    width = 0;
+                }
             }
             width += cells;
             if (c + 1 < clusters.length && breakAfter(c))
@@ -363,36 +346,85 @@ struct ParagraphLayout
         }
         addRow(rowFirst, clusters.length);
 
-        // Row levels (L1) and visual order (L2) at cluster granularity.
-        BidiLineWorkspace lineScratch;
-        UniqueBuffer!(ubyte, 64) lineLevels;
-        UniqueBuffer!(size_t, 64) lineForward, lineBackward;
+        // Levels (UAX #9). A paragraph separator (B) inside the line — a lone
+        // CR, NEL, U+2029 — ends a bidi paragraph, so each piece is resolved
+        // on its own; the first sets the line's reading direction.
+        if (needsBidi)
+        {
+            BidiWorkspace bidi;
+            UniqueBuffer!(BidiCell, 1) bidiCells;
+            UniqueBuffer!(size_t, 1) bidiSequence, bidiOrder;
+            bidiCells.length = tokens.length;
+            bidiSequence.length = tokens.length;
+            bidiOrder.length = tokens.length;
+            BidiLineWorkspace lineScratch;
+            UniqueBuffer!(ubyte, 64) lineLevels;
+            UniqueBuffer!(size_t, 64) lineForward, lineBackward;
+            lineLevels.length = tokens.length;
+            lineForward.length = tokens.length;
+            lineBackward.length = tokens.length;
+            if (options.direction == BidiDirection.rtl) baseLevel = 1;
+            foreach (ref cluster; clusters[]) cluster.level = bidiRemovedLevel;
+
+            size_t s0;
+            bool first = true;
+            while (s0 < tokens.length)
+            {
+                size_t s1 = s0;
+                while (s1 < tokens.length && bidiClass(tokens[s1].scalar) != BidiClass.B) ++s1;
+                if (s1 < tokens.length) ++s1; // the separator ends its paragraph
+                bidi.cells = bidiCells[s0 .. s1];
+                bidi.sequence = bidiSequence[s0 .. s1];
+                bidi.visualToLogical = bidiOrder[s0 .. s1];
+                const result = resolveBidiParagraph(tokens[s0 .. s1], options.direction, bidi);
+                if (result.outcome.succeeded)
+                {
+                    if (first) baseLevel = result.paragraph.baseLevel;
+                    foreach (r; 0 .. rows.length)
+                    {
+                        const t0 = firstToken[rows[r].first], t1 = firstToken[rows[r].last];
+                        const from = t0 > s0 ? t0 : s0, to = t1 < s1 ? t1 : s1;
+                        if (from >= to) continue;
+                        lineScratch.levels = lineLevels[0 .. to - from];
+                        lineScratch.logicalToVisual = lineForward[0 .. to - from];
+                        lineScratch.visualToLogical = lineBackward[0 .. to - from];
+                        const line = resolveBidiLine(result.paragraph, from - s0, to - s0, lineScratch);
+                        if (!line.outcome.succeeded) continue;
+                        foreach (c; rows[r].first .. rows[r].last)
+                        {
+                            if (firstToken[c] < from || firstToken[c] >= to) continue;
+                            foreach (t; firstToken[c] .. firstToken[c + 1])
+                                if (t < to && line.line.levels[t - from] != bidiRemovedLevel)
+                                {
+                                    clusters[c].level = line.line.levels[t - from];
+                                    break;
+                                }
+                        }
+                    }
+                }
+                first = false;
+                s0 = s1;
+            }
+            // X9-removed clusters (BN, explicit embeddings) take the level of
+            // the cluster before them on their row, else after, so they never
+            // split a run (UAX #9 §5.2).
+            foreach (r; 0 .. rows.length)
+            {
+                ubyte carry = bidiRemovedLevel;
+                foreach (c; rows[r].first .. rows[r].last)
+                    if (clusters[c].level == bidiRemovedLevel) clusters[c].level = carry;
+                    else carry = clusters[c].level;
+                carry = baseLevel;
+                foreach_reverse (c; rows[r].first .. rows[r].last)
+                    if (clusters[c].level == bidiRemovedLevel) clusters[c].level = carry;
+                    else carry = clusters[c].level;
+            }
+        }
+
+        // Row summaries and visual order (L2) at cluster granularity.
         foreach (r; 0 .. rows.length)
         {
             ref row = rows[r];
-            if (needsBidi && row.last > row.first)
-            {
-                const t0 = firstToken[row.first], t1 = firstToken[row.last];
-                lineLevels.length = t1 - t0;
-                lineForward.length = t1 - t0;
-                lineBackward.length = t1 - t0;
-                lineScratch.levels = lineLevels[];
-                lineScratch.logicalToVisual = lineForward[];
-                lineScratch.visualToLogical = lineBackward[];
-                const line = resolveBidiLine(paragraph, t0, t1, lineScratch);
-                foreach (c; row.first .. row.last)
-                {
-                    ubyte level = baseLevel;
-                    if (line.outcome.succeeded)
-                        foreach (t; firstToken[c] .. firstToken[c + 1])
-                            if (line.line.levels[t - t0] != bidiRemovedLevel)
-                            {
-                                level = line.line.levels[t - t0];
-                                break;
-                            }
-                    clusters[c].level = level;
-                }
-            }
             foreach (c; row.first .. row.last)
             {
                 if (!clusters[c].rtl) clusters[c].mirrored = 0;
@@ -567,12 +599,24 @@ struct LayoutContext
     size_t positionAt(in Text text, VisualLine line, size_t column)
         => caretAt(text, line, column).position;
 
-    /// The caret nearest `column` on `line`, with the affinity that draws it there.
+    /**
+    The caret nearest `column` on `line`, with the affinity that draws it there.
+    Where two carets share a stop (a bidi boundary), the click's side decides:
+    a column on the cluster right of the stop takes that cluster's left edge.
+    */
     CaretTarget caretAt(in Text text, VisualLine line, size_t column)
     {
         ref p = paragraph(text, text.lineOf(line.start));
         const r = p.rowStarting(line.start);
-        auto target = p.stopTarget(r, p.stopAtColumn(r, column));
+        const count = p.rows[r].last - p.rows[r].first;
+        const k = p.stopAtColumn(r, column);
+        CaretTarget target;
+        if (count == 0)
+            target = p.stopTarget(r, 0);
+        else if (k < count && (k == 0 || column >= p.stopCells(r, k)))
+            target = p.visualCluster(r, k).leftEdge;
+        else
+            target = p.visualCluster(r, k - 1).rightEdge;
         // A row's logical edges belong to the row itself.
         if (target.position == line.start && line.start != p.start)
             target.affinity = Affinity.after;
@@ -581,40 +625,54 @@ struct LayoutContext
         return target;
     }
 
+    /// A row's width in cells.
+    size_t lineCells(in Text text, VisualLine line)
+    {
+        ref p = paragraph(text, text.lineOf(line.start));
+        return p.rows[p.rowStarting(line.start)].cells;
+    }
+
     /**
     Visual Left/Right (`EAD9`): collapse a nonempty selection to its visual
-    edge, else cross the adjacent cluster. Past a row's edge the caret
-    continues on the next row in reading order, never resting twice on one
-    byte across a soft wrap.
+    edge, else cross the adjacent cluster.
+
+    Past a row's edge the caret continues on the paragraph's next row in
+    reading order. Past the paragraph, Right goes to the next logical line's
+    first row at its left edge and Left to the previous line's last row at
+    its right edge, so held keys always progress through mixed-direction
+    paragraphs. A landing on the byte just left is skipped; a byte at a bidi
+    soft wrap may still be visited at two different cells.
     */
     CaretTarget horizontalCaret(in Text text, in EditRange range, int direction, bool extend)
     {
         const head = CaretTarget(range.head, range.affinity);
         if (!extend && !range.empty)
         {
+            // Each endpoint on the selection's inner side: what it draws next to.
             const anchor = CaretTarget(range.anchor, range.forward ? Affinity.after : Affinity.before);
-            const ia = text.lineOf(anchor.position), ih = text.lineOf(head.position);
-            if (ia == ih)
+            const inner = CaretTarget(range.head, range.forward ? Affinity.before : Affinity.after);
+            const start = range.forward ? anchor : inner;
+            const end = range.forward ? inner : anchor;
+            const ls = text.lineOf(start.position), le = text.lineOf(end.position);
+            if (ls == le)
             {
-                ref p = paragraph(text, ih);
-                const ra = p.rowOf(anchor.position, anchor.affinity);
-                const rh = p.rowOf(head.position, head.affinity);
-                if (ra == rh)
+                ref p = paragraph(text, ls);
+                const rs = p.rowOf(start.position, start.affinity);
+                const re = p.rowOf(end.position, end.affinity);
+                if (rs == re)
                 {
-                    const ka = p.stopOf(ra, anchor.position, anchor.affinity);
-                    const kh = p.stopOf(rh, head.position, head.affinity);
-                    return (direction < 0) == (ka < kh) ? anchor : head;
+                    const ks = p.stopOf(rs, start.position, start.affinity);
+                    const ke = p.stopOf(re, end.position, end.affinity);
+                    if (ks != ke)
+                        return (direction < 0) == (ks < ke) ? start : end;
                 }
             }
-            const startFirst = (direction < 0) != paragraph(text, ih).rtl;
-            const start = range.forward ? anchor : head;
-            const end = range.forward ? head : anchor;
-            return startFirst ? start : end;
+            return (direction < 0) != paragraph(text, ls).rtl ? start : end;
         }
         size_t line = text.lineOf(head.position);
         size_t r;
-        bool forward;
-        bool lastRow;
+        size_t landing;
+        bool crossed;
         {
             ref p = paragraph(text, line);
             r = p.rowOf(head.position, head.affinity);
@@ -623,22 +681,28 @@ struct LayoutContext
             if (direction > 0 ? k < count : k > 0)
                 return direction > 0 ? p.visualCluster(r, k).rightEdge : p.visualCluster(r, k - 1).leftEdge;
 
-            // Past the edge: the next row in reading order, or the previous one.
-            forward = (direction > 0) != p.rtl;
+            // Past the edge: the paragraph's next row in reading order...
+            const forward = (direction > 0) != p.rtl;
             if (forward ? r + 1 < p.rows.length : r > 0)
-                r = forward ? r + 1 : r - 1;
-            else if (forward ? line + 1 < text.lineCount : line > 0)
             {
-                line = forward ? line + 1 : line - 1;
-                r = 0;
-                lastRow = !forward;
+                r = forward ? r + 1 : r - 1;
+                landing = forward ? p.readingStart(r) : p.readingEnd(r);
+            }
+            // ... else the next or previous logical line, in document order.
+            else if (direction > 0 ? line + 1 < text.lineCount : line > 0)
+            {
+                line = direction > 0 ? line + 1 : line - 1;
+                crossed = true;
             }
             else
                 return head;
         }
         ref p = paragraph(text, line);
-        if (lastRow) r = p.rows.length - 1;
-        const landing = forward ? p.readingStart(r) : p.readingEnd(r);
+        if (crossed)
+        {
+            r = direction > 0 ? 0 : p.rows.length - 1;
+            landing = direction > 0 ? 0 : p.rows[r].last - p.rows[r].first;
+        }
         const target = p.stopTarget(r, landing);
         if (target.position != head.position)
             return target;
@@ -652,7 +716,7 @@ struct LayoutContext
     /**
     Home and End (`EAD9`): the visual left and right edge of the caret's
     row. A row with no right-to-left text keeps the logical smart Home:
-    from the row's start, the first non-blank.
+    from the row's start, the first non-blank, and an all-blank row's end.
     */
     CaretTarget lineBoundaryCaret(in Text text, size_t position, Affinity affinity, Boundary boundary)
     {
@@ -661,44 +725,73 @@ struct LayoutContext
         const row = p.rows[r];
         if (!row.mixed && !p.rtl)
         {
+            CaretTarget target;
             if (boundary == Boundary.end)
-                return CaretTarget(row.end, Affinity.before);
-            if (position != row.start)
-                return CaretTarget(row.start, Affinity.after);
-            size_t c = row.first;
-            while (c < row.last && p.clusters[c].space) ++c;
-            return CaretTarget(c < row.last ? p.clusters[c].start : row.end, Affinity.after);
+                target = CaretTarget(row.end, Affinity.before);
+            else if (position != row.start)
+                target = CaretTarget(row.start, Affinity.after);
+            else
+            {
+                size_t c = row.first;
+                while (c < row.last && p.clusters[c].space) ++c;
+                target = c < row.last ? CaretTarget(p.clusters[c].start, Affinity.after)
+                    : CaretTarget(row.end, Affinity.before);
+            }
+            // Staying put is not a motion (`EDT5`): keep the caret's own side.
+            if (target.position == position && p.rowOf(position, affinity) == r)
+                target.affinity = affinity;
+            return target;
         }
         return p.stopTarget(r, boundary == Boundary.start ? 0 : row.last - row.first);
     }
 
-    /**
-    The caret at `position`, `extra` cells further right (a preedit's
-    cursor), in cells and visual rows from `originLine`/`originRow`.
-    */
+    /// The caret at `position`, before any boundary; see the `CaretTarget` overload.
     Rect caretArea(in Text text, size_t position, size_t extra)
+        => caretArea(text, CaretTarget(position, Affinity.before), extra);
+
+    /**
+    The caret `caret`, `extra` cells further right (a preedit's cursor), in
+    cells and visual rows from `originLine`/`originRow`: where `visualRows`
+    draws it. An origin past the text is read as its last line. Rows are
+    exact within `viewportLines` logical lines of the origin; farther away,
+    each line counts one row, as the caret is off screen either way.
+    */
+    Rect caretArea(in Text text, CaretTarget caret, size_t extra)
     {
-        const line = text.lineOf(position);
-        ref p = paragraph(text, line);
-        const r = p.rowOf(position, Affinity.before);
-        const x = p.stopCells(r, p.stopOf(r, position, Affinity.before)) + extra;
-        return Rect(cast(int) x, cast(int) rowsBetween(text, originLine, originRow, line, r), 1, 1);
+        const line = text.lineOf(caret.position);
+        size_t x;
+        size_t r;
+        {
+            ref p = paragraph(text, line);
+            r = p.rowOf(caret.position, caret.affinity);
+            x = p.stopCells(r, p.stopOf(r, caret.position, caret.affinity)) + extra;
+        }
+        const last = text.lineCount - 1;
+        const fromLine = originLine > last ? last : originLine;
+        const fromRow = originLine > last ? 0 : originRow;
+        const y = rowsBetween(text, fromLine, fromRow, line, r, viewportLines + 1);
+        return Rect(cast(int) x, cast(int) y, 1, 1);
     }
 
-    /// Visual rows from (`fromLine`, `fromRow`) to (`toLine`, `toRow`), negative when before.
-    long rowsBetween(in Text text, size_t fromLine, size_t fromRow, size_t toLine, size_t toRow)
+    /**
+    Visual rows from (`fromLine`, `fromRow`) to (`toLine`, `toRow`), negative
+    when before. Lines past `exactLines` from the start count one row each.
+    */
+    long rowsBetween(in Text text, size_t fromLine, size_t fromRow, size_t toLine, size_t toRow,
+        size_t exactLines = size_t.max)
     {
         if (toLine < fromLine || toLine == fromLine && toRow < fromRow)
-            return -rowsBetween(text, toLine, toRow, fromLine, fromRow);
+            return -rowsBetween(text, toLine, toRow, fromLine, fromRow, exactLines);
         long rows = cast(long) toRow - cast(long) fromRow;
         foreach (line; fromLine .. toLine)
-            rows += rowCount(text, line);
+            rows += line - fromLine < exactLines ? rowCount(text, line) : 1;
         return rows;
     }
 
-    /// Rows of logical line `line`, laid out without disturbing the cache.
+    /// Rows of logical line `line` (0 past the text), laid out without disturbing the cache.
     size_t rowCount(in Text text, size_t line)
     {
+        if (line >= text.lineCount) return 0;
         foreach (i; 0 .. cacheSize)
             if (cachedValid[i] && cached[i].line == line && cachedOptions[i] == options
                 && cachedText[i] == text)
@@ -710,40 +803,65 @@ struct LayoutContext
 
 static assert(isEditContext!LayoutContext);
 
+private bool before(size_t lineA, size_t rowA, size_t lineB, size_t rowB) @safe pure nothrow @nogc
+    => lineA < lineB || lineA == lineB && rowA < rowB;
+
 /**
 The top (`line`, `row`) that keeps the primary caret's row in a view of
-`visible` rows (`EDR2`), moving as little as possible.
+`visible` rows (`EDR2`), moving as little as possible. It lays out at most
+the `visible` rows above the caret, wherever the top was.
 */
 void scrollToCaret(ref LayoutContext context, in Text text, CaretTarget caret, size_t visible,
     ref size_t line, ref size_t row) @safe pure nothrow @nogc
 {
     if (visible == 0) return;
     const caretLine = text.lineOf(caret.position);
-    ref p = context.paragraph(text, caretLine);
-    const caretRow = p.rowOf(caret.position, caret.affinity);
+    size_t caretRow;
+    {
+        ref p = context.paragraph(text, caretLine);
+        caretRow = p.rowOf(caret.position, caret.affinity);
+    }
     if (line >= text.lineCount) { line = text.lineCount - 1; row = 0; }
     if (row >= context.rowCount(text, line)) row = 0;
-    const offset = context.rowsBetween(text, line, row, caretLine, caretRow);
-    if (offset < 0)
+    if (before(caretLine, caretRow, line, row))
     {
         line = caretLine;
         row = caretRow;
         return;
     }
-    if (offset < visible) return;
-    // Advance the top by the rows the caret overshoots.
-    size_t advance = cast(size_t) offset - visible + 1;
-    while (advance)
+    // The highest top that still shows the caret: `visible - 1` rows above it.
+    size_t topLine = caretLine, topRow = caretRow, budget = visible - 1;
+    while (budget)
     {
-        const rows = context.rowCount(text, line);
-        if (row + advance < rows)
-        {
-            row += advance;
-            return;
-        }
-        advance -= rows - row;
-        ++line;
-        row = 0;
+        if (topRow >= budget) { topRow -= budget; break; }
+        if (topLine == 0) { topRow = 0; break; }
+        budget -= topRow + 1;
+        --topLine;
+        topRow = context.rowCount(text, topLine) - 1;
+    }
+    if (before(line, row, topLine, topRow))
+    {
+        line = topLine;
+        row = topRow;
+    }
+}
+
+/// Move the top (`line`, `row`) by `delta` visual rows (a wheel), within the text.
+void scrollRows(ref LayoutContext context, in Text text, long delta, ref size_t line, ref size_t row)
+    @safe pure nothrow @nogc
+{
+    if (line >= text.lineCount) { line = text.lineCount - 1; row = 0; }
+    for (; delta > 0; --delta)
+    {
+        if (row + 1 < context.rowCount(text, line)) ++row;
+        else if (line + 1 < text.lineCount) { ++line; row = 0; }
+        else break;
+    }
+    for (; delta < 0; ++delta)
+    {
+        if (row > 0) --row;
+        else if (line > 0) { --line; row = context.rowCount(text, line) - 1; }
+        else break;
     }
 }
 
@@ -939,4 +1057,143 @@ version (unittest)
     assert(line == 0 && row == 0);
     c.originLine = 0;
     assert(c.caretArea(text, 15, 0) == Rect(0, 3, 1, 1));
+}
+
+// ------------------------------------------------- review regressions (agy, 2026-11-14)
+
+/// An origin past the text (lines deleted while scrolled) is read as its last line.
+@("editor.layout.review.caretAreaOriginPastText")
+@safe pure nothrow @nogc unittest
+{
+    const text = Text("a");
+    LayoutContext c;
+    c.options.wrapCells = 10;
+    c.originLine = 3;
+    c.originRow = 2;
+    assert(c.caretArea(text, 0, 0) == Rect(0, 0, 1, 1));
+}
+
+/// X9-removed clusters (ZWSP, word joiner) do not split a right-to-left run.
+@("editor.layout.review.removedClustersKeepRun")
+@safe pure nothrow @nogc unittest
+{
+    size_t n;
+    auto p = layoutOf("ab א​ב");
+    auto starts = visualStarts(p, 0, n);
+    assert(n == 6 && starts[0 .. 6] == [0, 1, 2, 8, 5, 3]);
+    p = layoutOf("ab א⁠ב");
+    starts = visualStarts(p, 0, n);
+    assert(n == 6 && starts[0 .. 6] == [0, 1, 2, 8, 5, 3]);
+}
+
+/// A paragraph separator inside the line (a lone CR) ends a bidi paragraph
+/// rather than disabling bidi for the line.
+@("editor.layout.review.separatorInsideLine")
+@safe pure nothrow @nogc unittest
+{
+    const p = layoutOf("אב\rגד");
+    assert(p.rtl);
+    size_t n;
+    const starts = visualStarts(p, 0, n);
+    assert(n == 5 && starts[0 .. 5] == [7, 5, 4, 2, 0]);
+}
+
+/// A click on the cluster right of an ambiguous stop takes its left edge:
+/// the logical end of `ab אב` is reachable.
+@("editor.layout.review.clickSideAtBidiStop")
+@safe pure nothrow @nogc unittest
+{
+    const text = Text("ab אב");
+    LayoutContext c;
+    const row = VisualLine(0, 7);
+    assert(c.caretAt(text, row, 3) == CaretTarget(7, Affinity.before), "on Bet");
+    assert(c.caretAt(text, row, 2) == CaretTarget(2, Affinity.after), "on the space");
+    assert(c.caretAt(text, row, 9) == CaretTarget(3, Affinity.after), "past the row");
+}
+
+/// Collapse uses each endpoint's inner side, whichever way the selection runs.
+@("editor.layout.review.collapseBackwardSelection")
+@safe pure nothrow @nogc unittest
+{
+    const text = Text("ab אב");
+    LayoutContext c;
+    // [3, 7) selected backwards: visually stops 3 (byte 7) to 5 (byte 3).
+    const backward = EditRange(7, 3, Affinity.before);
+    assert(c.horizontalCaret(text, backward, 1, false) == CaretTarget(3, Affinity.after));
+    assert(c.horizontalCaret(text, backward, -1, false) == CaretTarget(7, Affinity.before));
+    // Across lines the same bytes collapse alike in either direction.
+    const lines = Text("abc\nאב");
+    assert(c.horizontalCaret(lines, EditRange(1, 6), -1, false).position
+        == c.horizontalCaret(lines, EditRange(6, 1), -1, false).position);
+}
+
+/// Held Right progresses from an LTR line into an RTL one without bouncing.
+@("editor.layout.review.noParagraphBounce")
+@safe pure nothrow @nogc unittest
+{
+    const text = Text("abc\nאב");
+    LayoutContext c;
+    auto at = CaretTarget(3, Affinity.before);
+    size_t[4] seen;
+    foreach (i; 0 .. 4)
+    {
+        at = c.horizontalCaret(text, EditRange(at.position, at.position, at.affinity), 1, false);
+        seen[i] = at.position;
+    }
+    // Bet's left edge (EOF), Alef's left edge, then the row's right edge, then stay.
+    assert(seen == [8, 6, 4, 4]);
+    // And Left from the RTL line's left edge returns to the line above.
+    assert(c.horizontalCaret(text, EditRange(8, 8, Affinity.before), -1, false).position == 3);
+}
+
+/// A row after a break is checked again: no multi-cluster row exceeds the width.
+@("editor.layout.review.wrapRecheck")
+@safe pure nothrow @nogc unittest
+{
+    foreach (s; [" ((世", "​aaaaa"])
+    {
+        const p = layoutOf(s, s[0] == ' ' ? 3 : 4);
+        foreach (r; 0 .. p.rows.length)
+            assert(p.rows[r].cells <= (s[0] == ' ' ? 3 : 4) || p.rows[r].last - p.rows[r].first == 1);
+    }
+}
+
+/// The IME area follows the caret's affinity across a soft wrap and a bidi boundary.
+@("editor.layout.review.caretAreaAffinity")
+@safe pure nothrow @nogc unittest
+{
+    LayoutContext c;
+    c.options.wrapCells = 4;
+    assert(c.caretArea(Text("aaa bbb"), CaretTarget(4, Affinity.after), 0) == Rect(0, 1, 1, 1));
+    LayoutContext d;
+    assert(d.caretArea(Text("ab אב"), CaretTarget(3, Affinity.after), 0) == Rect(5, 0, 1, 1));
+}
+
+/// Smart Home stays on an all-blank row and keeps the caret's side when it does not move.
+@("editor.layout.review.homeEdges")
+@safe pure nothrow @nogc unittest
+{
+    LayoutContext c;
+    c.options.wrapCells = 4;
+    const blank = Text("     abc");
+    assert(c.lineBoundaryCaret(blank, 0, Affinity.after, Boundary.start) == CaretTarget(5, Affinity.before));
+    LayoutContext d;
+    assert(d.lineBoundaryCaret(Text("abc"), 0, Affinity.before, Boundary.start)
+        == CaretTarget(0, Affinity.before));
+}
+
+/// Scrolling far lays out only the rows above the caret; the wheel moves by rows.
+@("editor.layout.review.scrollByRows")
+@safe pure nothrow @nogc unittest
+{
+    const text = Text("aaaa bbbb cccc\nd");
+    LayoutContext c;
+    c.options.wrapCells = 5;
+    size_t line, row;
+    scrollRows(c, text, 2, line, row);
+    assert(line == 0 && row == 2);
+    scrollRows(c, text, 5, line, row);
+    assert(line == 1 && row == 0);
+    scrollRows(c, text, -2, line, row);
+    assert(line == 0 && row == 1);
 }

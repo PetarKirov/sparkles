@@ -540,9 +540,10 @@ struct Stepper(Texts, Context)
 
     /// EDC4: where a line kill from `p` ends; the line break itself when `p`
     /// is already at the boundary.
-    size_t killLineTarget(size_t p, Boundary boundary)
+    size_t killLineTarget(size_t p, Affinity affinity, Boundary boundary)
     {
-        const line = lineAt(p);
+        // A caret at a soft wrap kills on the row it is drawn on.
+        const line = context.lineAt(text, p, affinity);
         if (boundary == Boundary.end)
         {
             if (p < line.end)
@@ -793,11 +794,21 @@ struct Stepper(Texts, Context)
         state.selection = normalized(all[], primaryAt);
     }
 
+    /// A visual line's width in the layout's unit: its widest caret column,
+    /// which in a right-to-left row is not its logical end's.
+    size_t lineCells(VisualLine line)
+    {
+        static if (is(typeof(context.lineCells(text, line)) : size_t))
+            return context.lineCells(text, line);
+        else
+            return context.columnOf(text, line, line.end);
+    }
+
     void addCursorVertical(int direction)
     {
         const ranges = state.selection.ranges;
         const from = direction < 0 ? ranges[0] : ranges[$ - 1];
-        auto line = lineAt(from.head);
+        auto line = context.lineAt(text, from.head, from.affinity);
         const goal = from.goal != EditRange.noGoal ? from.goal : context.columnOf(text, line, from.head);
         while (true)
         {
@@ -811,7 +822,7 @@ struct Stepper(Texts, Context)
             }
             line = next;
             // Skip lines too short to reach the goal column.
-            if (context.columnOf(text, line, line.end) < goal)
+            if (lineCells(line) < goal)
                 continue;
             auto caret = EditRange.caret(context.positionAt(text, line, goal));
             caret.goal = goal;
@@ -1216,7 +1227,7 @@ struct Stepper(Texts, Context)
         case KillSpan.blankWord:
             return EditRange(r.head, previousBlankDelimited(text, r.head).start);
         case KillSpan.line:
-            return EditRange(r.head, killLineTarget(r.head, cmd.boundary));
+            return EditRange(r.head, killLineTarget(r.head, r.affinity, cmd.boundary));
         }
     }
 
@@ -1458,8 +1469,16 @@ struct Stepper(Texts, Context)
     Rect imeArea()
     {
         const primary = state.selection.primary;
+        // A layout that tells a soft wrap's or bidi boundary's sides apart
+        // places the area where the caret is drawn.
+        enum withAffinity = is(typeof(context.caretArea(text, CaretTarget.init, size_t(0))) == Rect);
         if (!state.composition.active)
-            return context.caretArea(text, primary.head, 0);
+        {
+            static if (withAffinity)
+                return context.caretArea(text, CaretTarget(primary.head, primary.affinity), 0);
+            else
+                return context.caretArea(text, primary.head, 0);
+        }
         size_t cells;
         const preedit = state.composition.preedit;
         for (size_t at; at < state.composition.cursor;)
@@ -1468,7 +1487,11 @@ struct Stepper(Texts, Context)
             cells += clusterCells(preedit, at, next);
             at = next;
         }
-        return context.caretArea(text, primary.start, cells);
+        static if (withAffinity)
+            return context.caretArea(text, CaretTarget(primary.start,
+                primary.empty ? primary.affinity : Affinity.before), cells);
+        else
+            return context.caretArea(text, primary.start, cells);
     }
 
     // -------------------------------------------------------------- history

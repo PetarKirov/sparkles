@@ -830,6 +830,8 @@ struct NativeSession
     string delegate() @safe nothrow @nogc takeClipboardError; /// consumed diagnostic
     void delegate(int px) @system setFontSize;               ///
     void delegate(bool on) @system setTextInput;             ///
+    /// The caret's rectangle in device pixels from the surface's origin.
+    void delegate(int x, int y, int width, int height) @system setTextInputArea;
     /// The fingers down, as the last drain left them.
     TouchContacts touches;
     /// The frame the host draws itself where the window system leaves it to
@@ -987,6 +989,18 @@ struct NativeHost
     /// Asks for text input — on a phone, the soft keyboard — or puts it away.
     /// A hardware keyboard types either way.
     void textInput(bool on) @system => session_.setTextInput(on);
+
+    /**
+    Where the focused text's caret is, in cells (`EDI6`): the input method
+    places its candidates beside it. Sent to the window system in device
+    pixels from the cells' origin.
+    */
+    void textInputArea(int column, int row, int columns, int rows) @system
+    {
+        const cw = session_.font.cellW, ch = session_.font.cellH;
+        session_.setTextInputArea(session_.insets.left + column * cw, session_.insets.top + row * ch,
+            columns * cw, rows * ch);
+    }
 
     /// One cell, in device pixels. A terminal pane opens with these
     /// (`openPixels`) and needs `PointerUnit.pixels` so pointer events
@@ -2611,6 +2625,10 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         }
         return true;
     };
+    session.setTextInputArea = (int x, int y, int width, int height) {
+        static if (__traits(hasMember, Wsi, "setTextInputArea"))
+            cast(void) wsi.setTextInputArea(window, x, y, width, height);
+    };
     session.setTextInput = (bool on) {
         static if (__traits(hasMember, Wsi, "setTextInput"))
             cast(void) wsi.setTextInput(window, on);
@@ -3691,6 +3709,8 @@ void replayNative(alias present, alias handle, Texts)(ref NativeSession session,
         session.setFontSize = (int) {};
     if (session.setTextInput is null)
         session.setTextInput = (bool) {};
+    if (session.setTextInputArea is null)
+        session.setTextInputArea = (int, int, int, int) {};
 
     NativeHost host;
     host.session_ = &session;

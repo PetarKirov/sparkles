@@ -172,9 +172,10 @@ struct VisualRow
     size_t row;
     /// Its spans, left to right.
     TextSpan[] spans;
-    /// Inserted spans (carets, a preedit) as `[stop, cells]`, left to right:
-    /// drawn cells that are not the layout's.
-    size_t[2][] inserted;
+    /// Inserted spans (carets, a preedit) as `[stop, cells, hidden]`, left to
+    /// right: drawn cells that are not the layout's, and the layout cells of
+    /// the text a preedit hides in their place.
+    size_t[3][] inserted;
 }
 
 /**
@@ -185,17 +186,19 @@ Each cluster draws with the styling of the span covering its source bytes, in
 the row's visual order; a right-to-left cluster is its own span, and a lone
 mirrored scalar draws its L4 mirror. Spans without source bytes — carets and
 a preedit — are drawn at the caret stop of their position, on the side of a
-soft wrap or bidi boundary that the range's affinity names.
+soft wrap or bidi boundary that the range's affinity names. A preedit stands
+at its range's start, in place of the selected text it replaces.
 */
 VisualRow[] visualRows(scope const(TextSpan)[] logical, in ParagraphLayout layout, in EditorState state)
     @safe pure nothrow
 {
     import sparkles.text_buffer.summary : Affinity;
 
-    static struct Group { size_t position; size_t first, last; size_t row, stop; }
+    static struct Group { size_t position; size_t first, last; size_t row, stop, hidden; Affinity affinity; }
     Group[] groups;
     size_t[] textSpans;
     size_t cursor = layout.start;
+    const composing = state.composition.active;
     foreach (i, ref span; logical)
     {
         if (span.srcStart != size_t.max && span.srcEnd - span.srcStart == span.text.length)
@@ -204,19 +207,37 @@ VisualRow[] visualRows(scope const(TextSpan)[] logical, in ParagraphLayout layou
             cursor = span.srcEnd;
             continue;
         }
-        if (groups.length && groups[$ - 1].position == cursor && groups[$ - 1].last == i)
+        // Adjacent inserted spans (a preedit and its cursor) are one group.
+        if (groups.length && groups[$ - 1].last == i)
+        {
             groups[$ - 1].last = i + 1;
-        else
-            groups ~= Group(cursor, i, i + 1);
+            continue;
+        }
+        Group g = Group(cursor, i, i + 1);
+        foreach (j, r; state.selection.ranges)
+        {
+            const primary = j == state.selection.primaryIndex;
+            if (composing && r.start == cursor)
+            {
+                // The preedit replaces `[start, end)`: drawn from its start.
+                g.affinity = r.empty ? r.affinity : Affinity.before;
+                if (!r.empty)
+                {
+                    foreach (c; layout.clusters[])
+                        if (c.start >= r.start && c.end <= r.end) g.hidden += c.cells;
+                    cursor = r.end;
+                }
+                break;
+            }
+            if (!composing && r.head == cursor && (primary || g.affinity == Affinity.before))
+                g.affinity = r.affinity;
+        }
+        groups ~= g;
     }
     foreach (ref g; groups)
     {
-        Affinity affinity = Affinity.before;
-        foreach (j, r; state.selection.ranges)
-            if (r.head == g.position && (j == state.selection.primaryIndex || affinity == Affinity.before))
-                affinity = r.affinity;
-        g.row = layout.rowOf(g.position, affinity);
-        g.stop = layout.stopOf(g.row, g.position, affinity);
+        g.row = layout.rowOf(g.position, g.affinity);
+        g.stop = layout.stopOf(g.row, g.position, g.affinity);
     }
 
     VisualRow[] rows;
@@ -237,7 +258,7 @@ VisualRow[] visualRows(scope const(TextSpan)[] logical, in ParagraphLayout layou
                         row.spans ~= s;
                         cells += textCells(s.text);
                     }
-                    row.inserted ~= [k, cells];
+                    row.inserted ~= [k, cells, g.hidden];
                     previous = size_t.max;
                 }
         }
@@ -301,22 +322,45 @@ VisualRow[] visualRows(scope const(TextSpan)[] logical, in ParagraphLayout layou
 
 /**
 The layout column under drawn column `column` of `row`: inserted cells to
-its left are not the layout's, and a column inside an inserted span is the
-stop it was inserted at.
+its left are not the layout's, text a preedit hides is, and a column inside
+an inserted span is the stop it was inserted at.
 */
 size_t layoutColumn(in VisualRow row, in ParagraphLayout layout, size_t column) @safe pure nothrow @nogc
 {
-    size_t shift;
+    long shift; // drawn minus layout cells left of the column
     foreach (inserted; row.inserted)
     {
-        const at = layout.stopCells(row.row, inserted[0]) + shift;
+        const at = cast(long) layout.stopCells(row.row, inserted[0]) + shift;
         if (column < at)
             break;
-        if (column < at + inserted[1])
-            return at - shift;
-        shift += inserted[1];
+        if (column < at + cast(long) inserted[1])
+            return cast(size_t)(at - shift);
+        shift += cast(long) inserted[1] - cast(long) inserted[2];
     }
-    return column - shift;
+    const result = cast(long) column - shift;
+    return result < 0 ? 0 : cast(size_t) result;
+}
+
+/// A preedit replacing selected text: hits past it land on the text after
+/// the hidden selection.
+@("editor.view.visualRows.compositionHidesSelection")
+@safe pure nothrow unittest
+{
+    import sparkles.ui.editor.layout : LayoutOptions, ParagraphLayout;
+    import sparkles.ui.editor.testing : parse;
+
+    auto state = parse("a[bc]d");
+    state.composition.preedit = Text("にほ");
+    state.composition.cursor = 3;
+    const layout = ParagraphLayout.of(state.text, 0, LayoutOptions.init);
+    const rows = visualRows(editorLineSpans(state, 0, EditorViewOptions.init), layout, state);
+    string drawn;
+    foreach (s; rows[0].spans) drawn ~= s.text;
+    assert(drawn == "aに" ~ caretGlyph ~ "ほd", drawn);
+    assert(rows[0].inserted == [[1, 5, 2]]);
+    // Drawn cell 6 is `d`: layout column 3.
+    assert(layoutColumn(rows[0], layout, 6) == 3);
+    assert(layoutColumn(rows[0], layout, 3) == 1, "inside the preedit: its stop");
 }
 
 private size_t textCells(scope const(char)[] text) @safe pure nothrow
@@ -368,7 +412,7 @@ private string encodeScalar(dchar c) @safe pure nothrow
         drawn ~= s.text;
     // Byte 3 after: before Alef, which is drawn rightmost.
     assert(drawn == "ab בא" ~ caretGlyph, drawn);
-    assert(rows[0].inserted == [[5, 1]]);
+    assert(rows[0].inserted == [[5, 1, 0]]);
     assert(layoutColumn(rows[0], layout, 6) == 5);
     // Before: after the space.
     state.selection = SelectionSet.single(EditRange(3, 3, Affinity.before));

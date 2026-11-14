@@ -11,7 +11,8 @@ import sparkles.ui.command_palette_input : PaletteInput;
 import sparkles.ui.components.command_palette : PaletteViewOptions, viewCommandPalette;
 import sparkles.ui.components.editor : editorLineSpans, editorView, EditorViewOptions, layoutColumn, VisualRow, visualRows;
 import sparkles.ui.editor.context : CaretTarget;
-import sparkles.ui.editor.layout : ParagraphLayout, scrollToCaret;
+import sparkles.text_buffer.summary : Affinity;
+import sparkles.ui.editor.layout : ParagraphLayout, scrollRows, scrollToCaret;
 import sparkles.ui.components.lantern_view : BoxLayout, LabelArena, viewLantern;
 import sparkles.ui.editor.field : EditorField, forwardClipboard;
 import sparkles.ui.editor.command : EditCommand, EditKind;
@@ -56,7 +57,7 @@ private struct RowHit
     size_t node;
     size_t line;
     size_t row;
-    const(size_t[2])[] inserted;
+    const(size_t[3])[] inserted;
 }
 
 private class DisplayedFrame
@@ -951,6 +952,8 @@ struct EditorApp
     /// The rows the last view drew, for the frame `paint` retains.
     private RowHit[] shownRows;
     private size_t shownWrap;
+    /// Whether text input has been asked for since the text was last tapped.
+    private bool keyboardAsked;
     private HoverTarget[] hits;
     private const(PaletteChoice!Command)[] paletteChoices;
     private bool selecting;
@@ -972,6 +975,57 @@ struct EditorApp
         displayed.rows = shownRows;
         displayed.wrapCells = shownWrap;
         hits = hoverTargets(tree, frames);
+        static if (__traits(hasMember, H, "textInputArea"))
+        {
+            int[4] area;
+            if (!modal && !commands.palette.active && drawnCaretArea(area))
+                host.textInputArea(area[0], area[1], area[2], area[3]);
+        }
+    }
+
+    /**
+    The primary caret's drawn cell, `[column, row, 1, 1]` in the window's
+    cells, from the rows just painted (`EDI6`, `EAP20`): the layout's column,
+    the inserted cells before it, and a preedit's cursor within it. `false`
+    when the caret's row is not on screen.
+    */
+    private bool drawnCaretArea(out int[4] area) @safe
+    {
+        import sparkles.base.text.seek : nextGraphemeBoundary;
+        import sparkles.ui.editor.context : clusterCells;
+        if (displayed is null || !document.field.state.text.length && !document.field.state.composition.active)
+            return false;
+        const state = document.field.state;
+        const primary = state.selection.primary;
+        const composing = state.composition.active;
+        const at = CaretTarget(composing ? primary.start : primary.head,
+            composing && !primary.empty ? Affinity.before : primary.affinity);
+        const text = state.text;
+        const line = text.lineOf(at.position);
+        ref layout = document.field.context.paragraph(text, line);
+        const r = layout.rowOf(at.position, at.affinity);
+        const k = layout.stopOf(r, at.position, at.affinity);
+        foreach (shown; displayed.rows)
+        {
+            if (shown.line != line || shown.row != r || shown.node >= displayed.frames.length) continue;
+            long x = layout.stopCells(r, k);
+            foreach (inserted; shown.inserted)
+                if (inserted[0] < k) x += cast(long) inserted[1] - cast(long) inserted[2];
+            if (composing)
+            {
+                const preedit = state.composition.preedit;
+                for (size_t i; i < state.composition.cursor;)
+                {
+                    const next = nextGraphemeBoundary(preedit, i);
+                    x += clusterCells(preedit, i, next);
+                    i = next;
+                }
+            }
+            const origin = displayed.frames[shown.node].rect.origin;
+            area = [origin.x + cast(int) x, origin.y, 1, 1];
+            return true;
+        }
+        return false;
     }
 
     private void pointer(in PointerEvent pointer) @safe
@@ -1067,6 +1121,7 @@ struct EditorApp
         {
             selectionAnchor = pointer.mods.shift ? document.field.state.selection.primary.anchor : at.position;
             selecting = true;
+            keyboardAsked = false;
             selectingDocument = document.id;
         }
         if (!selecting) return;
@@ -1474,9 +1529,8 @@ struct EditorApp
                 });
             },
             (in WheelEvent wheel) {
-                const wanted = cast(long) document.firstLine + wheel.dy;
-                document.firstLine = wanted < 0 ? 0 : cast(size_t) wanted;
-                document.firstRow = 0;
+                scrollRows(document.field.context, document.field.state.text, wheel.dy,
+                    document.firstLine, document.firstRow);
                 document.followCaret = false;
             },
             (in EndOfInput _) { closeRequested(host); },
@@ -1572,6 +1626,14 @@ struct EditorApp
                 host.quit();
             }
         }
+        // Text input (a soft keyboard) is asked for once, and again only when
+        // the text is tapped: a keyboard the user dismissed stays down (EAP20).
+        static if (__traits(hasMember, H, "textInput"))
+            if (!keyboardAsked)
+            {
+                keyboardAsked = true;
+                host.textInput(true);
+            }
         const selectedTarget = host.backend == Backend.gui ? windowTarget : EditorTarget.terminal;
         if (selectedTarget != target) configure(selectedTarget);
         const recoveryWarning = recovery !is null
@@ -1637,8 +1699,9 @@ struct EditorApp
             const reserved = 5 + extraRows;
             const visible = host.size.height > reserved ? cast(size_t) host.size.height - reserved : 1;
             const count = document.field.state.text.lineCount;
-            // One cell stays free for the inline caret; rows wrap at the rest.
-            const width = host.size.width > 9 ? cast(size_t) host.size.width - 1 : 8;
+            // Rows wrap at the field's width: the window less the root's padding
+            // and one cell for the inline caret.
+            const width = host.size.width > 11 ? cast(size_t) host.size.width - 3 : 8;
             auto context = &document.field.context;
             context.options.wrapCells = width;
             context.viewportLines = visible;
@@ -1901,7 +1964,8 @@ struct EditorApp
     import sparkles.ui.editor.command : EditCommand;
     EditorApp app;
     scope (exit) app.dispose();
-    // At 20 columns, rows wrap at 19 cells: "alpha beta gamma " and "delta epsilon".
+    // At 20 columns, rows wrap at 17 cells (padding and the caret cell aside):
+    // "alpha beta gamma " and "delta epsilon".
     app.document.field.setText("alpha beta gamma delta epsilon");
     app.document.field.run(EditCommand.setRange(0, 0));
     RecordingHost host;
@@ -1909,7 +1973,7 @@ struct EditorApp
     FrameSnapshot frame;
     presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
     app.paint(host, frame.tree, frame.frames);
-    assert(app.displayed.rows.length == 2 && app.displayed.wrapCells == 19);
+    assert(app.displayed.rows.length == 2 && app.displayed.wrapCells == 17);
     const second = frame.frames[app.displayed.rows[1].node].rect.origin;
     app.handle(host, Event(PointerEvent(PointerAction.press, PointerButton.left, Point(second.x + 2, second.y))));
     assert(app.document.field.state.selection.primary.head == 19, "column 2 of the second row");
@@ -1946,6 +2010,38 @@ struct EditorApp
     // Visual Right from there crosses Alef, logically backwards to byte 3.
     app.document.field.run(EditCommand.grapheme(1));
     assert(app.document.field.state.selection.primary.head == 3);
+}
+
+/// The host learns the caret's drawn cell: after the bidi stop, and at a preedit's cursor (EAP20).
+@("editor.app.textInputAreaFollowsDrawnCaret")
+@safe unittest
+{
+    import sparkles.input : CompositionEvent;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
+    import sparkles.ui.editor.selection : EditRange, SelectionSet;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    EditorApp app;
+    scope (exit) app.dispose();
+    app.document.field.setText("ab אב");
+    app.document.field.state.selection = SelectionSet.single(EditRange(3, 3, Affinity.after));
+    RecordingHost host;
+    FrameSnapshot frame;
+    presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
+    app.paint(host, frame.tree, frame.frames);
+    const node = app.displayed.rows[0].node;
+    const origin = frame.frames[node].rect.origin;
+    // Drawn `ab בא▏`: the caret glyph is cell 5 of the row.
+    assert(host.textInputAreas.length && host.textInputAreas[$ - 1] == [origin.x + 5, origin.y, 1, 1]);
+
+    // A preedit `にほ` at byte 0 with its cursor after `に`: two cells in.
+    app.document.field.state.selection = SelectionSet.caret(0);
+    app.document.field.compose(CompositionEvent.init, "にほ");
+    app.document.field.state.composition.cursor = 3;
+    presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
+    app.paint(host, frame.tree, frame.frames);
+    const row = frame.frames[app.displayed.rows[0].node].rect.origin;
+    assert(host.textInputAreas[$ - 1] == [row.x + 2, row.y, 1, 1], "after に");
 }
 
 /// A displayed tab names its document even if an earlier tab closes before repaint.

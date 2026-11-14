@@ -108,6 +108,10 @@ struct WaylandWsi
         wp_viewport* viewport;
         PhysicalSize crop;
         int cropScale;
+        /// Where the focused text's caret is, in physical pixels from the
+        /// surface's origin (`setTextInputArea`); empty for none.
+        int[4] textArea;
+        bool hasTextArea;
     }
 
     private wl_display* display_;
@@ -461,6 +465,44 @@ struct WaylandWsi
 
     /// Retitles the window (`F13`): what the window list, the dock and a
     /// server-drawn title bar show. A client-drawn bar reads its own copy.
+    /**
+    Where the focused text's caret is, in physical pixels from the window
+    surface's origin (`EDI6`): text-input-v3's cursor rectangle, so an input
+    method places its candidates beside the caret. It is kept per window and
+    sent again whenever the window gains text-input focus.
+    */
+    WsiResult!void setTextInputArea(WindowId id, int x, int y, int width, int height)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        ref slot = windows_.at(checked.value);
+        const int[4] area = [x, y, width, height];
+        if (slot.hasTextArea && slot.textArea == area)
+            return wsiOk();
+        slot.textArea = area;
+        slot.hasTextArea = true;
+        if (textInput_ is null || textInputFocus_ !is slot.surface)
+            return wsiOk();
+        auto paused = pausePoll();
+        if (paused.hasError)
+            return paused;
+        sendTextArea(slot);
+        zwp_text_input_v3_commit(textInput_);
+        return prepareAndArm();
+    }
+
+    /// The slot's caret area as text-input-v3's surface-local rectangle.
+    private void sendTextArea(ref const Slot slot) nothrow @nogc
+    {
+        if (!slot.hasTextArea)
+            return;
+        const scale = slot.scale > 0 ? slot.scale : 1;
+        const a = slot.textArea;
+        zwp_text_input_v3_set_cursor_rectangle(textInput_, a[0] / scale, a[1] / scale,
+            (a[2] + scale - 1) / scale, (a[3] + scale - 1) / scale);
+    }
+
     WsiResult!void setTitle(WindowId id, in char[] title)
     {
         auto checked = checkedSlot(id, WsiOperation.command);
@@ -3263,6 +3305,10 @@ struct WaylandWsi
         auto owner = cast(WaylandWsi*) data;
         owner.textInputFocus_ = surface;
         zwp_text_input_v3_enable(textInput);
+        // The window's caret area, as last set, goes with the enable.
+        const index = owner.indexOfSurface(surface);
+        if (index != size_t.max)
+            owner.sendTextArea(owner.windows_.at(index));
         zwp_text_input_v3_commit(textInput);
     }
 
@@ -4407,6 +4453,13 @@ private void zwp_text_input_v3_disable()(zwp_text_input_v3* self)
 {
     wl_proxy_marshal_flags(cast(wl_proxy*) self, ZWP_TEXT_INPUT_V3_DISABLE,
         null, wl_proxy_get_version(cast(wl_proxy*) self), 0);
+}
+
+private void zwp_text_input_v3_set_cursor_rectangle()(zwp_text_input_v3* self,
+        int x, int y, int width, int height)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, ZWP_TEXT_INPUT_V3_SET_CURSOR_RECTANGLE,
+        null, wl_proxy_get_version(cast(wl_proxy*) self), 0, x, y, width, height);
 }
 
 private void zwp_text_input_v3_commit()(zwp_text_input_v3* self)

@@ -601,3 +601,25 @@ unittest
     h(K.selectAll);
     assert(h.effects.has(EffectKind.imeArea), "the commit and the selection moved it");
 }
+
+/// Kill-line and add-cursor answer from the caret's own wrapped or RTL row (review 2026-11-14).
+@("editor.step.layoutRows.killAndAddCursor")
+@safe pure nothrow unittest
+{
+    import sparkles.text_buffer.summary : Affinity;
+    import sparkles.ui.editor.command : Boundary, EditCommand;
+    import sparkles.ui.editor.field : EditorFieldOf;
+    import sparkles.ui.editor.layout : LayoutContext;
+    import sparkles.ui.editor.selection : EditRange, SelectionSet;
+
+    auto field = EditorFieldOf!LayoutContext.make("aaa bbb");
+    field.context.options.wrapCells = 4;
+    field.state.selection = SelectionSet.single(EditRange(4, 4, Affinity.after));
+    field.run(EditCommand.killToLineBoundary(Boundary.end));
+    assert(field.text == "aaa ", field.text);
+
+    auto rtl = EditorFieldOf!LayoutContext.make("אבג\nדהו");
+    rtl.state.selection = SelectionSet.caret(2);
+    rtl.run(EditCommand.cursorVertical(1));
+    assert(rtl.state.selection.ranges.length == 2);
+}

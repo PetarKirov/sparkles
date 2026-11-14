@@ -93,6 +93,8 @@ struct RecordingHost
     /// Clipboard reads requested (`INP25`), in order; a test answers one by
     /// feeding `PasteEvent`s carrying its number.
     uint[] clipboardReads;
+    /// Caret areas a text field reported (`EDI6`), in cells, in order.
+    int[4][] textInputAreas;
     /// Whether the application asked for fullscreen at any point.
     bool fullscreenToggled;
 
@@ -104,6 +106,9 @@ struct RecordingHost
 
     void pointerShape(PointerShape s) pure nothrow { shapes ~= s; }
     void clipboard(scope const(char)[] text) pure nothrow { clipboardWrites ~= text.idup; }
+    /// Records where a text field's caret is, in cells.
+    void textInputArea(int column, int row, int columns, int rows) pure nothrow
+        { textInputAreas ~= [column, row, columns, rows]; }
     void readClipboard(uint request) pure nothrow { clipboardReads ~= request; }
     void title(scope const(char)[] t) pure nothrow { titles ~= t.idup; }
     void writeOutOfBand(scope const(char)[] seq) pure nothrow { outOfBand ~= seq.idup; }
