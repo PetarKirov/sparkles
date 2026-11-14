@@ -39,6 +39,7 @@ in
     ./shaping.nix
     ./terminal.nix
     ./text-lab.nix
+    ./editor.nix
     ./examples.nix
     ./terminal-nix.nix
     ./tree-sitter.nix

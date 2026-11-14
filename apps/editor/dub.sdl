@@ -16,6 +16,16 @@ dependency "sparkles:source-view" path="../.."
 dependency "sparkles:ui" path="../.."
 dependency "sparkles:ui-app" path="../.."
 
+// On Android the editor is the shared library a NativeActivity loads, its
+// entry `AndroidWsiMain`'s in src/android_entry.d (not app.d, which dub leaves
+// out of a library as a program's main); listed first so dub picks it there.
+// The native arm only: an Android closure carries no terminal.
+configuration "android" {
+    platforms "android"
+    targetType "dynamicLibrary"
+    targetName "editor"
+    subConfiguration "sparkles:ui-app" "gui-vulkan"
+}
 configuration "application" {
     subConfiguration "sparkles:ui-app" "full-vulkan"
 }
