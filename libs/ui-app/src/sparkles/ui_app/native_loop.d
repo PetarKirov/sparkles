@@ -366,6 +366,31 @@ private bool measureCellFontImpl(in FontRequest request, in string[] extraSource
         if (fbSpan > 0)
             cell.fallbacks ~= FallbackFont(fb, ulong(px) * fbFace.value.unitsPerEm, cast(ulong) fbSpan);
     }
+    // Then a face for each script those lack (`EAP18`), mapped rather than
+    // read: only the tables text reaches are paged in.
+    if (loaded is null)
+    {
+        import sparkles.raylib_text.font_resolve : scriptFallbackFacePaths;
+
+        foreach (scriptPath; scriptFallbackFacePaths(sources,
+                [path, boldPath, italicPath, boldItalicPath, regularPath, nerdPath, emojiPath]))
+        {
+            const(ubyte)[] fb;
+            try
+                fb = mappedFont(scriptPath);
+            catch (Exception)
+                continue;
+            if (!fb.length)
+                continue;
+            auto fbFace = openFace(fb);
+            if (fbFace.hasError)
+                continue;
+            const fbHh = hhea(fbFace.value);
+            const fbSpan = fbHh.hasValue ? long(fbHh.value.ascender) - fbHh.value.descender : 0;
+            if (fbSpan > 0)
+                cell.fallbacks ~= FallbackFont(fb, ulong(px) * fbFace.value.unitsPerEm, cast(ulong) fbSpan);
+        }
+    }
     return true;
 }
 

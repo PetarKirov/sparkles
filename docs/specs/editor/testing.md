@@ -936,3 +936,35 @@ the bidi stop in `ab אב` and after `に` inside a preedit. The editor asks
 for text input once, and again only after the text is tapped. This is
 plumbing evidence; candidate placement with a live input method on GNOME
 and Android remains the EAP20 gate.
+
+### First Android device run — 2026-11-14
+
+`nix build .#editor-apk-debug` packages the editor's `android` configuration
+(native Vulkan arm, no terminal) with the desktop bundle's faces. On the
+Xiaomi Pad 8 Pro (`15006456`, Android, landscape), the editor launches as a
+NativeActivity with tabs, the layout-backed field and the Unicode example;
+right-to-left lines draw in visual order.
+
+The first run found three device defects, each repaired. Android sets no
+`HOME`, so the recovery namespace root was `/`, which SELinux denies
+(`avc: denied { read } … name="/"` once a second). The entry now sets `HOME`
+to the app's private directory. Recovery publication then failed: the app
+sandbox denies `link` on `app_data_file` (`avc: denied { link }`), which the
+create-only commit used. `saveAtomic` now commits with
+`renameat2(RENAME_NOREPLACE)`, which is equally atomic and refuses
+replacement, and keeps `linkat` only where the flag is unsupported. The
+existing competing-creator and fault tests pass through the new path. After
+reinstalling, the device reports "Recovery revision 1 / 1", writes
+`files/sessions/<id>/…01.session` and logs no link denial.
+
+Hebrew, Indic, Thai and CJK lines drew nothing, on the desktop as well as
+the device: the native cell font consulted only three fallback faces. It now
+appends every regular face of the font sources, memory-mapped: the
+`--font-dir` faces, or fontconfig's `monospace` order. Desktop and device
+captures then draw every line of the Unicode example. Proportional
+script faces draw narrower than their cells; per-script monospace selection
+and sizing remain with generated fonts (plan item 2).
+
+This is a launch, rendering and recovery-write check. Live IME on Android,
+touch handles, keyboard insets with a soft keyboard (the tablet's keyboard
+cover registers a hardware keyboard) and provider documents remain open.

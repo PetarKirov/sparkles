@@ -182,3 +182,63 @@ version (RaylibTextTests)
     assert(resolveUiFace(file, FontSources.init, regular, bold));
     assert(regular == file && bold.baseName == "Roboto-Bold.ttf");
 }
+
+/**
+The faces after the nerd, regular and emoji fallbacks that cover the scripts
+those lack (`EAP18`): every regular face in `sources.dirs` — collections
+included, member zero — or fontconfig's `monospace` fallback order when the
+system database is used. `exclude` (the primary and the faces already
+chosen) and bold, italic or oblique styles are left out; order is kept, so
+the first face with a glyph draws it.
+
+A caller should map rather than read these: there may be hundreds, and a
+face no text reaches should cost no I/O.
+*/
+string[] scriptFallbackFacePaths(FontSources sources, const(string)[] exclude) @system
+{
+    import std.algorithm.sorting : sort;
+    import std.file : dirEntries, exists, isDir, SpanMode;
+    import std.path : baseName, extension;
+    import std.string : splitLines, toLower;
+
+    static bool styled(string path)
+    {
+        const name = path.baseName;
+        return name.canFind("Bold") || name.canFind("Italic") || name.canFind("Oblique");
+    }
+    static bool face(string path)
+    {
+        const ext = path.extension.toLower;
+        return ext == ".ttf" || ext == ".otf" || ext == ".ttc";
+    }
+    string[] candidates;
+    if (!sources.useSystemFontDb)
+    {
+        foreach (dir; sources.dirs)
+        {
+            try
+            {
+                if (!dir.exists || !dir.isDir) continue;
+                string[] files;
+                foreach (entry; dirEntries(dir, SpanMode.shallow))
+                    if (face(entry.name)) files ~= entry.name;
+                sort(files);
+                candidates ~= files;
+            }
+            catch (Exception) { /* an unreadable directory adds nothing */ }
+        }
+    }
+    else version (OSX) {}
+    else
+    {
+        auto listed = fcRun(["fc-match", "-f", "%{file}\\n", "monospace", "-s"]);
+        if (listed.status == 0)
+            foreach (line; listed.output.splitLines)
+                candidates ~= line.strip.idup;
+    }
+    string[] result;
+    foreach (path; candidates)
+        if (path.length && face(path) && !styled(path) && !exclude.canFind(path) && !result.canFind(path))
+            result ~= path;
+    return result;
+}

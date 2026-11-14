@@ -16,6 +16,8 @@ version (Posix)
         close, fstatat, fsync, renameat, unlinkat, write;
 }
 
+version (linux) private extern (C) long syscall(long number, ...) nothrow @nogc;
+
 /// Existing files may be replaced only after the UI explains the nonconditional commit.
 enum SaveAuthorization : ubyte { createOnly, replaceConfirmed }
 
@@ -26,8 +28,32 @@ struct SaveReceipt
     string warning;
 }
 
+/**
+`renameat2(dir, from, dir, to, RENAME_NOREPLACE)`: an atomic rename that fails
+with `EEXIST` rather than replace. `-1` with `ENOSYS` where the platform has
+no such call; `EINVAL` where the file system does not support the flag.
+*/
+private int renameNoReplace(int dir, const(char)* from, const(char)* to) @system nothrow @nogc
+{
+    version (linux)
+    {
+        version (X86_64) enum long number = 316;
+        else version (AArch64) enum long number = 276;
+        else version (X86) enum long number = 353;
+        else version (ARM) enum long number = 382;
+        else enum long number = -1;
+        enum uint renameNoReplaceFlag = 1;
+        static if (number >= 0)
+            return cast(int) syscall(number, dir, from, dir, to, renameNoReplaceFlag);
+    }
+    import core.stdc.errno : ENOSYS, errno;
+    errno = ENOSYS;
+    return -1;
+}
+
 /// Sync a private temporary, then install it in one directory-relative atomic operation.
-/// createOnly uses a hard-link commit that cannot replace an existing entry, including races.
+/// createOnly commits with a no-replace rename (or, where that is unsupported, a
+/// hard link), which cannot replace an existing entry, including races.
 Expected!SaveReceipt saveAtomic(string path, string bytes,
     SaveAuthorization authorization = SaveAuthorization.createOnly) @safe
 {
@@ -84,11 +110,24 @@ Expected!SaveReceipt saveAtomic(string path, string bytes,
         SaveReceipt receipt;
         if (authorization == SaveAuthorization.createOnly)
         {
-            if ((() @trusted => linkat(parent, temporary.toTempStringz.ptr,
-                    parent, name.toTempStringz.ptr, 0))() != 0)
-                return err!SaveReceipt("The destination was not created; it may already exist or disallow atomic creation.");
-            if ((() @trusted => unlinkat(parent, temporary.toTempStringz.ptr, 0))() == 0) cleanup = false;
-            else receipt.warning = "The document was saved, but its private temporary could not be removed.";
+            // A no-replace rename commits in one step; Android's app sandbox
+            // denies hard links, so the link commit is only the fallback for
+            // a file system without RENAME_NOREPLACE.
+            const renamed = (() @trusted => renameNoReplace(parent, temporary.toTempStringz.ptr,
+                name.toTempStringz.ptr))();
+            if (renamed == 0)
+                cleanup = false;
+            else
+            {
+                import core.stdc.errno : EEXIST;
+                if (errno == EEXIST)
+                    return err!SaveReceipt("The destination already exists; replacement needs confirmation.");
+                if ((() @trusted => linkat(parent, temporary.toTempStringz.ptr,
+                        parent, name.toTempStringz.ptr, 0))() != 0)
+                    return err!SaveReceipt("The destination was not created; it may already exist or disallow atomic creation.");
+                if ((() @trusted => unlinkat(parent, temporary.toTempStringz.ptr, 0))() == 0) cleanup = false;
+                else receipt.warning = "The document was saved, but its private temporary could not be removed.";
+            }
         }
         else
         {

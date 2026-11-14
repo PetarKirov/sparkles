@@ -30,6 +30,10 @@ void androidMain()
     if (!extractAssetBundle(data, ["fonts"], buildPath(data, "assets-ready")))
         logFailure("editor: the APK's fonts could not be extracted");
     const fonts = buildPath(data, "fonts");
+    // Android sets no HOME; the recovery namespace root is the app's private
+    // directory, the only tree it may open (the filesystem root is denied).
+    import std.process : environment;
+    environment["HOME"] = data;
     // App-private, one-shot arguments (an example, a screenshot) make device
     // checks reproducible without rebuilding the APK; consumed before launch.
     const next = buildPath(data, "next-launch.args");
