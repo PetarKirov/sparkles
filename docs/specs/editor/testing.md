@@ -968,3 +968,29 @@ and sizing remain with generated fonts (plan item 2).
 This is a launch, rendering and recovery-write check. Live IME on Android,
 touch handles, keyboard insets with a soft keyboard (the tablet's keyboard
 cover registers a hardware keyboard) and provider documents remain open.
+
+### Live desktop input method on GNOME Wayland — 2026-11-14
+
+The checked Vulkan editor ran on the owner's GNOME Wayland session with
+`WAYLAND_DEBUG=client`; IBus served text-input-v3. Keys were injected with
+`ydotool` only while the protocol log showed `wl_keyboard.enter` on the
+editor's surface. Excerpts from the client log:
+
+- typing `ab ` sent `set_cursor_rectangle(40|50|60, 138, 10, 24)`: one
+  10-pixel cell right per character, at the drawn caret;
+- IBus Unicode entry (Ctrl+Shift+U, `5d0`) delivered
+  `preedit_string("u5", 2, 2)`, `("u5d", 3, 3)`, `("u5d0", 4, 4)`. The
+  editor answered with rectangles at x 80, 90 and 100, following the
+  preedit's cursor;
+- Space delivered `commit_string("א")` and an empty preedit. The next
+  rectangle was x 60, the visual left edge of the right-to-left letter,
+  where the logical end after it is drawn;
+- a second entry (`5d1`) cancelled with Escape delivered an empty preedit
+  and no `commit_string`, and the rectangle returned to x 60.
+
+This establishes live preedit update, commit, cancellation and caret
+rectangle delivery through a real input method on desktop Wayland. GNOME
+denies Shell screenshots to this client, so no screen image was captured.
+Candidate-window placement needs a candidate-producing engine; this session
+has US and Bulgarian layouts only. Pinyin/Anthy candidates, X11 (no XIM
+client exists) and Android's live IME remain open under EAP20.
