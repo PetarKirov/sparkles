@@ -456,14 +456,14 @@ The observed gaps, which feed [comparison.md][comparison]'s delta table:
 <!-- References -->
 
 [src-register]: ../../../libs/test-runner/src/sparkles/test_runner/register.d
-[src-discovery]: ../../../libs/test-runner/src/sparkles/test_runner/discovery.d
+[src-discovery]: ../../../libs/test-harness/src/sparkles/test_runner/discovery.d
 [src-runner]: ../../../libs/test-runner-impl/src/sparkles/test_runner/runner_impl.d
-[src-execution]: ../../../libs/test-runner-impl/src/sparkles/test_runner/execution.d
-[src-extract]: ../../../libs/test-runner-impl/src/sparkles/test_runner/extract.d
-[src-driver]: ../../../libs/test-runner-impl/src/sparkles/test_runner/driver.d
-[src-model]: ../../../libs/test-runner-impl/src/sparkles/test_runner/model.d
-[src-attributes]: ../../../libs/test-runner/src/sparkles/test_runner/attributes.d
-[src-skip]: ../../../libs/test-runner-impl/src/sparkles/test_runner/skip.d
+[src-execution]: ../../../libs/test-harness/src/sparkles/test_runner/execution.d
+[src-extract]: ../../../libs/test-runner-core/src/sparkles/test_runner/extract.d
+[src-driver]: ../../../libs/test-runner-core/src/sparkles/test_runner/driver.d
+[src-model]: ../../../libs/test-harness/src/sparkles/test_runner/model.d
+[src-attributes]: ../../../libs/test-attributes/src/sparkles/test_runner/attributes.d
+[src-skip]: ../../../libs/test-harness/src/sparkles/test_runner/skip.d
 [src-reporting]: ../../../libs/test-runner-impl/src/sparkles/test_runner/reporting.d
 [versions-dub]: ../../../libs/versions/dub.sdl
 [design-doc]: ../../libs/test-runner/explanation/design.md

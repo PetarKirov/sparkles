@@ -40,6 +40,7 @@ private:
     bool touched;                   // reached by a backend call since `clearTouched`
     uint openCount;
     long mtimeNs;
+    long ctimeNs;                   // the clock at its last change
     Sharing sharing;
     size_t dataOffset, dataLength, dataCapacity; // contents, or a link's target
 }
@@ -66,6 +67,21 @@ struct MemVfs
 
     /// The hook of VFM3: runs before backend call number `callIndex`.
     alias Hook = void delegate(size_t callIndex, ref MemVfs vfs) @safe nothrow @nogc;
+
+    /**
+    The time a change is stamped with, in nanoseconds, as POSIX stamps them.
+    Creating an entry, a write of at least one byte, a truncation and
+    `writeFile` set its modification and status-change times; a rename
+    (`renameAt`, `rename`), an unlink and `setMtime` set its status-change
+    time; and adding or removing an entry sets both times of its directory.
+    The clock moves only when the caller moves it, so two changes at one
+    value fall in one tick, as on a file system whose timestamps are coarse.
+    */
+    long clockNs;
+
+    /// Reports every change time as settable, as Windows's are
+    /// (`Stat.ctimeSettable`), for a test of a caller that must not trust it.
+    bool ctimeSettable;
 
     /// Runs before every backend call when set.
     Hook hook;
@@ -192,7 +208,10 @@ struct MemVfs
             if (mode.disposition == Disposition.createNew)
                 return ioErr!Handle(ErrorKind.exists, OpKind.openAt);
             if (mode.disposition == Disposition.createOrTruncate)
+            {
                 nodes[n].dataLength = 0;
+                modified(n);
+            }
         }
         return newHandle(n, false, mode.access, OpKind.openAt);
     }
@@ -337,6 +356,7 @@ struct MemVfs
         }
         unlink(src);
         setName(src, dstName);
+        nodes[src].ctimeNs = clockNs;
         link(d.value, src);
         return ioOk();
     }
@@ -467,6 +487,7 @@ struct MemVfs
     }
 
     /// Writes to an open file at its offset, or at its end in append mode.
+    /// A write of nothing changes nothing, its times included, as on POSIX.
     IoResult!size_t write(Handle h, scope const(ubyte)[] data) @safe nothrow @nogc
     {
         enter(OpKind.write);
@@ -478,6 +499,8 @@ struct MemVfs
             return ioErr!size_t(ErrorKind.isADirectory, OpKind.write);
         if (slot.access == Access.read)
             return ioErr!size_t(ErrorKind.permission, OpKind.write, 9); // EBADF
+        if (data.length == 0)
+            return ioOk(size_t(0));
         auto n = &nodes[slot.node];
         if (slot.access == Access.append)
             slot.offset = n.dataLength;
@@ -497,6 +520,7 @@ struct MemVfs
         bytes[n.dataOffset + cast(size_t) slot.offset .. n.dataOffset + end] = data[];
         if (end > n.dataLength)
             n.dataLength = end;
+        modified(slot.node);
         slot.offset = end;
         return ioOk(data.length);
     }
@@ -568,6 +592,7 @@ struct MemVfs
         }
         auto node = &nodes[n];
         node.executable = executable;
+        modified(n);
         node.dataOffset = region.value;
         node.dataLength = node.dataCapacity = content.length;
         bytes[region.value .. region.value + content.length] = content[];
@@ -614,6 +639,7 @@ struct MemVfs
             removeSubtree(existing);
         unlink(src);
         setName(src, leaf);
+        nodes[src].ctimeNs = clockNs;
         link(parent, src);
         return true;
     }
@@ -646,6 +672,7 @@ struct MemVfs
         if (n == none)
             return false;
         nodes[n].mtimeNs = ns;
+        nodes[n].ctimeNs = clockNs;
         return true;
     }
 
@@ -868,6 +895,7 @@ private:
         nodes[n].kind = kind;
         nodes[n].sharing = sharing;
         nodes[n].touched = true;
+        modified(n);
         setName(n, name);
         link(dir, n);
         return ioOk(n);
@@ -879,18 +907,29 @@ private:
         nodes[n].name[0 .. name.length] = name[];
     }
 
+    // Stamps `n`'s content as changed: its modification and change times.
+    void modified(uint n) @safe nothrow @nogc
+    {
+        nodes[n].mtimeNs = clockNs;
+        nodes[n].ctimeNs = clockNs;
+    }
+
+    // Adds `n` to `dir`, whose listing, and so whose times, change.
     void link(uint dir, uint n) @safe nothrow @nogc
     {
         nodes[n].parent = dir;
         nodes[n].nextSibling = nodes[dir].firstChild;
         nodes[dir].firstChild = n;
+        modified(dir);
     }
 
+    // Removes `n` from its directory, whose times change.
     void unlink(uint n) @safe nothrow @nogc
     {
         const p = nodes[n].parent;
         if (p == none)
             return;
+        modified(p);
         if (nodes[p].firstChild == n)
             nodes[p].firstChild = nodes[n].nextSibling;
         else
@@ -908,6 +947,7 @@ private:
     void detach(uint n) @safe nothrow @nogc
     {
         unlink(n);
+        nodes[n].ctimeNs = clockNs; // its link count changed
         nodes[n].detached = true;
         if (nodes[n].openCount == 0)
             free(n);
@@ -983,10 +1023,21 @@ private:
         s.executable = node.executable;
         s.size = node.kind == EntryKind.directory ? 0 : node.dataLength;
         s.device = deviceOf(n);
+        if (mask & StatMask.identity)
+        {
+            s.hasIdentity = true;
+            s.inode = n + 1; // a node's index is fixed for its lifetime
+        }
         if (mask & StatMask.mtime)
         {
             s.hasMtime = true;
             s.mtimeNs = node.mtimeNs;
+        }
+        if (mask & StatMask.change)
+        {
+            s.hasCtime = true;
+            s.ctimeNs = node.ctimeNs;
+            s.ctimeSettable = ctimeSettable;
         }
         version (Posix)
             s.permissions = node.kind == EntryKind.symlink ? 511
@@ -1203,6 +1254,51 @@ version (unittest)
     const inner = v.fstat(m.value, StatMask.basic).value.device;
     const rootDevice = v.fstat(root.value, StatMask.basic).value.device;
     assert(outer == inner && inner != rootDevice);
+}
+
+/// DV32: the clock stamps times as POSIX does. A rename moves the renamed
+/// entry's change time; adding or removing an entry moves both times of its
+/// directory; a write moves both times of its file, and a write of nothing
+/// moves neither.
+@("vfs.mem.changeTimes")
+@safe unittest
+{
+    auto v = testVfs();
+    v.clockNs = 10;
+    v.writeFile("r/f", cast(const(ubyte)[]) "hello");
+    v.mkdirs("r/d");
+    auto r = v.openRootDir("r").value;
+    enum m = cast(StatMask)(StatMask.mtime | StatMask.change);
+    long ctime(scope const(char)[] name) => v.statAt(r, name, m).value.ctimeNs;
+    long mtime(scope const(char)[] name) => v.statAt(r, name, m).value.mtimeNs;
+    long dirCtime(MemVfs.Handle h) => v.fstat(h, m).value.ctimeNs;
+    long dirMtime(MemVfs.Handle h) => v.fstat(h, m).value.mtimeNs;
+    auto d = v.openDirAt(r, "d").value;
+
+    v.clockNs = 20;
+    assert(!v.renameAt(r, "f", d, "g").hasError);
+    assert(v.statAt(d, "g", m).value.ctimeNs == 20, "a rename moves the entry's change time");
+    assert(v.statAt(d, "g", m).value.mtimeNs == 10, "and not its modification time");
+    assert(dirCtime(r) == 20 && dirMtime(r) == 20, "the source directory changed");
+    assert(dirCtime(d) == 20 && dirMtime(d) == 20, "the destination directory changed");
+
+    v.clockNs = 30;
+    auto fh = v.openFileAt(d, "g", OpenMode(Access.write), Sharing.init).value;
+    assert(!v.write(fh, cast(const(ubyte)[]) "J").hasError);
+    const written = v.statAt(d, "g", m).value;
+    assert(written.mtimeNs == 30 && written.ctimeNs == 30, "a write moves both times");
+
+    v.clockNs = 40;
+    assert(!v.write(fh, null).hasError);
+    const unwritten = v.statAt(d, "g", m).value;
+    assert(unwritten.mtimeNs == 30 && unwritten.ctimeNs == 30, "a write of nothing moves neither");
+    assert(!v.close(fh).hasError);
+
+    v.clockNs = 50;
+    assert(!v.unlinkAt(d, "g").hasError);
+    assert(dirCtime(d) == 50 && dirMtime(d) == 50, "an unlink changes the directory");
+    assert(!v.mkdirAt(r, "e", Sharing.init).hasError);
+    assert(ctime("e") == 50 && mtime("e") == 50 && dirMtime(r) == 50, "a creation stamps both");
 }
 
 @("vfs.mem.isVfs")

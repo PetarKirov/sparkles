@@ -6,14 +6,15 @@ license "BSL-1.0"
 
 targetPath "build"
 
-// `attributes` (imported unconditionally by modules with `@betterC` tests)
-// lives in the shim; the impl's tree is unittest-only.
-importPaths "src" "../test-runner/src"
+importPaths "src"
 
 dflags "-preview=in" "-preview=dip1000"
 // Keep downstream template emission consistent across library consumers.
 dflags "-linkonce-templates" platform="ldc"
 
+// The marker attributes, imported unconditionally by modules with `@betterC`
+// tests.
+dependency "sparkles:test-attributes" path="../.."
 // Structural classification for the shared value-writing dispatch: the text
 // writers, the property tree, and query engines answer "what shape is this
 // value" from one ladder.
@@ -29,25 +30,23 @@ configuration "library" {
 }
 
 configuration "unittest" {
-    // `base`/`core-cli` cannot depend on the impl library (cycle: impl → base),
-    // so they source-include both the shim and the impl.
-    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../profiling/src/sparkles/profiling/counters"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../profiling/src"
+    importPaths "src"
     buildRequirements "disallowDeprecations"
 
     dflags "-checkaction=context" "-allinst"
+    dependency "sparkles:test-runner" path="../.."
 }
 
 // The unittest build with base.sync's portable thread parker in place of the
 // native seam (SPEC SYF2, DS24), so a leg with a native mechanism also runs
 // the fallback: `dub test :base -c unittest-portable -- -i "sync\."`.
 configuration "unittest-portable" {
-    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../profiling/src/sparkles/profiling/counters"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../profiling/src"
+    importPaths "src"
     buildRequirements "disallowDeprecations"
     versions "SparklesSyncPortableParker"
 
     dflags "-checkaction=context" "-allinst"
+    dependency "sparkles:test-runner" path="../.."
 }
 
 // Linux allocation audit for the capability VFS (testing.md § allocation): the
@@ -56,11 +55,11 @@ configuration "unittest-portable" {
 // is never imposed on library consumers.
 configuration "allocation-audit" {
     targetType "library"
-    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../profiling/src/sparkles/profiling/counters"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../profiling/src"
+    importPaths "src"
     versions "VfsAllocationAudit"
     dflags "-checkaction=context" "-allinst"
     lflags "--wrap=malloc" "--wrap=calloc" "--wrap=realloc" platform="linux"
+    dependency "sparkles:test-runner" path="../.."
 }
 
 // Real numbers need release codegen: dub's stock `unittest` build type is a

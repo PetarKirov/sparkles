@@ -1,0 +1,1262 @@
+---
+status: draft
+owner: sparkles:build-primitives
+reviewed: 2026-11-01
+---
+
+# `sparkles:build-primitives` build graph — Specification
+
+## Abstract
+
+The build graph compiles the packages of a dub monorepo directly, without
+running dub. Each library is compiled once per distinct configuration, and the
+result is reused by every package, test and application that needs it, across
+every git worktree on a machine. The graph reads the packages' `dub.sdl` recipes
+itself and turns each requested build into compile, archive, link, generator
+and test actions. It keys every action by the content of what it reads,
+including what it looked for and did not find. The same graph runs on a local
+executor with a shared content-addressed cache, or lowers to Nix derivations so
+that remote builders and binary caches can execute it.
+
+## Introduction
+
+A Sparkles CI run tests about sixty dub packages and builds a dozen
+applications and many examples. Almost all of them depend on the same few
+libraries: `sparkles:base`, `sparkles:wired`, `sparkles:event-horizon` and
+`sparkles:ui`. A developer typically has several git worktrees of the
+repository checked out at once, each holding a nearly identical tree.
+
+dub cannot share that work:
+
+- Its build identifier hashes the absolute paths of a package's sources, so the
+  same library under a second worktree, or a second `DUB_HOME`, is compiled
+  again.
+- Its staleness check compares modification times only, so copied or restored
+  trees rebuild needlessly or, worse, skip a needed rebuild.
+- Several `dub test` processes sharing one `DUB_HOME` race on its package
+  database.
+
+The repository's workarounds show the cost. CI tasks were specified with a
+private `DUB_HOME` each, which recompiles `sparkles:base` once per dependent.
+The Nix example builder copies every source tree to one fixed path and
+flattens every timestamp so that one cache bundle can be reused.
+
+This library takes over the part of dub that decides _what_ to compile and
+_whether_ it is already compiled. It resolves each package's recipe into
+explicit compiler invocations. It identifies each library build by everything
+that changes its object code, which this document calls its
+[_variant_](#3-variants). For every compile, it records the exact set of files
+the compiler read and the search paths it found empty. An action whose recorded
+inputs are unchanged is never repeated, whichever worktree, directory or
+machine asks for it. Recipes stay dub recipes: humans, editors and `dmd-lsp`
+keep using dub on the same files, and dub itself is the oracle the resolver
+must agree with.
+
+The build graph does not download or resolve registry packages; their pinned
+sources come from the repository's dub lockfiles. Which packages a command
+selects, how tasks are reported and how many run at once belong to the
+[task DAG](../task-dag/SPEC.md), whose executor runs this library's actions.
+The graph declares test actions and the conditions under which a test result
+may be reused, but owns no test policy. A per-module compilation mode, a
+remote-execution protocol of its own, and a general workflow language are out
+of scope. So are:
+
+- **speculative execution:** the plan is static, so the graph has no
+  unresolved discovery to speculate on;
+- **a resident compiler process,** unless its state enters no key and
+  removing it leaves every output identical;
+- **build provenance,** which would record an action's terminal inputs beside
+  its result, never inside its key.
+
+Section 1 states the invariants. Sections 2–4 define recipe resolution,
+variants and the action graph; §5 the action key and the input manifest; §6 the
+shared store; §7 generators; §8 toolchain identity; §9 test actions and result
+reuse; §10 the Nix backend; §11 the public surface; §12 file-system access.
+Delivery order lives in
+[PLAN.md](./PLAN.md), oracles and evidence in [testing.md](./testing.md), and
+the choices behind each section in [decisions.md](./decisions.md).
+
+## 1. Invariants
+
+1. **An action is a pure function of its key.** Two actions with equal keys
+   produce interchangeable outputs. Anything that can change an output is in
+   the key, or the action is not cacheable.
+2. **No ambient input.** An action runs with an explicit argument vector,
+   working directory, environment and compiler configuration file. It inherits
+   nothing its key does not cover.
+3. **Outputs do not name their worktree.** No cached output embeds the
+   absolute path of the worktree that built it, unless the action's key
+   includes that path.
+4. **dub agrees.** For every package and request in scope, the resolver's
+   settings equal what dub resolves, except where [decisions.md](./decisions.md)
+   records an intentional divergence.
+5. **Reuse never changes a verdict.** A cache hit and a cold build of the same
+   key report the same diagnostics, exit status and outputs.
+6. **The source tree is read, never written.** Generated files live in action
+   outputs.
+7. **A result is keyed by its action's inputs, never by graph edges.** An edge
+   decides whether an action runs, not what it produces. A fallback compile
+   that runs only after another action failed shares its key with the same
+   compile run unconditionally.
+
+## 2. Recipe resolution
+
+A **recipe** is a package's `dub.sdl`, read through `sparkles.wired.sdl`, or a
+registry package's `dub.json`. Resolution turns a recipe, a selected
+configuration, a build type and a platform into **resolved settings**: the
+ordered source files, import paths, C import paths, string import paths,
+versions, debug versions, dflags, lflags, libraries and target properties that
+a compiler invocation needs.
+
+The recipes **in scope** are the root recipe's sub-packages, the registry
+packages they depend on, and the single-file packages that `apps/ci` builds
+(BGR6). Any other recipe in the tree is out of scope until a consumer requests
+it. The reference semantics are dub's, at the revision the flake pins.
+
+**BGR1: Typed recipe reading.** The resolver **must** read recipes through the
+repository's typed schema (`sparkles.build_primitives.dub_manifest`), from SDL
+and from JSON. It **must** reject a directive the schema does not name, with a
+diagnostic naming the file, line and directive. dub's `x:` extension tags are
+the only directives that are read and ignored.
+
+**BGR2: Supported directives.** Resolution **must** support every directive,
+attribute and form the recipes in scope use. A directive outside the supported
+set is a resolution error. The supported set is listed in
+[testing.md](./testing.md#the-recipe-vocabulary), generated by scanning the
+recipes in scope and checked by oracle 1. It includes at least:
+
+- the package, dependency and sub-package forms: inline `subPackage` blocks,
+  the `:name` shorthand, and `dependency` with its `path`, `version`,
+  `repository`, `optional`, `default` and `platform` attributes;
+- configurations, top-level `platforms`, build types resolved against the
+  request's root recipe, and `toolchainRequirements`;
+- every build setting, each with dub's platform matching (the `platform`
+  attribute in SDL, the name suffix in JSON);
+- an empty `sourcePaths`, and dub's glob forms in file lists;
+- dub's variables (`$PACKAGE_DIR`, `$ROOT_PACKAGE_DIR`, `$<NAME>_PACKAGE_DIR`,
+  `$ARCH`, `$PLATFORM`, `$PLATFORM_POSIX`, `$BUILD_TYPE`, `$DUB`, `$DUB_EXE`,
+  `$DC`, `${…}` and `$$`), and environment references. An environment variable
+  a value names is an input of every action whose settings contain it.
+
+**BGR3: dub's configuration steps.** Resolution **must** reproduce the steps of
+dub's `ProjectGenerator.configurePackages`, in dub's order:
+
+1. **Collect targets.** A `sourceLibrary` dependency is folded into each
+   consumer, merging all of its settings, and a non-executable target drops
+   its `mainSourceFile` from its sources.
+2. **Down:** from each dependent to every dependency, its versions and debug
+   versions, the build options dub classes as inherited, and the dflags dub
+   classes as ABI-critical (`filterABICriticalFlags`).
+3. **Across:** a `Have_<package>` version, its name sanitized as dub does, for
+   each package a target incorporates and each direct dependency.
+4. **Up:** from each dependency to its dependents, dflags, versions (so
+   `Have_` versions reach every transitive dependent), debug versions, version
+   filters, import, C import and string import paths, injected source files,
+   and, from library targets, libraries, frameworks, lflags and linker files.
+5. **Override string imports** from dependents, as dub does.
+6. **Build type:** add the build type's settings to every target, remove the
+   `unittests` option from non-root targets, and extract build options from
+   the dflags.
+
+Downward versions are pruned per BGV1. A build option selects the divergent
+mode of [D13](./decisions.md#d13-prune-downward-inherited-versions-accepted)
+instead: a dependent's configuration-level versions and debug versions do not
+pass down, and resolution rejects a dependency whose sources test one. Both
+modes pass build-type options and ABI-critical flags down, and the mode is part
+of every variant key.
+
+**BGR4: Registry packages.** A dependency that is not an in-tree sub-package
+**must** resolve to the source the repository's dub lockfiles
+(`nix/dub-lock.json` and `nix/ci-dub-lock.json`) pin:
+
+- **With Nix:** the source is a store path fetched by the lockfile's hash.
+- **Without Nix:** it is fetched by the lockfile's URL into the build store
+  (§6) and verified by the lockfile's hash. An archive is checked against its
+  flat SHA-256, and a git checkout against its NAR hash, which the build graph
+  computes itself.
+
+A dependency missing from the lockfiles is a resolution error, and so is a
+locked source that a version range or repository pin naming it does not
+admit: every one, from every package depending on it, at the top level or in
+any configuration, whichever configuration the request builds. The resolver
+never resolves a version against a registry. An `optional` dependency is used
+exactly when the lockfiles pin it, or when it is a sub-package of its
+dependent's own package, whether or not it is `default`
+([D46](./decisions.md#d46-an-optional-dependency-follows-the-locks-proposed)).
+
+**BGR5: Library resolution.** `libs` entries **must** resolve through
+`pkg-config` at planning time, with dub's rules: the `lib<name>` fallback, the
+split of the results into compiler and linker flags, and the `-P` prefixing of
+preprocessor flags.
+
+- **Executable and dynamic-library targets:** these receive the results, as
+  dub gives them.
+- **Library targets:** these also receive the `--cflags` results of their own
+  `libs` for their compiles. dub gives them none, and the divergence is
+  recorded in
+  [decisions.md](./decisions.md#d17-library-targets-see-their-own-c-headers).
+- **Separated operands:** a preprocessor option written apart from its
+  operand (`-isystem /x`) keeps it, joined into one flag (`-P-isystem/x`).
+  dub keeps the option and drops the operand, and the divergence is recorded
+  in
+  [decisions.md](./decisions.md#d45-a-preprocessor-option-keeps-its-separate-operand-proposed).
+
+The resolved flags, the digests of the `.pc` files consulted, and the libraries
+the link flags resolve to are inputs of the actions that use them. A library
+that resolves to a store path may be identified by that path. BGK9 adds what
+the searches did not find.
+
+**BGR6: Single-file packages.** A D source file with an embedded `dub.sdl`
+recipe (`/+ dub.sdl: … +/`) **must** resolve as a package whose recipe is the
+embedded one and whose only source is the file. In-tree dependencies it names
+by version, rather than by path, resolve to the in-tree package when the
+requester asks for that rewrite, as documentation examples do.
+
+**BGR7: The oracle.** Resolution **must** agree with dub on every resolved field,
+for every package and request in scope (see
+[testing.md](./testing.md#oracle-1-dub-agreement)). Fields before library
+resolution are compared with `dub describe`. Fields after it, and anything else
+`dub describe` does not expose, are compared with dub used as a library. A
+disagreement fails the gate. Accepting one is a decision record, never a silent
+exception.
+
+_Rationale:_ an independent resolver is what removes dub's path-hashed and
+mtime-based behaviour from the loop, and an oracle is what keeps it from
+silently drifting into a different build system.
+
+**BGR8: No hidden source edges.** A package in scope **must not** reach into
+another package's directory through `importPaths`, `sourcePaths`, `sourceFiles`,
+`stringImportPaths`, `cImportPaths` or `cSourcePaths` without a `dependency` on
+it, in any configuration. Resolution reports each violation, naming the recipe
+line and the package reached. There is no exception: the test runner runs out
+of process, so a test binary links only its shim and no package
+source-includes its implementation. TRD1, TRD9 and TRM8 in
+`docs/specs/test-runner/` define that model.
+
+## 3. Variants
+
+A **variant** is one way of compiling one package. Two builds of a package are
+the same variant exactly when they produce interchangeable object code.
+
+**BGV1: The variant key.** A variant **must** be identified by:
+
+- the package;
+- its configuration, including one chosen by a consumer's `subConfiguration`;
+- its role (BGV2);
+- its resolved build options and flags, including coverage instrumentation,
+  sanitizers and optimization, after inheritance (BGR3);
+- its versions and debug versions after inheritance, pruned as below;
+- the inheritance mode (BGR3);
+- the toolchain identity (§8);
+- the target platform, including WebAssembly and betterC targets.
+
+Two requests that resolve to equal variant keys **must** share one set of
+actions.
+
+**Pruning.** A downward-inherited version or debug identifier **must** be kept
+only if it is **mentioned** under one of the variant's source, import or string
+import roots. Mentioned means it appears in a `version (…)` or `debug (…)`
+condition, or in a `version = …` or `debug = …` assignment:
+
+- in a D source file under any of those roots, read as D tokens;
+- in any file under a string import root, whatever its extension, read as
+  text.
+
+The scan has these further rules:
+
+- **Scanned at plan time:** the scan runs during planning, over the files
+  present then, and the digest of the scanned file listing is part of the
+  declared key (BGK1). A new file that mentions an identifier therefore
+  re-plans the variant.
+- **Generated roots:** a root filled by a generator (§7) is not scanned. A
+  variant with such a root keeps every inherited identifier.
+- **Conditions built as strings:** a variant **must** keep every inherited
+  identifier if, in a scanned D file, the string literals of one `mixin`'s
+  arguments, joined in order, or the string literals that initialize one
+  manifest constant (`enum`), contain `version` or `debug` followed by `(`,
+  with optional whitespace between them. Planning reports each such `mixin`
+  or constant. The one exemption is the `mixin` in
+  `sparkles.base.meta.isVersion`, whose arguments the next rule checks.
+- **The `isVersion` lint:** planning **must** fail on a use of
+  `sparkles.base.meta.isVersion`, outside a `unittest` block, whose argument is
+  not a string literal naming one of D's predefined version identifiers. It
+  names the file and line. A use is found by resolving the template's name
+  through the module's imports, including selective and renamed imports and
+  `sparkles.base`'s public import of `sparkles.base.meta`. A `unittest` block
+  compiles only in its own package's test root, which inherits nothing.
+
+_Rationale:_ dub passes a test root's versions down to every dependency, so
+without pruning, any root with a configuration-local version forks its whole
+dependency closure. Version identifiers are module-local in D, so an identifier
+no file the compile can reach mentions cannot change the object code. A
+`mixin` writes a condition that no file spells out, which
+[D34](./decisions.md#d34-pruning-sees-string-imports-and-mixed-in-conditions-accepted)
+handles.
+
+**BGV2: Roles.** A variant has one of these roles:
+
+- **Test root:** the variant a package's unittest binary compiles its own
+  sources in, using its unittest configuration with `-unittest`.
+  - **Custom runner:** if that configuration's target type is `executable`,
+    the configuration is a custom test runner. Its `mainSourceFile` is kept and
+    no test-root module is generated.
+  - **Generated entry point:** otherwise its `mainSourceFile` is excluded, and
+    a generated test-root module (§7) gives the binary its entry point. The
+    module imports the package's own sources only, with no `sourceLibrary`
+    files, skipping every `package.d` and the `mainSourceFile`. It names each
+    module by its parsed `module` declaration, as dub does.
+- **Dependency library:** the variant a dependent links against. It uses the
+  package's library configuration under the requester's build type, with
+  `-unittest` removed, as dub does for every non-root package.
+- **Application:** a root compiled for shipping, with dependency libraries of
+  the same build type.
+
+A package that other selected packages depend on is therefore built at least
+twice when its tests run: once as a test root and once as a dependency
+library. A package nothing selected depends on is built only in its root role.
+
+**BGV3: Source libraries are not compiled alone.** A `sourceLibrary` package
+**must** never produce a compile action of its own. Its sources are part of
+each consumer's compile and take that consumer's variant, so they compile with
+`-unittest` inside a test root. It may own generate actions (§7).
+
+**BGV4: The unittest layout rule.** In a package compiled as a dependency
+library, `version (unittest)` **must not** change anything a dependent's
+compile or link can observe, outside `unittest` blocks. That covers:
+
+- a declaration visible outside its module (`public`, `package` or
+  `protected`), at any level;
+- an aggregate member of any visibility: a field, field initializer, virtual
+  method, destructor, postblit or copy constructor;
+- an `enum` member or value, or an `alias` target;
+- any `version (unittest)` inside a template, or inside the body of a function
+  whose body a dependent compiles: an `auto`-returning or attribute-inferred
+  function, or one marked `pragma(inline, true)`;
+- a module-scope import of a package that the library configuration does not
+  depend on.
+
+A `private`, non-template, module-level declaration that only the module's own
+`unittest` blocks use is exempt. The rule also applies to a `sourceLibrary`
+compiled into both a test root and a dependency library of one binary.
+
+_Rationale:_ `-unittest` turns on `version (unittest)` in every module a test
+root imports, including its dependencies' modules. A test root then sees a
+different declaration, layout, mangled attribute set or template instance
+than the dependency library it links against was compiled with. The linker
+merges template instances across the two, so a template's test-only branch
+also leaks into library code.
+
+**BGV5: The layout lint.** Planning **must** report every violation of BGV4 in
+the packages it plans, naming the file and line, and **must** fail the plan.
+The lint works on the parsed module before conditional compilation is
+resolved, so it sees both branches of every `version (unittest)` and every
+uninstantiated template body.
+
+## 4. The action graph
+
+An **action** is one tool invocation with declared inputs and outputs.
+
+**BGA1: Action kinds.** The graph **must** use exactly these kinds:
+
+- `compile`: one compiler invocation over all of a variant's own modules;
+- `archive`: a static library from compile outputs;
+- `link`: an executable from objects and archives;
+- `generate` (§7);
+- `test` (§9).
+
+A kind outside this list is an error.
+
+**BGA2: One compile per variant.** A library or root variant **must** compile
+its own modules in one compiler invocation. A dependent's compile reads its
+dependencies' sources through import paths; it does not wait for their
+archives. A link action waits for the archives it links.
+
+**BGA3: Declared outputs.** Every action **must** declare the outputs it
+produces, relative to an action-private output directory on the store's file
+system. A declared output is a file or a directory tree; a generator whose
+file names depend on its inputs declares its output directory. The action
+**must** fail if it produced an output outside its declarations, or did not
+produce a declared one. Files it writes into its measurement directory
+([observability OBD8](../observability/SPEC.md#_11-run-records)) are not
+outputs.
+
+**BGA4: Explicit environment.** Every action **must** run with the environment
+its key declares (invariant 2). That environment is complete, not a change to
+the executor's own: an ambient `DFLAGS`, `CC`, `NIX_CFLAGS_COMPILE` or any
+other variable is not inherited. A caller that wants extra compiler flags
+requests them as variant options. The declared environment **must**:
+
+- set `SOURCE_DATE_EPOCH` to a fixed value, so that `__DATE__`, `__TIME__` and
+  `__TIMESTAMP__` do not follow the clock, in D and in ImportC sources;
+- fix the variables that change diagnostics (`TERM`, `NO_COLOR`) and the
+  target (`MACOSX_DEPLOYMENT_TARGET`);
+- set `PATH` explicitly, empty for `compile`, `archive` and `link` actions.
+
+A compile or link **must** name its C compiler driver and its linker by
+absolute path (`-gcc=` and `--linker=` on LDC). They are the files toolchain
+identity covers (BGT1), so the compiler cannot pick another from a search
+path. An action passes no `@file` response file, because LDC reads an
+environment variable of the same name instead when one is set.
+
+_Rationale:_ with a `PATH`, LDC finds `cc` by searching it, so toolchain
+identity could hash one driver while the compiler runs another.
+
+**BGA5: Relocatable invocation.**
+
+- **Working directory:** a compile action **must** run in the repository root,
+  passing sources and in-tree paths as root-relative paths.
+- **Prefix map:** with a compiler that supports it, the action **must** map the
+  absolute repository root, without a trailing separator, to `.` in debug
+  information, `__FILE__`, `__FILE_FULL_PATH__`, coverage registration and the
+  C preprocessor's output (`--ffile-prefix-map=<root>=.` on LDC). So every
+  in-tree path the outputs record is relative to the root, such as
+  `./libs/base/src/…`, and so is the debug information's compilation
+  directory, which is the root itself. Store paths name no worktree, so this
+  map leaves them alone; BGA11 maps the toolchain's for another reason.
+- **Fallback:** with a compiler that cannot map them, the repository root's
+  absolute path is part of the action key.
+
+**BGA6: Argument normalization.** Before an action's argument vector enters its
+key (§5), the absolute repository root **must** be replaced by a fixed
+placeholder, the action's private output directory by another, and its
+measurement directory by a third. No other
+argument is rewritten. So a prefix-map argument naming a worktree hashes
+equally in every worktree.
+
+**BGA7: Diagnostics are outputs.** An action's standard output, standard error
+and exit status **must** be recorded with its outputs and replayed on a cache
+hit (invariant 5). That includes a hit on a failed action that BGA9 publishes.
+
+An action's measurements are recorded beside its diagnostics, outside every
+key and every declared output
+([observability OBD8](../observability/SPEC.md#_11-run-records)).
+
+**BGA8: Graph exposure.** The build graph **must** expose its actions as task
+nodes with stable ids, typed actions and resource claims, so that the task-DAG
+executor can run them (see [task DAG](../task-dag/SPEC.md)). Their form is
+the one [observability OBD2](../observability/SPEC.md#_11-run-records) states,
+so that measurements line up across toolchain bumps; BGA8 adopts it at E2
+(see [PLAN.md](./PLAN.md)). Edges between actions are ordinary `onSuccess`
+task edges. The default weights are:
+
+- `compile` 2;
+- `archive` 1;
+- `link` 2;
+- `generate` 1;
+- `test` 2.
+
+A `test` action **must** pass its claimed weight as the test runner's
+maximum thread count, and a `link` action as the linker's thread count
+(`--threads` on `ld.lld`).
+
+**BGA9: Which results are published.** A result **must** be published only for
+an action that ran to completion and exited on its own:
+
+- **`compile`, `archive` and `link`:** with any exit status. A failed compile
+  is keyed by the manifest its dependency output lists, as a successful one
+  is, or conservatively (BGK6) when the compiler writes none. A hit on it
+  replays the failure (BGA7), so a deterministic error is not compiled again.
+- **`generate` and `test`:** with a zero exit status only. A test's result is
+  published only when BGX3 allows it to be reused.
+
+An action ended by a signal, a timeout or a cancellation, or one that exited
+zero without producing its declared outputs (BGA3), **must not** be published.
+See [D30](./decisions.md#d30-deterministic-build-failures-are-cached-accepted).
+
+_Rationale:_ a compile killed by the kernel's out-of-memory killer, or by
+fail-fast, failed for a reason its key does not cover. Replaying that failure
+would report a verdict that no cold build of the key gives (invariant 5).
+
+**BGA10: Deterministic archives.** An `archive` action **must** produce a
+non-thin archive whose member headers are deterministic: zero timestamps,
+owner and group, and a fixed mode (`D` on `llvm-ar`). An archive's and a
+link's outputs are then functions of the bytes they consume. So a compile
+whose outputs are byte-identical to an earlier one leaves every archive, link
+and test key downstream of it unchanged. That is the graph's early cutoff.
+
+_Rationale:_ a thin archive records its members' paths, not their bytes, so a
+changed member would leave the archive, and every link key that digests it,
+unchanged.
+
+**BGA11: Toolchain paths are remapped.** With a compiler that supports a prefix
+map, a compile **must** map the store paths of the compiler's import
+directories to a fixed prefix in debug information and `__FILE__`, with the
+same mechanism BGA5 uses. Those directories hold the druntime and Phobos
+sources. The toolchain's prebuilt druntime and Phobos **must** be built with
+the same map. No debug information or `__FILE__` in an output then names a
+druntime or Phobos source by its store path. A linked binary's interpreter and
+run path still name the C library, which this requirement does not cover.
+
+_Rationale:_ a Phobos `assert` records its source file's store path, so every
+binary that links Phobos keeps the whole toolchain alive in its Nix closure
+([D40](./decisions.md#d40-toolchain-store-paths-are-remapped-accepted)).
+
+## 5. Keys and the input manifest
+
+Each action has a **key**, a SHA-256 digest that identifies its result. A
+compile cannot know its exact inputs until it has run, so compile keys are
+computed in two steps, as ccache's direct mode does.
+
+**BGK1: The declared key.** An action's declared key **must** cover:
+
+- the action kind;
+- its argument vector, normalized per BGA6;
+- its declared environment;
+- the toolchain identity (§8);
+- the content digests of its declared inputs. For a compile, these are the
+  variant's own source files, the recipe files that resolved it, the generator
+  outputs it reads, and the digest of the file listing that version pruning
+  scanned (BGV1). For a link or archive, they are the outputs it consumes;
+- a format version. It changes with any change to this specification's key
+  layout, to how a manifest is extracted from the compiler's dependency
+  output, or to argument normalization (BGA6).
+
+_Rationale:_ a fix to manifest extraction leaves every key's layout as it was,
+yet results published before it may rest on incomplete manifests. Only a new
+format version retires them.
+
+**BGK2: The input manifest.** A compile **must** record a **manifest** of
+everything the compiler resolved. It lists every file the compiler read, each
+as a root-relative or store path with a content digest:
+
+- its own sources;
+- the modules it imported;
+- its string imports;
+- the C headers its ImportC sources included.
+
+It also lists every **absent candidate**: each path the compiler's D import or
+string import search probed and found missing before the path it resolved to,
+and every path probed by a lookup that failed. An absent candidate also stands
+for each missing parent directory on its path. The C preprocessor cannot
+report its failed lookups (`__has_include`, the includer's own directory,
+`#include_next`), so a compile with ImportC sources also keys on the paths and
+content digests of every file under its C include roots, as BGK6 does.
+
+The manifest comes from the compiler's dependency output. On LDC, that is
+`--makedeps` plus the fork's extensions for C headers and absent candidates
+([decisions.md](./decisions.md#d12-complete-dependency-output-in-the-ldc-fork)).
+
+- **Compiler-reported digests:** where the compiler's dependency output
+  carries the content digest of the bytes it read for each file, as the LDC
+  fork's does, the manifest **must** record those digests rather than digests
+  taken afterwards. A file's entry then describes what the compile read,
+  whenever the file changed.
+
+**BGK3: Several manifests per declared key.** The store **must** keep, under one
+declared key, a bounded list of manifests. Each manifest leads to its own
+**result key**: the digest of the declared key and the manifest's entries. A
+lookup **must** take the most recently used manifest whose every file entry
+matches the current digest and whose every absent candidate is still absent,
+and reuse its result. The list's bound is 16 by default, with least recently
+used manifests evicted first.
+
+_Rationale:_ two worktrees on different revisions of `sparkles:base` produce the
+same declared key for `sparkles:ui`'s compile but different manifests. Both
+must stay reusable.
+
+**BGK4: Precision.** Editing a file that no compile read **must not** change that
+compile's result key. So editing a module of `sparkles:base` that
+`sparkles:ui` never imports does not rebuild `sparkles:ui`'s variants. Creating
+a file at an absent candidate's path **must** change the result key.
+
+**BGK5: Digests are cached by identity.** File digests **may** be cached by the
+tuple (device, inode, size, modification time, change time). A cached digest
+**must not** be trusted when the file's modification or change time is not
+older than the time the digest was recorded, minus two seconds; such a file is
+rehashed. This is git's rule for racily clean index entries, with a margin
+that covers coarse kernel timestamps.
+
+- **The clock:** the recording time **must** be read from the clock of the
+  file system that holds the file: the modification time of a probe file the
+  build graph has just written there, in the store or in the worktree's
+  private git directory. Where it can write no probe on that file system, it
+  **must not** cache digests of files there.
+- **Future times:** a file whose modification time is later than the
+  recording time **must** be rehashed whenever it is read, and reported.
+
+_Rationale:_ the process clock and a file system's timestamps can disagree, on
+a network file system most of all, and a racy check that compares the two
+misses the edits it exists to catch.
+
+**BGK7: Inputs edited during a compile.** A compile **must** detect that a file
+it read changed while it ran, and a compile that detects one **must not**
+publish
+([D31](./decisions.md#d31-a-source-edited-during-a-compile-accepted)):
+
+1. **Before the compile:** for every file the most recently used manifest of
+   its declared key lists, it records a stat proxy (inode, size, modification
+   and change times in nanoseconds) and the file's digest. It takes its start
+   time from the file system's clock, as BGK5 does: the modification time of a
+   probe file it writes and stats.
+2. **After the compile:** it stats every file of the new manifest. A
+   **conflict** is any of:
+   - a file recorded before the compile whose stat proxy changed. When only
+     the change time changed, as a new hard link makes it, the file is
+     rehashed, and it conflicts only if its digest changed;
+   - a file the compile read that no earlier manifest listed, whose
+     modification or change time is at or after the start probe's;
+   - with compiler-reported digests (BGK2), a reported digest that differs
+     from the one recorded before the compile.
+3. **On a conflict:** the outputs serve the current run, which reports the
+   action as `unstable input`. Nothing from the action is written to the
+   local store or to any other: no result, manifest or digest-cache entry. The
+   next run therefore looks the action up afresh.
+4. **No rerun loop:** the action **must not** be rerun until it is stable. A
+   command in a watch mode **may** rerun it once.
+
+The stat check has a residual gap: an edit that keeps a file's size and lands
+within one timestamp tick of the read leaves the proxy unchanged. Only
+compiler-reported digests (BGK2), or compiling from a snapshot (BGS11), close
+it.
+
+_Rationale:_ a manifest digests each file after the compiler read it. An editor
+that saves a module mid-compile would pair the new digest with object code
+built from the old content, and every worktree on the machine would reuse that
+wrong result. Rerunning until stable can loop for as long as an editor
+autosaves.
+
+**BGK6: Incomplete dependency output.** If a compile's dependency output is
+missing, unparseable, or comes from a compiler that cannot list C headers or
+absent candidates, the action **must** key on its declared inputs plus the
+paths and content digests of every file under every import, C import and
+string import root it searches. Its result is published under that key and
+reported as conservatively keyed.
+
+**BGK8: Reads outside the declared roots.** A compile whose manifest lists a
+file outside all of the following **must** fail, and its result **must not**
+be published:
+
+- the source, import, C import and string import roots of its variant and of
+  its transitive dependencies, including the C import paths `pkg-config`
+  resolved (BGR5);
+- the outputs of the generators it depends on;
+- the toolchain (§8).
+
+The diagnostic names the file and the package whose directory holds it.
+
+_Rationale:_ an ImportC `#include "../other/x.h"` reaches another package with
+no recipe edge. BGR8 reads recipes, so it cannot see the reach, and selection
+would not rebuild the package's consumers when the header's owner changes.
+
+**BGK9: Library search inputs.** Library resolution and linking **must** key on
+what their searches did not find, as compiles do (BGK2):
+
+- **`pkg-config`:** the value of `PKG_CONFIG_PATH`, the directories searched,
+  and each `.pc` path found absent before the one used are inputs of every
+  action that uses the query's results.
+- **The link:** a link's declared key covers its `-L` search order. For every
+  library it links, including those that `pragma(lib)` names in its inputs,
+  the key covers the path the library resolved to and the candidates absent
+  before it in that order. Each library is resolved over the search order as
+  the linker does: a `-l` library at planning, and a library that
+  `pragma(lib)` names when the link is keyed, once the objects naming it
+  exist. The toolchain's own library directories are covered by toolchain
+  identity (§8).
+
+_Rationale:_ a `.pc` file or a library created earlier on a search path changes
+what an action uses without changing anything it read.
+
+## 6. The shared store
+
+The store's layout is:
+
+| Directory                  | Holds                                                  |
+| -------------------------- | ------------------------------------------------------ |
+| `<store>/results/<key>/`   | a published result: outputs, diagnostics, digests      |
+| `<store>/manifests/<key>`  | the manifest list of a declared key                    |
+| `<store>/records/<key>`    | the digest record of an evicted result (BGS5)          |
+| `<store>/preimages/<task>` | the declared-key preimage a task last published (BGS8) |
+| `<store>/leases/<key>/`    | one lease file per process using a result              |
+| `<store>/staging/`         | entries being written                                  |
+| `<store>/trash/`           | entries being evicted or discarded                     |
+
+**BGS1: One store per machine.** Results **must** live in one store per user and
+machine, under `$XDG_CACHE_HOME/sparkles/build` (`~/.cache/sparkles/build` when
+unset), shared by every worktree and process. `<store>` is that directory's
+`v<N>/` subdirectory, where `<N>` is the store's layout version (BGS10).
+
+**BGS2: Atomic publication.** A result **must** become visible only complete.
+
+- **Staging:** its outputs, diagnostics and manifest are written to a private
+  entry under `staging/`, so the publishing rename never crosses a file system.
+- **Results:** a result is published by one rename to `results/<key>`.
+- **Manifest lists:** a manifest list is replaced by writing a new list file and
+  renaming it over the old one.
+- **Durability:** before the publishing rename, the staged entry's files and
+  its directory are flushed to stable storage (`fsync`). After a crash, a
+  published entry is therefore complete or absent.
+- **Failure:** a failure to stage or to publish **must not** change the
+  action's outcome. The outputs serve the current run from where they were
+  written, and the failure is reported.
+
+A reader never observes a partial entry.
+
+**BGS3: Concurrent producers.** Two processes **may** compute the same result key
+at once. Correctness **must not** depend on a lock: the first rename wins.
+
+- **The loser adopts the winner:** the other producer **must** move its own
+  entry to `trash/` and continue from the published entry's outputs and
+  diagnostics, and so **must** every action that consumes its result.
+- **Nondeterminism:** if the loser's output digests differ from the published
+  entry's, it **must** report the action as nondeterministic, naming the
+  result key and each differing output.
+
+Concurrent manifest-list updates **may** lose an entry, which costs only a
+rebuild. A per-key advisory lock **may** suppress duplicate work.
+
+_Rationale:_ archive and link keys digest the bytes they consume (BGK1). A loser
+that kept its own outputs would key its dependents on bytes that no store
+holds.
+
+**BGS4: Leases.** A process **must** lease every result it looks up or
+publishes, and **must** hold the lease until its run ends.
+
+- **Lease files:** a lease is a file under `leases/<key>/`, named by the
+  holder's process id and start time. A lease whose holder is gone is
+  reclaimed.
+- **Lookup:** an action's lookup happens when the executor admits it (TDM7),
+  not when the graph is planned, so it sees what concurrent producers
+  published meanwhile. Lookup creates the lease, then checks that
+  `results/<key>` exists, then reads it. A missing entry is a miss.
+- **Read only:** outputs are read in place, and no process modifies a
+  published entry. An entry leaves `results/` only by the renames that
+  eviction, removal, replacement and corruption handling make.
+
+**BGS5: Eviction.** The store **must** enforce two configured size bounds, each
+by evicting its least recently used entries first:
+
+- **Results:** output bytes, 20 GiB by default.
+- **Records:** manifest lists, digest records and key preimages, 1 GiB by
+  default. Large results therefore never evict the small records that later
+  lookups need.
+
+A result's recency is the time a lease on it was last created (BGS4); the
+store does not read access times
+([D38](./decisions.md#d38-plain-lru-touched-at-lease-creation-accepted)).
+Eviction follows these rules:
+
+- **Off the publish path:** eviction runs when a bound is exceeded, in a task
+  of its own, and evicts down to 90 % of the bound. Publication never waits
+  for it.
+- **Leased overshoot:** a result with a live lease is never evicted, so the
+  store **may** exceed its bound while leases hold it. The overshoot is
+  reported, and eviction resumes when the leases end.
+- **Digest records:** evicting a result removes its output bytes but keeps a
+  record under its result key: its output digests and sizes, its diagnostics
+  and its exit status. A consumer whose key needs only those digests (BGK1)
+  reads them from the record, and a lookup that needs the bytes is a miss. An
+  action whose result is only recorded is executed only when an action that
+  misses needs its bytes. If that execution's output digests differ from the
+  record, the new digests replace it and the action is reported as
+  nondeterministic, as BGS3 reports.
+- **Manifests:** a manifest whose result is neither present nor recorded is a
+  miss, and is dropped from its list. A list left empty is removed.
+
+An eviction of a result:
+
+1. skips a result with a live lease;
+2. renames the result into `trash/` under a unique name;
+3. checks the leases again, and renames the result back if one appeared;
+4. discards it instead if its key has been republished meanwhile;
+5. writes its digest record.
+
+Garbage collection removes `trash/`, stale `staging/` entries, and the
+directories of older layout versions in which no lease is live.
+
+_Rationale:_ archive and link keys digest their inputs' outputs. Without the
+record, evicting an archive whose link result survives would force the archive
+to be rebuilt only to recompute a digest, and the link would then hit.
+
+**BGS6: Corruption.** An entry whose recorded digests do not match its files
+**must** be treated as a miss. It is renamed into `trash/` before it is
+deleted, so a concurrent publisher never meets a half-deleted directory, and
+a diagnostic is reported. Corruption is detected at three points:
+
+- **Every lookup** checks that each of the entry's declared outputs exists,
+  with its recorded type and size.
+- **A sample of hits,** one in 64 by default and chosen at random, also has
+  every recorded digest rehashed. The fraction is configurable, and a value of
+  one rehashes every hit.
+- **Verification** (BGS7) rehashes every entry it is asked to check.
+
+**BGS7: Inspection and repair.** The store **must** provide operations to:
+
+- report its size, and list entries by key, task and age;
+- collect garbage;
+- **verify** entries, by rehashing every recorded digest (BGS6);
+- **remove** the results of one result key, one task, one package, or one
+  toolchain identity, by moving them to `trash/`;
+- **replace** a result: execute its action with lookup bypassed, move the
+  published entry to `trash/`, and publish the new one;
+- run the determinism check (BGS9).
+
+Removal and replacement **must** wait for every live lease on an entry held by
+another process, as eviction does (BGS5 steps 1 and 3), and report the
+entries they wait for. The operating process's own leases do not hold it back.
+
+`apps/ci` exposes them as `ci cache` subcommands. The store's top directory,
+and the directory under which `ci` keeps its run directories, each hold a
+`CACHEDIR.TAG` file, as the
+[Cache Directory Tagging Specification](https://bford.info/cachedir/) defines,
+so backup tools skip them.
+
+_Rationale:_ a wrong result that passes every digest check, such as one keyed
+on an incomplete manifest, is never evicted by age while it keeps being used.
+Removal by toolchain identity retires every result a defective compiler
+built.
+
+**BGS8: Explaining a miss.** For every action it publishes, the store **must**
+keep the preimage of its declared key under the action's task id (BGA8): each
+component BGK1 lists, by name, with its value or digest. A task's newer
+preimage replaces its older one. On a miss, the build graph **must** classify
+it as one of:
+
+1. **declared:** no manifest list exists for the declared key. The
+   explanation names each component that differs from the task's recorded
+   preimage, or says that none is recorded.
+2. **manifest:** a list exists but no manifest matches. The explanation names,
+   for the most recently used manifest, its first file entry whose digest
+   differs, or its first absent candidate that now exists.
+3. **evicted:** a manifest matches, but its result is gone and no record
+   serves the lookup.
+
+Each miss is reported with its class. `ci cache explain <task>` plans the task
+and prints the classification of its lookup against the current tree and
+store, executing nothing. A value marked redacted (TDM4) **must** appear in a
+preimage only as a digest keyed with a secret private to the store, so that
+the preimage shows that the value changed without letting its value be
+guessed and checked.
+
+**BGS9: The determinism check.** The store **must** provide a check that
+re-executes a given set of actions **cold and unshared**:
+
+- **Cold:** each action runs with its own lookup bypassed, on the inputs its
+  published result was keyed on. A compile reads its sources from the tree,
+  which **must** still match the result's manifest; otherwise the action is
+  reported as not checkable, and is not compared. An archive, link or test
+  reads the outputs it consumes from the shared store.
+- **Unshared:** its outputs go to a private store, created empty for the check
+  and discarded after it, and never reach the shared store or a binary cache.
+
+The check compares each action's output digests, manifest, diagnostics and
+exit status with its published result. A difference **must** fail the check,
+name the action, its result key and each differing item, and remove the
+published result as BGS7's removal does. BGS3's nondeterminism reports feed the same report.
+
+_Rationale:_ a determinism check must run cold and unshared, or it tests the
+cache ([reproducibility](../../../research/build-systems/reproducibility.md)).
+Which actions are checked, and when, is the consumer's policy; `ci` checks a
+sample on every CI run
+([CIC13](../../ci/task-dag/SPEC.md#_1-3-ci-pipeline)).
+
+**BGS10: Format versions.** The store's layout version names its directory
+(BGS1), so two revisions of the build graph with different layouts use
+separate stores on one machine. Each entry, record and manifest list
+**must** record the format version of its own encoding. An entry in a format
+the reading process does not know is a miss, and is left in place for a
+process that does.
+
+**BGS11: Snapshots before sharing.** A result **must** be published to a store
+or cache shared beyond its machine only if its action read a snapshot of its
+inputs: the inputs ingested into content-addressed storage, hashed in the same
+pass that copies them, and the action run on a view materialized from that
+storage. Hard links into the tree are not a snapshot, because an editor that
+writes in place changes the linked file. The Nix backend satisfies this
+requirement (BGN2). The local backend's store is per machine (BGS1), and any
+remote cache it gains **must** meet this requirement first.
+
+_Rationale:_ a snapshot is the only design without a timestamp window, and a
+wrong result in a shared cache reaches every machine that uses it.
+
+The store also reports each lookup's outcome and miss reason, and keeps a
+bounded journal of evicted keys to tell an eviction from a first build
+([observability §4.1](../observability/SPEC.md#_4-1-the-cache-family)).
+
+## 7. Generators
+
+A **generator** is a tool the graph runs to produce files that a compile
+reads. There are three kinds:
+
+- **The shader compiler**, run as `preGenerateCommands` declare.
+- **A single-file D program** that a `preGenerateCommands` entry runs through
+  dub: the `dmd` registry package's `config.d` is one.
+- **The test-root module**, generated in-process (BGV2).
+
+**BGG1: Typed generators.** Each generator **must** be a typed `generate`
+action with declared inputs and declared outputs. Its tool is built by the
+graph, except an in-process generator, which has none. A `preGenerateCommands`
+entry that the resolver does not recognize as one of these kinds is a
+resolution error, never a shell command.
+
+**BGG2: Generated inputs replace in-tree paths.** A compile that reads generated
+files **must** read them from the generator's output directory and **must**
+depend on the generator action. Where the recipe names an in-tree output
+directory (such as `stringImportPaths "generated/shaders"`), the generator's
+output directory replaces that entry in the same position. The replacement is
+a recorded divergence from dub
+([decisions.md](./decisions.md#d8-generators-are-typed-nodes)).
+
+**BGG3: Generators take explicit inputs.** A generator invoked by the graph
+**must not** decide staleness itself; the cache decides. It receives its
+sources, import paths, output directory and tool paths as arguments, and it
+does not call dub or search `PATH`. The shader compiler gains a direct
+invocation mode for this, and its own specification
+([shaders build](../../shaders/build.md)) is amended with it.
+
+**BGG4: Generated sources have content-addressed paths.** A generated source
+that a compile names as a source file, such as an extracted documentation
+example, **must** live at a path derived from its content digest, so that its
+path, and with it `__FILE__`, is the same in every run.
+
+**BGG5: Generators that resolve imports.** A generator whose tool resolves
+imports, such as the shader compiler running LDC over D shader modules,
+**must** be keyed as a compile is: by a manifest of what its tool read and
+probed (BGK2–BGK3), or conservatively (BGK6) when the tool reports none.
+
+_Rationale:_ its declared inputs name the shader modules, not the modules they
+import, so a declared key alone would miss an edit to an imported one.
+
+**BGG6: Generator tools are host variants.** A generator's tool **must** be
+built as an application variant for the host platform, whatever the target
+platform of the variant that reads its outputs.
+
+## 8. Toolchain identity
+
+**BGT1: Identity.** The toolchain identity **must** cover:
+
+- the D compiler binary and the configuration file it uses, which the action
+  passes explicitly (`-conf=` on LDC);
+- the druntime and Phobos sources and libraries;
+- the C compiler driver that the D compiler invokes for preprocessing and
+  linking, the C library, startup objects and system headers;
+- the linker;
+- every generator tool;
+- for a test action, the **runner core** that runs it: the identity of the
+  `ci` build whose core drives the test binary. The test runner runs out of
+  process, and this item follows TRM8 of its process model
+  (`docs/specs/test-runner/process-model.md`).
+
+**BGT2: Store toolchains.** When a component resolves into a Nix store path, its
+identity **may** be that path's closure of store paths, without reading file
+contents. A wrapper script's referenced store paths are part of its closure.
+
+**BGT3: Host toolchains.** Otherwise, a component's identity **must** be the
+digests of the files BGT1 lists, found through the compiler's own reported
+configuration. It **may** be cached per BGK5.
+
+**BGT4: The pinned test runner (superseded).** Superseded by the test runner's
+out-of-process model, TRM8 and decision TRD9 in `docs/specs/test-runner/`:
+test binaries link only the shim, never the runner's implementation, and
+BGT1's runner-core item replaces this requirement. Its former text, not normative:
+
+> Every test root must link the pinned test runner's prebuilt library and
+> compile against its import directory. The test-runner shim,
+> `sparkles:test-runner`, stays an in-tree `sourceLibrary` that every package
+> depends on through an ordinary `dependency`. A change to the working tree's
+> test-runner implementation affects only that package's own tests until the
+> pin is bumped.
+
+## 9. Test actions and result reuse
+
+**BGX1: Test actions.** A test action runs a linked test binary with a declared
+argument vector, environment and working directory.
+
+- **Working directory:** the requesting worktree's repository root, whatever
+  the recipe's `workingDirectory` says. That directive governs only the run
+  actions of applications and examples.
+- **Outcome:** the binary's exit status and output.
+- **No dub:** a test binary **must not** run dub, and the test runner
+  **must not** fall back to it. The import paths, string import paths, dflags
+  and versions that its compile-time and extracted modes need are passed to it
+  as arguments, from the variant's resolved settings, together with a working
+  directory for its probe files inside the task's directory.
+
+**BGX2: Runtime inputs.** A test action's declared runtime inputs **must**
+include:
+
+- the source closure the binary reads at run time, such as fixtures named
+  through `__FILE_FULL_PATH__`;
+- the toolchain, when the test compiles;
+- the flake inputs it reads.
+
+**BGX3: Result reuse.** A test action's result **must not** be reused unless one
+of these holds, and otherwise every request runs it:
+
+- **Sandboxed:** it ran in the Nix sandbox (§10). Its output records the
+  machine it observed at run time: the kernel release, the CPU model and
+  features, and the system type. A reuse **must** compare them with the
+  machine the test would otherwise run on, and a mismatch is a miss: the
+  test runs again, without reuse. That machine is the requesting one for its
+  own system type, and for another system type any remote builder configured
+  for it.
+- **Declared:** the test declares every runtime input it reads, and the key
+  covers them.
+
+A test that needs the network is never reused.
+
+_Rationale:_ tests in this repository read the network, the kernel, `/proc`
+and flake inputs, and the Nix sandbox isolates none of the kernel's features. A
+reused result for an undeclared input reports a pass that was never observed.
+The machine facts are compared on reuse, not keyed, because Nix chooses the
+builder after the derivation's hash is fixed
+([D33](./decisions.md#d33-sandboxed-tests-record-the-machine-they-ran-on-accepted)).
+
+**BGX4: Shared verdicts.** A test result that BGX3 allows to be reused, and
+that BGS11 allows to leave its machine, **may** be published to a binary cache
+as a **shared verdict**: a flat content-addressed path whose content is its
+key, looked up by asking whether the path exists.
+
+- **The key:** the test's result key, plus the kernel release, the CPU model
+  and features, and the identity of the runner image, all as observed on the
+  machine that ran it. A requester computes the key with its own machine's
+  facts, so a verdict matches only a machine like the one it was observed on.
+- **Publishing:** only a run holding the cache's push credential publishes,
+  and only once every gating check of that run passed.
+- **A missing verdict** costs a run of the test, never a failure.
+
+A task skipped by a shared verdict carries the run-record id of the run that
+published it, as
+[observability OBD9](../observability/SPEC.md#_11-run-records) requires.
+
+_Rationale:_ BGX3 compares machine facts on reuse, but an existence query
+cannot compare anything, so the facts enter the key. The gate keeps a run whose
+other checks failed from vouching for its tests
+([D43](./decisions.md#d43-amendments-from-the-nix-generated-ci-pr-accepted)).
+
+## 10. The Nix backend
+
+The Nix backend lowers the same action graph to Nix derivations, so that
+`/etc/nix/machines` remote builders, the Nix store and binary caches execute
+and share it. It uses neither dynamic derivations, recursive Nix nor
+import-from-derivation: every derivation is known before any builds.
+
+**BGN1: Same graph.** The Nix backend **must** lower the actions §4 defines, with
+the same declared keys, argument vectors and declared outputs as the local
+backend, plus the separate measurement output
+([observability OBD8](../observability/SPEC.md#_11-run-records)).
+
+- **Staging helper:** each derivation's builder is a small, deterministic
+  staging helper. It copies or hard-links each store input, never symlinks it,
+  to its repository-relative path under a private root directory. It
+  hard-links an input only when the input and the private root are on one
+  mount, and copies it otherwise.
+- **The input list:** the helper reads the list of inputs to stage from a file
+  (`passAsFile`), never from an argument or an environment variable, which
+  `MAX_ARG_STRLEN` bounds.
+- **Other systems:** a derivation for another system type uses that system's
+  toolchain, whose identity enters its keys (§8).
+- **The argument vector:** the helper then runs the action's normalized
+  argument vector there, with the private root in the root placeholder's place
+  (BGA6), and that measurement output's directory in the measurement
+  placeholder's place. So the recorded paths are root-relative, exactly as in
+  the local backend.
+
+**BGN2: Sources.** A compile derivation's source inputs **must** be its declared
+inputs plus the complete file sets of the import, C import and string import
+roots it searches. Each enters the store as a content-addressed path that the
+build graph computes itself, hashing each file in the same pass that copies it,
+so the derivation reads a snapshot (BGS11). Whole-repository source copies are
+not used.
+
+An edit to any file under a searched root therefore re-runs the compiles that
+search it, unlike the local backend's manifest check (BGK4).
+
+A backend **may** narrow the inputs to a manifest that the local store holds
+for the same declared key, under these constraints
+([D32](./decisions.md#d32-nix-input-narrowing-is-kept-constrained-accepted)):
+
+- **Still absent:** it narrows only while every absent candidate of that
+  manifest is still absent.
+- **Checked afterwards:** the narrowed build's own dependency output **must**
+  list only files among its inputs, and only absent candidates that are
+  absent from the full roots too. Otherwise, or if the build fails, it is
+  rerun with the full roots.
+- **Never shared:** a narrowed derivation's outputs **must not** be pushed to
+  a shared store or binary cache.
+
+_Rationale:_ D searches import roots in order, so a file created earlier on the
+search path shadows the one the manifest resolved instead of failing. A
+narrowed build that omits it compiles the old module and succeeds. A narrowed
+derivation's identity also depends on the local store's history, which no
+other machine shares.
+
+**BGN3: Derivations without evaluation.** Derivations **must** be created
+directly from their description (`nix derivation add`). Nix expression
+evaluation is not on the build path.
+
+- **Lowering:** derivations are added in topological order and in batches,
+  and one already in the store is not added again.
+- **Dry run:** a dry run computes each derivation's store path in process,
+  without the Nix daemon, so it writes nothing (TDY2).
+
+**BGN4: Content addressing.** `compile`, `archive` and `link` derivations
+**should** be content-addressed (`ca-derivations`), so that a compile whose
+output is unchanged stops the rebuild of the archives and links that consume
+it. Where that feature is unavailable, the backend **must** fall back to
+input-addressed derivations and report it. That is the exception policy for
+this recommendation. `test` and `generate` derivations are input-addressed.
+
+_Rationale:_ a content-addressed derivation is a claim that equal inputs give
+equal bytes. A test's output records an observation, not a function of its
+inputs, and a generator tool's determinism is not checked by the graph.
+
+**BGN5: Agreement.** For the same declared key and manifest, the local backend
+and the Nix backend **must** produce interchangeable outputs. The measurement
+output ([observability OBD8](../observability/SPEC.md#_11-run-records)) is not
+compared. The agreement oracle in
+[testing.md](./testing.md#oracle-6-backend-agreement) checks it.
+
+**BGN6: Diagnostics in the output.** A derivation's output **must** hold the
+action's standard output, standard error and exit status. A derivation whose
+action failed in a way BGA9 publishes therefore succeeds, with the failure
+recorded, and the backend replays it as BGA7 requires. A test derivation that
+records a failure is never reused (BGA9).
+
+- **Reruns:** a test the backend must not reuse, because its output records a
+  failure or a machine that does not match (BGX3), is rerun by lowering it
+  again with one more environment attribute, naming the output it replaces.
+  The new derivation's path therefore differs, and Nix runs it instead of
+  substituting the old output.
+
+**BGN7: Garbage-collector roots.** A run **must** hold an indirect
+garbage-collector root for every store path it looks up or realises, from the
+lookup until the run ends. A concurrent `nix-collect-garbage` therefore cannot
+delete a result between its lookup and its use, as BGS4's leases ensure
+locally.
+
+**BGN8: Infrastructure failures.** A failure of the Nix machinery **must not**
+be recorded or reported as the action's result:
+
+- **Infrastructure:** an unreachable or crashed builder, a failed substitution
+  or copy, a lost connection, or a builder killed for memory. The backend
+  retries it, on another builder or locally, up to a bound, and reports it as
+  an infrastructure failure when the bound is reached.
+- **The action's own ending:** the staging helper reports the action's
+  timeout or termination by a signal distinctly. That is the action's outcome,
+  which BGA9 does not publish and the backend does not retry.
+
+An outcome recorded in an output by BGN6 is authoritative.
+
+_Rationale:_ a remote builder that dies mid-compile says nothing about the
+compile. Reporting it as a compile failure would fail a run, and publishing it
+would replay a failure no cold build gives (invariant 5).
+
+## 11. Public surface
+
+The library exposes these operations, under `sparkles.build_primitives`:
+
+- **resolve:** a recipe, configuration, build type and platform, to resolved
+  settings (§2);
+- **plan:** a set of requested roots and roles, to a validated action graph
+  with variant dedup and the layout lint (§§3–4);
+- **key:** an action, to its declared key, and a manifest, to its result key
+  (§5);
+- **store:** look up, lease, publish, inspect and collect garbage (§6);
+- **lower:** an action graph, to task nodes (BGA8) or to Nix derivations
+  (§10).
+
+Each operation returns its errors as values. Planning and keying read recipes,
+lex source files for version pruning and the layout lint, digest files and
+query `pkg-config`. They reach files only through the capability VFS, on the
+roots §12 names, and perform no other I/O.
+
+**BGP1: Planning's read set.** Planning **must** record its **read set** and
+report it with the plan:
+
+- every file it read or listed, with its content digest or listing digest;
+- every path it probed and found absent;
+- every symbolic link a lookup crossed, with its target (BGF3);
+- every environment variable it consulted;
+- every `pkg-config` query, with its arguments.
+
+The read set is what a plan depends on. A consumer that decides when to plan
+again, such as `ci`'s invalidator list
+([CIC5](../../ci/task-dag/SPEC.md#_4-selection-policy)), is checked against it.
+See [D37](./decisions.md#d37-planning-records-its-read-set-accepted).
+
+## 12. File-system access
+
+The build graph reaches the file system only through the
+[capability VFS](../../base/vfs/SPEC.md): a held directory handle and one name
+beneath it, never a path resolved from the process's root. Its listings are
+[fileset](../filesets/SPEC.md) resolutions answered through that VFS. The
+processes an action starts are outside this section: a compiler, linker,
+generator or test reads paths, and the manifest and BGK8 check what it read.
+
+**BGF1: Every operation through the VFS.** Every file-system operation the
+build graph performs itself **must** be a VFS operation on a handle
+([VFO3](../../base/vfs/SPEC.md#vfo3-the-operation-set)), on a backend its
+caller supplies ([VFB1](../../base/vfs/backends.md#vfb1-the-concept)):
+`RingVfs` for operations the task-DAG executor runs on its event loop,
+`BlockingVfs` for planning in a process without one, and `MemVfs` in tests.
+This covers:
+
+- reading recipes and lockfiles (§2), and lexing sources (BGV1, BGV5);
+- digesting files and probing absent candidates (BGK2, BGK5, BGK9), and the
+  stat proxies of BGK7;
+- creating action output and measurement directories (BGA3);
+- every store operation (§6).
+
+No module of the build graph **may** call `std.file`, open a `std.stdio.File`,
+or make a system call that names a path.
+
+**BGF2: The roots.** The only directories the build graph opens with
+`openRoot` ([VFH7](../../base/vfs/SPEC.md#vfh7-the-ambient-constructor))
+**must** be these, each once per run:
+
+| Root                                                          | Rights                          | Policy               |
+| ------------------------------------------------------------- | ------------------------------- | -------------------- |
+| the worktree                                                  | read-only                       | `symlinks = beneath` |
+| the store, `<store>` (BGS1)                                   | all; entries created owner-only | the default          |
+| the worktree's private git directory (BGK5)                   | create, write, remove           | the default          |
+| each pinned registry source directory (BGR4)                  | read-only                       | the default          |
+| each directory a `pkg-config` query or a link searches (BGK9) | read-only                       | the default          |
+| each host toolchain directory (BGT3)                          | read-only                       | `symlinks = beneath` |
+
+Every other access descends from one of them, and the read set (BGP1) names
+each entry by its root and the path beneath it.
+
+_Rationale:_ a read-only worktree makes invariant 6 a property of the types:
+no planning or keying code holds a handle that can write the source tree. A
+fixed set of roots makes everything the graph can reach enumerable, and every
+escape from it findable by searching for `ambientAuthority(`.
+
+**BGF3: Links in the worktree.** A committed relative link whose target stays
+in the worktree **must** resolve
+([VFP5](../../base/vfs/SPEC.md#vfp5-beneath)); `ui-app`'s link to its
+resilience catalog is one
+([D24](./decisions.md#d24-a-test-reads-a-specification-through-a-link-accepted)).
+A link that is absolute or climbs above the worktree **must** fail planning
+with the VFS's `escapesRoot`, naming the link. The read set records every link
+a lookup crossed, with its target, so retargeting a link changes the plan.
+
+**BGF4: Store operations.** The store **must** mutate itself with the VFS's
+primitives on handles beneath `<store>`:
+
+- **Publication** moves a staged entry into `results/` with `renameAt`, which
+  cannot leave the store's root
+  ([VFO8](../../base/vfs/SPEC.md#vfo8-rename-stays-in-one-root)).
+- **Manifest lists, preimages and digest records** are written with
+  `writeFileAtomic` ([VFO9](../../base/vfs/SPEC.md#vfo9-atomic-write)).
+- **Eviction and discard** remove trees with `removeTree`, which never
+  descends a link ([VFD2](../../base/vfs/SPEC.md#vfd2-never-descend-a-link)).
+
+The store's root refuses links
+([VFP4](../../base/vfs/SPEC.md#vfp4-no-symlinks)). A link planted in the
+store fails the lookup that meets it with `symlinkRefused`, and BGS6 treats
+its entry as corrupt.
+
+**BGF5: Listings are filesets.** Every directory listing the build graph
+makes, such as a source root's modules, the string import roots that pruning
+scans (BGV1), and a generator's declared input directories (BGG3), **must** be
+a fileset resolved by the fileset driver over the root that holds it
+([FSD1](../filesets/SPEC.md#_11-drivers-fsd)). The graph walks no directory
+itself, and the listing digests BGP1 records come from the resolution.
+
+**BGF6: Identity for digest caching.** BGK5's cache tuple and BGK7's stat
+proxies **must** come from the VFS's `Stat`, with the file identity and the
+change time requested in its mask
+([VFO6](../../base/vfs/SPEC.md#vfo6-stat)). A tuple decides only whether a file
+is read again; it never stands in for a handle.
+
+See [D44](./decisions.md#d44-the-build-graph-reaches-files-through-the-vfs-accepted).

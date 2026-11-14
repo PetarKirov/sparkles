@@ -424,6 +424,52 @@ Writing `RingVfs` and moving event-horizon onto the VFS changed six things.
 - **`AmbientAuthority` is readable.** `granted()` lets an API outside base, such
   as event-horizon's `Watcher.addWatch`, check the token in its contract.
 
+### DV31: A file's identity, and a directory's own `stat`
+
+[`VFO6`](./SPEC.md#vfo6-stat) specified a file's identity on its device
+behind the stat mask, and the plan left it for the build graph's digest
+cache. The filesets' cycle check
+([D6](../../build-primitives/filesets/decisions.md#d6-a-symlink-cycle-under-symlinks-beneath-accepted))
+needed it first, for directories, so two things were added.
+
+- **`StatMask.identity` fills `Stat.inode`**, with `hasIdentity` saying it
+  was asked for, as `hasMtime` does: `st_ino` from `fstatat`, `stx_ino`
+  from `statx`, the file index from `GetFileInformationByHandle`, and on
+  `MemVfs` a node's index, which is fixed for the node's lifetime. With the
+  device it tells whether two handles name one file. The change time stays
+  planned.
+- **A `Dir` has `stat(mask)`**, the `fstat` a `File` already had, under the
+  `stat` right ([`VFO3`](./SPEC.md#vfo3-the-operation-set)). A directory
+  opened through a followed link can then say which directory it is, which
+  `statAt` on its parent cannot: that stats the link, never its target
+  ([`VFO2`](./SPEC.md#vfo2-the-named-entry-is-never-followed)).
+
+### DV32: The change time
+
+The filesets' subtree cache
+([M7](../../build-primitives/filesets/PLAN.md#m7-the-subtree-cache)) reuses
+a file's digest only when its `stat` still matches, which made the change time
+from [`VFO6`](./SPEC.md#vfo6-stat) the next thing to deliver.
+
+- **`StatMask.change` fills `Stat.ctimeNs`**, and `hasCtime` says that it was
+  requested. It comes from `st_ctim` from `fstatat` (`st_ctimespec` on
+  macOS), `stx_ctime` from `statx`, and on Windows the `ChangeTime` of
+  `FILE_BASIC_INFORMATION`. `GetFileInformationByHandle` has no change time,
+  so that request costs one more query.
+- **On POSIX, it is the time that cannot be put back.** `touch -r`,
+  `rsync -t` and an archive extractor all set the modification time. Every
+  change sets the change time to the current time instead, so a cache that
+  compares it notices a rewrite whose size and modification time were put
+  back. Windows is the exception: `SetFileInformationByHandle` with
+  `FileBasicInfo` sets `ChangeTime` as readily as the other times. So a
+  `Stat` reports `ctimeSettable`, true on the NT backend, and a cache must
+  not trust a change time that is settable.
+- **`MemVfs` stamps changes with a clock its caller moves.** `clockNs` starts
+  at zero and moves only when the caller sets it. Creating an entry, a write,
+  a truncation, `writeFile`, `rename` and `setMtime` each record its value.
+  Two changes at one value fall in one tick, which is how a test reproduces a
+  file system with coarse timestamps.
+
 ## Open
 
 ### O3: Where `O_NOFOLLOW_ANY` is available

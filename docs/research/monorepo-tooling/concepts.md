@@ -3,7 +3,7 @@
 The cross-cutting vocabulary the rest of this survey leans on. Where a per-tool
 [deep-dive](./) instantiates a feature in concrete config, this page defines the
 _concept_ once — workspace topology, dependency isolation, local cross-references,
-the task DAG, caching/remote execution, and lockfiles — and maps the 44 surveyed
+the task DAG, caching/remote execution, and lockfiles — and maps the 45 surveyed
 tools onto each axis. Every term is grounded in a real tool; follow the cross-link
 to its deep-dive for the mechanics.
 
@@ -346,7 +346,7 @@ lockfile and version catalog.
 ## Sources
 
 - Per-tool primary sources are cited in each [deep-dive](./); this page synthesizes
-  the 44-tool catalog into shared definitions.
+  the 45-tool catalog into shared definitions.
 - Structural models: async-io's [primitives][async-primitives] and
   [techniques][async-techniques] (the layered-vocabulary pattern), and the
   [coroutines concepts][coroutines-concepts] doc.

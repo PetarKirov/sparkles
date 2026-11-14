@@ -241,6 +241,7 @@ _Loop-side_ modules may import anything.
 | `live`             | loop-side    | ring-backed capability implementations (`RingClock`, `RingNet`, `RingProc`), the process spawn machinery (§13), and the `Env` row                                       |
 | `proc`             | effects-side | process vocabulary (`StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`), `isProc`, `SimProc` (§13)                                                                 |
 | `channel`          | effects-side | `Channel!T` — bounded intra-worker fiber channel (§14)                                                                                                                  |
+| `admission`        | effects-side | `Admission` — a counted budget of units with a reserved share, `tryAcquire` and parking `acquire` (§14.2)                                                               |
 | `vfs`              | loop-side    | `RingVfs`, the capability VFS backend over the loop, and the `fs` member of the row (§10.5)                                                                             |
 | `signals`, `watch` | loop-side    | concrete ring-driven modules (M7): `SignalFd`, `Watcher`; concept seams follow demand (§10.3)                                                                           |
 | `group`            | loop-side    | `LoopGroup`, `LoopGroupConfig`, `Topology` (§11)                                                                                                                        |
@@ -1152,9 +1153,10 @@ yields an interrupt outcome ("you cannot silently drop a cancel").
 For a fiber parked on I/O, the installed cancel function does **not** wake
 the fiber; it submits `ASYNC_CANCEL` for the awaited op on the owner ring
 (via a group message when invoked cross-worker). The single wake is always
-the terminal CQE. For non-I/O parks (a `JoinHandle.join` — the only non-I/O
-park in v1; a cross-fiber channel primitive is a recognized gap, see
-[open-issues](./open-issues.md) O20), the cancel function latches the
+the terminal CQE. For non-I/O parks — a `JoinHandle.join`, a `Channel`'s
+`put` or `take` (§14), and an interruptible `sparkles.base.sync` wait through
+the fiber parker, which `CrossChannel` uses across workers (§14.1;
+[open-issues](./open-issues.md) O20) — the cancel function latches the
 interrupt and wakes immediately.
 
 ### 8.5 In-flight cancellation state machine
@@ -1716,13 +1718,18 @@ double; the spawn machinery (`ChildProcess`, `spawnProcess`, `spawnPty`,
 `wait`) and the `RingProc` handler are loop-side in `live` (all re-exported
 by `package`, so consumer spellings do not change).
 
-**Delivery status.** §§13.1–13.4 describe the shipped M15 POSIX baseline.
-Today it is publicly re-exported and tested on Linux; kqueue has a shipped
-`EVFILT_PROC` reap lowering, but the process modules are not yet exported or
-covered by the package test suite on macOS. Windows has no process surface:
-its IOCP backend currently covers sockets, timers, and wakes only. §§13.5–13.8
-shipped in M19 on Linux (the `supervise`, `sampling`, `cgroup` and
-`blocking_pool` modules); §13.9 and the `apps/ci` port remain M19 targets — see
+**Delivery status.** §§13.1–13.4 describe the shipped M15 POSIX baseline. It
+is publicly re-exported and tested on Linux and macOS; on macOS the reap
+lowers to `EVFILT_PROC`. On Windows, §13.9 shipped in M19: `live_windows`
+(spawn, wait, kill), the Job Object sampler and `supervise` are exported and
+run the supervision cases on native Windows (`windows-latest`); under Wine,
+which lacks the wait packets, only the cases that need no process wait run.
+`capture`, `RingProc` and the `liveEnv` row are shared by both (module
+`live_shared`), and `spawnPty`/`resizePty` run over ConPTY there. §§13.5–13.8 shipped
+in M19 (the `supervise`, `sampling`, `cgroup` and `blocking_pool` modules).
+The supervision suite runs on Linux and native macOS; macOS has no
+containment tier, so it supervises by process group, and it samples through
+libproc. The `apps/ci` port remains an M19 target — see
 [PLAN M19](./PLAN.md#m19--cross-platform-supervised-processes-for-appsci) for
 the delivery status.
 
@@ -1874,7 +1881,8 @@ can never depend on a resource acquired afterwards.
 Portability as shipped: io_uring lowers `OpWaitid` to `WAITID`; kqueue lowers
 it to `EVFILT_PROC`/`NOTE_EXIT` and closes the register-vs-exit race with a
 `waitpid(WNOHANG)` back-check. The kqueue lowering is not yet reachable through
-the public package import. IOCP process waits are an M19 target (§13.9). The
+the public package import. IOCP lowers the wait to a wait completion packet on
+the process handle (§13.9). The
 descriptor is portable-shaped; peer backends implement it without changing
 the fiber-level wait contract.
 
@@ -1897,6 +1905,26 @@ are ignored for a PTY spawn: all three point at the slave. The master is an
 `OwnedFd` like any other — `apps/terminal`'s per-frame `EAGAIN` drain
 becomes one parked ring read (the `pty-drain` example, completed by the
 in-ring reap that `forkpty` could not offer).
+
+On Windows (§13.9) the PTY is a ConPTY (`CreatePseudoConsole` of the
+requested size, resized by `ResizePseudoConsole`), fed through two uniquely
+named pipes whose parent ends are overlapped and ride the port. A
+pseudoconsole takes its input and output on separate pipes, so `ptyMaster`
+reads the console's output (VT sequences) and input is written to `stdinW`.
+End of input is in-band, as on a POSIX tty (`^D` at the start of a line):
+Ctrl-Z then Enter (`"\x1a\r"`) makes the child's console read return no
+bytes, and a reading child exits cleanly. Closing `stdinW` is not end of
+input but a hangup: conhost ends the session and the child dies of the
+console's close event (`STATUS_CONTROL_C_EXIT`, `0xC000013A`). Both are
+tested.
+The child inherits no handle; its console is the ConPTY. It is started with
+`STARTF_USESTDHANDLES` and null standard handles, so a parent whose own stdio
+is redirected never hands those handles to a console child: the child's
+stdio is the pseudoconsole (tested from a parent with all three streams on
+pipes). The reap closes the
+pseudoconsole, which ends conhost and so the output pipe: the master is
+drained concurrently, as a terminal does, and reaches EOF after the reap.
+ConPTY is resolved at run time (`ENOSYS` where it is missing).
 
 ### 13.4 The proc capability
 
@@ -2353,41 +2381,104 @@ after its completion, including when cancellation arrived meanwhile. The
 parked frame therefore remains the ordinary lifetime proof. `Sched` owns or is
 bound to one pool rather than constructing a pool per operation.
 
-### 13.9 Windows lowering (target M19)
+### 13.9 Windows lowering (M19)
 
-Windows process parity is native Win32, not a POSIX emulation:
+Windows process parity is native Win32, not a POSIX emulation (module
+`live_windows`, re-exported by `live`; the research behind it is
+[Windows IOCP Waits, Timers & Jobs](../../research/async-io/windows-iocp-waits.md)):
 
 - spawn uses `CreateProcessW`; argv is encoded with the documented
-  `CommandLineToArgvW` inverse quoting rules, strings/cwd are UTF-16, and the
-  double-NUL environment block is case-insensitively sorted after applying
-  §13.1's overlay;
-- the child is created suspended, assigned to a per-run Job Object, then
-  resumed, so descendants cannot escape between creation and supervision;
-  inability to assign the requested job fails spawn and terminates/reaps the
+  `CommandLineToArgvW` inverse quoting rules (the program name by that
+  function's first-token rule, so it may not contain a quote), strings/cwd are
+  UTF-16, and the double-NUL environment block is case-insensitively sorted
+  after applying §13.1's overlay. The PATH search is §13.1's, over the child's
+  PATH: each candidate is attempted by `CreateProcessW`, a bare name gets
+  `.exe`, a relative candidate resolves against the child's cwd, neither the
+  parent's directory nor its cwd is searched implicitly, and batch files are
+  refused (they are run as `cmd.exe /c …` explicitly);
+- the child is created suspended, assigned to its own Job Object, then
+  resumed, so no child instruction runs outside the job and descendants cannot
+  escape it; inability to assign fails spawn and terminates/reaps the
   suspended child;
-- piped streams use uniquely named pipes whose parent ends are opened with
-  `FILE_FLAG_OVERLAPPED` and associated with the scheduler's IOCP. Child ends
-  alone are inheritable; `STARTUPINFOEXW` plus a handle list prevents accidental
+- piped streams use uniquely named single-instance pipes rejecting remote
+  clients, whose parent ends are opened with `FILE_FLAG_OVERLAPPED` and
+  associated with the scheduler's IOCP. Child ends alone are inheritable;
+  `STARTUPINFOEXW` plus `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` prevents accidental
   inheritance. `ReadFile`/`WriteFile` completions use the ordinary op-slot
   lifetime rule (§4.3), including `CancelIoEx` terminal completion;
-- process exit uses one `RegisterWaitForSingleObject` registration. Its callback
-  posts the wait result to IOCP; unregister and process/thread-handle closure
-  happen only after that completion is consumed. The process exit code is read
-  once and represented as `ExitStatus(signaled: false, code: value)`;
-- the Job Object has `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. `newProcessGroup`
-  additionally requests `CREATE_NEW_PROCESS_GROUP`; graceful termination sends
-  `CTRL_BREAK_EVENT` when the child has a compatible console group. If no
-  console control channel exists, the graceful stage records that no soft
-  signal was deliverable and still observes the configured grace. Hard kill is
-  `TerminateJobObject`, covering the whole descendant tree;
-- sampling uses `QueryInformationJobObject` accounting and process/memory
-  classes. If Job Object accounting is unavailable, the sample has
+- process exit is `OpWaitHandle` on the process handle: one wait completion
+  packet (`NtCreateWaitCompletionPacket` + `NtAssociateWaitCompletionPacket`)
+  associated with the scheduler's port, whose APC context is the op's
+  `OVERLAPPED`, so the exit dequeues like any completion — no threadpool wait,
+  no callback, no helper thread. Cancellation is
+  `NtCancelWaitCompletionPacket(…, TRUE)`: `STATUS_SUCCESS` synthesizes the
+  target's `ECANCELED`, any other status leaves delivery to the queued packet.
+  The packet is closed only after its pickup or a successful cancel. The
+  process handle is not consumed by the wait and pins identity until the reap;
+  the reap reads the exit code once, as
+  `ExitStatus(signaled: false, code: value)`, then closes the process and job
+  handles. The exports are resolved at
+  run time; where any is missing (installed Wine) the `waitid` capability bit is
+  clear, the op is a terminal `EOPNOTSUPP`, and there is no polling or
+  threadpool fallback;
+- the Job Object has `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so the reap ends
+  any descendant still in it; `ResidualPolicy.detach` clears the limit before
+  the reap, and `ResidualPolicy.wait` is refused (no populated evidence, as on
+  the non-cgroup POSIX tiers). `newProcessGroup` additionally requests
+  `CREATE_NEW_PROCESS_GROUP` (`supervise` always does); graceful termination
+  sends `CTRL_BREAK_EVENT` to the child's group when the child is attached to
+  this process's console (`GetConsoleProcessList`) — never a console-wide
+  broadcast. If no console control channel exists, the graceful stage records
+  `softSignalUndelivered` and still observes the configured grace. Hard kill
+  is `TerminateJobObject`, covering the whole descendant tree and nested jobs;
+  a killed child's status is `ExitStatus(false, 1)`;
+- sampling uses `QueryInformationJobObject`: basic-and-I/O accounting
+  (cumulative user/kernel CPU over every member, exited ones included, and the
+  active-process count), the extended limit information, and the job's
+  process-id list, each member read with `K32GetProcessMemoryInfo`. The two
+  memory measures stay apart: `peakCgroupMemoryBytes` is **commit** — the job's
+  own `PeakJobMemoryUsed`, `exact`, the container-level peak like a cgroup's
+  `memory.peak`; `peakRssBytes` is **working set**, the RSS-like measure, over
+  the **whole tree** — the peak over samples of the members' summed working
+  sets, raised to the largest single member's kernel-kept `PeakWorkingSetSize`
+  (the root's through its own handle, valid after its exit until the reap).
+  Both terms are lower bounds of the tree's true summed peak, so its quality is
+  `lowerBound` (source `rusage`). A member is opened by id and counted only when
+  `IsProcessInJob` confirms it, so a recycled id never is. CPU is tick-sampled
+  and so a `lowerBound`. If Job Object accounting is unavailable, the sample has
   `sampled == false`; wall time remains valid.
+
+IOCP timers follow the same bridge: a software timer list whose earliest
+deadline (and the caller's wait deadline) arms one
+`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION` timer, connected to the port by one
+persistent wait packet that is re-associated after each pickup and consumed
+inside the dequeue. A port-wait timeout is quantised to the clock interval
+(~15.6 ms by default); the timer wakes within about 0.5 ms. The rounded-up
+port timeout remains the backstop, and is the whole mechanism where the timer
+class or the packet exports are missing, or when `BackendConfig.coarseTimers`
+forces it for A/B measurement.
+
+A native Win32 message host (`runHostedOnce`; `wsi`'s Win32 backend) blocks in
+`MsgWaitForMultipleObjectsEx` on one handle, and that handle is the completion
+port itself. A mirror event cannot carry wait packets: the kernel queues a
+packet without setting any event, and a packet cannot target a port (the
+association is refused), so the alternatives left were a helper thread or a host
+wait that misses exits and timers. A port is a waitable dispatcher object —
+signalled while any packet is queued, and not consumed by the wait — so I/O,
+posts, wake-ups and every wait packet wake the host, and no reset/drain
+ordering is needed (`prepareNativeHostDrain` is empty). Completions the backend
+synthesizes (fallback-path timers, cancel acknowledgments, rejections) never
+sit on the port: `nativeHostWaitTimeout` returns zero while they await the
+reap, and arms the high-resolution timer for the earliest software deadline so
+that its packet, not the rounded timeout, ends the host's wait.
 
 There are no anonymous blocking pipes, polling `PeekNamedPipe`, helper wait
 loops, or per-process threads in the Windows path. IOCP remains the single I/O
-wait. This Windows work does not alter Linux backend selection: Linux continues
-to require `io_uring` with no epoll fallback (§3.4).
+wait. The termination-critical lane (§13.8) holds the one blocking fallback —
+a `WaitForSingleObject` reap taken only after an in-ring wait failed — and the
+observer-failure probes, as on POSIX. This Windows work does not alter Linux
+backend selection: Linux continues to require `io_uring` with no epoll
+fallback (§3.4).
 
 ## 14. Channels
 
@@ -2398,8 +2489,8 @@ input-fiber → UI-fiber handoffs of §15.3).
 
 ```d
 /// Bounded intra-worker SPSC-ish channel (any number of fibers may put or
-/// take, but all belong to ONE executor — cross-worker channels are the
-/// M9 MSG_RING work). Capacity is fixed at creation.
+/// take, but all belong to ONE executor — across workers, use
+/// `CrossChannel`, §14.1). Capacity is fixed at creation.
 struct Channel(T, uint N = 16)
 {
     IoResult!void put(X)(ref X exec, T item);   // parks while full
@@ -2420,6 +2511,126 @@ loss on graceful shutdown. Elements move in and out (`T` need not be
 copyable). The channel itself is address-pinned like every intrusive
 structure (§8.1): create it in a frame that outlives all users — scope
 join order makes that natural.
+
+### 14.1 Cross-worker channels
+
+Module `cross_channel`. `CrossChannel!(T, N)` has `Channel`'s semantics —
+fixed capacity, close-then-drain, cancellation checkpoints, move-only
+elements, address-pinned — for producers and consumers on any workers of a
+`LoopGroup` or `WorkStealingPool`, and on threads no scheduler runs, such as
+`BlockingPool` jobs.
+
+```d
+struct CrossChannel(T, uint N = 16)
+{
+    // Fibers of an executor that installs the fiber parker (`hasFiberParker`):
+    IoResult!void put(X)(ref X exec, T item); // checkpoint; parks while full
+    IoResult!T take(X)(ref X exec);           // checkpoint; parks while empty
+    // Any thread; parks through the caller's current base.sync parker:
+    IoResult!void put(T item);
+    IoResult!T take();
+    bool tryPut(ref T item);   // non-parking; moves `item` out only on success
+    bool tryTake(out T item);  // non-parking
+    void close();              // idempotent: put fails EPIPE; take drains, then EPIPE
+    bool closed();
+    uint length();
+    uint parkedPutters();      // snapshots, for tests and diagnostics
+    uint parkedTakers();
+}
+```
+
+It adds no wake mechanism of its own. The ring buffer, its count, the closed
+flag and the parked counts are guarded by one `sparkles.base.sync.Mutex`, and
+the two sides wait on two `Condition`s, "not full" and "not empty". A wait
+therefore parks through the caller's current parker
+([fiber-parker.md](./fiber-parker.md) EFP1). A fiber of a `Sched` suspends
+alone, and a wake from another worker or thread reaches its owner through the
+parker's inbox or ring path (EFP9, EFP12). A thread outside any scheduler
+sleeps on the thread parker. Nothing spins, sleeps or polls, and the channel
+works on every backend that has the parker (`io_uring`, kqueue, IOCP).
+
+- **Critical sections never suspend.** Holding the `Mutex` pins the caller
+  (base.sync SYK9), and the channel only moves one element and notifies
+  inside it. A waiting fiber's `Condition` wait drops the lock, and with it
+  the pin, before it sleeps.
+- **Notification.** A put notifies one "not empty" waiter, and a take one
+  "not full" waiter. Both notify with the lock held, so the waiter is moved
+  onto the mutex's queue rather than woken into contention (SYC5). `close`
+  notifies every waiter on both conditions.
+- **Cancellation** follows §8.4. The fiber verbs check the latched interrupt
+  before they lock, as `Channel` does, so they are checkpoints even when they
+  do not park. A parked fiber waits with `Condition.waitInterruptible`, so
+  the parker's one-shot cancel function resumes it (EFP14), and the verb
+  returns `ECANCELED` without touching the buffer. A wait that reports
+  cancelled was not selected by a notification (SYC7), so no notification is
+  lost to a cancelled waiter. A waiter that is selected and also cancelled
+  reports the notification: a selected taker takes, a selected putter
+  stores, and cancellation is observed at the next checkpoint (EFP16).
+- **Exactly once.** Every slot transition happens under the lock, so each
+  stored element is moved out by exactly one take. A put that fails stores
+  nothing, and a take that fails removes nothing.
+- **Threads.** The thread verbs have no up-front checkpoint and park with the
+  same interruptible waits. On the thread parker those waits never report
+  cancelled, so a thread's verbs fail only with `EPIPE`. A fiber may call
+  them too, and observes cancellation only when it parks.
+- **Teardown.** The channel must outlive every user. Close it, then join
+  every scope that puts or takes, then destroy it. Destruction with a waiter
+  still parked is a defect, which an assertion reports. Elements still
+  buffered are destroyed with the channel.
+
+The executor-gated fiber verbs exist because the single-threaded `TestSched`
+has no fiber parker: there, a `Condition` wait would block its only thread.
+Deterministic single-executor code keeps using `Channel`.
+
+### 14.2 Admission
+
+Module `admission` (effects-side). `Admission` is a counted budget of units —
+in-flight operations, slots, bytes, descriptors — that work acquires before
+it starts and releases when it ends. It is the one primitive behind the loop's
+op-slot budget, the fork server's request slots (§17) and `Channel`'s
+capacity, and the admission budget a fileset resolution and its schemes share
+([filesets FSS6](../build-primitives/filesets/SPEC.md#8-the-scheme-seam-fss),
+[decision A6](../build-primitives/filesets/decisions.md#a6-the-admission-budget-belongs-to-event-horizon)).
+
+```d
+struct Admission
+{
+    this(uint capacity, uint inUse = 0);
+    bool tryAcquire(uint n = 1, bool reserved = false); // never waits
+    void release(uint n = 1, bool reserved = false);    // wakes who now fit
+    IoResult!void acquire(X)(ref X exec, uint n = 1);   // parks while short
+    void reserve(uint n);  // hold n units back for reserved acquisitions
+    void close();          // wakes every parked fiber
+    uint capacity() const; uint inUse() const; uint available() const;
+    uint reserved() const; uint reservedInUse() const;
+    bool closed() const;   uint parked() const;
+}
+```
+
+- **Reserved units.** An ordinary acquisition never takes a reserved unit,
+  and a reserved acquisition takes only reserved units, so whoever holds the
+  reserve never finds the budget exhausted by others: the loop's held op
+  slots (fiber-parker.md EFP22).
+- **Order.** First come, first served. A release hands its units to
+  waiters from the head while they cover them, and a smaller request behind
+  the head does not overtake it. A woken fiber's units are charged to it
+  before it runs, so nothing taken in between leaves it short and it never
+  parks again. A fresh `acquire` parks behind the fibers already parked,
+  even when the units it asks for are free. A reserve that shrinks hands on
+  the units it frees, as a release does. `tryAcquire` does not queue: it
+  takes only units no waiter was handed, which may be units a large request
+  at the head is still waiting to accumulate.
+- **Leaving the queue.** An interrupted waiter gives back any units it was
+  handed, which go on to the next waiters; one that leaves the head without
+  them lets the requests behind it be considered. Either way no waiter stays
+  parked while units it fits are free and nobody ahead of it waits.
+- **Closing.** `close` is idempotent and wakes every parked fiber. An
+  acquisition that finds enough free units still succeeds, so a channel's
+  buffered items drain; one that would have to wait fails with `EPIPE`.
+- **Cancellation** follows §8.4: `acquire` checks the latched interrupt
+  before every attempt and parks through the one-shot cancel discipline, so
+  it is a checkpoint, and an interrupted fiber gets `ECANCELED`.
+- Like `Channel`, it is address-pinned and belongs to one executor.
 
 ## 15. The UI event loop
 

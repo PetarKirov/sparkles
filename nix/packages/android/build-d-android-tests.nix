@@ -1,14 +1,13 @@
 # `legacyPackages.buildDAndroidTests`: a D package's unittests as one Android
-# executable per ABI, run by sparkles:test-runner — the same runner, flags and
-# output as `dub test`, pushed to a device or emulator with adb.
+# executable per ABI, pushed to a device or emulator with adb. A device has no
+# runner executable, so the binary runs its tests in sparkles:test-harness's
+# fallback: one at a time, with plain-text lines (test-runner process-model
+# §7, open issue O16).
 #
 # Raw ldc2, as in build-d-android-lib.nix: dub cannot drive a cross build, so
 # this derivation writes the `dub_test_root` module dub would generate (every
 # module under `testedDirs`, `package.d` excepted, as dub omits it) and hands it
-# to `-i` together with the runner's two halves: the shim's registration module
-# and the impl's entry module, which `-i` cannot reach through the `extern(C)`
-# seam between them. `libs/ui/src` stays off the import path; the runner's
-# reports degrade to plain text without it.
+# to `-i` together with the shim's registration module.
 { inputs, lib, ... }:
 let
   # Whether this system can build Android at all (./host.nix).
@@ -25,12 +24,14 @@ in
     let
       ndk = config.legacyPackages.androidNdk;
       sources = config.legacyPackages.sparklesSources;
-      # The runner and the libraries its impl imports (sparkles:base and its
-      # closure); its sparkles:ui dependency is left out on purpose (above).
+      # The in-binary half of the runner (shim, harness, attributes) and
+      # sparkles:base's closure.
       runnerDirs = sources.libsClosure [ "base" ] ++ [
         "libs/test-runner/src"
-        "libs/test-runner-impl/src"
+        "libs/test-harness/src"
+        "libs/test-attributes/src"
         "libs/profiling/src"
+        "libs/profiling-counters/src"
       ];
     in
     lib.optionalAttrs (androidHost system).supported {
@@ -114,7 +115,6 @@ in
                 ${toString (map (d: ''-I="$(echo dub-imports/${d.name}/*/source)" -i=-${d.name}'') dubDeps)} \
                 -i dub_test_root.d \
                 libs/test-runner/src/sparkles/test_runner/register.d \
-                libs/test-runner-impl/src/sparkles/test_runner/runner_impl.d \
                 ${toString (map (d: "dub-imports/${d.name}-${t.abi}.a") dubDeps)} \
                 ${toString (extraLinkFlags t)} \
                 -link-defaultlib-shared=false ${linkFlags} -L-llog -L-lm -L-ldl \

@@ -280,6 +280,8 @@ enum StatMask : ubyte
 {
     basic = 0,     /// kind, executable bit, size, device
     mtime = 1 << 0, /// also the modification time
+    identity = 1 << 1, /// also the file's identity on its device
+    change = 1 << 2, /// also the status-change time
 }
 
 /// The metadata of one entry, never of a link's target (VFO6).
@@ -291,6 +293,21 @@ struct Stat
     ulong device;     /// the file system holding the entry
     bool hasMtime;    /// whether `mtimeNs` was requested and filled
     long mtimeNs;     /// nanoseconds since the Unix epoch
+    bool hasIdentity; /// whether `inode` was requested and filled
+    /// The file's identity on `device`: the inode on POSIX, the file index
+    /// on Windows. With `device`, it tells whether two handles name one file.
+    ulong inode;
+    bool hasCtime;    /// whether `ctimeNs` was requested and filled
+    /// The status-change time, in nanoseconds since the Unix epoch: `st_ctime`
+    /// on POSIX, `ChangeTime` on Windows. A change to the file's content or
+    /// metadata sets it to the current time. On POSIX no call sets it to any
+    /// other value, so unlike the modification time it cannot be put back.
+    long ctimeNs;
+    /// Whether a caller can set `ctimeNs` to a value of its choosing: on
+    /// Windows, any handle with write-attributes access can set `ChangeTime`
+    /// through `SetFileInformationByHandle`. A cache that relies on the change
+    /// time not being put back must not trust one that is settable.
+    bool ctimeSettable;
     version (Posix)
         uint permissions; /// the mode's permission bits
 }

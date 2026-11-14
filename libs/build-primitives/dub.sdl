@@ -13,22 +13,40 @@ dflags "-preview=in" "-preview=dip1000"
 // `dub_recipe` reads `dub.sdl` through wired's SDLang reader. wired depends
 // only on `sparkles:base`, so this closes no dependency cycle.
 dependency "sparkles:wired" path="../.."
+// The task-DAG executor and process actions (`task.executor`, `task.process`)
+// run on Event Horizon. Event Horizon depends only on `sparkles:base` and
+// `sparkles:event-horizon-sys`, so this closes no cycle either.
+dependency "sparkles:event-horizon" path="../.."
+// The plain reporter writes CI-provider groups and masks. A leaf package.
+dependency "sparkles:ci-provider" path="../.."
+// Recipe resolution checks dub version ranges against SemVer. versions
+// depends only on `sparkles:base`, so this closes no cycle.
+dependency "sparkles:versions" path="../.."
+// Fileset patterns compile to fuzzy's bounded Thompson NFA (filesets
+// decision A3). fuzzy depends only on `sparkles:base`, so this closes no cycle.
+dependency "sparkles:fuzzy" path="../.."
 
 configuration "library" {
     targetType "library"
     // `testing.d` hosts the git-repository fixtures and is the only module
-    // needing `sparkles:test-utils`; excluding it here keeps test helpers out
-    // of every consumer's closure.
-    excludedSourceFiles "src/app.d" "src/sparkles/build_primitives/testing.d"
+    // needing `sparkles:test-utils`; `task/testing.d` is the task-DAG fake
+    // driver; `fileset/testing.d` holds the fileset oracles, and
+    // `content_addressing/testing.d` the content-addressing ones. Excluding them
+    // keeps test helpers out of every consumer's closure.
+    excludedSourceFiles "src/app.d" "src/sparkles/build_primitives/testing.d" "src/sparkles/build_primitives/task/testing.d" "src/sparkles/build_primitives/fileset/testing.d" "src/sparkles/build_primitives/content_addressing/testing.d"
 }
 
-// The library plus `testing.d`, for a consumer whose *tests* want the
-// repository fixtures. Select it from the consumer's unittest configuration
-// with `subConfiguration "sparkles:build-primitives" "testing"`; never from a
+// The library plus the test helpers (`testing.d`, `task/testing.d`), for a
+// consumer whose *tests* want the repository fixtures or the task-DAG fake
+// driver. Select it from the consumer's unittest configuration with
+// `subConfiguration "sparkles:build-primitives" "testing"`; never from a
 // shipped configuration, or the test helpers travel with the binary.
 configuration "testing" {
     targetType "library"
-    excludedSourceFiles "src/app.d"
+    // The fileset and content-addressing oracles are tests, not helpers, and
+    // need the test runner, which a consumer's closure does not give this
+    // package.
+    excludedSourceFiles "src/app.d" "src/sparkles/build_primitives/fileset/testing.d" "src/sparkles/build_primitives/content_addressing/testing.d"
     dependency "sparkles:test-utils" path="../.."
 }
 
@@ -42,6 +60,22 @@ configuration "unittest" {
     dependency "sparkles:test-utils" path="../.."
 
     dflags "-checkaction=context" "-allinst"
+}
+
+// Linux allocation audit of fileset evaluation (invariant 2): the test module
+// wraps the libc allocation family and compares druntime's per-thread GC
+// counter. Separate, so GNU ld's --wrap is never imposed on a consumer.
+// Run with `dub test :build-primitives -c allocation-audit`.
+configuration "allocation-audit" {
+    excludedSourceFiles "src/app.d"
+
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:base" path="../.."
+    dependency "sparkles:test-utils" path="../.."
+
+    versions "FilesetAllocationAudit"
+    dflags "-checkaction=context" "-allinst"
+    lflags "--wrap=malloc" "--wrap=calloc" "--wrap=realloc" platform="linux"
 }
 
 // BEGIN managed build types — apps/ci/tools/standardize-build-settings.d

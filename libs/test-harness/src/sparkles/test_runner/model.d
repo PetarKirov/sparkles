@@ -1,0 +1,129 @@
+/**
+ * Data model of the test runner: descriptions of discovered tests and the
+ * results of executing them.
+ *
+ * Everything here is runtime data — the compile-time discovery that produces
+ * it lives in $(MREF sparkles,test_runner,discovery).
+ */
+module sparkles.test_runner.model;
+
+import core.time : Duration;
+
+import sparkles.test_runner.attributes : CacheRegime, ThreadAffinity;
+
+/// Source location of a `unittest` block, from `__traits(getLocation)`.
+/// The file path is as the compiler saw it (usually relative to the package
+/// root that `dub test` runs in).
+struct TestLocation
+{
+    string file;
+    size_t line, column;
+}
+
+/// Special handling a test opted into via the attributes in
+/// $(MREF sparkles,test_runner,attributes).
+struct TestTraits
+{
+    bool isBetterC;
+    bool isCtfe;
+    bool isWasm;
+    bool isBenchmark;
+    bool isWorkload;
+
+    /// The test is `@slow`: `--skip-slow` leaves it out, `--only-slow` keeps
+    /// only such tests.
+    bool isSlow;
+
+    /// The test is `@serial`: it runs alone, after the parallel tests, on
+    /// the thread `serialAffinity` asks for.
+    bool isSerial;
+
+    /// Where a `@serial` test runs (see `serial.threadAffinity`).
+    ThreadAffinity serialAffinity;
+
+    /// The test asserts it needs nothing linked from its own module, so the
+    /// extracted `--better-c` / `--wasm` program leaves that module out
+    /// (see `betterC.selfContained`). One flag covers both modes: a test
+    /// marked self-contained under either is self-contained under both.
+    bool selfContained;
+
+    /// Fixed benchmark iteration count; `0` auto-scales.
+    uint benchIterations;
+
+    /// Workload window rep count; discovery clamps it to ≥ 1
+    /// (see `workload.reps`). Meaningful only when `isWorkload`.
+    uint workloadReps;
+
+    /// The workload's requested page-cache regime (see `workload.regime`).
+    CacheRegime workloadRegime;
+
+    /// The test's safety/purity attributes (`"@safe pure nothrow @nogc"`),
+    /// re-applied to extracted `@betterC`/`@wasm` test functions.
+    string functionAttributes;
+}
+
+/// One discovered `unittest` block.
+struct Test
+{
+    /// Fully qualified name of the unittest symbol,
+    /// e.g. `sparkles.base.buffer.__unittest_L42_C1`.
+    string fullName;
+
+    /// Display name: the first string UDA, or the symbol identifier.
+    string name;
+
+    TestLocation location;
+    TestTraits traits;
+
+    /// The unittest function itself; `null` in a runner's copy of the
+    /// listing.
+    void function() ptr;
+
+    /// The test's position in discovery order: its id on the runner
+    /// protocol (process-model TRP13).
+    size_t id;
+
+    /// The module part of `fullName` (everything before the last `.`).
+    string moduleName() const @safe pure nothrow @nogc return scope
+    {
+        foreach_reverse (i, c; fullName)
+            if (c == '.')
+                return fullName[0 .. i];
+        return fullName;
+    }
+}
+
+@("Test.moduleName")
+@safe pure nothrow @nogc
+unittest
+{
+    static immutable t = Test(fullName: "pkg.mod.__unittest_L1_C1", name: "x");
+    assert(t.moduleName == "pkg.mod");
+    static immutable noDot = Test(fullName: "lonely", name: "x");
+    assert(noDot.moduleName == "lonely");
+}
+
+/// One `Throwable` (possibly chained) caught while executing a test.
+struct Thrown
+{
+    string type;
+    string message;
+    string file;
+    size_t line;
+    immutable(string)[] info;
+}
+
+/// The outcome of executing one test at runtime.
+struct TestResult
+{
+    Test test;
+    bool succeeded;
+    bool skipped; /// the body called `skipTest` — neither passed nor failed
+    string skipReason;
+    Duration duration;
+    immutable(Thrown)[] thrown;
+    bool stackBudgetExceeded; /// body crossed the 384 KiB worker-stack watermark
+    /// What the test wrote to its standard output and error, as the runner
+    /// read it from the worker (process-model TRP24).
+    string output;
+}

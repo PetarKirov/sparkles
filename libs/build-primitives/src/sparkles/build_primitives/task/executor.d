@@ -1,0 +1,1194 @@
+/++
+The task executor ([SPEC TDM7, TDE1, TDC1–TDC6, TDD1](../../../../../../docs/specs/build-primitives/task-dag/SPEC.md)):
+weighted admission with exclusive keys, conditional edge resolution, outcomes,
+the event stream, structured fail-fast, external cancellation, and protected
+cleanup.
+
+The executor knows actions only through an $(I action driver), and events
+only through an $(I event sink). It is generic over the Event Horizon fiber
+executor `X` and clock `C`, so the same code runs on the live `Sched` inside
+a `LoopGroup` and on `TestSched` under a `TestClock`:
+
+$(LIST
+    * A driver `D` provides `TaskOutcome run(ref TaskContext!X)`, called on the
+        task's own fiber ($(LREF isActionDriver)).
+    * A sink `S` provides `put(ref X, TaskEvent)` returning an `IoResult`:
+        the intra-worker `Channel`, or the cross-worker channel once the
+        reporter runs elsewhere ($(LREF isEventSink)). The executor is its only
+        producer; it never closes it.
+)
+
+Admission ([SPEC TDM8]): ready tasks are considered in presentation
+order — the graph's index order, by `PresentationKey` then `TaskId`. A task
+starts when its exclusive keys are free and its weight, clamped to the
+capacity, fits. A ready task that waits for $(I capacity) stops admission of
+every later task until it starts — no backfilling past it — so a heavy task
+cannot be starved by a stream of light ones. A task that waits only for a
+key does not hold back the rest. A task whose fiber cannot be spawned (the
+fiber slab is full) fails at once as `Failed(spawnFailed, ENOBUFS)`.
+
+Fail-fast ([SPEC TDC2]): the first authoritative failure — the lowest index
+among those that complete in the same turn — emits `CancellationRequested`
+once, closes admission, and interrupts every running task except cleanup.
+A task decided after admission closed becomes `Blocked` when its block
+descends from a failure, otherwise `Cancelled(notAdmitted)`. Cleanup tasks
+(`TaskKind.cleanup`) still start once ready and run under `protect`. A
+provisional failure never triggers fail-fast.
+
+A task the executor interrupted that then reports `Failed` is recorded as
+`Cancelled(interrupted)`: a child killed because the run was cancelled adds
+no failure of its own.
++/
+module sparkles.build_primitives.task.executor;
+
+import core.lifetime : move;
+import core.stdc.errno : ENOBUFS, EPIPE;
+import core.time : Duration, MonoTime;
+import std.sumtype : match;
+
+import sparkles.event_horizon.cause : FiberContext, Interrupt, InterruptKind, interruptFiber,
+    interruptRequested;
+import sparkles.event_horizon.channel : Channel;
+import sparkles.event_horizon.capability : isFiberExecutor;
+import sparkles.event_horizon.scope_ : OnChildFailure, protect, ScopeOptions, withScope;
+
+import sparkles.build_primitives.task.graph;
+import sparkles.build_primitives.task.model;
+
+/// Whether `D` can run a task's action on executor `X`.
+enum bool isActionDriver(D, X) = __traits(compiles, (ref D d, ref TaskContext!X ctx) {
+    TaskOutcome outcome = d.run(ctx);
+});
+
+/// Whether `S` accepts the executor's events on executor `X`: the shape of
+/// `Channel.put` and of the cross-worker channel.
+enum bool isEventSink(S, X) = __traits(compiles, (ref S s, ref X x, TaskEvent e) {
+    auto r = s.put(x, move(e));
+    bool failed = r.hasError;
+});
+
+/// What a driver sees of the task it runs.
+struct TaskContext(X)
+{
+    X* exec;                 /// the executor the task's fiber runs on
+    TaskIndex task;          ///
+    const(TaskNode)* node;   ///
+
+    private void delegate(TaskIndex, OutputStream, scope const(char)[], bool) outputFn;
+    private void delegate(TaskIndex, ulong, Duration) usageFn;
+
+    /// Reports one assembled output line (without its terminator); the
+    /// executor numbers it and forwards it as a `TaskOutput` event.
+    void output(OutputStream stream, scope const(char)[] line, bool unterminated = false)
+        => outputFn(task, stream, line, unterminated);
+
+    /// Reports a resource-usage sample.
+    void usage(ulong rssBytes, Duration cpu) => usageFn(task, rssBytes, cpu);
+
+    /// Whether the run asked this task to stop: a cancellation checkpoint
+    /// for in-process actions.
+    bool cancelRequested() => interruptRequested(*exec.currentContext());
+}
+
+/// Executor settings.
+struct ExecutorOptions
+{
+    /// Total weighted capacity (`--jobs`); at least 1.
+    uint capacity = 1;
+    /// Stop admission and cancel on the first authoritative failure.
+    bool failFast;
+}
+
+/// What a run produced.
+struct RunResult
+{
+    /// One terminal outcome per task, by index.
+    TaskOutcome[] outcomes;
+    /// The primary cause: the triggering failure under fail-fast, else the
+    /// lowest-index task whose outcome fails the command. Invalid when none.
+    TaskIndex primaryFailure;
+    /// Why the run was cancelled, when it was.
+    bool cancelled;
+    CancelCause cancelCause; /// meaningful when `cancelled`
+    /// `0` success, `1` failure, `130` SIGINT, `143` SIGTERM ([SPEC TDC5]).
+    int exitCode;
+}
+
+/**
+Runs `graph` to completion on `exec` and returns every task's outcome.
+Must be called from a fiber of `exec`. Events go to `sink`; the caller closes
+it afterwards so the reporter drains and ends.
+*/
+RunResult runGraph(X, C, D, S)(ref X exec, ref C clock, const ref TaskGraph graph, ref D driver,
+    ref S sink, ExecutorOptions options)
+if (isFiberExecutor!X && isActionDriver!(D, X) && isEventSink!(S, X))
+{
+    auto executor = TaskExecutor!(X, C, D, S)(&exec, &clock, &graph, &driver, &sink, options);
+    return executor.run();
+}
+
+/**
+The executor's state for one run: address-pinned, so it can hand its own
+methods to task fibers as delegates. $(LREF runGraph) is the usual entry;
+hold an instance to call $(LREF cancel) from another fiber (a signal
+watcher).
+*/
+struct TaskExecutor(X, C, D, S)
+{
+    @disable this();
+    @disable this(this);
+
+    /// Prepares a run; nothing starts until $(LREF run).
+    this(X* exec, C* clock, const(TaskGraph)* graph, D* driver, S* sink, ExecutorOptions options)
+    in (options.capacity > 0, "--jobs must be positive")
+    {
+        this.exec = exec;
+        this.clock = clock;
+        this.graph = graph;
+        this.driver = driver;
+        this.sink = sink;
+        this.options = options;
+        const n = graph.nodes.length;
+        outcomes = new OutcomeSlot[n];
+        state = new TaskState[n];
+        fibers = new FiberContext*[n];
+        interrupted = new bool[n];
+        streamSeq = new ulong[2 * n];
+        chunkSeq = new ulong[n];
+        started = new MonoTime[n];
+    }
+
+    /**
+    Requests external cancellation ([SPEC TDC5]): emits `CancellationRequested`
+    with `cause` (unless the run is already cancelling), closes admission,
+    and interrupts running tasks. Callable from any fiber of the executor.
+    */
+    void cancel(CancelCause cause)
+    {
+        if (cancelling)
+            return;
+        externalCause = cause;
+        externalRequested = true;
+        // Wake the scheduler if it is parked; a full channel means it is
+        // not, and it checks the flag on its next turn.
+        cast(void) completions.tryPut(Completion(TaskIndex.init));
+    }
+
+    /// Runs the graph; see $(LREF runGraph).
+    RunResult run()
+    {
+        emit(TaskEventPayload(GraphPlanned(graph.nodes.length, graph.edges.length, options.capacity)));
+        free = options.capacity;
+
+        auto scoped = withScope!((ref sc) {
+            for (;;)
+            {
+                if (externalRequested && !cancelling)
+                    requestCancellation(externalCause, TaskIndex.init);
+                resolve();
+                admit((TaskIndex t) { spawnTask(sc, t); });
+                if (running == 0)
+                    break;
+                // One completion parks; the rest of this turn's are drained
+                // without parking, so simultaneous failures are compared.
+                auto first = completions.take(*exec);
+                if (first.hasError)
+                {
+                    // The scheduler fiber itself was interrupted (an outer
+                    // shutdown): cancel the run, then keep collecting under
+                    // protection so every child is accounted for.
+                    protect!(() {
+                        if (!cancelling)
+                            requestCancellation(CancelCause.terminate, TaskIndex.init);
+                        drainProtected((TaskIndex t) { spawnTask(sc, t); });
+                    })(*exec);
+                    break;
+                }
+                Completion[] batch = [move(first.value)];
+                Completion more;
+                while (completions.tryTake(more))
+                    batch ~= more;
+                finishBatch(batch);
+            }
+        })(*exec, ScopeOptions(onFailure: OnChildFailure.collect));
+
+        RunResult result;
+        result.outcomes = new TaskOutcome[outcomes.length];
+        foreach (i, slot; outcomes)
+        {
+            assert(!slot.isNull, "the run ended with an undecided task");
+            result.outcomes[i] = slot.get;
+        }
+        result.cancelled = cancelling;
+        result.cancelCause = cancelCause;
+        result.primaryFailure = primaryCause;
+        // TDC3: the lowest-index authoritative failure, never a task blocked
+        // by one (a dependent can sort before its prerequisite); a block
+        // that fails the command stands in only if no failure does.
+        foreach (blocks; [false, true])
+            foreach (i, ref outcome; result.outcomes)
+            {
+                if (result.primaryFailure.valid)
+                    break;
+                if (failsCommand(outcome) && (blocks || kindOf(outcome) == OutcomeKind.failed)
+                    && graph.nodes[i].failurePolicy == FailurePolicy.authoritative)
+                    result.primaryFailure = TaskIndex(cast(uint) i);
+            }
+        if (cancelling && cancelCause == CancelCause.interrupt)
+            result.exitCode = 130;
+        else if (cancelling && cancelCause == CancelCause.terminate)
+            result.exitCode = 143;
+        else
+            result.exitCode = result.primaryFailure.valid || scoped.hasError ? 1 : 0;
+        emit(TaskEventPayload(RunFinished(result.exitCode)));
+        return result;
+    }
+
+private:
+    enum TaskState : ubyte { pending, ready, running, done }
+
+    static struct Completion
+    {
+        TaskIndex task; // invalid: a wake-up, not a completion
+        TaskOutcome outcome;
+    }
+
+    X* exec;
+    C* clock;
+    const(TaskGraph)* graph;
+    D* driver;
+    S* sink;
+    ExecutorOptions options;
+
+    Channel!(Completion, 64) completions;
+    OutcomeSlot[] outcomes;
+    TaskState[] state;
+    FiberContext*[] fibers;
+    bool[] interrupted;
+    ulong[] streamSeq; // 2 per task: stdout, stderr
+    ulong[] chunkSeq;
+    MonoTime[] started;
+    bool[string] heldKeys; // membership only; never iterated
+    uint free;
+    size_t running;
+    ulong sequence;
+    bool sinkGone;
+    // The sink's one producer turn: the holder numbers its event and puts
+    // it, parking on backpressure while it holds the turn. The turn is
+    // handed over in arrival order — a ticket per delivery, served one at a
+    // time — so a producer that delivers again without parking queues
+    // behind the ones already waiting, rather than taking the turn back
+    // before they run (an `Admission` wakes a waiter without handing it the
+    // unit). A task printing a long burst would otherwise hold the
+    // scheduler off, and with it every completion, fail-fast and `cancel`.
+    ulong nextTicket, servingTicket;
+    // The parked holders of tickets `servingTicket + 1 .. nextTicket`, in
+    // ticket order.
+    FiberContext*[] turnQueue;
+
+    void takeTurn()
+    {
+        const ticket = nextTicket++;
+        if (ticket == servingTicket)
+            return;
+        turnQueue ~= exec.currentContext();
+        // Parked with no cancel hook, so only `passTurn` wakes it.
+        while (servingTicket != ticket)
+            exec.park();
+    }
+
+    void passTurn()
+    {
+        ++servingTicket;
+        if (turnQueue.length == 0)
+            return;
+        auto next = turnQueue[0];
+        turnQueue = turnQueue[1 .. $];
+        exec.wake(next);
+    }
+
+    bool cancelling;
+    CancelCause cancelCause;
+    TaskIndex primaryCause;
+    bool externalRequested;
+    CancelCause externalCause;
+
+    void emit(TaskEventPayload payload, string text = null)
+    {
+        deliver(() => payload, text);
+    }
+
+    // Numbers and delivers one event (TDM12). Producers — the scheduler
+    // fiber and every task fiber — take turns: a put parks while the sink is
+    // full, and a producer that found room meanwhile would otherwise
+    // overtake it with a later number. So the number (and the payload's
+    // task-local numbers, from `make`) is drawn only once the turn is held,
+    // and delivery order is numbering order.
+    //
+    // Delivery is not a cancellation checkpoint. The producers are the
+    // fibers the run interrupts — a task on fail-fast or `cancel`, the
+    // scheduler on an outer shutdown — and the events they still owe
+    // (`TaskFinished`, `CancellationRequested`, `RunFinished`) are the ones
+    // a reporter needs most. So the turn and the put run under `protect`,
+    // and only a closed sink (`EPIPE`) ends delivery: a reporter that stops
+    // early closes its source (`consumeEvents`), which wakes a parked put.
+    void deliver(scope TaskEventPayload delegate() make, string text)
+    {
+        if (sinkGone)
+            return;
+        protect!(() {
+            takeTurn();
+            scope (exit)
+                passTurn();
+            if (sinkGone)
+                return;
+            auto event = TaskEvent(sequence++, clock.now(), make(), text);
+            // A closed sink stops receiving; the run itself carries on.
+            const put = sink.put(*exec, move(event));
+            if (put.hasError && put.error.code == EPIPE)
+                sinkGone = true;
+        })(*exec);
+    }
+
+    // Spawns task `t`'s fiber. A rejected spawn — the executor's fiber slab
+    // is full — settles the task at once as a failure to start, through the
+    // ordinary completion path, so its weight and keys are released and
+    // fail-fast sees it.
+    void spawnTask(Sc)(ref Sc sc, TaskIndex t)
+    {
+        if (!sc.spawn(() { runTask(t); }))
+            finishBatch([Completion(t, TaskOutcome(Failed(FailureReason.spawnFailed, ENOBUFS)))]);
+    }
+
+    void finish(TaskIndex t, TaskOutcome outcome, Duration elapsed = Duration.zero)
+    {
+        outcomes[t.value] = outcome;
+        state[t.value] = TaskState.done;
+        emit(TaskEventPayload(TaskFinished(t, outcome, elapsed)));
+    }
+
+    bool isCleanup(TaskIndex t) const @safe pure nothrow @nogc
+        => (*graph)[t].kind == TaskKind.cleanup;
+
+    // Decides every pending task whose prerequisites are terminal, in
+    // topological order, so a decision cascades within one pass.
+    void resolve()
+    {
+        foreach (t; graph.topologicalOrder)
+        {
+            if (state[t.value] != TaskState.pending)
+                continue;
+            const r = readiness(*graph, t, outcomes);
+            final switch (r.kind)
+            {
+                case ReadinessKind.waiting:
+                    break;
+                case ReadinessKind.blocked:
+                    // Under cancellation a block becomes a cancellation,
+                    // except where TDM6 keeps it: a failure's descendant,
+                    // or an unneeded fallback (TDC2 item 4).
+                    if (cancelling && !r.blocked.fromFailure
+                        && r.blocked.reason != BlockReason.conditionUnmet && !isCleanup(t))
+                        finish(t, TaskOutcome(Cancelled(CancelReason.notAdmitted)));
+                    else
+                        finish(t, TaskOutcome(r.blocked));
+                    break;
+                case ReadinessKind.cancelled:
+                    finish(t, r.outcome);
+                    break;
+                case ReadinessKind.ready:
+                    if (cancelling && !isCleanup(t))
+                    {
+                        finish(t, TaskOutcome(Cancelled(CancelReason.notAdmitted)));
+                        break;
+                    }
+                    state[t.value] = TaskState.ready;
+                    emit(TaskEventPayload(TaskReady(t)));
+                    break;
+            }
+        }
+    }
+
+    // Starts ready tasks in index (presentation) order.
+    void admit(scope void delegate(TaskIndex) spawn)
+    {
+        foreach (i; 0 .. cast(uint) state.length)
+        {
+            if (state[i] != TaskState.ready)
+                continue;
+            const t = TaskIndex(i);
+            if (cancelling && !isCleanup(t))
+            {
+                finish(t, TaskOutcome(Cancelled(CancelReason.notAdmitted)));
+                continue;
+            }
+            const claim = (*graph)[t].resources;
+            bool keyBusy;
+            foreach (key; claim.exclusiveKeys)
+                if (key in heldKeys)
+                    keyBusy = true;
+            if (keyBusy)
+                continue;
+            const weight = claim.admittedWeight(options.capacity);
+            if (weight > free)
+                break; // no backfilling past a task waiting for capacity
+            free -= weight;
+            foreach (key; claim.exclusiveKeys)
+                heldKeys[key] = true;
+            state[i] = TaskState.running;
+            ++running;
+            started[i] = clock.now();
+            emit(TaskEventPayload(TaskStarted(t)));
+            spawn(t);
+        }
+    }
+
+    // The body of a task's fiber.
+    void runTask(TaskIndex t)
+    {
+        fibers[t.value] = exec.currentContext();
+        TaskOutcome outcome;
+        scope (exit)
+        {
+            fibers[t.value] = null;
+            cast(void) protect!(() => completions.put(*exec, Completion(t, outcome)))(*exec);
+        }
+        auto ctx = TaskContext!X(exec, t, &(*graph)[t], &onOutput, &onUsage);
+        if (isCleanup(t))
+            outcome = protect!(() => driveCatching(ctx))(*exec);
+        else if (cancelling)
+            outcome = TaskOutcome(Cancelled(CancelReason.interrupted));
+        else
+            outcome = driveCatching(ctx);
+    }
+
+    TaskOutcome driveCatching(ref TaskContext!X ctx)
+    {
+        try
+            return driver.run(ctx);
+        catch (Exception)
+            return TaskOutcome(Failed(FailureReason.contract));
+    }
+
+    void onOutput(TaskIndex t, OutputStream stream, scope const(char)[] line, bool unterminated)
+    {
+        auto seq = &streamSeq[2 * t.value + stream];
+        deliver(() => TaskEventPayload(TaskOutput(t, stream, (*seq)++, chunkSeq[t.value]++, unterminated)),
+            line.idup);
+    }
+
+    void onUsage(TaskIndex t, ulong rss, Duration cpu)
+    {
+        emit(TaskEventPayload(TaskUsage(t, rss, cpu)));
+    }
+
+    void finishBatch(Completion[] batch)
+    {
+        TaskIndex firstFailure;
+        foreach (ref c; batch)
+        {
+            if (!c.task.valid)
+                continue; // a cancellation wake-up
+            const i = c.task.value;
+            auto outcome = c.outcome;
+            if (interrupted[i] && kindOf(outcome) == OutcomeKind.failed)
+                outcome = TaskOutcome(Cancelled(CancelReason.interrupted));
+            // A cancellation nothing asked for — neither the run nor an outer
+            // shutdown of the scheduler — has no cause to control the exit
+            // status (SPEC §3.4, TDC3), so the command would pass over work that
+            // never finished: it is the action's failure.
+            else if (kindOf(outcome) == OutcomeKind.cancelled && !interrupted[i] && !cancelling
+                && !interruptRequested(*exec.currentContext()))
+                outcome = TaskOutcome(Failed(FailureReason.contract));
+            const claim = (*graph)[c.task].resources;
+            free += claim.admittedWeight(options.capacity);
+            foreach (key; claim.exclusiveKeys)
+                heldKeys.remove(key);
+            --running;
+            finish(c.task, outcome, clock.now() - started[i]);
+            if (kindOf(outcome) == OutcomeKind.failed
+                && (*graph)[c.task].failurePolicy == FailurePolicy.authoritative
+                && (!firstFailure.valid || c.task < firstFailure))
+                firstFailure = c.task;
+        }
+        // Only fail-fast's trigger is a primary cause by completion; without
+        // it, `run` takes the lowest-index failure (TDD1), whatever finished
+        // first.
+        if (options.failFast && firstFailure.valid && !cancelling)
+        {
+            primaryCause = firstFailure;
+            requestCancellation(CancelCause.failFast, firstFailure);
+        }
+    }
+
+    void requestCancellation(CancelCause cause, TaskIndex causal)
+    {
+        cancelling = true;
+        cancelCause = cause;
+        emit(TaskEventPayload(CancellationRequested(cause, causal)));
+        foreach (i, f; fibers)
+            if (f !is null && state[i] == TaskState.running && !isCleanup(TaskIndex(cast(uint) i)))
+            {
+                interrupted[i] = true;
+                interruptFiber(f, Interrupt(cause == CancelCause.failFast
+                    ? InterruptKind.cancelled : InterruptKind.shutdown));
+            }
+        // Running tasks that have not reached their fiber yet see
+        // `cancelling` when they do, and so does every later decision.
+        foreach (i, s; state)
+            if (s == TaskState.running && fibers[i] is null)
+                interrupted[i] = true;
+    }
+
+    // After the scheduler itself was interrupted: collect every running
+    // task's completion and decide the rest, still starting each cleanup
+    // node once it is ready (TDC2 item 8) — admission is closed to all other
+    // work. Runs under `protect`.
+    void drainProtected(scope void delegate(TaskIndex) spawn)
+    {
+        for (;;)
+        {
+            resolve();
+            admit(spawn);
+            if (running == 0)
+                break;
+            auto c = completions.take(*exec);
+            if (c.hasError)
+                break;
+            finishBatch([move(c.value)]);
+        }
+        foreach (i, s; state)
+            if (s == TaskState.ready || s == TaskState.pending)
+                finish(TaskIndex(cast(uint) i), TaskOutcome(Cancelled(CancelReason.notAdmitted)));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests: a deterministic fake driver under TestSched and TestClock
+// ─────────────────────────────────────────────────────────────────────────────
+
+version (unittest)
+{
+    import core.time : msecs;
+    import std.algorithm.iteration : filter, map;
+    import std.array : array;
+
+    import sparkles.build_primitives.task.testing;
+}
+
+@("build_primitives.task.executor.run.eventsAreSequencedAndMonotonic")
+@system
+unittest
+{
+    const g = graphOf([tnode("a"), tnode("b")], [tedge("a", "b")]);
+    auto run = runFake(g, ["a": Script(5.msecs, lines: ["one", "two"]), "b": Script(3.msecs)],
+        ExecutorOptions(capacity: 2));
+    assert(run.result.exitCode == 0);
+    foreach (i, e; run.events)
+    {
+        assert(e.sequence == i, "sequence numbers are dense from 0");
+        if (i)
+            assert(e.at >= run.events[i - 1].at, "timestamps are monotonic");
+    }
+    assert(run.events[0].payload.match!((GraphPlanned p) => p.nodes == 2 && p.capacity == 2, _ => false));
+    assert(run.events[$ - 1].payload.match!((RunFinished f) => f.exitCode == 0, _ => false));
+    const lines = run.events.filter!(e => e.payload.match!((TaskOutput o) => true, _ => false))
+        .map!(e => e.text).array;
+    assert(lines == ["one", "two"]);
+    assert(run.startedAt["b"] - MonoTime.zero == 5.msecs, "b waits for a");
+    assert(run.finishedAt["b"] - MonoTime.zero == 8.msecs);
+}
+
+@("build_primitives.task.executor.admission.capacityAndPresentationOrder")
+@system
+unittest
+{
+    // Inserted out of order; presentation order is by name.
+    auto nodes = [tnode("e", 2), tnode("b", 2), tnode("f", 2), tnode("a", 2), tnode("d", 2), tnode("c", 2)];
+    const g = graphOf(nodes, null);
+    Script[string] scripts;
+    foreach (n; nodes)
+        scripts[n.id.text] = Script(10.msecs);
+
+    auto wide = runFake(g, scripts, ExecutorOptions(capacity: 4));
+    assert(wide.peakWeight == 4, "capacity bounds the running weight");
+    assert(wide.startOrder == ["a", "b", "c", "d", "e", "f"]);
+    assert(wide.finishedAt["f"] - MonoTime.zero == 30.msecs, "three waves of two");
+
+    auto serial = runFake(g, scripts, ExecutorOptions(capacity: 1));
+    assert(serial.peakWeight == 2, "a claim over capacity runs alone, clamped");
+    assert(serial.startOrder == ["a", "b", "c", "d", "e", "f"]);
+}
+
+@("build_primitives.task.executor.admission.noStarvationOfAHeavyTask")
+@system
+unittest
+{
+    // `a` holds half the capacity; `b` needs all of it; the light tasks
+    // after `b` would fit beside `a` but must not overtake `b`.
+    const g = graphOf([tnode("a", 2), tnode("b", 4), tnode("c"), tnode("d"), tnode("e")], null);
+    auto run = runFake(g, ["a": Script(10.msecs), "b": Script(5.msecs), "c": Script(1.msecs),
+        "d": Script(1.msecs), "e": Script(1.msecs)], ExecutorOptions(capacity: 4));
+    assert(run.startOrder == ["a", "b", "c", "d", "e"]);
+    assert(run.startedAt["b"] - MonoTime.zero == 10.msecs);
+    assert(run.startedAt["c"] - MonoTime.zero == 15.msecs);
+}
+
+@("build_primitives.task.executor.admission.overCapacityClaimRunsAlone")
+@system
+unittest
+{
+    const g = graphOf([tnode("a", 8), tnode("b"), tnode("c")], null);
+    auto run = runFake(g, ["a": Script(10.msecs), "b": Script(4.msecs), "c": Script(4.msecs)],
+        ExecutorOptions(capacity: 3));
+    assert(run.result.exitCode == 0);
+    assert(run.startedAt["b"] - MonoTime.zero == 10.msecs, "nothing runs beside a clamped claim");
+    assert(run.startedAt["c"] - MonoTime.zero == 10.msecs);
+}
+
+@("build_primitives.task.executor.admission.exclusiveKeysSerializeOnlyTheirHolders")
+@system
+unittest
+{
+    const g = graphOf([tnode("a", 1, TaskKind.rewrite, ["workspace-write:README.md"]),
+        tnode("b", 1, TaskKind.rewrite, ["workspace-write:README.md"]), tnode("c")], null);
+    auto run = runFake(g, ["a": Script(10.msecs), "b": Script(10.msecs), "c": Script(1.msecs)],
+        ExecutorOptions(capacity: 8));
+    assert(run.startedAt["b"] - MonoTime.zero == 10.msecs, "b waits for a's key");
+    assert(run.startedAt["c"] - MonoTime.zero == 0.msecs, "a key wait holds back nothing else");
+}
+
+@("build_primitives.task.executor.failFast.simultaneousFailuresPickTheLowestKey")
+@system
+unittest
+{
+    // a, b and c all fail at t=5, and their completions reach the
+    // scheduler in one turn as c, a, b; d is still running and e has not
+    // started.
+    foreach (order; permutations(["a", "b", "c"]))
+    {
+        TaskNode[] nodes;
+        foreach (name; order)
+            nodes ~= tnode(name);
+        nodes ~= [tnode("d"), tnode("e")];
+        const g = graphOf(nodes, [tedge("d", "e")]);
+        Script[string] scripts = ["d": Script(20.msecs), "e": Script(1.msecs)];
+        foreach (name; order)
+            scripts[name] = Script(5.msecs, TaskOutcome(Failed(FailureReason.exitStatus, 1)),
+                yields: name == "c" ? 0 : 1);
+
+        auto run = runFake(g, scripts, ExecutorOptions(capacity: 8, failFast: true));
+        assert(run.result.exitCode == 1);
+        assert(g[run.result.primaryFailure].id.text == "a");
+        assert(countOf!((CancellationRequested c) => c.cause == CancelCause.failFast
+            && g[c.causalTask].id.text == "a")(run.events) == 1);
+        assert(countOf!((CancellationRequested _) => true)(run.events) == 1, "exactly once");
+        assert(run.outcomeOf(g, "d") == "cancelled");
+        assert(run.outcomeOf(g, "e") == "cancelled");
+        assert("e" !in run.startedAt, "no admission after cancellation");
+    }
+}
+
+@("build_primitives.task.executor.failFast.blockedCancelledAndCleanup")
+@system
+unittest
+{
+    // a fails -> b, c blocked (from failure); d running -> interrupted; e
+    // waits on d -> not admitted; cleanup runs always, protected.
+    const g = graphOf([tnode("a"), tnode("b"), tnode("c"), tnode("d"), tnode("e"),
+        tnode("z", 1, TaskKind.cleanup)], [tedge("a", "b"), tedge("b", "c"), tedge("d", "e"),
+        tedge("c", "z", EdgeCondition.always), tedge("e", "z", EdgeCondition.always)]);
+    Script[string] scripts = ["a": Script(5.msecs, TaskOutcome(Failed(FailureReason.exitStatus, 2))),
+        "d": Script(20.msecs), "z": Script(3.msecs)];
+
+    // Completion orders scrambled through the durations.
+    foreach (dDuration; [2.msecs, 20.msecs])
+    {
+        scripts["d"] = Script(dDuration);
+        auto run = runFake(g, scripts, ExecutorOptions(capacity: 8, failFast: true));
+        assert(run.result.exitCode == 1);
+        assert(run.outcomeOf(g, "b") == "blocked");
+        assert(failsCommand(run.result.outcomes[g.indexOf(tid("c")).value]), "blocked from failure");
+        assert(run.outcomeOf(g, "z") == "succeeded", "cleanup still runs");
+        if (dDuration == 20.msecs)
+        {
+            assert(run.outcomeOf(g, "d") == "cancelled");
+            assert(run.outcomeOf(g, "e") == "cancelled");
+            assert("e" !in run.startedAt);
+        }
+        else
+            assert(run.outcomeOf(g, "e") == "succeeded", "work finished before the failure stands");
+    }
+
+    // Without fail-fast, independent work runs on.
+    auto patient = runFake(g, scripts, ExecutorOptions(capacity: 8));
+    assert(patient.outcomeOf(g, "e") == "succeeded");
+    assert(patient.outcomeOf(g, "b") == "blocked");
+    assert(countOf!((CancellationRequested _) => true)(patient.events) == 0);
+}
+
+@("build_primitives.task.executor.failFast.provisionalFailureFallsBackWithoutCancelling")
+@system
+unittest
+{
+    // coverage (provisional) fails -> plain retry runs -> classify.
+    const g = graphOf([tnode("cov", 2, TaskKind.test, null, FailurePolicy.provisional),
+        tnode("plain", 2), tnode("classify", 1, TaskKind.classify), tnode("other")],
+        [tedge("cov", "plain", EdgeCondition.onFailure),
+        tedge("cov", "classify", EdgeCondition.onCompletion),
+        tedge("plain", "classify", EdgeCondition.onCompletion)]);
+    auto run = runFake(g, ["cov": Script(5.msecs, TaskOutcome(Failed(FailureReason.exitStatus, 1))),
+        "plain": Script(5.msecs), "other": Script(30.msecs)], ExecutorOptions(capacity: 8, failFast: true));
+    assert(countOf!((CancellationRequested _) => true)(run.events) == 0, "a provisional failure is no trigger");
+    assert(run.outcomeOf(g, "plain") == "succeeded");
+    assert(run.outcomeOf(g, "classify") == "succeeded");
+    assert(run.outcomeOf(g, "other") == "succeeded");
+    assert(run.result.exitCode == 0);
+
+    // A coverage success makes the fallback's condition impossible: blocked,
+    // and no failure.
+    auto clean = runFake(g, ["cov": Script(5.msecs)], ExecutorOptions(capacity: 8, failFast: true));
+    assert(clean.outcomeOf(g, "plain") == "blocked");
+    assert(clean.result.exitCode == 0);
+}
+
+@("build_primitives.task.executor.cancel.externalInterrupt")
+@system
+unittest
+{
+    const g = graphOf([tnode("a"), tnode("b"), tnode("c", 1, TaskKind.cleanup)],
+        [tedge("a", "b"), tedge("b", "c", EdgeCondition.always)]);
+    auto run = runFake(g, ["a": Script(10.msecs), "c": Script(1.msecs)], ExecutorOptions(capacity: 4),
+        5.msecs, CancelCause.interrupt);
+    assert(run.result.cancelled && run.result.cancelCause == CancelCause.interrupt);
+    assert(run.result.exitCode == 130);
+    assert(run.outcomeOf(g, "a") == "cancelled");
+    assert(run.outcomeOf(g, "b") == "cancelled", "not admitted, and no failure");
+    assert(run.outcomeOf(g, "c") == "succeeded");
+    assert(countOf!((CancellationRequested c) => c.cause == CancelCause.interrupt
+        && !c.causalTask.valid)(run.events) == 1);
+
+    auto terminated = runFake(g, ["a": Script(10.msecs)], ExecutorOptions(capacity: 4),
+        5.msecs, CancelCause.terminate);
+    assert(terminated.result.exitCode == 143);
+}
+
+@("build_primitives.task.executor.cancel.scopeShutdownStillRunsCleanup")
+@system
+unittest
+{
+    import sparkles.event_horizon.cause : Interrupt, InterruptKind;
+    import sparkles.event_horizon.channel : Channel;
+    import sparkles.event_horizon.clock : TestClock;
+    import sparkles.event_horizon.scope_ : withScope;
+    import sparkles.event_horizon.testing : advanceAndSettle, TestSched;
+
+    // The scope around the executor is shut down while `a` runs: `b` never
+    // starts, but the cleanup `z` (always after `a`) must still run.
+    const g = graphOf([tnode("a"), tnode("b"), tnode("z", 1, TaskKind.cleanup)],
+        [tedge("a", "b"), tedge("a", "z", EdgeCondition.always)]);
+    TestSched sched;
+    auto clock = TestClock!(TestSched.Waker)(sched.waker());
+    auto driver = FakeDriver(&clock, ["a": Script(20.msecs), "z": Script(1.msecs)]);
+    Channel!(TaskEvent, 4) sink;
+    RunResult result;
+    sched.run(() {
+        cast(void) withScope!((ref outer) {
+            outer.spawn(() {
+                for (auto e = sink.take(sched); !e.hasError; e = sink.take(sched)) {}
+            });
+            cast(void) withScope!((ref inner) {
+                inner.spawn(() {
+                    cast(void) clock.sleep(5.msecs);
+                    inner.cancel(Interrupt(InterruptKind.shutdown));
+                });
+                result = runGraph(sched, clock, g, driver, sink, ExecutorOptions(capacity: 4));
+            })(sched);
+            sink.close();
+        })(sched);
+    });
+    advanceAndSettle(sched, clock);
+    assert(sched.liveFibers == 0);
+
+    assert(result.cancelled && result.exitCode == 143);
+    assert(kindOf(result.outcomes[g.indexOf(tid("a")).value]) == OutcomeKind.cancelled);
+    assert(kindOf(result.outcomes[g.indexOf(tid("b")).value]) == OutcomeKind.cancelled);
+    assert(kindOf(result.outcomes[g.indexOf(tid("z")).value]) == OutcomeKind.succeeded,
+        "a ready cleanup node runs after the scheduler is interrupted");
+    assert(driver.startOrder == ["a", "z"]);
+}
+
+@("build_primitives.task.executor.cancel.interruptedProducersStillDeliver")
+@system
+unittest
+{
+    import sparkles.event_horizon.cause : Interrupt, InterruptKind;
+    import sparkles.event_horizon.channel : Channel;
+    import sparkles.event_horizon.scope_ : withScope;
+    import sparkles.event_horizon.testing : advanceAndSettle, TestSched;
+
+    // Talkers print a line a millisecond into a reporter that takes an event
+    // a millisecond, so they are parked delivering when fail-fast (`afail`
+    // at 5 ms) or an outer shutdown (at 5 ms) interrupts them. Their puts,
+    // and the scheduler's, must still land: every task's `TaskFinished`, the
+    // one `CancellationRequested`, and `RunFinished`.
+    static struct Talkers
+    {
+        Clock* clock;
+        Script[string] scripts;
+
+        TaskOutcome run(X)(ref TaskContext!X ctx)
+        {
+            const id = ctx.node.id.text;
+            if (id[0] != 't')
+            {
+                const script = scripts.get(id, Script.init);
+                cast(void) clock.sleep(script.duration);
+                return script.outcome;
+            }
+            foreach (_; 0 .. 100)
+            {
+                if (clock.sleep(1.msecs).hasError || ctx.cancelRequested)
+                    return TaskOutcome(Cancelled(CancelReason.interrupted));
+                ctx.output(OutputStream.stdout, "line");
+            }
+            return TaskOutcome(Succeeded());
+        }
+    }
+
+    foreach (shutdown; [false, true])
+    {
+        const g = graphOf([tnode("afail"), tnode("t1"), tnode("t2")], null);
+        TestSched sched;
+        auto clock = Clock(sched.waker());
+        auto driver = Talkers(&clock, ["afail": shutdown ? Script(50.msecs)
+            : Script(5.msecs, TaskOutcome(Failed(FailureReason.exitStatus, 1)))]);
+        Channel!(TaskEvent, 4) sink;
+        TaskEvent[] events;
+        RunResult result;
+        sched.run(() {
+            cast(void) withScope!((ref outer) {
+                outer.spawn(() {
+                    for (auto e = sink.take(sched); !e.hasError; e = sink.take(sched))
+                    {
+                        events ~= e.value;
+                        cast(void) clock.sleep(1.msecs);
+                    }
+                });
+                cast(void) withScope!((ref inner) {
+                    if (shutdown)
+                        inner.spawn(() {
+                            cast(void) clock.sleep(5.msecs);
+                            inner.cancel(Interrupt(InterruptKind.shutdown));
+                        });
+                    result = runGraph(sched, clock, g, driver, sink, ExecutorOptions(capacity: 3, failFast: true));
+                })(sched);
+                sink.close();
+            })(sched);
+        });
+        advanceAndSettle(sched, clock);
+        assert(sched.liveFibers == 0);
+        assert(result.exitCode == (shutdown ? 143 : 1));
+        assert(countOf!((TaskFinished _) => true)(events) == 3, "a task's end was dropped");
+        assert(countOf!((CancellationRequested _) => true)(events) == 1);
+        assert(countOf!((RunFinished f) => f.exitCode == result.exitCode)(events) == 1);
+        foreach (i, e; events)
+            assert(e.sequence == i, "events arrive in sequence order");
+    }
+}
+
+@("build_primitives.task.executor.failFast.aChattyTaskDoesNotStarveTheScheduler")
+@system
+unittest
+{
+    import sparkles.event_horizon.channel : Channel;
+    import sparkles.event_horizon.scope_ : withScope;
+    import sparkles.event_horizon.testing : advanceAndSettle, TestSched;
+
+    // `chatty` prints 200 lines and parks only on the sink's backpressure;
+    // the reporter takes an event a millisecond. `afail` fails at 5 ms. The
+    // scheduler must get the emit turn between chatty's lines, record the
+    // failure and interrupt chatty, rather than wait out its 200 lines.
+    static struct Chatty
+    {
+        Clock* clock;
+
+        TaskOutcome run(X)(ref TaskContext!X ctx)
+        {
+            if (ctx.node.id.text != "chatty")
+            {
+                cast(void) clock.sleep(5.msecs);
+                return TaskOutcome(Failed(FailureReason.exitStatus, 1));
+            }
+            foreach (_; 0 .. 200)
+            {
+                if (ctx.cancelRequested)
+                    return TaskOutcome(Cancelled(CancelReason.interrupted));
+                ctx.output(OutputStream.stdout, "line");
+            }
+            return TaskOutcome(Succeeded());
+        }
+    }
+
+    const g = graphOf([tnode("afail"), tnode("chatty")], null);
+    TestSched sched;
+    auto clock = Clock(sched.waker());
+    auto driver = Chatty(&clock);
+    Channel!(TaskEvent, 4) sink;
+    TaskEvent[] events;
+    RunResult result;
+    sched.run(() {
+        cast(void) withScope!((ref sc) {
+            sc.spawn(() {
+                for (auto e = sink.take(sched); !e.hasError; e = sink.take(sched))
+                {
+                    events ~= e.value;
+                    cast(void) clock.sleep(1.msecs);
+                }
+            });
+            result = runGraph(sched, clock, g, driver, sink, ExecutorOptions(capacity: 2, failFast: true));
+            sink.close();
+        })(sched);
+    });
+    advanceAndSettle(sched, clock);
+    assert(sched.liveFibers == 0);
+    assert(result.exitCode == 1);
+    assert(result.outcomes[g.indexOf(tid("chatty")).value] == TaskOutcome(Cancelled(CancelReason.interrupted)),
+        "chatty ran to the end: the scheduler never got the turn");
+    assert(countOf!((TaskOutput _) => true)(events) < 20);
+    foreach (i, e; events)
+        assert(e.sequence == i, "events arrive in sequence order");
+}
+
+@("build_primitives.task.executor.failFast.unneededFallbackStaysUnneeded")
+@system
+unittest
+{
+    // `plain` falls back on `cov`'s failure; `cov` succeeds. `a` fails and
+    // triggers fail-fast. Whether `cov` finishes before or after the
+    // cancellation, `plain` is the same unneeded fallback (TDM6, TDC2 item 4).
+    const g = graphOf([tnode("a"), tnode("cov", 1, TaskKind.test, null, FailurePolicy.provisional),
+        tnode("plain")], [tedge("cov", "plain", EdgeCondition.onFailure)]);
+    foreach (covTakes; [1.msecs, 10.msecs])
+    {
+        auto run = runFake(g, ["a": Script(5.msecs, TaskOutcome(Failed(FailureReason.exitStatus, 1))),
+            "cov": Script(covTakes, ignoresCancel: true)], ExecutorOptions(capacity: 4, failFast: true));
+        assert(run.result.outcomes[g.indexOf(tid("plain")).value]
+            == TaskOutcome(Blocked(BlockReason.conditionUnmet, g.indexOf(tid("cov")), g.indexOf(tid("cov")), false)),
+            "an unneeded fallback is not a cancellation");
+        assert(run.result.exitCode == 1);
+    }
+}
+
+@("build_primitives.task.executor.failFast.interruptedFailureIsACancellation")
+@system
+unittest
+{
+    // `b` is interrupted by `a`'s failure but reports `Failed` anyway, as a
+    // child killed by the teardown does: it is recorded as interrupted, and
+    // `a` alone is the cause (TDC3).
+    const g = graphOf([tnode("a"), tnode("b")], null);
+    auto run = runFake(g, ["a": Script(1.msecs, TaskOutcome(Failed(FailureReason.exitStatus, 1))),
+        "b": Script(10.msecs, TaskOutcome(Failed(FailureReason.signal, 15)), ignoresCancel: true)],
+        ExecutorOptions(capacity: 2, failFast: true));
+    assert(run.result.outcomes[g.indexOf(tid("b")).value] == TaskOutcome(Cancelled(CancelReason.interrupted)));
+    assert(g[run.result.primaryFailure].id.text == "a");
+}
+
+@("build_primitives.task.executor.run.anUnaskedCancellationIsAFailure")
+@system
+unittest
+{
+    // `a` reports `Cancelled` though nothing cancelled the run (a driver
+    // that lost its child, say): no cause stands behind it, so it is a
+    // failure, its dependent is blocked by it, and the command fails.
+    const g = graphOf([tnode("a"), tnode("b")], [tedge("a", "b")]);
+    auto run = runFake(g, ["a": Script(1.msecs, TaskOutcome(Cancelled(CancelReason.interrupted)),
+        ignoresCancel: true)], ExecutorOptions(capacity: 2));
+    assert(!run.result.cancelled);
+    assert(run.result.outcomes[g.indexOf(tid("a")).value] == TaskOutcome(Failed(FailureReason.contract)));
+    assert(run.outcomeOf(g, "b") == "blocked");
+    assert(run.result.exitCode == 1);
+    assert(g[run.result.primaryFailure].id.text == "a");
+
+    // A run that was cancelled keeps its tasks' cancellations.
+    auto cancelled = runFake(g, ["a": Script(10.msecs)], ExecutorOptions(capacity: 2), 5.msecs,
+        CancelCause.interrupt);
+    assert(cancelled.outcomeOf(g, "a") == "cancelled" && cancelled.result.exitCode == 130);
+}
+
+@("build_primitives.task.executor.run.outputSequenceNumbersAreMonotonic")
+@system
+unittest
+{
+    // TDM12: per task, `streamSeq` counts each stream from 0 and `chunkSeq`
+    // counts both streams together from 0, whatever interleaves between.
+    const g = graphOf([tnode("a"), tnode("b")], null);
+    auto run = runFake(g, ["a": Script(1.msecs, lines: ["a0", "a1", "a2"]),
+        "b": Script(1.msecs, lines: ["b0", "!b1", "b2", "!b3"])], ExecutorOptions(capacity: 2));
+    ulong[2] nextChunk;
+    ulong[2][2] nextStream;
+    size_t seen;
+    foreach (ref e; run.events)
+        e.payload.match!(
+            (TaskOutput o) {
+                assert(o.chunkSeq == nextChunk[o.task.value]++);
+                assert(o.streamSeq == nextStream[o.task.value][o.stream]++);
+                ++seen;
+            },
+            (_) {});
+    assert(seen == 7);
+    assert(nextChunk == [3, 4]);
+    assert(nextStream[1] == [2, 2], "b's two streams count separately");
+}
+
+@("build_primitives.task.executor.run.outcomesIndependentOfCompletionOrder")
+@system
+unittest
+{
+    // A diamond with a failing branch: every assignment of durations gives
+    // the same outcomes and the same primary cause.
+    const g = graphOf([tnode("a"), tnode("b"), tnode("c"), tnode("d"), tnode("s", 1, TaskKind.report)],
+        [tedge("a", "b"), tedge("a", "c"), tedge("b", "d"), tedge("c", "d"),
+        tedge("d", "s", EdgeCondition.onCompletion), tedge("b", "s", EdgeCondition.onCompletion)]);
+    string[] reference;
+    foreach (durations; permutations([1, 2, 3]))
+    {
+        auto run = runFake(g, ["a": Script(durations[0].msecs),
+            "b": Script(durations[1].msecs, TaskOutcome(Failed(FailureReason.exitStatus, 1))),
+            "c": Script(durations[2].msecs)], ExecutorOptions(capacity: 4));
+        string[] outcomes;
+        foreach (name; ["a", "b", "c", "d", "s"])
+            outcomes ~= run.outcomeOf(g, name);
+        if (reference is null)
+            reference = outcomes;
+        assert(outcomes == reference);
+        assert(g[run.result.primaryFailure].id.text == "b");
+    }
+    assert(reference == ["succeeded", "failed", "succeeded", "blocked", "succeeded"]);
+}
+
+@("build_primitives.task.executor.run.primaryFailureIsTheLowestIndexWithoutFailFast")
+@system
+unittest
+{
+    // TDD1: without fail-fast, the primary cause is the lowest-index
+    // failure, whichever of two independent failures completes first.
+    const g = graphOf([tnode("a"), tnode("b")], null);
+    foreach (aFirst; [true, false])
+    {
+        auto run = runFake(g, ["a": Script((aFirst ? 1 : 5).msecs, TaskOutcome(Failed(FailureReason.exitStatus, 1))),
+            "b": Script((aFirst ? 5 : 1).msecs, TaskOutcome(Failed(FailureReason.exitStatus, 2)))],
+            ExecutorOptions(capacity: 2));
+        assert(run.result.exitCode == 1);
+        assert(g[run.result.primaryFailure].id.text == "a", "completion order chose the primary cause");
+    }
+
+    // A dependent that sorts before its failed prerequisite is blocked, and
+    // fails the command, but the failure is the primary cause (TDC3).
+    const blocked = graphOf([tnode("a"), tnode("z")], [tedge("z", "a")]);
+    auto run = runFake(blocked, ["z": Script(1.msecs, TaskOutcome(Failed(FailureReason.exitStatus, 1)))],
+        ExecutorOptions(capacity: 2));
+    assert(run.outcomeOf(blocked, "a") == "blocked");
+    assert(run.result.exitCode == 1);
+    assert(blocked[run.result.primaryFailure].id.text == "z", "a blocked task became the primary cause");
+}
+
+@("build_primitives.task.executor.run.sequenceNumbersFollowDeliveryOrder")
+@system
+unittest
+{
+    // TDM12: twenty tasks emit output at once through the four-slot sink,
+    // so producers park on backpressure; a producer that resumes must not
+    // be overtaken by one numbered after it.
+    TaskNode[] nodes;
+    Script[string] scripts;
+    foreach (i; 0 .. 20)
+    {
+        import std.conv : text;
+
+        const name = text("t", i < 10 ? "0" : "", i);
+        nodes ~= tnode(name);
+        scripts[name] = Script(1.msecs, lines: ["l0", "l1", "l2", "l3", "l4", "l5"]);
+    }
+    const g = graphOf(nodes, null);
+    auto run = runFake(g, scripts, ExecutorOptions(capacity: 20));
+    assert(run.result.exitCode == 0);
+    assert(run.events.length == 1 + 20 * (1 + 1 + 6 + 1) + 1);
+    foreach (i, e; run.events)
+    {
+        assert(e.sequence == i, "events arrive in sequence order");
+        if (i)
+            assert(e.at >= run.events[i - 1].at, "timestamps are monotonic");
+    }
+}
+
+@("build_primitives.task.executor.admission.aRejectedSpawnFailsTheTask")
+@system
+unittest
+{
+    import core.stdc.errno : ENOBUFS;
+
+    import sparkles.event_horizon.capability : SpawnOptions;
+    import sparkles.event_horizon.cause : CancelContext;
+    import sparkles.event_horizon.channel : Channel;
+    import sparkles.event_horizon.testing : advanceAndSettle, TestSched;
+
+    // An executor whose fiber slab holds `budget` more fibers: spawning a
+    // task past it fails, as `Sched.spawn` does when its slab is exhausted.
+    static struct SlabLimited
+    {
+        TestSched* inner;
+        uint budget;
+
+        FiberContext* currentContext() @safe nothrow @nogc => inner.currentContext();
+        void park() @safe nothrow => inner.park();
+        void wake(FiberContext* f) @safe nothrow @nogc => inner.wake(f);
+        FiberContext* spawnFiber(scope CancelContext* node, in SpawnOptions opts, void delegate() body_) @safe nothrow
+        {
+            if (budget == 0)
+                return null;
+            --budget;
+            return inner.spawnFiber(node, opts, body_);
+        }
+    }
+
+    const g = graphOf([tnode("a"), tnode("b"), tnode("c")], [tedge("b", "c")]);
+    foreach (failFast; [false, true])
+    {
+        TestSched sched;
+        auto clock = Clock(sched.waker());
+        auto driver = FakeDriver(&clock, ["a": Script(5.msecs)]);
+        Channel!(TaskEvent, 4) sink;
+        TaskEvent[] events;
+        RunResult result;
+        bool returned;
+        sched.run(() {
+            cast(void) withScope!((ref sc) {
+                sc.spawn(() {
+                    for (auto e = sink.take(sched); !e.hasError; e = sink.take(sched))
+                        events ~= e.value;
+                });
+                auto limited = SlabLimited(&sched, 1); // room for `a` only
+                result = runGraph(limited, clock, g, driver, sink, ExecutorOptions(capacity: 4, failFast: failFast));
+                returned = true;
+                sink.close();
+            })(sched);
+        });
+        advanceAndSettle(sched, clock);
+        assert(returned, "the run hung on a task that never started");
+        assert(sched.liveFibers == 0);
+        assert(result.outcomes[g.indexOf(tid("b")).value] == TaskOutcome(Failed(FailureReason.spawnFailed, ENOBUFS)));
+        assert(kindOf(result.outcomes[g.indexOf(tid("c")).value]) == OutcomeKind.blocked);
+        assert(g[result.primaryFailure].id.text == "b");
+        assert(result.exitCode == 1);
+        assert(countOf!((TaskFinished f) => g[f.task].id.text == "b")(events) == 1);
+        if (failFast)
+        {
+            assert(kindOf(result.outcomes[g.indexOf(tid("a")).value]) == OutcomeKind.cancelled);
+            assert(countOf!((CancellationRequested c) => g[c.causalTask].id.text == "b")(events) == 1);
+        }
+        else
+            assert(kindOf(result.outcomes[g.indexOf(tid("a")).value]) == OutcomeKind.succeeded);
+    }
+}

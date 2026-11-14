@@ -448,7 +448,6 @@ in
                 sparklesSources.srcClosure appDir
                 ++ sparklesSources.libsClosure [
                   "test-runner"
-                  "test-runner-impl"
                   "test-utils"
                 ];
               nativeBuildInputs = base.nativeBuildInputs ++ [ pkgs.xvfb-run ] ++ nativeCheckInputs;

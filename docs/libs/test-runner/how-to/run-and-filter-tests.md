@@ -52,13 +52,17 @@ do not `T x;` a workspace in a unittest.
 
 ## The runner's own tests
 
-The runner is compiled into every in-tree test build, so its self-tests are
-discoverable everywhere; they are hidden unless you ask:
+Each part of the runner is a package with its own suite:
 
 ```bash
-dub test :test-runner        # the runner's own suite (runs by default here)
-dub test :base -- --self-test # base's tests + the runner's, in one process
+dub test :test-harness       # discovery, execution, the fallback, measurement
+dub test :test-runner-impl   # the runner executable: CLI, reports, drivers
 ```
+
+A package's suite holds only its own tests. The runner executable that runs
+them is the pinned one (`$SPARKLES_TEST_RUNNER`), so a change to
+`libs/test-runner-impl` shows up in its own suite and nowhere else until the
+pin moves.
 
 ## Exit status
 

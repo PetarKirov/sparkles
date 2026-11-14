@@ -11,27 +11,27 @@ list is the `subPackage` entries in the root `dub.sdl`. **Before working in an
 unfamiliar package, read its entry in the [Package Catalog](./packages.md)** —
 the detailed descriptions and the module map live there.
 
-| Package                                                                                          | One line                                                                                     |
-| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| `ci`                                                                                             | repo CI helper: tests, markdown examples, link/sidebar audits                                |
-| `hue`                                                                                            | syntax-highlighting viewer (ANSI/HTML/`--gui`), diff/PR viewer, APK                          |
-| `release`                                                                                        | tag scanning, bump suggestion, notes, publishing                                             |
-| `shader-compile`                                                                                 | D shaders → SPIR-V → GLSL, built by `sparkles:ui`'s `gpu-effects` build                      |
-| `terminal`, `terminal-benchmark`                                                                 | terminal emulator on libghostty-vt; its render-CPU benchmark                                 |
-| `ui-gallery`, `diagram`, `text-lab`                                                              | `sparkles:ui-app` apps: the toolkit catalog; a diagram board; the Vulkan text lab            |
-| `nix-eval`, `twoslash-extract`                                                                   | `sparkles:nix` demo; batch D twoslash extractor                                              |
-| `base`, `text-buffer`                                                                            | `Buffer`, `@nogc` text, lifetime, logging, caps; persistent editable text and undo           |
-| `appearance`                                                                                     | the desktop's scheme, accent, contrast, title-bar controls and fonts (the settings portal)   |
-| `core-cli`                                                                                       | argument parsing, help, prompts, process utilities                                           |
-| `ui`, `ui-app`, `ui-tui`, `ui-raylib`, `ui-sdl3`, `ui-vulkan`, `input`, `tui`                    | the one UI stack: toolkit, host, backends, input vocabulary, cell grid                       |
-| `syntax`, `tree-sitter`, `source-view`, `doc-view`, `diff`, `dsv`                                | highlighting, markdown model, code/markdown views, the document viewer, diff and DSV engines |
-| `twoslash`, `twoslash-d`, `twoslash-protocol`, `dmd-lsp`, `dmd-fmt`                              | type overlays, the DMD-frontend semantic core, the D formatter                               |
-| `event-horizon`, `http`, `dbus`                                                                  | completion-first event loop with effects; HTTP/1.1 and D-Bus over it                         |
-| `wsi`, `vulkan`, `vulkan-wsi`, `raylib-text`, `ghostty`, `terminal-view`, `shaders`, `profiling` | windowing, GPU, fonts, VT engine, embeddable terminal, shader vocabulary, frame profiling    |
-| `font`, `font-oracle`                                                                            | font files parsed in D; its HarfBuzz differential tests                                      |
-| `wired`, `reflection`, `metadata`, `dql`, `fuzzy`                                                | serialization, reflection kernel, UDA vocabulary, query engine, fuzzy search                 |
-| `build-primitives`, `code-instrumentation`, `docs`, `nix`, `versions`, `math`, `image`           | gitignore/walk/`runGit`/`dub.sdl` schema, coverage, SSG, Nix C API, versioning, vectors, PNG |
-| `test-runner` (+ internal `test-runner-impl`), `test-utils`                                      | the unittest runner; test helpers                                                            |
+| Package                                                                                                                   | One line                                                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `ci`                                                                                                                      | repo CI helper: tests, markdown examples, link/sidebar audits                                                               |
+| `hue`                                                                                                                     | syntax-highlighting viewer (ANSI/HTML/`--gui`), diff/PR viewer, APK                                                         |
+| `release`                                                                                                                 | tag scanning, bump suggestion, notes, publishing                                                                            |
+| `shader-compile`                                                                                                          | D shaders → SPIR-V → GLSL, built by `sparkles:ui`'s `gpu-effects` build                                                     |
+| `terminal`, `terminal-benchmark`                                                                                          | terminal emulator on libghostty-vt; its render-CPU benchmark                                                                |
+| `ui-gallery`, `diagram`, `text-lab`                                                                                       | `sparkles:ui-app` apps: the toolkit catalog; a diagram board; the Vulkan text lab                                           |
+| `nix-eval`, `twoslash-extract`                                                                                            | `sparkles:nix` demo; batch D twoslash extractor                                                                             |
+| `base`, `text-buffer`                                                                                                     | `Buffer`, `@nogc` text, lifetime, logging, caps; persistent editable text and undo                                          |
+| `appearance`                                                                                                              | the desktop's scheme, accent, contrast, title-bar controls and fonts (the settings portal)                                  |
+| `core-cli`                                                                                                                | argument parsing, help, prompts, process utilities                                                                          |
+| `ui`, `ui-app`, `ui-tui`, `ui-raylib`, `ui-sdl3`, `ui-vulkan`, `input`, `tui`                                             | the one UI stack: toolkit, host, backends, input vocabulary, cell grid                                                      |
+| `syntax`, `tree-sitter`, `source-view`, `doc-view`, `diff`, `dsv`                                                         | highlighting, markdown model, code/markdown views, the document viewer, diff and DSV engines                                |
+| `twoslash`, `twoslash-d`, `twoslash-protocol`, `dmd-lsp`, `dmd-fmt`                                                       | type overlays, the DMD-frontend semantic core, the D formatter                                                              |
+| `event-horizon`, `http`, `dbus`                                                                                           | completion-first event loop with effects; HTTP/1.1 and D-Bus over it                                                        |
+| `wsi`, `vulkan`, `vulkan-wsi`, `raylib-text`, `ghostty`, `terminal-view`, `shaders`, `profiling` (+ `profiling-counters`) | windowing, GPU, fonts, VT engine, embeddable terminal, shader vocabulary, frame profiling                                   |
+| `font`, `font-oracle`                                                                                                     | font files parsed in D; its HarfBuzz differential tests                                                                     |
+| `wired`, `reflection`, `metadata`, `dql`, `fuzzy`                                                                         | serialization, reflection kernel, UDA vocabulary, query engine, fuzzy search                                                |
+| `build-primitives`, `ci-provider`, `code-instrumentation`, `docs`, `nix`, `versions`, `math`, `image`                     | gitignore/walk/`runGit`/`dub.sdl` schema + task DAG, CI log conventions, coverage, SSG, Nix C API, versioning, vectors, PNG |
+| `test-runner` (+ `test-harness`, `test-attributes`, `test-runner-core`, `test-runner-impl`), `test-utils`                 | the unittest runner (shim, in-binary harness, core, runner executable); test helpers                                        |
 
 Libraries are documented under `docs/libs/<name>/` as a [Diátaxis](https://diataxis.fr/)
 tree (`tutorial/`, `how-to/`, `reference/`, `explanation/`); designs live in
@@ -208,25 +208,27 @@ evaluator). Import the attributes
 evaluated by a separate `-o- -unittest` probe after filtering, so a failing one
 cannot break the build, `--help`, or `--list`.
 
-The runner is a thin `sourceLibrary` shim (`sparkles:test-runner`: discovery,
-registration, and the attributes) linked across an `extern(C)` seam to the
-prebuilt `sparkles:test-runner-impl`. A new sub-package integrates it one of
-two ways:
+The runner runs out of process
+([process model](../specs/test-runner/process-model.md)). A test binary holds
+its tests and the measurement layer (`sparkles:test-harness`, which depends on
+no other repository package) and hands its run to the runner executable,
+`sparkles-test-runner`, which the dev shell exports as `$SPARKLES_TEST_RUNNER`.
+That executable, a `main`, pool and reporter over the I/O-free
+`sparkles:test-runner-core` that `ci` will drive too, is built from the
+revision in `nix/test-runner-pin.json`, not
+from the working tree, so a change to `libs/test-runner-impl` reaches only its
+own package's tests until the pin moves. Without a runner (`--no-runner`, or
+no variable) a binary runs its tests itself, one at a time — the way to put a
+test under a debugger. Every sub-package integrates it the same way:
 
-- **Default** — `dependency "sparkles:test-runner" path="../.."` inside
+- `dependency "sparkles:test-runner" path="../.."` inside
   `configuration "unittest"`; copy the block from `libs/versions`.
-- **Cycle-safe** — `base`, `core-cli`, and `test-utils` sit in the impl's
-  dependency closure, so they source-include both instead. Only the shim goes
-  on the top-level `importPaths` (keeping the impl and its `sparkles:ui` out of
-  every consumer's source closure):
-
-  ```sdl
-  importPaths "src" "../test-runner/src"
-  configuration "unittest" {
-      sourcePaths "../test-runner/src" "../test-runner-impl/src"
-      importPaths "src" "../test-runner/src" "../test-runner-impl/src"
-  }
-  ```
+- A library whose modules carry the marker attributes depends on
+  `sparkles:test-attributes` (most get it through `base`). Never name
+  `sparkles:test-runner-impl`, and never reach into a runner package's
+  directory through `sourcePaths`/`importPaths`.
+- A test that re-runs its own binary as a child passes `--no-runner`, so the
+  child's exit status is its own.
 
 > [!WARNING]
 > Tests in `package.d` are never discovered — dub's generated test root omits

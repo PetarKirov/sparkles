@@ -508,7 +508,7 @@ than a list of files, the enumerate-by-hand approach simply declines.
 [reapi]: ./reapi.md
 [ostree]: ./ostree.md
 [bao]: ./bao-blake3.md
-[bp]: ../../../libs/build-primitives/src/sparkles/build_primitives/gitignore.d
+[bp]: https://github.com/PetarKirov/sparkles/blob/e70f9016cc5d6dfaf80468b46d8fe2f95924e58f/libs/build-primitives/src/sparkles/build_primitives/gitignore.d
 [manual]: https://github.com/ccache/ccache/blob/b471bbde2923994781821e8d8893e7180ba45168/doc/manual.adoc
 [ccache-manifest]: https://github.com/ccache/ccache/blob/b471bbde2923994781821e8d8893e7180ba45168/src/ccache/core/manifest.cpp
 [ccache-hashutil]: https://github.com/ccache/ccache/blob/b471bbde2923994781821e8d8893e7180ba45168/src/ccache/hashutil.cpp

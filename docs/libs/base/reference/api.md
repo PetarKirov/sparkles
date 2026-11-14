@@ -316,9 +316,11 @@ their borrowed inputs. No compatibility status-return overload remains.
 
 ## `sparkles.base.source_uri`
 
-| Symbol              | Description                                                       |
-| ------------------- | ----------------------------------------------------------------- |
-| `resolveSourcePath` | Resolves relative source path to absolute path.                   |
-| `FileUriHook`       | Default hook that formats source locations as `file://` URIs.     |
-| `SchemeHook`        | Hook that formats source locations using custom editor schemes.   |
-| `EditorDetectHook`  | Runtime detector using `$VISUAL`/`$EDITOR` environment variables. |
+| Symbol               | Description                                                                                     |
+| -------------------- | ----------------------------------------------------------------------------------------------- |
+| `resolveSourcePath`  | Resolves a source path against the compiler's working directory; relative in a relocated build. |
+| `absoluteSourcePath` | Completes a relative resolved path with the working directory at run time.                      |
+| `fileUriPath`        | A path in the `file` URI form (RFC 8089): `/` separators, a drive as `/D:/…`.                   |
+| `FileUriHook`        | Default hook that formats source locations as `file://` URIs.                                   |
+| `SchemeHook`         | Hook that formats source locations using custom editor schemes.                                 |
+| `EditorDetectHook`   | Runtime detector using `$VISUAL`/`$EDITOR` environment variables.                               |

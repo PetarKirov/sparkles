@@ -6,9 +6,9 @@ without druntime, and as a benchmark.
 
 ## 1. Wire the runner into a package
 
-Add one dependency to `configuration "unittest"` — a thin shim compiles in and
-links the prebuilt implementation library, so `dub test` stays close to a
-vanilla build:
+Add one dependency to `configuration "unittest"` — a thin shim compiles in, and
+the test binary hands its run to the runner executable the dev shell provides
+(`$SPARKLES_TEST_RUNNER`), so `dub test` stays close to a vanilla build:
 
 ```sdl
 configuration "unittest" {

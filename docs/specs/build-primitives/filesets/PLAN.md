@@ -4,8 +4,16 @@ _The reviewable implementation sequence for [SPEC.md](./SPEC.md). Each
 milestone lands code, tests and the evidence its gate names. Decisions and open
 questions live in [decisions.md](./decisions.md)._
 
-**Status (September 21, 2026):** nothing implemented. Every requirement in
-`SPEC.md` is `unverified`.
+**Status (November 10, 2026):** M0 is delivered (PR #507), with its
+`git check-ignore -v` parity gate. M1–M7 and M9, with E0, are delivered
+with their gates;
+the state of each requirement is in the SPEC's
+[evidence ledger](./SPEC.md#evidence-ledger).
+The work resumes as the file-system layer of the
+[build graph](../build-graph/SPEC.md#_12-file-system-access): every listing
+the graph makes is a fileset resolution, so the build graph's E2 needs M1–M3,
+and M5 for the listing digests its planning read set records
+([D44](../build-graph/decisions.md#d44-the-build-graph-reaches-files-through-the-vfs-accepted)).
 
 ## Dependency graph
 
@@ -24,7 +32,7 @@ M4  ignore scopes on the immutable chain  ── behaviour-preservation gate
  │
 M5  FSO vocabulary + scheme declarations
  │
-M6  content-addressing schemes            ── blocked on decisions.md D1
+M6  content-addressing schemes            ── decided by decisions.md A19
  │
 M7  subtree cache
  │
@@ -32,7 +40,7 @@ M9  consumer migration + deletion of the old modules
 ```
 
 `M0` is independent of everything and useful on its own. `E0` gates only `M3`.
-`M6` is the only milestone the open Merkle decision blocks.
+The Merkle decision that blocked `M6` is A19.
 
 ## Milestones
 
@@ -60,6 +68,15 @@ fixture format.
 predicate on the whole fixture set. Allocation instrumentation shows zero
 allocation on the evaluation path.
 
+**Delivered.** Modules `fileset/pattern.d`, `value.d`, `tree_literal.d`;
+oracles and fixtures in `fileset/testing.d`; the audit in
+`fileset/allocation_audit.d`. Two scope items finish in M3, because both need
+a resolution: [`FSV4`](./SPEC.md#4-the-fileset-value-fsv)'s empty-directory
+report is part of the resolution result, and `FSD2`'s driver is M3's adapter
+instantiated over `MemVfs`. M1 delivers the tree-literal format and the
+`MemVfs` it builds. [`FSG2`](./SPEC.md#5-matching-fsg) is checked by M4's
+differential gate.
+
 ### M2 — The prefix lattice and verdicts
 
 **Scope.** [`FSA1`–`FSA6`](./SPEC.md#6-analysis-and-planning-fsa): root
@@ -72,6 +89,13 @@ same member set. Any member the plan misses is a `FSA1` violation. This gate is
 what makes the optimizer safe to make cleverer later, and it must run on every
 fixture for the life of the library.
 
+**Delivered.** `fileset/plan.d`: `plan` derives the start roots and the
+static-emptiness diagnostic, and `rootState` positions an evaluator at a
+root. The gate lives in `fileset/testing.d` beside M1's and runs over the same
+fixture set: `plannedWalk` follows the plan and the verdicts, and is the
+reference the M3 machine must match. `FSA5` is partial until M4. Only a root
+`.gitignore` exists as a leaf before then.
+
 ### M3 — The resolution machine and three drivers
 
 **Scope.** [`FSM1`–`FSM7`](./SPEC.md#7-the-resolution-machine-fsm), the
@@ -80,6 +104,16 @@ synchronous driver, and the `event-horizon` driver. Depends on `E0`.
 **Gate.** All three drivers produce byte-identical results over one fixture
 set. The machine's modules import nothing that performs I/O — checked by grep,
 not by inspection.
+
+**Delivered.** `fileset/machine.d` (the machine), `driver.d` (the one
+adapter and `PathCollector`) and `driver_loop.d` (the event-horizon
+executor); E0 is `sparkles.event_horizon.admission`. The machine reports
+units, incomplete entries and errors. A `Plan` start root whose directory is
+absent holds no member and is not reported. The gate is
+`fileset.gate.m3.threeBackends`, beside `fileset.gate.m3.machineAgreesWithOracles`,
+which holds the machine to M1's and M2's oracles on the whole fixture set.
+`FSV4` and `FSD2`, moved from M1, are delivered here. `FSM5`'s order and
+`FSE1`, `FSE2` and `FSS6`'s scheme halves wait for M5.
 
 ### M4 — Ignore scopes, and the behaviour-preservation gate
 
@@ -92,6 +126,13 @@ divergence is either explained by
 [`FSG2`](./SPEC.md#5-matching-fsg) (the anchoring change) and recorded, or
 fixed. Nothing is deleted until this evidence exists.
 
+Delivered as `fileset.gate.m4.behaviourPreservation`, deleted with the old walker
+in M9. Two more classes are
+accepted beside `FSG2`: a divergence where git agrees with the machine (the
+old walker's defect) and one `FSA5`'s forced entry explains. The record, over
+this repository and ten others, linux among them, is
+[A17](./decisions.md#a17-the-m4-divergence-record).
+
 ### M5 — The FSO vocabulary and scheme declarations
 
 **Scope.** [`FSO1`–`FSO4`](./SPEC.md#3-the-file-system-object-vocabulary-fso),
@@ -101,21 +142,53 @@ fixed. Nothing is deleted until this evidence exists.
 versus `a.b` fixture distinguishes `narOrder` from `gitTreeOrder`. A fold
 scheme with `none` ordering fails to compile.
 
+Delivered: `fileset/fso.d` (the vocabulary and the declarations) and
+`fileset/scheme.d` (`resolveScheme`, `FsoRef`, `PathScheme`). The machine
+orders units, requests declared metadata, reads link targets, and hands a
+fold the directories above its start roots
+([A18](./decisions.md#a18-the-scheme-seam-as-built)). The three gate
+conditions are `fileset.scheme.FSS2.metadata`,
+`fileset.scheme.FSS1.orders` and `fileset.scheme.FSS5.foldNeedsOrder`.
+`FSS8` was partial until M6 gave the supplied tree a type.
+
 ### M6 — Content-addressing schemes
 
-**Blocked on [D1](./decisions.md#d1-which-merkle-shape).**
+**Decided by [A19](./decisions.md#a19-content-addressing-is-a-family-of-schemes-with-snix-castore-as-the-default).**
 
-**Scope.** The first two schemes, and the sibling contract under
-`docs/specs/build-primitives/content-addressing/`.
+**Scope.** The generic parts of A19 (`MerkleFold`, `Serial`, `Tee`), the
+castore, NAR and git instances (BLAKE3 from `sparkles.base.hash.blake3`), and the
+sibling contract under `docs/specs/build-primitives/content-addressing/`.
+`FSS8` gets its type: a supplied bao outboard, verified instead of read.
 
-**Order within the milestone.** Merkle first, NAR second — the Merkle oracle
-needs only tooling this repository already requires, while NAR's needs Nix on
-the host. If D1 selects the git shape, `git write-tree` is that oracle;
-Software Heritage's `swh.core.nar` is a second, independent NAR implementation
-if a cross-check is wanted offline.
+**Order within the milestone.**
 
-**Gate.** Digests match the chosen oracle on the fixture set, including the
-ordering fixture and a case-collision fixture.
+1. The oracles in the dev shell: Snix from its own repository, and Nix's
+   `nix hash path`, which every Nix host has.
+2. `MerkleFold`, with the D1 spike refactored into its git instance, which
+   `git write-tree` checks without new tooling.
+3. castore with BLAKE3, the default identity.
+4. `Serial` and NAR, which may need the stream's `leave` from A19.
+5. `Tee` of castore and NAR, so NarHash is stored beside the identity (D2).
+
+**Gate.** Each instance matches its oracle on the fixture set, including the
+ordering fixture and a case-collision fixture. A `Tee` reads each file once.
+
+Progress: all five steps are delivered. `content_addressing/merkle.d` holds the
+shell, `git.d` and `castore.d` the instances; `content_addressing.git.writeTree`
+checks SHA-1 and SHA-256 against `git write-tree`, and
+`content_addressing.castore.snix` checks castore against Snix, on the hazard,
+case-collision, fixture and 200 random trees. `nar.d` holds NAR, a stream
+declaring the new `leave`; `content_addressing.nar.dump` checks it against
+`nix-store --dump` on the same trees. The tee is `NarScheme!(H, Ref, Dirs)`,
+NAR with Merkle encodings beside it, and `CastoreNar` stores the `NarHash`
+beside the identity; `content_addressing.tee.readsOnce` is the gate's "reads
+each file once". The sibling contract,
+[content-addressing/](../content-addressing/SPEC.md), was accepted by the owner
+on 2026-11-09, with its decisions: C1 stores `NarHash` beside the id, C2
+makes iroh's outboard the supplied tree, and C3 has an id name only the
+members' tree. `outboard.d` holds `FSS8`'s type, which `MerkleFold` takes
+through a `Supply`, checked against `bao-tree` (`CAO1`, `CAO2`). M6 is
+complete.
 
 ### M7 — The subtree cache
 
@@ -127,6 +200,18 @@ and only slower. A fault-injection case in which the heuristic reports
 "unchanged" for changed content must fail the suite — the oracle is tested, not
 only the implementation.
 
+Progress: delivered, as
+[`FSC1`–`FSC6`](./SPEC.md#12-the-subtree-cache-fsc) and
+[A20](./decisions.md#a20-the-subtree-cache-as-built). The cache lives in
+`content_addressing/cache.d`, where `SubtreeCache` is the cache and
+`CachedFold` the fold that keeps one. Its staleness check needed a file's
+change time, which the VFS gained for it
+([DV32](../../base/vfs/decisions.md#dv32-the-change-time)). Its oracle,
+`cacheDivergence`, runs the fold over a script of changes, and after each
+change compares the cached id with a cold run's. With the cache deleted, the
+ids are the same and every file is read again. Three lying validators each
+make the oracle fail, and the real one passes the same scripts.
+
 ### M9 — Migration and deletion
 
 **Scope.** `apps/hue` (`picker_sources.d`, `site.d`, `picker_grep.d`),
@@ -137,6 +222,17 @@ those call sites lose their bespoke glob layer.
 
 **Gate.** M4's divergence record is closed, all consumers are on the new API,
 and the old modules are deleted in the same PR that removes the last consumer.
+
+Progress: delivered. `fileset/listing.d` is the consumers' API: `listRepository`
+resolves a fileset at the enclosing repository's root through `RingVfs`,
+`withGlobs` is the explorer's include/exclude precedence, and `GlobFilter` and
+`GlobSet` replace `passesGlobs` for one path at a time. `source_set.d`, hue's
+pickers, site discovery and explorer, and both examples are on it, and
+`dir_walk.d`, `glob_walk.d` and `gitignore.d` are deleted, with M4's gate;
+`gitGlobMatch`, which selects packages by name, moved to `workspace/select.d`.
+Consumers' globs were reviewed against A17: the repository ships none to
+them, and the site's `srcExclude` keeps VitePress's own matcher, which reads
+`**/` as filesets do.
 
 ## What is deliberately not here
 

@@ -1617,5 +1617,152 @@
     ],
     "owner": "sparkles:base",
     "seeAlso": ["parking-lot"]
+  },
+  {
+    "id": "run-record",
+    "term": "run record",
+    "aliases": ["perf record"],
+    "summary": "The measurements of one ci run, kept as a small schema-versioned directory of JSON files that names no person, so runs can be shown, compared and charted later.",
+    "definition": "A directory holding one run's facts, its run and CI job metrics, and every task's metrics keyed by series and comparability key. Records are written locally for every run and shared through the data-only ref `refs/perf/data`. See [the observability specification §11](/specs/build-primitives/observability/SPEC#_11-run-records).",
+    "authority": [
+      {
+        "text": "Observability specification §11",
+        "link": "/specs/build-primitives/observability/SPEC#_11-run-records"
+      }
+    ],
+    "owner": "sparkles:build-primitives",
+    "seeAlso": ["series-key", "comparability-key", "metric-quality"]
+  },
+  {
+    "id": "series-key",
+    "term": "series key",
+    "summary": "The identity of one task across runs and machines, from its stable task id and its variant with only the compiler vendor of its toolchain, so the same task's measurements line up over time.",
+    "definition": "The SHA-256 of a task's stable id and, for a build action, of its variant key with the toolchain identity replaced by the compiler's vendor. A toolchain bump therefore continues a series instead of starting a new one, while LDC and DMD builds stay apart; the [comparability key](/glossary#comparability-key) records the toolchain.",
+    "authority": [
+      {
+        "text": "Observability specification, OBD2",
+        "link": "/specs/build-primitives/observability/SPEC#_11-run-records"
+      }
+    ],
+    "owner": "sparkles:build-primitives",
+    "seeAlso": ["comparability-key", "run-record"]
+  },
+  {
+    "id": "comparability-key",
+    "term": "comparability key",
+    "summary": "What two measurements of one task must share to be compared: the toolchain, the CPU, the operating system and the enabled measurements.",
+    "definition": "The SHA-256 of a task's toolchain identity, CPU vendor, family and model, operating system and enabled observation families. Comparisons and the regression gate pair only samples with equal keys.",
+    "authority": [
+      {
+        "text": "Observability specification, OBD3",
+        "link": "/specs/build-primitives/observability/SPEC#_11-run-records"
+      }
+    ],
+    "owner": "sparkles:build-primitives",
+    "seeAlso": ["series-key"]
+  },
+  {
+    "id": "metric-quality",
+    "term": "metric quality",
+    "summary": "What a recorded value is the truth about: exact, a lower bound, or an estimate; a value that could not be measured is absent instead.",
+    "definition": "Every recorded metric value carries a quality. **Exact** values are the truth about the metric's definition; a **lower bound** missed part of the work, through sampling, a budget or a boundary the work can leave; an **estimate** scaled a partial count, such as a multiplexed hardware counter. An unmeasurable metric is a [reported absence](/glossary#reported-absence), never zero.",
+    "authority": [
+      {
+        "text": "Observability specification §3",
+        "link": "/specs/build-primitives/observability/SPEC#_3-the-metric-vocabulary"
+      }
+    ],
+    "owner": "sparkles:build-primitives",
+    "seeAlso": ["reported-absence", "metric-class"]
+  },
+  {
+    "id": "test-runner-executable",
+    "term": "test runner executable",
+    "aliases": ["pinned runner", "sparkles-test-runner"],
+    "summary": "The separate program, built from a pinned revision of the repository, that parses a test run's command line, schedules its tests across worker processes and renders the reports.",
+    "definition": "`sparkles-test-runner` holds everything a test run needs except the tests themselves: the command line, scheduling, reports, `--bench-json`, and the compile-time and extracted modes. It drives test binaries over the runner protocol and is never linked into one, so it is built from a pinned revision like a bootstrap compiler.",
+    "authority": [
+      {
+        "text": "sparkles:test-runner process model §2",
+        "link": "/specs/test-runner/process-model#_2-packages"
+      }
+    ],
+    "owner": "sparkles:test-runner",
+    "seeAlso": ["test-launcher", "test-worker", "test-fallback"]
+  },
+  {
+    "id": "test-launcher",
+    "term": "launcher",
+    "aliases": ["test launcher"],
+    "summary": "A test binary started by a person or by dub that hands its run to the test runner executable and exits with its status.",
+    "definition": "A test binary that finds a runner, through `--runner` or `SPARKLES_TEST_RUNNER`, starts it on itself, forwards its arguments, and exits with the runner's status without running a test.",
+    "authority": [
+      {
+        "text": "sparkles:test-runner process model §3",
+        "link": "/specs/test-runner/process-model#_3-finding-the-runner"
+      }
+    ],
+    "owner": "sparkles:test-runner",
+    "seeAlso": ["test-runner-executable", "test-worker"]
+  },
+  {
+    "id": "test-worker",
+    "term": "worker",
+    "aliases": ["test worker", "worker process"],
+    "summary": "A test binary started by the test runner executable that runs the tests it is told to, one at a time, and reports each over the runner protocol.",
+    "definition": "A test binary started with `--sparkles-test-protocol`. It lists its tests, then runs the commands it reads on its standard input, one at a time, writing frames to its standard output and the tests' own output to its standard error. A run uses several workers in parallel.",
+    "authority": [
+      {
+        "text": "sparkles:test-runner process model §4",
+        "link": "/specs/test-runner/process-model#_4-the-protocol"
+      }
+    ],
+    "owner": "sparkles:test-runner",
+    "seeAlso": ["test-runner-executable", "test-launcher"]
+  },
+  {
+    "id": "test-fallback",
+    "term": "fallback",
+    "aliases": ["test fallback"],
+    "summary": "How a test binary runs when no test runner executable is found: its own tests, one at a time, with a minimal report.",
+    "definition": "With no runner, or with `--no-runner`, a test binary runs its selected runtime tests in its own process, in discovery order, and prints one line per test and a summary. Options that need the runner, such as `--bench`, stop the run with an error.",
+    "authority": [
+      {
+        "text": "sparkles:test-runner process model §7",
+        "link": "/specs/test-runner/process-model#_7-fallback"
+      }
+    ],
+    "owner": "sparkles:test-runner",
+    "seeAlso": ["test-runner-executable", "test-launcher"]
+  },
+  {
+    "id": "runner-frame",
+    "term": "frame",
+    "aliases": ["runner frame", "protocol frame"],
+    "summary": "One message of the test runner protocol: a record-separator byte, a JSON object naming its type, and a line feed.",
+    "definition": "A worker writes frames on a duplicate of its original standard output, and the runner writes commands as frames on the worker's standard input. Bytes outside a frame are stray output, shown, never a protocol error.",
+    "authority": [
+      {
+        "text": "sparkles:test-runner process model §4.1",
+        "link": "/specs/test-runner/process-model#_4-1-transport-and-framing"
+      }
+    ],
+    "owner": "sparkles:test-runner",
+    "seeAlso": ["test-worker", "test-runner-core"]
+  },
+  {
+    "id": "test-runner-core",
+    "term": "runner core",
+    "aliases": ["test runner core", "sparkles:test-runner-core"],
+    "summary": "The library both clients of the test runner protocol share: a protocol state machine that turns a worker's bytes into events and commands, and performs no I/O.",
+    "definition": "`sparkles:test-runner-core` holds the option model, the protocol client, the run plan and verdict, the bench session, and the compile-time and extracted modes. Its clients supply process spawning, I/O, scheduling and rendering: the standalone runner with threads, its pool and its reporter; `ci` with supervised processes, one task node per leg of a binary, and its reporters.",
+    "authority": [
+      {
+        "text": "sparkles:test-runner process model §9",
+        "link": "/specs/test-runner/process-model#_9-two-clients-the-standalone-runner-and-ci"
+      }
+    ],
+    "owner": "sparkles:test-runner",
+    "seeAlso": ["test-runner-executable", "test-worker"]
   }
 ]

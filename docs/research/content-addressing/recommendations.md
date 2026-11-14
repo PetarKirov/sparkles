@@ -352,5 +352,5 @@ through it on paper before any of it was written.
 [caches]: ./build-input-caches.md
 [venti]: ./venti.md
 [contra-1]: #1-the-git-shaped-identity-is-a-genuine-fork-not-an-obvious-choice
-[bp]: ../../../libs/build-primitives/src/sparkles/build_primitives/gitignore.d
+[bp]: https://github.com/PetarKirov/sparkles/blob/e70f9016cc5d6dfaf80468b46d8fe2f95924e58f/libs/build-primitives/src/sparkles/build_primitives/gitignore.d
 [nixspec]: ../../specs/nix/SPEC.md

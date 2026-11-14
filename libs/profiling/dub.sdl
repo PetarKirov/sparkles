@@ -14,6 +14,11 @@ dflags "-preview=in" "-preview=dip1000"
 // never compiled (its symbols are libTracyClient's).
 excludedSourceFiles "src/sparkles/profiling/tracy_c.c"
 
+// The counters (`sparkles.profiling.counters`) are a package of their own,
+// which the test harness depends on as well, so both link one copy;
+// `counters/frame.d`, which reads them for a frame loop, is this package's.
+dependency "sparkles:profiling-counters" path="../.."
+
 configuration "library" {
     targetType "library"
     dependency "sparkles:base" path="../.."
@@ -35,11 +40,7 @@ configuration "tracy" {
 }
 
 configuration "unittest" {
-    // Cycle-safe: the runner's impl depends on this package for its counters,
-    // so this package source-includes the shim and the impl, and takes the
-    // impl's own dependencies.
-    sourcePaths "src" "../test-runner/src" "../test-runner-impl/src"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
+    dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:base" path="../.."
     dependency "sparkles:ui" path="../.."
     // `FrameSummary` round-trips through JSON without custom code (PRF17).
@@ -50,8 +51,7 @@ configuration "unittest" {
 
 // The tests again, with Tracy: `dub test :profiling -c unittest-tracy`.
 configuration "unittest-tracy" {
-    sourcePaths "src" "../test-runner/src" "../test-runner-impl/src"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
+    dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:base" path="../.."
     dependency "sparkles:ui" path="../.."
     dependency "sparkles:wired" path="../.."

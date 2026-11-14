@@ -1,64 +1,41 @@
 name "test-runner-impl"
-description "Implementation library for sparkles:test-runner (internal — depend on sparkles:test-runner instead)"
+description "The sparkles:test-runner runner executable, sparkles-test-runner (internal — tests depend on sparkles:test-runner)"
 authors "Petar Kirov"
 copyright "Copyright © 2026, Petar Kirov"
 license "BSL-1.0"
 
 targetPath "build"
+targetName "sparkles-test-runner"
 
-// `-allinst` makes the prebuilt library self-contained: it emits every
-// template instance it references (notably `std.uni`, via base's grapheme-aware
-// width), so a consumer linking `impl.a` — whose own build may not re-instantiate
-// them — resolves cleanly.
-dflags "-preview=in" "-preview=dip1000" "-allinst"
-// Keep nested reporting helpers in one object even for optimized consumers
-// whose dependency selection uses the ordinary library configuration.
-dflags "-singleobj" platform="ldc"
+dflags "-preview=in" "-preview=dip1000"
 
-// The marker UDAs live in the shim. Import-only (not `sourcePaths`): the shim's
-// registration modules are not compiled into this library.
-importPaths "src" "../test-runner/src"
-
-// The heavy runner machinery: CLI dispatch, execution, reporting, drivers,
-// benchmarking. Built once as a prebuilt library and reached across a thin
-// `extern(C)` seam by the `sparkles:test-runner` shim, so consumers never
-// recompile it. In-monorepo `base`/`core-cli` cannot depend on this package
-// (dub rejects the resulting cycle); they source-include it instead.
+// The runner proper: the command line, scheduling across worker processes,
+// reports, --bench-json, and the compile-time and extracted modes. It drives
+// test binaries over the runner protocol and is never linked into one, so
+// test binaries run it from a pinned revision (nix/test-runner-pin.json) and
+// a change here reaches only this package's own tests until the pin moves
+// (docs/specs/test-runner/process-model.md).
+dependency "sparkles:test-runner-core" path="../.."
 dependency "sparkles:base" path="../.."
 
 // The reporting UI (result tables, progress lines, OSC-8 links, the live
-// region) comes from the toolkit, not from the CLI package. `sparkles:ui`
-// depends only on `base`/`input`/`math`, so this edge closes no cycle — whereas
-// `core-cli` sits above the runner and did.
-//
-// This is also why `sparkles:ui` cannot take the fast `dependency
-// "sparkles:test-runner"` route for its own tests: that would close
-// `ui -> test-runner -> impl -> ui`. It source-includes the runner instead.
+// region) comes from the toolkit, not from the CLI package.
 dependency "sparkles:ui" path="../.."
 
 // The counters a benchmark reads (perf groups, rdpmc, syscalls, pressure
-// stalls) are `sparkles.profiling.counters`, shared with frame profiling.
-// `profiling`'s library depends only on `base`, so this edge closes no cycle;
-// the packages that source-include this impl source-include those counters too.
-dependency "sparkles:profiling" path="../.."
+// stalls) are `sparkles.profiling.counters`, shared with frame profiling. They
+// arrive with `sparkles:test-harness`, which depends on their package,
+// `sparkles:profiling-counters` (TRD13).
 
-targetType "library"
-
-configuration "library" {
-    targetType "library"
-}
-
-// Compatibility name for existing optimized consumers. The single-object LDC
-// policy now also protects consumers selecting the ordinary library config.
-configuration "benchmark" {
-    targetType "library"
+configuration "application" {
+    targetType "executable"
+    mainSourceFile "src/sparkles/test_runner/app.d"
 }
 
 configuration "unittest" {
-    // Self-host: source-include the shim (registration + discovery) so the
-    // implementation's own tests run through the sparkles runner.
-    sourcePaths "src" "../test-runner/src"
-    importPaths "src" "../test-runner/src"
+    targetType "library"
+    excludedSourceFiles "src/sparkles/test_runner/app.d"
+    dependency "sparkles:test-runner" path="../.."
 
     dflags "-checkaction=context" "-allinst"
 }

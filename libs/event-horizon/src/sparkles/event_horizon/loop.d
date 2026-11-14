@@ -2342,7 +2342,9 @@ unittest
     {
         auto devnull = File("/dev/null", "w");
         auto pid = spawnProcess(
-            ["/proc/self/exe", "-i", `loop\.fatal\.childBody`, "-t", "1"],
+            // `--no-runner`: the child must run its test in its own process,
+            // whose exit status is the observation.
+            ["/proc/self/exe", "--no-runner", "-i", `loop\.fatal\.childBody`, "-t", "1"],
             File("/dev/null", "r"), devnull, devnull,
             ["EH_FATAL_CHILD": mode], Config.none);
         return wait(pid);

@@ -356,10 +356,10 @@ low-level POSIX API:
    and no blocking call or sleep runs on a scheduler thread.
 5. Add native Windows spawning with `CreateProcessW`, UTF-16 argv/environment/
    cwd staging, restricted handle inheritance, IOCP-associated overlapped named
-   pipes, process-handle wait registration posting to IOCP, and Job Object tree
+   pipes, process-handle wait completion packets on the IOCP, and Job Object tree
    ownership/termination/resource accounting.
 6. Deliver the `apps/ci` process adapter through
-   [task-DAG M5](../ci/task-dag/PLAN.md#m5-event-horizon-subprocess-actions),
+   [task-DAG M5](../build-primitives/task-dag/PLAN.md#m5-event-horizon-subprocess-actions),
    preserving user-visible line streaming, timeout status, separate capture,
    and resource reporting. Its M3 supervision probes establish prerequisite
    parity; M5 supplies the adapter and M7–M12 remove the legacy execution paths.
@@ -394,7 +394,7 @@ package-private shielded scope children (`scope_`, SPEC §8.2). The
 "no polling loop" gate holds: an idle three-second supervised `sleep` makes
 nine `io_uring_enter` calls, no `epoll_*`, and no timer loop
 (`strace -f -c`). Remaining: item 1's complete macOS process-test matrix
-(portable exports exist; Darwin sampling progress is recorded below), item 5
+(closed on 2026-11-01, recorded below), item 5
 (Windows, §13.9), item 6
 (folded into task-DAG M5 and its later cutovers), and a
 `clone3(CLONE_INTO_CGROUP)` spawn path so that a
@@ -411,14 +411,46 @@ timeout/KILL/drain, cancellation and admission-failure reap. The latter
 exposed a short Darwin `siginfo_t` in the blocking-lane probe; it now uses
 the full native layout already used by `live`.
 
-Item 1 is **not complete**: lifting the entire legacy Linux supervision
-test gate exposed a macOS auto-reaped-root hang and residual-tree edge cases.
-The shared probes do not replace that remaining matrix. Windows spawning,
-Job Objects and wait packets, async file opens/flush, native Windows
-certification and bounded cross-worker channels remain open prerequisites.
-The installed Wine lacks both wait-packet exports; it may explicitly skip
-those cases, but native Windows must run them, without a polling or
-threadpool-callback fallback.
+Item 1's macOS process matrix is complete (2026-11-01). The supervision
+suite runs on every POSIX host: native macOS passes 255 tests with 11 skips
+at `-t 1`, and Linux passes 306 with 4 skips. The auto-reaped-root hang was in
+the kqueue backend, not in supervision. When a cancellation's internal
+completion is dispatched, the loop submits its next queued cancellation from
+inside that dispatch. `reap` iterated the synthesized completions up to the
+count it saw at entry, then cleared it, so the new pair was dropped and its
+target (already released) never completed. A lost root forces both drains
+while a reparented descendant still holds the pipes, which made that the
+first case to cancel two reads back to back. Darwin sampling now also walks
+the root's process group, as Linux's procfs scan does, so a member
+reparented away from its exited parent is still counted. Every `supervise`,
+`live` and shared-probe test is compiled on both hosts. On macOS only two
+skip: the cgroup kill of a `setsid` descendant, and a PTY master kqueue
+cannot poll. The `cgroup` module and the Linux
+procfs/cgroup sampler tests stay Linux-only; the `sampling_darwin` suite is
+their libproc counterpart. Without a run cgroup, a group the lost root
+unpinned may not be signalled again (§13.7), so the residual lives on until it
+exits; the auto-reap test ends its own orphan.
+
+Item 5 shipped (2026-11-01) as SPEC §13.9: `live_windows` spawns with
+`CreateProcessW` (suspended, assigned to a kill-on-close Job Object, then
+resumed), inverse-`CommandLineToArgvW` argv, UTF-16 strings and a sorted
+overlay block, a handle list restricting inheritance, and overlapped named
+pipes on the port; exits arrive through one wait completion packet per wait
+(`OpWaitHandle`), timers through a high-resolution waitable timer on a
+persistent packet. `supervise` runs over it unchanged in shape (console break,
+`TerminateJobObject`, the Job Object sampler), and the supervision cases run
+on native `windows-latest`. The installed Wine lacks both wait-packet exports:
+exactly the cases that wait on a process skip there, and nothing falls back
+to polling or a threadpool callback.
+
+Follow-ups (2026-11-02): a Win32 message-loop host now waits on the
+completion port itself, so wait packets (process exits, the high-resolution
+timer) wake it; `capture`, `RingProc` and the `liveEnv` row moved to the
+shared `live_shared` module and run on Windows beside a Winsock `RingNet`,
+and `spawnPty`/`resizePty` run over ConPTY; the Job Object sampler measures
+the tree's peak working set as `peakRssBytes` beside the job's commit peak.
+Async file opens/flush and bounded cross-worker channels remain open
+prerequisites.
 
 ## M20 — The fiber parker for `sparkles.base.sync`
 
@@ -457,3 +489,14 @@ shutdown requested during a run cancels every scope and leaks a worker that
 outlives the grace period. `raw_pool` locks with base.sync. The
 [ledger](./fiber-parker.md#evidence-ledger) records what is verified; the
 bucket waits (EFP11, EFP15) lack a test hook in base.sync.
+
+Cross-worker channels (November 1, 2026) build on the parker: SPEC §14.1's
+`CrossChannel` guards its buffer with a base.sync `Mutex` and parks putters
+and takers on two `Condition`s, so its waits go through this parker on every
+backend that has it. It is the bounded cross-worker channel that the task-DAG
+plan's M3 gate requires. Native tests on both paths cover delivery across
+workers and threads, backpressure, close-then-drain, cancellation of a parked
+put and of a parked take (alone and racing a delivery), an exactly-once
+stress, move-only elements and teardown. The work fixed one ring-path defect:
+a worker that never went idle held its ring wakes for other workers' fibers
+until it next waited (EFP9).

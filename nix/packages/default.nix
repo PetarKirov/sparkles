@@ -205,6 +205,7 @@
               --prefix PATH : ${path} \
               --set-default SPARKLES_DUB_SOURCES ${config.packages.dub-sources} \
               --set-default SPARKLES_WASI_LDC ${lib.getExe' wasiLdc "ldc2"} \
+              --set-default SPARKLES_TEST_RUNNER ${lib.getExe config.packages.test-runner} \
               ${setEnv} \
               ${exampleLibArgs} \
               --run ${lib.escapeShellArg d-toolchain.nofileCommand}
@@ -292,7 +293,7 @@
             -Ilibs/metadata/src \
             -Ilibs/reflection/src \
             -Ilibs/core-cli/src \
-            -Ilibs/test-runner/src \
+            -Ilibs/test-attributes/src \
             -L-lcurl \
             -of=toolchain-pin-check \
             apps/ci/tools/check-pin-cache.d
@@ -391,7 +392,7 @@
       # CPU benchmark harness for the terminal. Pure D + core-cli (it only spawns
       # terminal binaries handed to it and reads /proc), so no raylib/ghostty
       # build inputs and no runtime wrapper are needed — just the default
-      # `buildSparklesApp` closure (core-cli → base, math, test-runner shim+impl).
+      # `buildSparklesApp` closure (core-cli → base, math, test-attributes).
       packages.terminal-benchmark = config.legacyPackages.buildSparklesApp (finalAttrs: {
         pname = "terminal-benchmark";
         version = "0.1.0";

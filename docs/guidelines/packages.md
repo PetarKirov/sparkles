@@ -21,7 +21,8 @@ live under `docs/libs/<name>/` and specs under `docs/specs/`.
 - **`sparkles:android`** (`libs/android`) — NativeActivity glue for the Android apps (hue, the terminal): the activity handle, data dirs and content rect, the logcat sink, the APK asset bundle (manifest-driven extraction keyed by `bundle-hash`, streaming asset copies), and JNI bridges into framework classes — clipboard, typed text (`KeyCharacterMap`, IME commits), the soft keyboard, HTTP(S) downloads (`HttpURLConnection`), `ACTION_VIEW` intents, a wake lock, runtime permissions. Short JNI calls run on one attached worker thread (`withJni`), since `sparkles:ui-app` frames run on fibers ART refuses to attach. Everything platform-bound is `version (Android)`; on a host the package is its pure helpers (`bundle.d`), so any library can depend on it unconditionally
 - **`sparkles:appearance`** (`libs/appearance`) — The desktop's appearance preferences as data (`SystemAppearance`: colour scheme, accent, contrast, reduced motion, title-bar controls, interface and title fonts, each with whether it was read), the parsers for GNOME's `button-layout` and Pango font names, the `--appearance` override (`overriddenBy`), and on Linux the settings portal over `sparkles:dbus` (`PortalAppearance`: one `ReadAll`, then `SettingChanged`) — the proposal's P2 ([proposal](../research/platform-ui-guidelines/sparkles-proposal.md))
 - **`sparkles:base`** (`libs/base`) — Allocation-conscious foundation utilities: `Buffer` (four storage policies), lifetime helpers, `@nogc` text readers/writers, terminal styling, terminal capability probing (`term_caps` — size/tty/colors/unicode, the single place that decision is made), hardware parallelism (`hw_caps` — CPU quota/affinity plus memory/load/swap so a pool is not wider than the host can usefully run), styled IES, logging, the shared I/O error vocabulary (`io.errors`), synchronization (`sync` — `Mutex`, `LockBits`, `InterruptibleMutex`, `Guarded!T`, `Condition`, `Once`, `RwLock`, `Semaphore`, the events, `Latch`, `Barrier` and a futex-style address wait over one statically allocated parking lot, serving threads and, through a scheduler's installed parker, fibers; spec: `docs/specs/base/sync/`), and the capability VFS (`vfs` — directory handles with compile-time rights, the component walk, tree removal, atomic write, and the in-memory `MemVfs`; spec: `docs/specs/base/vfs/`)
-- **`sparkles:build-primitives`** (`libs/build-primitives`) — Build-system and VCS primitives: `.gitignore` parsing/matching (nested + ancestor scopes), a DbI-hook directory walker (`walkGitRepository`), `git_env` — the scrubbed environment (`runGit`) a git child needs, so an inherited `GIT_DIR` cannot redirect a call that names its own repository — and the DUB recipe vocabulary: `dub_manifest`, the `dub.sdl` schema as `sparkles:wired` types (`DubManifest`, `DubBuildSettings`, `DubDependency`, …) that every in-repo recipe reader decodes through, and `dub_recipe`, the cross-format (`dub.sdl`/`dub.json`/single-file) summary dmd-lsp and hue read
+- **`sparkles:build-primitives`** (`libs/build-primitives`) — Build-system and VCS primitives: filesets (`fileset.*`: values naming sets of files, `.gitignore` scopes as git reads them, a sans-I/O resolution machine over the capability VFS, and `fileset.listing` for applications listing a directory with include/exclude globs), content addressing (`content_addressing.*`: castore, NAR, git trees and iroh's outboard over filesets), `git_env` — the scrubbed environment (`runGit`) a git child needs, so an inherited `GIT_DIR` cannot redirect a call that names its own repository — and the DUB recipe vocabulary: `dub_manifest`, the `dub.sdl` schema as `sparkles:wired` types (`DubManifest`, `DubBuildSettings`, `DubDependency`, …) that every in-repo recipe reader decodes through, and `dub_recipe`, the cross-format (`dub.sdl`/`dub.json`/single-file) summary dmd-lsp and hue read; plus the generic task-DAG layers `ci` runs on: `task.*` (vocabulary, graph validation, the Event Horizon executor, `supervise`-backed process actions, output spooling, plain reporters) and `workspace.*` (the dub package graph and focused `--from`/`--since` selection). The TTY reporter, which needs `sparkles:ui`, stays in `apps/ci`
+- **`sparkles:ci-provider`** (`libs/ci-provider`) — CI-provider detection (GitHub Actions, GitLab CI, Buildkite, Azure Pipelines, CircleCI) through an environment seam, and each provider's log conventions as writer-based `@nogc` operations: collapsible groups, source annotations, secret masks, and step-summary targets, degrading to plain output elsewhere. A leaf package with no dependencies, `-betterC`- and WASI-clean, so the task-DAG reporters and the test runner can share it (spec: `docs/specs/build-primitives/task-dag/SPEC.md` TDO6/TDO7)
 - **`sparkles:code-instrumentation`** (`libs/code-instrumentation`) — Code coverage ingestion library: universal coverage data model (`LineCoverage`, `FileCoverage`, `CoverageReport`), multi-format parsers over a shared record scanner (DMD `.lst`, GCC `gcov`, LCOV `.info`, V8 AST byte-range blocks, llvm-cov JSON) reporting failures as `ParseExpected`, anchored format auto-detection, and overlay planning (`CoveragePlan`)
 - **`sparkles:core-cli`** (`libs/core-cli`) — CLI argument parsing, help formatting, interactive prompts, process utilities, ANSI unstyle helpers. The UI components moved to `sparkles:ui` (`sparkles.ui.components.*`)
 - **`sparkles:dbus`** (`libs/dbus`) — A minimal D-Bus client: the wire format (a writer into a buffer, a bounds-checked `@nogc` reader cursor), message framing, SASL `EXTERNAL` over a Unix socket, `Hello`, method calls with a deadline, `AddMatch`, and signals read when `sparkles:event-horizon` finds the socket readable (Linux)
@@ -69,8 +70,12 @@ live under `docs/libs/<name>/` and specs under `docs/specs/`.
 - **`sparkles:wsi`** (`libs/wsi`) — Dependency-light native desktop window-system integration: unit-explicit geometry, generation-safe ids, typed errors/raw handles, lossless Regular events and a deterministic recording backend; native Wayland, X11, Win32 and AppKit lifecycle adapters share Event Horizon's only wait (Wayland/XCB over uring, User32/IOCP and CFRunLoop/kqueue), with immediate Wayland configure ack, a renderer native-I/O borrow, and IMM32 text input on Win32; XIM and remaining features follow `docs/specs/window-system-integration/`
 - **`sparkles:wired`** (`libs/wired`) — Serialization: a compile-time-reflected wire format with a JSON surface (`fromJSON`/`toJSON`), used for opaque payload ingest (e.g. the twoslash node model)
 - **`sparkles:ui-sdl3`** (`libs/ui-sdl3`) — SDL3 window system for `sparkles:ui`: window, input source, and the Vulkan surface (frame machinery from `sparkles:vulkan-wsi`)
-- **`sparkles:ui-vulkan`** (`libs/ui-vulkan`) — `sparkles:ui`'s canvas drawn with Vulkan on `sparkles:wsi` ([spec](../specs/ui-vulkan/SPEC.md)): buffers and images bound to memory from `sparkles:vulkan`'s sub-allocator, per-frame buffer space over a frame arena, and image uploads staged in that space and recorded before a frame's rendering; an effect bracketed at the frame's root runs through its record's SPIR-V passes (`EffectChain`, `spirv_interface`)
-- **`sparkles:test-runner-impl`** (`libs/test-runner-impl`) — internal: the prebuilt implementation library behind the `sparkles:test-runner` shim
+- **`sparkles:ui-vulkan`** (`libs/ui-vulkan`) — `sparkles:ui`'s canvas drawn with Vulkan on `sparkles:wsi` ([spec](../specs/ui-vulkan/SPEC.md)): buffers and images bound to memory from `sparkles:vulkan`'s sub-allocator, per-frame buffer space over a frame arena, and image uploads staged in that space and recorded before a frame's rendering; an effect bracketed at the frame's root runs through it
+- **`sparkles:test-runner-impl`** (`libs/test-runner-impl`) — internal: the runner executable, `sparkles-test-runner`, built from the pinned revision in `nix/test-runner-pin.json`; test binaries reach it through `$SPARKLES_TEST_RUNNER`
+- **`sparkles:test-runner-core`** (`libs/test-runner-core`) — internal: the runner core both clients share — the worker session as a sans-IO protocol state machine, the option model, the run plan and verdict, the compile-time and extracted modes, and a plain-text renderer; performs no I/O
+- **`sparkles:test-harness`** (`libs/test-harness`) — internal: what runs inside a test binary (discovery, execution, the fallback, the measurement layer); depends on no repository package but the attributes and `sparkles:profiling-counters`
+- **`sparkles:profiling-counters`** (`libs/profiling-counters`) — internal: `sparkles:profiling`'s hardware and OS counters (`sparkles.profiling.counters`: perf groups, rdpmc, raw events, syscall tracepoints, pressure stalls, the capability seam), a package of their own so the test harness and `sparkles:profiling` link one copy; depends only on `sparkles:test-attributes`
+- **`sparkles:test-attributes`** (`libs/test-attributes`) — the marker attributes (`@ctfe`, `@betterC`, `@wasm`, `@benchmark`, `@workload`, `@serial`, `@slow`), the one part of the runner a library build depends on
 
 ## Module map
 
@@ -131,12 +136,15 @@ sparkles/
 │   │   ├── sync/                   # parking lot + Mutex/LockBits, InterruptibleMutex, Guarded, Condition, Once, RwLock, Semaphore, events, Latch, Barrier, address wait, parker.d
 │   │   └── text/                   # @nogc text package: readers.d, writers.d, errors.d, package.d
 │   ├── build-primitives/src/sparkles/build_primitives/
-│   │   ├── gitignore.d             # .gitignore rule parsing/matching + GitIgnoreStack (nested/ancestor scopes)
-│   │   ├── dir_walk.d              # DbI-hook directory walker; walkGitRepository / GitRepositoryFilter
-│   │   ├── glob_walk.d             # include/exclude globs over the gitignore walk (GitGlobFilter)
+│   │   ├── fileset/                # filesets: value, pattern, plan, machine, ignore, driver, scheme, listing
+│   │   ├── content_addressing/     # Merkle shell, castore, NAR, git trees, iroh outboard
 │   │   ├── git_env.d               # runGit / gitChildEnvironment: a git child never inherits GIT_DIR
 │   │   ├── dub_manifest.d          # dub.sdl as a wired schema: DubManifest, DubBuildSettings, parseEmbeddedDubManifest
-│   │   └── dub_recipe.d            # recipe lookup + cross-format summary (names, subpackages, configurations)
+│   │   ├── dub_recipe.d            # recipe lookup + cross-format summary (names, subpackages, configurations)
+│   │   ├── task/                   # task DAG: model, graph, action, executor (Event Horizon), process (supervise), output, reporter, reporter_plain, testing
+│   │   └── workspace/              # package_graph.d (dub sub-package graph), select.d (--from/--since selection)
+│   ├── ci-provider/src/sparkles/
+│   │   └── ci_provider.d           # CI-provider detection + groups, annotations, masks, step summaries (TDO6/TDO7)
 │   ├── code-instrumentation/src/sparkles/code_instrumentation/
 │   │   └── coverage/               # models, record scanner, formats (dmd, gcov, lcov, v8, llvm), ingest, overlay
 │   ├── docs/src/sparkles/docs/     # SSG doc-site library: fragment.d, options.d, page_shell.d,
@@ -162,17 +170,26 @@ sparkles/
 │   │   ├── operations.d, ranges.d, parsing.d, traits.d, any.d
 │   │   ├── purl.d, vers.d          # pURL / VERS interop
 │   │   └── testing.d               # checkRoundTrip / checkRejects / checkAscending
-│   ├── test-runner/src/sparkles/test_runner/   # the shim (sourceLibrary, compiled into consumers)
-│   │   ├── attributes.d            # @betterC / @ctfe / @wasm / @benchmark marker UDAs
-│   │   ├── discovery.d             # compile-time unittest discovery → Test[]
-│   │   └── register.d              # extendedModuleUnitTester hook + extern(C) seam
-│   ├── test-runner-impl/src/sparkles/test_runner/  # prebuilt impl library (internal)
-│   │   ├── runner_impl.d           # extern(C) entry, CLI, mode dispatch
-│   │   ├── model.d, filter.d       # Test/TestResult data model; regex include/exclude
-│   │   ├── execution.d, reporting.d # parallel execution; styled result rendering
-│   │   ├── bench.d                 # benchIter/blackBox, auto-scaling measurement
-│   │   ├── extract.d, driver.d     # unittest-body extraction; -betterC/wasm drivers
+│   ├── test-attributes/src/sparkles/test_runner/  # the marker attributes, all a library build imports
+│   │   └── attributes.d            # @betterC / @ctfe / @wasm / @benchmark / @workload / @serial / @slow UDAs
+│   ├── test-harness/src/sparkles/test_runner/     # the in-binary half: no other repository package
+│   │   ├── discovery.d, model.d    # compile-time unittest discovery → Test[]; Test/TestResult
+│   │   ├── entry.d, worker.d       # worker / launcher / fallback mode; the protocol's binary side
+│   │   ├── protocol.d, fallback.d  # versions, framing, JSON values; in-process sequential runs
+│   │   ├── execution.d, skip.d     # one test on a budgeted thread; skipTest
+│   │   └── bench.d, workload.d, …  # the measurement layer (perf, tier0, syscalls, psi, …)
+│   ├── test-runner/src/sparkles/test_runner/   # the shim (sourceLibrary, compiled into each test root)
+│   │   └── register.d              # extendedModuleUnitTester hook → the harness
+│   ├── test-runner-core/src/sparkles/test_runner/  # the runner core: no I/O, shared by both clients
+│   │   ├── session.d               # the worker session: bytes in, commands and events out
+│   │   ├── options.d, plan.d       # the option model; selection, phases, verdict
+│   │   ├── render.d                # plain-text lines of a session's events
+│   │   ├── extract.d, driver.d     # unittest-body extraction; @ctfe/-betterC/wasm drivers
 │   │   └── ctfe_trace.d            # -ftime-trace CTFE cost attribution
+│   ├── test-runner-impl/src/sparkles/test_runner/  # the standalone runner, sparkles-test-runner (pinned)
+│   │   ├── app.d, runner_impl.d    # entry, mode dispatch
+│   │   ├── client.d, pool.d        # the I/O around a session; worker processes
+│   │   └── reporting.d, bench_json.d # styled result rendering; --bench-json
 │   ├── test-utils/src/sparkles/test_utils/
 │   │   └── diff_tools.d, tmpfs.d, string.d, package.d
 │   ├── text-buffer/src/sparkles/text_buffer/

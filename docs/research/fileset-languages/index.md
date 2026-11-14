@@ -5,7 +5,7 @@ the infix set algebras of Jujutsu and Mercurial, the ordered rule lists of
 `.gitignore` and rsync, the prefix namespace of git pathspec, the combinator API
 of nixpkgs' `lib.fileset`, and the implicit-conjunction prompts of fzf and fff.
 The evidence base for the textual query DSL that
-[`sparkles:build-primitives`](../../../libs/build-primitives/src/sparkles/build_primitives/glob_walk.d) is being
+[`sparkles:build-primitives`](https://github.com/PetarKirov/sparkles/blob/e70f9016cc5d6dfaf80468b46d8fe2f95924e58f/libs/build-primitives/src/sparkles/build_primitives/glob_walk.d) is being
 redesigned around, and for hue's [picker][picker] query language (`PKQ*`).
 
 This survey answers seven questions:

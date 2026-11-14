@@ -270,6 +270,9 @@
         # The LDC with the WASI runtimes: the test runner's `--wasm` and the
         # WebAssembly modules' builds (`ci --build`).
         export SPARKLES_WASI_LDC=${lib.getExe' inputs'.dlang-nix.packages.ldc-sparkles "ldc2"}
+        # The pinned test runner executable (test-runner process-model TRN2):
+        # every test binary started here delegates its run to it.
+        export SPARKLES_TEST_RUNNER=${lib.getExe config.packages.test-runner}
         ${lib.getExe config.packages.ci} --seed-dub-cache >/dev/null 2>&1 || {
           echo 'Failed to seed DUB sources; run ci --seed-dub-cache for details.' >&2
           return 1
@@ -307,6 +310,18 @@
         # reader (dub test :wired skips those tests when unset).
         export JSON_TEST_SUITE=${config.packages.json-test-suite}
         export NATIVEJSON_TEST_SUITE=${config.packages.nativejson-test-suite}
+
+        ${lib.optionalString (config.packages ? snix-castore) ''
+          # Snix's castore CLI, the oracle of the default content identity
+          # (filesets A19); `dub test :build-primitives` skips it when unset.
+          # CI tier: without it the gate of that identity degrades to a skip.
+          export SPARKLES_SNIX_CASTORE=${lib.getExe' config.packages.snix-castore "snix-castore"}
+        ''}
+
+        # bao-tree's outboard of a file, the oracle of the iroh outboard
+        # (content-addressing C2); `dub test :build-primitives` skips it when
+        # unset.
+        export SPARKLES_BAO_OUTBOARD=${lib.getExe config.packages.bao-outboard}
 
         # The bundled fonts, the corpus for sparkles:font and its HarfBuzz
         # oracle (dub test :font / :font-oracle skip those tests when unset).

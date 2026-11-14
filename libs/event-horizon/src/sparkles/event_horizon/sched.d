@@ -39,7 +39,7 @@ import sparkles.event_horizon.cause : CancelContext, FiberContext, Interrupt,
     InterruptKind, cancelTree, interruptFiber, interruptRequested;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.fiber_park : FiberParkState, fiberParker, resumeIfAsleep,
-    writeRingSleep;
+    ringWakesPending, writeRingSleep;
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig, RunStatus;
 import sparkles.event_horizon.op;
 
@@ -132,12 +132,37 @@ private:
 struct SchedOptions
 {
     size_t stackSize = 64 * 1024;  /// per-fiber stack (open-issues O4)
-    size_t guardPageSize = 4096;   /// guard page below each stack
+    /// The guard below each stack, rounded up to whole pages: `mprotect`
+    /// guards a page at a time, so on a 16 KiB-page host (Apple silicon) an
+    /// unrounded 4 KiB guard would protect a whole page carved out of
+    /// `stackSize`, leaving 52 KiB of a 64 KiB stack.
+    size_t guardPageSize = 4096;
     uint maxFibers = 256;          /// task-slab size; `spawn` fails past it
     uint resumeBudget = 64;        /// fibers run per tick before re-draining
     /// How a fiber waiting on a `sparkles.base.sync` primitive parks
     /// (fiber-parker.md EFP6).
     FiberPark fiberPark = FiberPark.auto_;
+}
+
+/// `bytes` rounded up to whole pages of this host; zero stays zero (no guard).
+private size_t wholePages(size_t bytes) @safe nothrow @nogc
+{
+    import core.memory : pageSize;
+
+    return (bytes + pageSize - 1) / pageSize * pageSize;
+}
+
+@("sched.wholePages.guardIsWholePagesAndZeroStaysUnguarded")
+@safe nothrow @nogc
+unittest
+{
+    import core.memory : pageSize;
+
+    assert(wholePages(0) == 0, "no guard requested, none added");
+    assert(wholePages(1) == pageSize);
+    assert(wholePages(4096) == (pageSize > 4096 ? pageSize : 4096),
+        "the default guard covers one page on a 16 KiB-page host");
+    assert(wholePages(pageSize + 1) == 2 * pageSize);
 }
 
 /**
@@ -180,6 +205,10 @@ struct Sched
 {
     @disable this(this);
 
+    /// Installs the fiber parker around every resume (fiber-parker.md EFP1),
+    /// which `hasFiberParker` detects.
+    enum bool installsFiberParker = true;
+
     /// Builds the loop and pre-allocates the fiber slab (the only
     /// GC-allocating phase; steady-state operation is allocation-free).
     static IoResult!void create(out Sched s, in SchedOptions opts = SchedOptions(),
@@ -207,7 +236,7 @@ struct Sched
         s._tasks = new FiberTask[opts.maxFibers];
         foreach_reverse (i; 0 .. opts.maxFibers)
         {
-            auto t = new FiberTask(opts.stackSize, opts.guardPageSize);
+            auto t = new FiberTask(opts.stackSize, wholePages(opts.guardPageSize));
             t.owner = &s;
             t.slabIndex = i;
             s._tasks[i] = t;
@@ -1110,9 +1139,10 @@ private:
     The end of a tick's resumes: the ring path's submission point (EFP8),
     then whether the tick is done without waiting — fibers ran, or are
     ready. A tick whose fibers ran does not wait for completions, so while
-    ring waits are written it still flushes and reaps without blocking: a
-    worker that always has a fiber to run must not starve its parked fibers'
-    wakes and deadlines.
+    ring waits are written, or ring wakes of other workers' park words are
+    unreaped, it still flushes and reaps without blocking: a worker that
+    always has a fiber to run must not starve its parked fibers' wakes and
+    deadlines, nor the wakes it owes other workers' fibers (EFP9).
     */
     bool ringSubmissionPoint(uint ran) @trusted nothrow @nogc
     {
@@ -1120,7 +1150,7 @@ private:
         if (ran == 0 && _readyHead is null && !resolved)
             return false;
         static if (ringParkLowerable)
-            if (_ringWaits > 0)
+            if (_ringWaits > 0 || ringWakesPending())
                 cast(void) _loop.runOnce(Duration.zero);
         return true;
     }
@@ -1342,16 +1372,31 @@ package struct BlockingJob
     Waker waker;           /// `owner`'s armed waker, copied at submission
     BlockingJob* next;     /// inbox link (worker push → owner drain)
     shared bool done;      /// set by the owner's drain, read by the caller
+
+    /// Test seam, declared in every build so a `-unittest` consumer agrees
+    /// with the library on the layout: runs on the worker after the job is
+    /// published and before its wake.
+    package void delegate() nothrow @nogc testAfterPublish;
 }
 
-/// Worker-thread side: pushes a finished job onto its owner's inbox and
-/// wakes that loop. Touches nothing of the scheduler but the shared inbox
-/// head; the waker is the job's own copy.
+/**
+Worker-thread side: pushes a finished job onto its owner's inbox and wakes
+that loop. Touches nothing of the scheduler but the shared inbox head; the
+waker is the job's own copy.
+
+Publishing hands the job back. The owner's loop may drain it at once — on
+any tick, woken by anything — and resume the caller, whose frame, the job's
+storage, is then reused or freed. So the waker is read before the push, and
+the job is not touched after it.
+*/
 package void postBlockingCompletion(BlockingJob* job) @trusted nothrow @nogc
 {
     import core.atomic : atomicLoad, cas;
 
+    const waker = job.waker;
     auto inbox = &job.owner._blockingInbox;
+    version (unittest)
+        auto afterPublish = job.testAfterPublish;
     for (;;)
     {
         auto old = atomicLoad(*inbox);
@@ -1359,7 +1404,10 @@ package void postBlockingCompletion(BlockingJob* job) @trusted nothrow @nogc
         if (cas(inbox, old, cast(shared(BlockingJob*)) job))
             break;
     }
-    job.waker.wake();
+    version (unittest)
+        if (afterPublish !is null)
+            afterPublish();
+    waker.wake();
 }
 
 /**
@@ -1810,6 +1858,70 @@ unittest
             s.park();
     });
     assert(!r.hasError);
+}
+
+version (Posix)
+@("sched.blockingInbox.postTouchesNoJobItHasPublished")
+@system
+unittest
+{
+    import core.atomic : atomicLoad, atomicStore;
+    import core.memory : pureFree;
+    import core.sys.posix.fcntl : F_SETFL, O_NONBLOCK, fcntl;
+    import core.sys.posix.unistd : close, pipe, read;
+    import core.time : msecs;
+    import sparkles.event_horizon.backend.concept : WakeCell, WakeTarget;
+    import sparkles.event_horizon.io : sleep;
+
+    Sched s;
+    schedOrSkip(s);
+
+    // What the caller's frame holds once it is the caller's again: a waker
+    // whose wake lands in a pipe of the test's, where it can be seen.
+    int[2] stale;
+    assert(pipe(stale) == 0);
+    scope (exit)
+    {
+        close(stale[0]);
+        close(stale[1]);
+    }
+    assert(fcntl(stale[0], F_SETFL, O_NONBLOCK) == 0);
+    auto staleCell = WakeCell.create(WakeTarget(stale[1]));
+    assert(staleCell !is null);
+    scope (exit) pureFree(staleCell);
+
+    shared bool reclaimed;
+    auto r = s.run(() {
+        assert(!s.ensureBlockingInboxWaker().hasError);
+        BlockingJob job;
+        job.owner = &s;
+        job.waiter = s.currentContext();
+        job.waker = s.blockingWaker;
+        // The worker stops between publishing the job and waking the loop
+        // until the caller has taken its frame back.
+        job.testAfterPublish = () nothrow @nogc {
+            while (!atomicLoad(reclaimed))
+                Thread.yield();
+        };
+        scope (exit) atomicStore(reclaimed, true); // never strand the worker
+        auto worker = new Thread({ postBlockingCompletion(&job); }).start();
+        // A loop woken by anything drains its inbox: a sibling's timer
+        // ticks it, and the caller resumes without the worker's wake,
+        // which cannot happen before `reclaimed`.
+        assert(!s.spawn(() {
+            while (!atomicLoad(job.done))
+                cast(void) sleep(s, 1.msecs);
+        }).hasError);
+        while (!atomicLoad(job.done))
+            s.park();
+        job.waker = Waker(staleCell);
+        atomicStore(reclaimed, true);
+        worker.join();
+    });
+    assert(!r.hasError);
+    ulong woken;
+    assert(read(stale[0], &woken, woken.sizeof) < 0,
+        "the worker read its wake from a job it had already handed back");
 }
 
 @("sched.defect.survivesTheDestructorOfAnAbortedRun")

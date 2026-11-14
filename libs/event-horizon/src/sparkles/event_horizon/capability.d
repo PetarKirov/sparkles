@@ -62,6 +62,15 @@ enum bool hasDeadlineTimer(X) = __traits(compiles, (ref X x, CancelContext* cc) 
 });
 
 /**
+Optional fiber-parker capability (fiber-parker.md EFP1): the executor installs
+its fiber parker around every resume, so a `sparkles.base.sync` wait on one of
+its fibers suspends that fiber alone and leaves its worker running. Gates the
+fiber verbs of `CrossChannel` (SPEC §14.1); on an executor without it — the
+single-threaded `TestSched` — such a wait would block the only thread.
+*/
+enum bool hasFiberParker(X) = __traits(compiles, { static assert(X.installsFiberParker); });
+
+/**
 The minimal one-shot park/wake seam (SPEC §10.3) that lets effects-side
 capabilities (`TestClock`, `SimNet`) suspend the current task without
 importing the scheduler. Exactly one wake per prepared handle;

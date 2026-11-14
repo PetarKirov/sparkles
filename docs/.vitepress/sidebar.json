@@ -1205,6 +1205,90 @@
                 "link": "/specs/build-primitives/filesets/decisions"
               }
             ]
+          },
+          {
+            "text": "Content addressing",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "SPEC",
+                "link": "/specs/build-primitives/content-addressing/SPEC"
+              },
+              {
+                "text": "Testing",
+                "link": "/specs/build-primitives/content-addressing/testing"
+              },
+              {
+                "text": "Decisions",
+                "link": "/specs/build-primitives/content-addressing/decisions"
+              }
+            ]
+          },
+          {
+            "text": "Task DAG",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "SPEC",
+                "link": "/specs/build-primitives/task-dag/SPEC"
+              },
+              {
+                "text": "PLAN",
+                "link": "/specs/build-primitives/task-dag/PLAN"
+              },
+              {
+                "text": "Testing",
+                "link": "/specs/build-primitives/task-dag/testing"
+              },
+              {
+                "text": "Decisions",
+                "link": "/specs/build-primitives/task-dag/decisions"
+              }
+            ]
+          },
+          {
+            "text": "Build graph",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "SPEC",
+                "link": "/specs/build-primitives/build-graph/SPEC"
+              },
+              {
+                "text": "PLAN",
+                "link": "/specs/build-primitives/build-graph/PLAN"
+              },
+              {
+                "text": "Testing",
+                "link": "/specs/build-primitives/build-graph/testing"
+              },
+              {
+                "text": "Decisions",
+                "link": "/specs/build-primitives/build-graph/decisions"
+              }
+            ]
+          },
+          {
+            "text": "Observability",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "SPEC",
+                "link": "/specs/build-primitives/observability/SPEC"
+              },
+              {
+                "text": "PLAN",
+                "link": "/specs/build-primitives/observability/PLAN"
+              },
+              {
+                "text": "Testing",
+                "link": "/specs/build-primitives/observability/testing"
+              },
+              {
+                "text": "Decisions",
+                "link": "/specs/build-primitives/observability/decisions"
+              }
+            ]
           }
         ]
       },
@@ -1221,12 +1305,16 @@
             "link": "/specs/ci/stats/PLAN"
           },
           {
-            "text": "Task DAG specification",
+            "text": "Commands specification",
             "link": "/specs/ci/task-dag/SPEC"
           },
           {
-            "text": "Task DAG delivery plan",
+            "text": "Commands delivery plan",
             "link": "/specs/ci/task-dag/PLAN"
+          },
+          {
+            "text": "Commands testing",
+            "link": "/specs/ci/task-dag/testing"
           }
         ]
       },
@@ -1861,6 +1949,14 @@
           {
             "text": "Specification",
             "link": "/specs/test-runner/SPEC"
+          },
+          {
+            "text": "Process model and protocol",
+            "link": "/specs/test-runner/process-model"
+          },
+          {
+            "text": "Decisions",
+            "link": "/specs/test-runner/decisions"
           },
           {
             "text": "Delivery Plan",
@@ -3667,6 +3763,10 @@
               {
                 "text": "Process Supervision",
                 "link": "/research/async-io/process-supervision"
+              },
+              {
+                "text": "Windows IOCP Waits, Timers & Jobs",
+                "link": "/research/async-io/windows-iocp-waits"
               }
             ]
           },
@@ -5605,6 +5705,10 @@
               {
                 "text": "Go (go.work)",
                 "link": "/research/monorepo-tooling/go-work/"
+              },
+              {
+                "text": "Zig build (Zig)",
+                "link": "/research/monorepo-tooling/zig-build/"
               },
               {
                 "text": "Gradle (JVM)",

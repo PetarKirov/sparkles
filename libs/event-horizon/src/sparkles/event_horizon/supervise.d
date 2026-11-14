@@ -59,13 +59,23 @@ cancellation is delivered only after cleanup and the final event.
 */
 module sparkles.event_horizon.supervise;
 
-version (Posix)  :
+// POSIX process groups and signals, or Windows Job Objects (SPEC §13.9).
+version (Posix) version = EhSupervise;
+version (Windows) version = EhSupervise;
+version (EhSupervise)  :
 
 import core.lifetime : move;
 import core.stdc.errno : EAGAIN, ECANCELED, ECHILD, EINTR, EINVAL, EIO, ENOBUFS,
     EOPNOTSUPP, EPERM, ESRCH;
-import core.sys.posix.signal : SIGCONT, SIGKILL, SIGTERM;
 import core.time : Duration, MonoTime, msecs, seconds;
+
+version (Posix)
+    import core.sys.posix.signal : SIGCONT, SIGKILL, SIGTERM;
+else
+{
+    // The three stages `signalGroup` maps to the console break and the job.
+    private enum int SIGTERM = 15, SIGKILL = 9, SIGCONT = 18;
+}
 
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.event_horizon.backend.concept : canSubmitOp;
@@ -78,9 +88,22 @@ import sparkles.event_horizon.errors : ioError, IoError, IoErrorStage, IoResult,
     ioErr, ioOk;
 import sparkles.event_horizon.io : read, sleep, write;
 import sparkles.event_horizon.sys.descriptor : BorrowedFd;
-import sparkles.event_horizon.live : ChildProcess, observeExit, spawnProcess,
-    wait, waitPidOnLane;
-import sparkles.event_horizon.op : OpWaitid;
+import sparkles.event_horizon.live : ChildProcess, observeExit, spawnProcess, wait;
+version (Windows)
+{
+    import sparkles.event_horizon.live_windows : detachJob, exitStatusOf, probeExited,
+        reapOnLane, sendConsoleBreak;
+    import sparkles.event_horizon.op : OpWaitHandle;
+
+    private enum bool canWaitProcesses = canSubmitOp!(DefaultBackend, OpWaitHandle);
+}
+else
+{
+    import sparkles.event_horizon.live : waitPidOnLane;
+    import sparkles.event_horizon.op : OpWaitid;
+
+    private enum bool canWaitProcesses = canSubmitOp!(DefaultBackend, OpWaitid);
+}
 import sparkles.event_horizon.proc : ExitStatus, KillOutcome, KillResult,
     LineFramer, MetricQuality, MetricSource, ProcessConfig, ProcessEnd,
     ProcessEvent, ProcessEventKind, ProcessEventSink, ProcessLine,
@@ -96,7 +119,7 @@ version (linux)
         TreeEvidence, cgroupCleanup, cgroupCreate, cgroupKill, evidenceCall,
         migrateInto;
 
-static if (canSubmitOp!(DefaultBackend, OpWaitid))  :
+static if (canWaitProcesses)  :
 
 /**
 Runs `argv` under full supervision (SPEC §13.5–§13.8). Guarantees:
@@ -278,6 +301,7 @@ private struct Run
     ProcessEnd end = ProcessEnd.exited;
     bool endDecided;
     bool termSent;
+    bool softSignalUndelivered; /// Windows: no console break could reach the tree
     ReapOutcome reap;
     ExitStatus status;
     ExitStatus observedStatus;
@@ -351,12 +375,12 @@ private struct Run
         cast(void) relay.tryPut(move(token));
     }
 
-    version (unittest)
-    {
-        int* signalAttempts;
-        RelayTestHook beforeHandle;
-        RelayHandledTestHook afterHandle;
-    }
+    // Test seams, set only by unittests but declared in every build: a
+    // consumer compiled with `-unittest` must agree with the library on
+    // this struct's layout.
+    int* signalAttempts;
+    RelayTestHook beforeHandle;
+    RelayHandledTestHook afterHandle;
 
     bool streamsTerminal() const @safe pure nothrow @nogc
         => stdoutFinished && stderrFinished;
@@ -487,6 +511,7 @@ version (OSX)
         import core.sys.posix.sys.wait : idtype_t, siginfo_t, waitid, waitpid,
             WEXITED, WNOWAIT;
         import core.sys.posix.unistd : pid_t;
+        import sparkles.event_horizon.live : SigInfo; // druntime's is undersized
 
         posix_spawnattr_t attr;
         posix_spawnattr_init(&attr);
@@ -495,8 +520,8 @@ version (OSX)
         pid_t pid;
         char*[2] argv = [cast(char*) "/usr/bin/true".ptr, null];
         assert(posix_spawn(&pid, argv[0], null, &attr, argv.ptr, null) == 0);
-        siginfo_t info;
-        assert(waitid(idtype_t.P_PID, pid, &info, WEXITED | WNOWAIT) == 0);
+        SigInfo info;
+        assert(waitid(idtype_t.P_PID, pid, cast(siginfo_t*) &info, WEXITED | WNOWAIT) == 0);
         scope (exit) cast(void) waitpid(pid, null, 0);
 
         // The pinned zombie is the group's one member, and XNU refuses the
@@ -507,6 +532,33 @@ version (OSX)
     }
 }
 
+version (Windows)
+private KillOutcome signalGroup(ref Run run, int signal) @trusted nothrow
+{
+    // The handle and the job pin identity until the reap: no stale target.
+    if (run.processGroup <= 0)
+        return KillOutcome(KillResult.notAttempted, 0);
+    version (unittest)
+        if (run.signalAttempts !is null)
+            ++*run.signalAttempts;
+    if (signal == SIGCONT)
+        return KillOutcome(KillResult.notAttempted, 0); // nothing is stopped
+    if (signal == SIGTERM)
+    {
+        // A console break to the child's group, when it shares a console;
+        // otherwise no soft signal is deliverable and the grace still runs.
+        if (sendConsoleBreak(*run.child))
+            return KillOutcome(KillResult.delivered, 0);
+        run.softSignalUndelivered = true;
+        return KillOutcome(KillResult.notAttempted, 0);
+    }
+    // The hard stage: the whole job, descendants and nested jobs included.
+    auto killed = run.child.killGroup();
+    return killed.hasError ? KillOutcome(KillResult.failed, killed.error.code)
+        : KillOutcome(KillResult.delivered, 0);
+}
+
+version (Posix)
 private KillOutcome signalGroup(ref Run run, int signal) @trusted nothrow
 {
     import core.stdc.errno : errno;
@@ -666,7 +718,9 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
         run.sampler.anchor(child.pid, run.migrated ? &run.cgroup : null);
     }
     else
-        run.sampler.anchor(child.pid, null);
+        run.sampler.anchor(child.pid, rootJobOf(child)); // the job on Windows
+    version (Windows)
+        run.sampler.anchorRoot(cast(void*) child.process.borrowFd.fd);
     scope (exit) run.sampler.finish();
 
     if (stdinBytes !is null)
@@ -717,7 +771,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
 
         if (!admissionFailed)
         {
-            if (childP.stdoutR.borrowFd().fd >= 0)
+            if (childP.stdoutR.valid)
                 spawnWorker(&rp.stdoutCtx,
                     &(new DrainWorker(rp, schedP, childP.stdoutR.borrowFd(), ProcessStream.stdout_)).run);
             else
@@ -725,7 +779,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
         }
         if (!admissionFailed)
         {
-            if (childP.stderrR.borrowFd().fd >= 0)
+            if (childP.stderrR.valid)
                 spawnWorker(&rp.stderrCtx,
                     &(new DrainWorker(rp, schedP, childP.stderrR.borrowFd(), ProcessStream.stderr_)).run);
             else
@@ -733,7 +787,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
         }
 
         // The stdin worker: sole owner of the descriptor while it lives.
-        if (childP.stdinW.borrowFd().fd >= 0 && !admissionFailed)
+        if (childP.stdinW.valid && !admissionFailed)
             spawnWorker(&rp.stdinCtx, &(new StdinWorker(rp, schedP, childP)).run);
 
         // The clock: six one-shot alarms, armed on request, ring-free.
@@ -1296,6 +1350,11 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                     return; // consumed or proven lost already
                 if (rp.observer == RootObserverState.lost)
                     return; // recorded once, at observation time
+                // The reap closes the job, whose kill-on-close would end a
+                // residual that `detach` promised to leave alone.
+                version (Windows)
+                    if (policy == ResidualPolicy.detach)
+                        detachJob(*childP);
                 uint retries;
                 for (;;)
                 {
@@ -1322,7 +1381,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                     }
                     // Any other in-ring error: the identity is still pinned, so
                     // the termination-critical lane consumes it.
-                    auto fallback = waitPidOnLane(*schedP, childP.pid);
+                    auto fallback = laneReap(*schedP, *childP);
                     if (fallback.hasValue)
                     {
                         rp.status = fallback.value;
@@ -1380,7 +1439,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                 Duration backoff = 10.msecs;
                 for (;;)
                 {
-                    ProbeJob job = {pid: childP.pid};
+                    ProbeJob job = {pid: childP.pid, child: childP};
                     auto ran = rp.pool.runMandatory(*schedP, &probeCall, &job);
                     if (ran.hasError)
                         schedP.fatal(ran.error);
@@ -1618,6 +1677,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
     result.residualPolicyDegraded = run.residualDegraded;
     result.residualPolicyError = run.residualError;
     result.cgroupCleanupLeaked = run.cleanupLeaked;
+    result.softSignalUndelivered = run.softSignalUndelivered;
     return ioOk(move(result));
 }
 
@@ -1697,7 +1757,7 @@ private final class ObserverWorker
             auto observed = rp.testObserverErrno != 0
                 ? ioErr!ExitStatus(rp.testObserverErrno, OpKind.waitid,
                     IoErrorStage.submit, "injected observer failure")
-                : observeExit(*s, child.pid);
+                : observeRoot(*s, *child);
             RelayMessage msg;
             if (observed.hasValue)
             {
@@ -1755,7 +1815,7 @@ private final class LaneObserverWorker
         Duration backoff = 10.msecs;
         while (!rp.stopLane && child.pid > 0)
         {
-            ProbeJob job = {pid: child.pid};
+            ProbeJob job = {pid: child.pid, child: child};
             auto ran = rp.pool.runMandatory(*s, &probeCall, &job);
             if (ran.hasError)
             {
@@ -2118,11 +2178,65 @@ private enum ProbeKind : ubyte
 private struct ProbeJob
 {
     int pid;
+    ChildProcess* child; /// Windows: the handle the probe asks
     ProbeKind kind;
     ExitStatus status;
     int errnoValue;
 }
 
+// ── platform seams: observation, the lane reap, the sampler anchor ──────────
+
+/// The root observer's one non-consuming wait.
+private IoResult!ExitStatus observeRoot(ref Sched s, ref ChildProcess child) @trusted
+{
+    version (Windows)
+        return observeExit(s, child);
+    else
+        return observeExit(s, child.pid);
+}
+
+/// The termination-critical lane reap (§13.8 fallback).
+private IoResult!ExitStatus laneReap(ref Sched s, ref ChildProcess child) @trusted
+{
+    version (Windows)
+        return reapOnLane(s, child);
+    else
+        return waitPidOnLane(s, child.pid);
+}
+
+/// What the sampler anchors besides the root pid: the run's Job Object on
+/// Windows, nothing elsewhere (Linux passes its cgroup itself).
+private void* rootJobOf(ref ChildProcess child) @trusted nothrow @nogc
+{
+    version (Windows)
+        return cast(void*) child.job.borrowFd.fd;
+    else
+        return null;
+}
+
+version (Windows)
+private void probeCall(void* p) nothrow
+{
+    auto job = cast(ProbeJob*) p;
+    if (!probeExited(*job.child))
+    {
+        job.kind = job.child.process.valid ? ProbeKind.pending : ProbeKind.fatal;
+        job.errnoValue = EINVAL;
+        return;
+    }
+    auto status = exitStatusOf(*job.child);
+    if (status.hasError)
+    {
+        job.kind = ProbeKind.fatal;
+        job.errnoValue = status.error.code;
+        return;
+    }
+    job.child.exited = true;
+    job.kind = ProbeKind.observed;
+    job.status = status.value;
+}
+
+version (Posix)
 private void probeCall(void* p) nothrow
 {
     import core.stdc.errno : errno;
@@ -2181,7 +2295,7 @@ version (unittest)
 // ── supervised runs (SPEC §13.5–§13.8) ──────────────────────────────────────
 
 version (unittest):
-version (linux):
+version (Posix):
 
 import core.thread : Thread;
 
@@ -2195,6 +2309,13 @@ import sparkles.test_runner.skip : skipTest;
 import sparkles.test_runner.attributes : serial;
 
 /// Event collector bound as a `ProcessEventSink`.
+///
+/// `events` records every event, `sample`s included; `lines` the line events
+/// alone, in order. A recorded line owns a copy of its bytes (the callback's
+/// slice is borrowed and gone once it returns), and `lineBytes[n]` is
+/// `lines[n].bytes`. Index `lineBytes` by line ordinal, never by a position
+/// in `events`: a host with a tree sampler (macOS, a cgroup v2 run)
+/// interleaves `sample` events between the lines.
 private struct EventLog
 {
     ProcessEvent[] events;
@@ -2203,9 +2324,15 @@ private struct EventLog
     {
         events ~= ev;
         if (ev.kind == ProcessEventKind.line)
-            lineBytes ~= ev.line.bytes.dup; // the spec-mandated copy
+        {
+            const owned = ev.line.bytes.dup; // the spec-mandated copy
+            events[$ - 1].line.bytes = owned;
+            lines ~= events[$ - 1].line;
+            lineBytes ~= owned;
+        }
     }
 
+    ProcessLine[] lines;
     const(ubyte)[][] lineBytes;
 
     /// `@trusted`: the collector provably outlives every supervised run
@@ -2495,12 +2622,11 @@ unittest
 
         const(ubyte)[][] lines;
         bool[] terminatedFlags;
-        foreach (i, ev; log.events)
-            if (ev.kind == ProcessEventKind.line
-                && ev.line.stream == ProcessStream.stdout_)
+        foreach (line; log.lines)
+            if (line.stream == ProcessStream.stdout_)
             {
-                lines ~= log.lineBytes[i].dup; // retained copy, per spec
-                terminatedFlags ~= ev.line.terminated;
+                lines ~= line.bytes; // the log's retained copy, per spec
+                terminatedFlags ~= line.terminated;
             }
         assert(lines.length == 4, "LF/CRLF/empty/final-partial");
         assert(lines[0] == cast(const(ubyte)[]) "one" && terminatedFlags[0]);
@@ -2519,9 +2645,8 @@ unittest
             SupervisedProcessConfig(), null, splitLog.sink());
         assert(split.hasValue);
         size_t helloLines;
-        foreach (ev; splitLog.events)
-            if (ev.kind == ProcessEventKind.line
-                && ev.line.bytes == cast(const(ubyte)[]) "hello world")
+        foreach (line; splitLog.lines)
+            if (line.bytes == cast(const(ubyte)[]) "hello world")
                 ++helloLines;
         assert(helloLines == 1, "split writes frame as ONE line");
     });
@@ -2658,14 +2783,13 @@ unittest
         assert(separate.hasValue);
         assert(separate.value.stderr_.length > 0);
         const(char)[][] outLines;
-        foreach (i, ev; log.events)
-            if (ev.kind == ProcessEventKind.line)
-            {
-                if (ev.line.stream == ProcessStream.stdout_)
-                    outLines ~= cast(const(char)[]) log.lineBytes[i].dup;
-                else
-                    assert((cast(const(char)[]) log.lineBytes[i])[0] == 'e');
-            }
+        foreach (line; log.lines)
+        {
+            if (line.stream == ProcessStream.stdout_)
+                outLines ~= cast(const(char)[]) line.bytes;
+            else
+                assert((cast(const(char)[]) line.bytes)[0] == 'e');
+        }
         assert(outLines == ["o1", "o2", "o3"], "per-stream order");
 
         // mergeStdout: one pipe, one total order, all reported as stdout_.
@@ -2680,13 +2804,12 @@ unittest
         assert(together.value.stdout_[]
             == cast(const(ubyte)[]) "o1\ne1\no2\n", "output order kept");
         const(char)[][] mergedOrder;
-        foreach (i, ev; mergedLog.events)
-            if (ev.kind == ProcessEventKind.line)
-            {
-                mergedOrder ~= cast(const(char)[]) mergedLog.lineBytes[i].dup;
-                assert(ev.line.stream == ProcessStream.stdout_,
-                    "merged lines report as stdout_");
-            }
+        foreach (line; mergedLog.lines)
+        {
+            mergedOrder ~= cast(const(char)[]) line.bytes;
+            assert(line.stream == ProcessStream.stdout_,
+                "merged lines report as stdout_");
+        }
         assert(mergedOrder == ["o1", "e1", "o2"]);
     });
     assert(!r.hasError);
@@ -2884,9 +3007,10 @@ unittest
 @system
 unittest
 {
-    import core.sys.posix.signal : SIGCHLD, SIG_IGN, sigaction,
+    import core.sys.posix.signal : SIGCHLD, SIGKILL, SIG_IGN, kill, sigaction,
         sigaction_t, sigemptyset;
     import core.time : MonoTime, msecs, seconds;
+    import std.conv : to;
 
     requireSingleThreadedProcess();
     sigaction_t ignored, previous;
@@ -2904,22 +3028,28 @@ unittest
     }
 
     bool bounded, preservedEchild;
+    EventLog log;
     auto r = s.run(() {
         SupervisedProcessConfig cfg;
         cfg.timeout = 50.msecs;
         cfg.terminateGrace = 100.msecs;
         cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
         const before = MonoTime.currTime;
-        auto got = supervise(s, ["sh", "-c", "sleep 30 & exit 0"], cfg);
+        auto got = supervise(s, ["sh", "-c", "sleep 30 & echo $!; exit 0"], cfg,
+            null, log.sink());
         bounded = MonoTime.currTime - before < 2.seconds;
         preservedEchild = got.hasError && got.error.code == ECHILD;
     });
     const restored = sigaction(SIGCHLD, &previous, null);
+    // The lost root unpinned its group, so a run without a cgroup may not
+    // signal it again (§13.7): the orphaned `sleep` is the test's to end.
+    if (log.lineBytes.length != 0)
+        cast(void) kill((cast(const(char)[]) log.lineBytes[0]).to!int, SIGKILL);
 
     assert(restored == 0);
     assert(!r.hasError);
     assert(bounded && preservedEchild,
-        "ECHILD still terminates/drains the saved process group promptly");
+        "ECHILD still forces the drains and returns within the bound");
 }
 
 @("supervise.scopeCancellationLatchesThenConverges")
@@ -3256,7 +3386,6 @@ unittest
     assert(!r.hasError);
 }
 
-version (linux)
 @("supervise.repeatedRunsDoNotLeakDescriptors")
 @system
 unittest
@@ -3266,7 +3395,11 @@ unittest
 
     static size_t fdCount()
     {
-        auto dir = opendir("/proc/self/fd");
+        // Darwin has no procfs; its fdesc mount lists the same table.
+        version (linux)
+            auto dir = opendir("/proc/self/fd");
+        else
+            auto dir = opendir("/dev/fd");
         assert(dir !is null);
         scope (exit) closedir(dir);
         size_t count;
@@ -3439,19 +3572,12 @@ unittest
                 lastCount = ev.usage.sampleCount;
                 assert(ev.usage.wallTime > Duration.zero);
             }
-        version (linux)
-        {
-            assert(samples >= 3, "interval sampling fired repeatedly");
-            assert(lastCount >= samples);
-            assert(got.value.usage.sampled);
-            assert(got.value.usage.peakProcesses >= 1,
-                "the tree sampler saw at least the root");
-        }
-        else
-        {
-            assert(samples == 0, "darwin stub emits no fabricated samples");
-            assert(!got.value.usage.sampled);
-        }
+        // procfs on Linux, libproc on Darwin: both sample for real.
+        assert(samples >= 3, "interval sampling fired repeatedly");
+        assert(lastCount >= samples);
+        assert(got.value.usage.sampled);
+        assert(got.value.usage.peakProcesses >= 1,
+            "the tree sampler saw at least the root");
         assert(got.value.usage.wallTime >= 300.msecs);
     });
     assert(!r.hasError);
@@ -3484,7 +3610,7 @@ unittest
                 lastUser = ev.usage.userTime;
                 lastSystem = ev.usage.systemTime;
             }
-        version (linux)
+        version (Posix)
             assert(got.value.usage.peakProcesses >= 2,
                 "same-group descendant remains visible after root exit");
     });
@@ -3521,7 +3647,7 @@ unittest
         assert(two.hasValue, two.hasError ? two.error.context : "");
         assert(two.value.status.ok, "both CPU workers completed their budgets");
 
-        version (linux)
+        version (Posix)
         {
             const oneCpu = one.value.usage.userTime
                 + one.value.usage.systemTime;
@@ -3741,32 +3867,30 @@ unittest
         auto got = supervise(s, ["sh", "-c",
             "i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done"], cfg);
         assert(got.hasValue, got.hasError ? got.error.context : "");
-        version (linux)
+        assert(got.value.usage.sampled && got.value.usage.sampleCount >= 2);
+        assert(got.value.usage.peakProcesses >= 1, "the final sample saw the root");
+        assert(!got.value.usage.samplingDegraded, "no sample was skipped or aborted");
+        assert(got.value.usage.memoryQuality == MetricQuality.lowerBound);
+        assert(got.value.usage.cpuQuality == MetricQuality.lowerBound,
+            "tree CPU is a lower bound under unenforced containment");
+        final switch (got.value.usage.source)
         {
-            assert(got.value.usage.sampled && got.value.usage.sampleCount >= 2);
-            assert(got.value.usage.peakProcesses >= 1, "the final sample saw the root");
-            assert(!got.value.usage.samplingDegraded, "no sample was skipped or aborted");
-            assert(got.value.usage.memoryQuality == MetricQuality.lowerBound);
-            assert(got.value.usage.cpuQuality == MetricQuality.lowerBound,
-                "tree CPU is a lower bound under unenforced containment");
-            final switch (got.value.usage.source)
-            {
-            case SampleSource.cgroupFull:
-            case SampleSource.cgroupMembers:
-                assert(got.value.usage.cgroupCpuSource == MetricSource.cgroup
-                    && got.value.usage.cgroupCpuQuality == MetricQuality.exact,
-                    "the run cgroup's own counter is exact");
-                break;
-            case SampleSource.procScan:
-                assert(got.value.usage.cgroupCpuSource == MetricSource.none);
-                break;
-            case SampleSource.none:
-            case SampleSource.darwinTree:
-                assert(0, "Linux always has a source");
-            }
+        case SampleSource.cgroupFull:
+        case SampleSource.cgroupMembers:
+            assert(got.value.usage.cgroupCpuSource == MetricSource.cgroup
+                && got.value.usage.cgroupCpuQuality == MetricQuality.exact,
+                "the run cgroup's own counter is exact");
+            break;
+        case SampleSource.procScan:
+        case SampleSource.darwinTree:
+            assert(got.value.usage.cgroupCpuSource == MetricSource.none);
+            break;
+        case SampleSource.none:
+        case SampleSource.jobObject:
+            assert(0, "every supported host has a source");
         }
-        else
-            assert(!got.value.usage.sampled);
+        version (OSX)
+            assert(got.value.usage.source == SampleSource.darwinTree);
     });
     assert(!r.hasError);
 }
@@ -4043,6 +4167,7 @@ unittest
     assert(!r.hasError);
 }
 
+version (linux)
 @("supervise.cancel.fromTheFinalFragmentCallbackStillKillsTheCgroup")
 @serial
 @system
@@ -4203,6 +4328,13 @@ unittest
         Thread.sleep(1.msecs);
     assert(!stillLive(), "the captured descendant identity is no longer live");
     assert(!got.cgroupCleanupLeaked, "no survivor in the run cgroup");
+}
+else
+@("supervise.cancel.fromTheFinalFragmentCallbackStillKillsTheCgroup")
+@system
+unittest
+{
+    skipTest("needs a cgroup v2 run cgroup and procfs process identities");
 }
 
 @("supervise.observer.failureWithNoReplacementFiberStillKillsAndReaps")

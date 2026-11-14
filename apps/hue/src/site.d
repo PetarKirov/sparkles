@@ -23,7 +23,8 @@ import std.path : absolutePath, baseName, buildNormalizedPath, buildPath,
     dirName, extension, relativePath;
 import std.string : endsWith, startsWith;
 
-import sparkles.build_primitives.glob_walk : globWalkGitRepository, passesGlobs;
+import sparkles.base.logger : warning;
+import sparkles.build_primitives.fileset.listing : GlobFilter, listRepository;
 import sparkles.docs.sidebar : isSrcExcluded;
 import sparkles.docs.site : extensionAllowed, extractMarkdownLinks,
     resolveLinkTarget, SiteConfig, SkippedFile, SkipReason, skipReasonName;
@@ -70,7 +71,12 @@ SiteDiscovery discoverSite(string repoRoot, in SiteConfig cfg,
         const rootAbs = buildPath(absRoot, rootRel);
         if (!rootAbs.exists)
             continue;
-        foreach (pageRel; globWalkGitRepository(rootAbs))
+        auto pages = listRepository(rootAbs);
+        if (pages.hasError)
+            throw new Exception(pages.error);
+        if (const note = pages.value.caveat)
+            warning(i"$(rootAbs): $(note)");
+        foreach (pageRel; pages.value.files)
         {
             if (!pageRel.endsWith(".md") || isSrcExcluded(pageRel, srcExclude))
                 continue;
@@ -131,11 +137,14 @@ SiteDiscovery discoverSite(string repoRoot, in SiteConfig cfg,
     // Directly-linked files: explicit intent, so no allow-list — but the
     // deny-list, the globs, and (below) the size cap still hold, with the
     // verdict recorded (`DSC2`).
+    auto excluded = GlobFilter.make(null, cfg.excludeGlobs);
+    if (excluded.hasError)
+        throw new Exception(excluded.error);
     foreach (rel; directFiles.byKey)
     {
         if (rel in included)
             continue;
-        if (!passesGlobs(rel, null, cfg.excludeGlobs))
+        if (!excluded.value.passes(rel))
         {
             skip(rel, SkipReason.excluded);
             continue;

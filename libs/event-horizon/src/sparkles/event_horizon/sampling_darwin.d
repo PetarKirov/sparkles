@@ -25,6 +25,7 @@ private extern (C) nothrow @nogc
 {
     int proc_pid_rusage(int pid, int flavor, void* buffer);
     int proc_listchildpids(int pid, void* buffer, int bytes);
+    int proc_listpids(uint type, uint typeinfo, void* buffer, int bytes);
     int mach_timebase_info(Timebase* info);
     ulong clock_gettime_nsec_np(uint clock);
 }
@@ -176,6 +177,39 @@ package struct TreeSampler
             return discard(exhausted);
         if (testAfterLedgerScan !is null)
             testAfterLedgerScan(expectedStart);
+
+        // The root's process group, as Linux's procfs scan matches it: a
+        // member whose parent exited is reparented to launchd, out of every
+        // roster this walk follows. Supervision's WNOWAIT-pinned root keeps
+        // the group number from being reused, so membership vouches for the
+        // pid; a root that leads no group lists nothing here.
+        {
+            enum uint PROC_PGRP_ONLY = 2; // <sys/proc_info.h>
+            int[1025] members;
+            if (!charge(0))
+                return discard(true);
+            errno = 0;
+            const listed = (() @trusted => proc_listpids(PROC_PGRP_ONLY,
+                cast(uint) root.pid, members.ptr, cast(int) members.sizeof))();
+            if (listed < 0 || (listed == 0 && errno != 0))
+                return discard();
+            const count = cast(size_t) listed / int.sizeof;
+            if (count >= members.length)
+                return discard(true);
+            if (!charge(cast(size_t) listed))
+                return discard(true);
+            foreach (member; members[0 .. count])
+            {
+                if (member <= 0)
+                    return discard();
+                if (member in queued)
+                    continue;
+                if (!visit(member))
+                    return discard(true);
+                queued[member] = true;
+                pending ~= member;
+            }
+        }
 
         for (size_t cursor; cursor < pending.length; ++cursor)
         {
@@ -504,4 +538,42 @@ private bool readUsage(int pid, out RusageV4 info) @safe nothrow @nogc
     assert(!sampler.sample(), "a member under a reused pid discards the sample");
     assert(reused, "the scan queued the non-root member");
     assert(sampler.usage.sampleCount == count && sampler.ledger.total() == cpu);
+}
+
+/// A group member outlives its parent, the root: reparented to launchd, it is
+/// in no child roster, but the root's process group — pinned by the root's
+/// unreaped zombie — still lists it, as Linux's procfs scan finds it by pgrp.
+@("sampling.darwin.groupMemberOfAnExitedRootIsSampled")
+@system unittest
+{
+    import core.sys.posix.signal : SIGKILL, kill;
+    import core.sys.posix.spawn : posix_spawn, posix_spawnattr_destroy,
+        posix_spawnattr_init, posix_spawnattr_setflags, posix_spawnattr_t,
+        POSIX_SPAWN_SETPGROUP;
+    import core.sys.posix.sys.wait : idtype_t, siginfo_t, waitid, waitpid,
+        WEXITED, WNOWAIT;
+    import core.sys.posix.unistd : pid_t;
+    import sparkles.event_horizon.live : SigInfo; // druntime's is undersized
+
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    scope (exit) posix_spawnattr_destroy(&attr);
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP); // pgroup 0: its own
+    pid_t pid;
+    char*[4] argv = [cast(char*) "/bin/sh".ptr, cast(char*) "-c".ptr,
+        cast(char*) "/bin/sleep 30 & exit 0".ptr, null];
+    assert(posix_spawn(&pid, argv[0], null, &attr, argv.ptr, null) == 0);
+    TreeSampler sampler;
+    sampler.anchor(pid, null);
+    SigInfo info;
+    assert(waitid(idtype_t.P_PID, pid, cast(siginfo_t*) &info, WEXITED | WNOWAIT) == 0);
+    scope (exit)
+    {
+        kill(-pid, SIGKILL); // the live `sleep` keeps the group signalable
+        waitpid(pid, null, 0);
+    }
+
+    assert(sampler.anchored, "anchored before the exit");
+    assert(sampler.sample(), "the pinned zombie still validates as the root");
+    assert(sampler.usage.peakProcesses >= 2, "the reparented sleep is still sampled");
 }

@@ -1,20 +1,9 @@
+/**
+Build-system and VCS primitives. Filesets — values naming sets of files, and
+their resolution against a file system — replace the `.gitignore` walkers this
+package used to export; `sparkles.build_primitives.fileset.listing` is the
+entry point for an application that wants a directory's files.
+*/
 module sparkles.build_primitives;
 
-public import sparkles.build_primitives.gitignore :
-    GitIgnore,
-    GitIgnoreRule,
-    GitIgnoreStack,
-    IgnoreMatch;
-public import sparkles.build_primitives.dir_walk :
-    walkDir,
-    dirEntriesFilter,
-    walkGitRepository,
-    readRepositoryGitIgnore,
-    repositoryGitIgnoreStack,
-    hasEnterDir,
-    hasLeaveDir,
-    hasIncludeFile,
-    hasOnFile,
-    NoopWalkHook,
-    DirWalkerRange,
-    GitRepositoryFilter;
+public import sparkles.build_primitives.fileset;

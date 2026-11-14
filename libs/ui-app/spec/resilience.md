@@ -1,0 +1,1 @@
+../../../docs/specs/ui-app/resilience.md

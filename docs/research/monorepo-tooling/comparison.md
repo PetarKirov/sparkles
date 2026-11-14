@@ -1,6 +1,6 @@
 # Cross-Tool Synthesis & the Dub Delta
 
-The capstone of the monorepo-tooling survey. **Part 1** distils the 44 deep-dives and
+The capstone of the monorepo-tooling survey. **Part 1** distils the 45 deep-dives and
 the [concepts][concepts] vocabulary into a head-to-head comparison across the five axes
 that decide a monorepo tool's character: **workspace declaration**, **dependency
 isolation**, **task DAG & change detection**, **caching & remote execution**, and
@@ -23,7 +23,7 @@ the bridge into the milestoned [proposal][proposal].
 
 ## Part 1 — Cross-tool synthesis
 
-### 1.1 The 44 tools at a glance
+### 1.1 The 45 tools at a glance
 
 The master catalog, grouped by category. `DAG` = does the tool build a multi-member
 task/target graph (vs. a single package's compile DAG). `Cache` summarises the deepest
@@ -44,6 +44,7 @@ cross-reference mechanism. The link cell points at each deep-dive.
 | [`hatch`][hatch]           | Python    | Env-scoped `workspace.members` | no               | local       | editable members + `path`         |
 | [`cargo`][cargo]           | Rust      | `[workspace]` (dual-mode)      | action           | local       | `path` + `.workspace = true`      |
 | [`go-work`][go-work]       | Go        | Virtual (`go.work`)            | no               | local       | implicit (MVS main modules)       |
+| [`zig-build`][zig-build]   | Zig       | `build.zig` + `.path` deps     | step             | local       | `.path` (not hashed)              |
 | [`gradle`][gradle]         | JVM       | Multi-project + composite      | task             | remote      | `project(":path")` + substitution |
 | [`maven`][maven]           | JVM       | Aggregator (`<modules>`)       | task (reactor)   | dl          | GAV + `ReactorReader`             |
 | [`sbt`][sbt]               | Scala/JVM | Multi-project (Scala DSL)      | task             | REAPI (2.x) | `dependsOn(proj)`                 |
@@ -336,7 +337,7 @@ one-off that re-enters `dub`'s single-root machinery N times. Multi-package work
 
 ## The Consensus Standard
 
-Cutting across the 44 tools, a **baseline feature set** has emerged that almost every
+Cutting across the 45 tools, a **baseline feature set** has emerged that almost every
 modern monorepo ecosystem now ships (or that teams bolt on if the native tool lacks it).
 A tool is "consensus-grade" when it offers all of:
 
@@ -521,7 +522,7 @@ build it.
 - The system under improvement: [`dub` baseline][dub-baseline] (read from the
   `dlang/dub` source at `v1.42.0-beta.1`) and the [proposal][proposal] it bridges into.
 - Per-tool primary sources are cited in each [deep-dive](./); this page synthesises the
-  44-tool catalog.
+  45-tool catalog.
 - Structural model: async-io's [comparison][async-comparison] (the synthesis-doc
   pattern this imitates).
 
@@ -548,6 +549,7 @@ build it.
 [hatch]: ./hatch/
 [cargo]: ./cargo/
 [go-work]: ./go-work/
+[zig-build]: ./zig-build/
 [gradle]: ./gradle/
 [maven]: ./maven/
 [sbt]: ./sbt/

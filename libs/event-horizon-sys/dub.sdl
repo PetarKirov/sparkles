@@ -12,7 +12,8 @@ targetType "library"
 // every package's test build reach the blocking backend through here.
 dependency "sparkles:base" path="../.."
 
-importPaths "src" "../test-runner/src"
+importPaths "src"
+dependency "sparkles:test-attributes" path="../.."
 dflags "-preview=in" "-preview=dip1000"
 dflags "-linkonce-templates" platform="ldc"
 
@@ -21,14 +22,11 @@ configuration "library" {
 }
 
 configuration "unittest" {
-    // sparkles:test-utils will depend on this package (VFS PLAN M4), which
-    // puts it in the test runner's own dependency closure; like base, it
-    // source-includes the runner instead of depending on it.
-    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../profiling/src/sparkles/profiling/counters"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../profiling/src"
+    importPaths "src"
     buildRequirements "disallowDeprecations"
 
     dflags "-checkaction=context" "-allinst"
+    dependency "sparkles:test-runner" path="../.."
 }
 
 // Optimised, assertions live, `debug {}` blocks out — the build every nix

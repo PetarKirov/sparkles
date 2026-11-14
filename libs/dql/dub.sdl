@@ -25,10 +25,11 @@ configuration "unittest" {
     // reflection kernel. Test-only edges — neither input nor wsi knows DQL.
     dependency "sparkles:input" path="../.."
     dependency "sparkles:wsi" path="../.."
-    // The integration schemas live outside `src/` so a consumer that
-    // source-includes `../dql/src` for its own unittests (the property tree
-    // does) never sees modules that would drag `sparkles:wsi` into its
-    // import closure.
+    // The property tree's paths checked against the generated schema: ui
+    // does not depend on this package, so the test lives here (D15).
+    dependency "sparkles:ui" path="../.."
+    // The integration schemas live outside `src/`, so the library's own
+    // sources never import the packages only they need.
     sourcePaths "test"
 
     dflags "-checkaction=context" "-allinst"

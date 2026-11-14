@@ -725,6 +725,11 @@ package(sparkles.event_horizon) Stat toStat(ref const stat_t st, StatMask mask)
     s.size = st.st_size;
     s.device = st.st_dev;
     s.permissions = st.st_mode & octal7777;
+    if (mask & StatMask.identity)
+    {
+        s.hasIdentity = true;
+        s.inode = st.st_ino;
+    }
     if (mask & StatMask.mtime)
     {
         s.hasMtime = true;
@@ -735,6 +740,16 @@ package(sparkles.event_horizon) Stat toStat(ref const stat_t st, StatMask mask)
         else
             s.mtimeNs = st.st_mtime * 1_000_000_000L;
     }
+    if (mask & StatMask.change)
+    {
+        s.hasCtime = true;
+        static if (__traits(compiles, st.st_ctim))
+            s.ctimeNs = st.st_ctim.tv_sec * 1_000_000_000L + st.st_ctim.tv_nsec;
+        else static if (__traits(compiles, st.st_ctimespec))
+            s.ctimeNs = st.st_ctimespec.tv_sec * 1_000_000_000L + st.st_ctimespec.tv_nsec;
+        else
+            s.ctimeNs = st.st_ctime * 1_000_000_000L;
+    }
     return s;
 }
 
@@ -743,14 +758,25 @@ version (linux)
     /**
     The `Stat` `toStat` makes from `fstatat`, made from `statx` instead. The
     device is encoded as 64-bit Linux's `stat` encodes it (`new_encode_dev`), so a
-    device compared across the two paths compares equal.
+    device compared across the two paths compares equal. A time or the identity
+    the file system did not fill (its bit clear in `stx_mask`) is reported as
+    absent, not as a zero that a fingerprint would trust (FSC3).
     */
     package(sparkles.event_horizon)
     Stat statxToStat(ref const Statx sx, StatMask mask) @safe pure nothrow @nogc
     {
+        import sparkles.event_horizon.sys.posix : STATX_CTIME, STATX_INO, STATX_MTIME;
+
+        if (!(sx.stx_mask & STATX_MTIME))
+            mask &= ~StatMask.mtime;
+        if (!(sx.stx_mask & STATX_INO))
+            mask &= ~StatMask.identity;
+        if (!(sx.stx_mask & STATX_CTIME))
+            mask &= ~StatMask.change;
         stat_t st;
         st.st_mode = sx.stx_mode;
         st.st_size = sx.stx_size;
+        st.st_ino = sx.stx_ino;
         const ulong major = sx.stx_dev_major, minor = sx.stx_dev_minor;
         st.st_dev = cast(typeof(st.st_dev))((minor & 0xff) | (major << 8) | ((minor & ~0xffUL) << 12));
         static if (__traits(compiles, st.st_mtim))
@@ -760,6 +786,13 @@ version (linux)
         }
         else
             st.st_mtime = sx.stx_mtime.tv_sec;
+        static if (__traits(compiles, st.st_ctim))
+        {
+            st.st_ctim.tv_sec = sx.stx_ctime.tv_sec;
+            st.st_ctim.tv_nsec = sx.stx_ctime.tv_nsec;
+        }
+        else
+            st.st_ctime = sx.stx_ctime.tv_sec;
         return toStat(st, mask);
     }
 }

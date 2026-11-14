@@ -4154,11 +4154,12 @@ private int runExtractedTestsMode(bool failFast)
             i"{dim $(progress)} {cyan $(job.packageName)} {dim › dub test :$(job.packageName) -- $(job.flag)}");
 
         mkdirRecurse(buildPath(repoRoot, job.packagePath, "build"));
-        // `--self-test` also covers the runner's own extracted tests, which are
-        // the ones exercising the `selfContained` opt-out.
+        // The runner's own extracted tests (the ones exercising the
+        // `selfContained` opt-out) are jobs of their own: `test-harness` and
+        // `test-runner-core` carry `@betterC`, and no host compiles them in.
         auto cmd = dubTestCommand(
             repoRoot, job.packageName, testBuildType(false),
-            [job.flag, "--self-test", "--require-toolchain"]);
+            [job.flag, "--require-toolchain"]);
 
         auto lines = executeMonitoredLines(
             cmd, 250.msecs, &onSample, ChildStdin.empty, Duration.zero,

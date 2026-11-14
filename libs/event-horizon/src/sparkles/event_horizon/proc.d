@@ -262,6 +262,7 @@ enum SampleSource : ubyte
     cgroupMembers, /// owned cgroup: roster + `cpu.stat`, peaks from procfs
     procScan,      /// `/proc` scan over the descendants and the process group
     darwinTree,    /// libproc rusage and child rosters, identity-validated
+    jobObject,     /// the run's Windows Job Object accounting (§13.9)
 }
 
 /// Which subsystem produced a metric.
@@ -271,6 +272,7 @@ enum MetricSource : ubyte
     procfs, /// `/proc/<pid>/stat` (stat, statm, children)
     cgroup, /// a cgroup v2 counter file
     rusage, /// the platform's per-process rusage call
+    jobObject, /// `QueryInformationJobObject` on the run's job (Windows)
 }
 
 /// What a metric's value is the truth about (SPEC §13.8 truth table).
@@ -430,6 +432,9 @@ struct SupervisedProcessResult
     bool residualPolicyDegraded; /// `wait` fell back to `bounded`
     IoError residualPolicyError; /// why
     bool cgroupCleanupLeaked;   /// the run's cgroup directory remained (removal only)
+    /// Windows: the graceful stage found no console control channel to the
+    /// tree (§13.9), so the grace ran without a soft signal. Never set on POSIX.
+    bool softSignalUndelivered;
     ReapOutcome reap;           /// `status` is valid ONLY when `reap == reaped`
 }
 

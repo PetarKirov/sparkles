@@ -26,6 +26,7 @@ import sparkles.base.vfs.types : Access, Disposition, DotDotPolicy, EntryKind, M
     OpenMode, ResolvePolicy, Rights, Sharing, Stat, StatMask, SymlinkPolicy, maxSplicedPathLength,
     windowsDeleteRetries;
 import sparkles.event_horizon.sys.nt;
+import sparkles.event_horizon.sys.nt_time : ntTimeToUnixNs;
 
 /// The context a backend gives when its kernel resolver turned out to be
 /// withdrawn during a call (VFR5).
@@ -203,12 +204,30 @@ struct BlockingVfs
         st.size = st.kind == EntryKind.directory ? 0
             : (cast(ulong) info.nFileSizeHigh << 32) | info.nFileSizeLow;
         st.device = info.dwVolumeSerialNumber;
+        if (mask & StatMask.identity)
+        {
+            st.hasIdentity = true;
+            st.inode = (cast(ulong) info.nFileIndexHigh << 32) | info.nFileIndexLow;
+        }
         if (mask & StatMask.mtime)
         {
-            st.hasMtime = true;
             const ticks = (cast(long) info.ftLastWriteTime.dwHighDateTime << 32)
                 | info.ftLastWriteTime.dwLowDateTime;
-            st.mtimeNs = (ticks - 116_444_736_000_000_000L) * 100;
+            st.hasMtime = ntTimeToUnixNs(ticks, st.mtimeNs);
+        }
+        if (mask & StatMask.change)
+        {
+            // `GetFileInformationByHandle` has no change time; the basic
+            // information has, in the same 100 ns ticks.
+            FILE_BASIC_INFORMATION basic;
+            IO_STATUS_BLOCK basicIo;
+            const b = (() @trusted => NtQueryInformationFile(cast(HANDLE) handle.raw, &basicIo,
+                &basic, basic.sizeof, FileBasicInformation))();
+            if (!ntSuccess(b))
+                return ioErr!Stat(ntError(b, OpKind.statAt));
+            // A file system that keeps no change time reports zero: absent.
+            st.hasCtime = ntTimeToUnixNs(basic.ChangeTime, st.ctimeNs);
+            st.ctimeSettable = true; // `FileBasicInformation` sets it too
         }
         return ioOk(st);
     }

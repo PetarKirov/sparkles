@@ -1,33 +1,32 @@
 /**
- * The runner entry point, active only in `dub test` builds.
- *
- * Registers itself as druntime's extended module unit tester, discovers every
- * `unittest` in the tested package (via dub's generated `dub_test_root`), and
- * runs them in parallel. Tests annotated with the attributes from
+ * The runner: the command line, scheduling, reports, and the compile-time and
+ * extracted modes of `sparkles-test-runner` (process-model §2). It drives the
+ * test binary through worker processes (see $(MREF sparkles,test_runner,pool))
+ * and never runs a test body itself. Tests annotated with the attributes from
  * $(MREF sparkles,test_runner,attributes) get special handling:
  *
  * $(LIST
- *     * `@ctfe` tests are not executed in-process: after CLI filtering, the
- *       selected ones are forced through CTFE by a driver-generated probe
- *       compiled with `-o- -unittest` (semantic analysis only), so `-i`/`-e`
- *       control which tests evaluate, and `--help`/`--list` never evaluate
- *       any;
+ *     * `@ctfe` tests are not executed: after CLI filtering, the selected ones
+ *       are forced through CTFE by a driver-generated probe compiled with
+ *       `-o- -unittest` (semantic analysis only), so `-i`/`-e` control which
+ *       tests evaluate, and `--help`/`--list` never evaluate any;
  *     * `@benchmark` tests are skipped by default and measured by `--bench`;
- *     * `@betterC` / `@wasm` tests run normally here, and are additionally
+ *     * `@betterC` / `@wasm` tests run normally, and are additionally
  *       exercised in their special environments by `--better-c` / `--wasm`.
  * )
  */
 module sparkles.test_runner.runner_impl;
 
-import core.runtime : Runtime, UnitTestResult;
+import core.runtime : UnitTestResult;
 import core.time : Duration, MonoTime;
 
-import sparkles.test_runner.bench : BenchConfig, BenchStats, CounterGroups;
+import sparkles.test_runner.bench : BenchConfig, BenchStats;
 import sparkles.profiling.counters.capability : Capability, capabilityName, CapabilityReport;
-import sparkles.test_runner.driver : detectCompiler, DriverOptions, runCtfeTests;
-import sparkles.test_runner.stack_budget : installStackBudgetHandler;
-import sparkles.test_runner.workers : joinTestWorkers, startTestWorkers;
-import sparkles.test_runner.filter : matchesFilter, matchesSlowSelection, SlowSelection;
+import sparkles.test_runner.client : Hello, ProtocolError, Worker, WorkerDied;
+import sparkles.test_runner.driver : detectCompiler, DriverOptions, ModeReport, runCtfeTests;
+import sparkles.test_runner.pool : joinTestWorkers, startTestWorkers, testWorkersFinished;
+import sparkles.test_runner.options : ParsedArgs, parseRunnerOptions, RunnerOptions;
+import sparkles.test_runner.plan : selectTests, testPhases, verdict;
 import sparkles.test_runner.model : Test, TestResult;
 import sparkles.base.text.writers : formatted;
 import sparkles.test_runner.reporting : BenchProgress, detectTerminalWidth,
@@ -37,92 +36,64 @@ import sparkles.test_runner.reporting : BenchProgress, detectTerminalWidth,
     writeDatasetCatalog, DatasetInfo, writeMetricCatalog, writeWorkloadTable;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Entry point — called across the extern(C) seam by the registration shim,
-// which has already discovered the tests and computed `hostIsRunner`.
+// Entry point
 // ─────────────────────────────────────────────────────────────────────────────
 
-extern (C) void sparkles_test_runner_run(
-    Test* testsPtr, size_t count, bool hostIsRunner, uint* executed, uint* passed)
+/// The binary under test, as the launcher named it.
+private __gshared string testBinary;
+/// What the first worker's `hello` said.
+private __gshared Hello hello;
+/// The first worker: it listed the tests, and the first worker thread or the
+/// bench run takes it.
+private __gshared Worker firstWorker;
+
+/**
+Runs the tests of `binary`, started as workers with `druntimeOptions`, under
+the command line `args`, and returns the exit status: `0` if and only if
+everything selected passed or was skipped.
+*/
+int runnerMain(string binary, string[] druntimeOptions, string[] args)
 {
-    version (OSX)
+    import std.stdio : stderr;
+    import sparkles.test_runner.pool : retireSpare, startFirstWorker, WorkerLaunch;
+
+    testBinary = binary;
+    try
+        firstWorker = startFirstWorker(WorkerLaunch(binary, druntimeOptions,
+            (string text) { stderr.write(text); stderr.flush(); }));
+    catch (ProtocolError e)
     {
-        // druntime resolves macOS stack traces by forking `atos -p <pid>`, which
-        // intermittently stalls on sandboxed CI runners and hangs the whole
-        // binary the moment a test throws (the runner reads `thrown.info` in
-        // `toThrown`). Swap in an in-process handler that keeps the full
-        // backtrace but never spawns atos. See `sparkles.test_runner.macos_trace`.
-        import sparkles.test_runner.macos_trace : installInProcessTraceHandler;
-
-        installInProcessTraceHandler();
+        stderr.writeln("error: ", e.msg);
+        return 2;
     }
-    installStackBudgetHandler();
+    catch (Exception e)
+    {
+        stderr.writeln("error: cannot start '", binary, "' as a worker: ", e.msg);
+        return 2;
+    }
+    hello = firstWorker.hello;
 
-    const result = runnerMain(testsPtr[0 .. count], hostIsRunner);
-    *executed = cast(uint) result.executed;
-    *passed = cast(uint) result.passed;
-}
-
-private struct RunnerOptions
-{
-    string include;
-    string exclude;
-    bool verbose;
-    uint threads;
-    bool noColors;
-    bool list;
-    bool skipSlow;
-    bool onlySlow;
-    bool bench;
-    bool perf;
-    bool perfScaled; /// keep the full group when it multiplexes; label estimates
-    uint perfIters;  /// pin the counting-pass iteration count (0 = auto)
-    uint perfBatch;  /// pin counting-pass iterations per bracket (0 = auto)
-    string syscalls;
-    string metrics;
-    string sortBy;
-    string[] groupBy;
-    string benchJson;  /// --bench-json=FILE ("" = off)
-    uint benchMinTime; /// --bench-min-time=MS (0 = BenchConfig's 5 ms default)
-    bool listMetrics;
-    string datasets;
-    bool listDatasets;
-    string ctfeTrace;
-    bool betterC;
-    bool wasm;
-    bool wasmBare;
-    string compiler;
-    string[] importPaths;
-    string[] includeImports;
-    bool noAutoInclude;
-    bool requireToolchain;
-    bool keep;
-    bool selfTest;
-}
-
-/// Whether `test` belongs to the runner itself. In-monorepo hosts compile the
-/// runner via `sourcePaths`, which puts its modules into `allModules`; hide
-/// their tests unless `--self-test` is given or the tested package $(I is)
-/// the runner.
-private bool isSelfTest(in Test test) @safe pure nothrow @nogc
-{
-    enum prefix = "sparkles.test_runner.";
-    return test.fullName.length > prefix.length
-        && test.fullName[0 .. prefix.length] == prefix;
-}
-
-/// Whether this test build is `dub test :test-runner` (whose suite $(I is) the
-/// runner's own tests). `hostIsRunner` (every module belongs to the runner) is
-/// the compile-time half, computed by the registration shim and passed in; the
-/// test-binary-name check is the runtime half.
-private bool testingRunnerItself(bool hostIsRunner)
-{
-    import std.algorithm.searching : canFind;
-    import std.path : baseName;
-
-    if (!hostIsRunner)
-        return false;
-    auto args = Runtime.args;
-    return args.length && args[0].baseName.canFind("test-runner");
+    int status;
+    try
+    {
+        scope (exit)
+            retireSpare();
+        const result = runSelected(firstWorker.listing, [binary] ~ args);
+        status = verdict(result.executed, result.passed);
+    }
+    catch (ProtocolError e)
+    {
+        stderr.writeln("error: ", e.msg);
+        return 2;
+    }
+    catch (WorkerDied e)
+    {
+        // A worker ended outside any test, and no test is to blame (TRP22,
+        // TRP27); a crash inside one is that test's failed result instead.
+        stderr.writeln("error: ", e.msg);
+        return 1;
+    }
+    return status;
 }
 
 /// Infers dub's `:subpackage` selector from its generated unittest executable
@@ -168,256 +139,24 @@ unittest
     assert(rerunPackageSelector("custom") is null);
 }
 
-/// The outcome of CLI parsing: either a populated `options`, a request for the
-/// help text, or a one-line `error` — never a thrown exception, which would
-/// escape the unittest hook as a raw stack trace.
-private struct ParsedArgs
-{
-    import std.getopt : Option;
-
-    RunnerOptions options;
-    string error; /// non-empty = fail the run with this message
-    bool helpWanted;
-    Option[] helpOptions; /// populated when `helpWanted`
-}
-
-/**
-Parses the runner's CLI. A malformed value (`-t abc`), an unknown option,
-and stray positional arguments (`--syscalls futex` — values attach with
-`=`) all yield a readable `error` instead of an uncaught exception.
-
-$(B `--DRT-*` options are dropped, not rejected.) They belong to druntime —
-`--DRT-covopt=dstpath:…` redirects `-cov` listings, `--DRT-gcopt=…` configures
-the collector — and the runtime acts on them before `main` runs, but leaves
-them in the argv this hook is handed. Treating them as unknown made a
-`-cov` build unusable: coverage listings were written correctly and the run
-then failed on the very option that produced them.
-*/
-package ParsedArgs parseRunnerOptions(string[] args)
-{
-    import std.algorithm.iteration : filter;
-    import std.algorithm.searching : startsWith;
-    import std.array : array;
-    import std.conv : ConvException, text;
-    import std.getopt : arraySep, config, getopt, GetOptException;
-
-    args = args.filter!(a => !a.startsWith("--DRT-")
-        && !a.startsWith("dstpath:") && !a.startsWith("merge:") && !a.startsWith("srcpath:")).array;
-
-    ParsedArgs r;
-    // Comma-separated array options (`--group-by=dataset,operation`, repeatable
-    // `-I` paths) split on `,` in addition to accumulating across occurrences.
-    arraySep = ",";
-    // `--syscalls` takes an optional value (bare = total only), which std.getopt
-    // can't express directly; rewrite a bare occurrence to the `*` sentinel.
-    foreach (ref arg; args)
-        if (arg == "--syscalls")
-            arg = "--syscalls=*";
-    try
-    {
-        auto res = parseInto(args, r.options);
-        r.helpWanted = res.helpWanted;
-        r.helpOptions = res.options;
-    }
-    catch (GetOptException e)
-        r.error = e.msg;
-    catch (ConvException e)
-        r.error = e.msg;
-    if (!r.error.length && args.length > 1)
-        r.error = text("unexpected positional argument", args.length > 2 ? "s " : " ",
-            args[1 .. $], " — attach option values with '=' (e.g. --syscalls=futex)");
-    return r;
-}
-
-/// The getopt call proper (separated so `parseRunnerOptions` can guard it).
-private auto parseInto(ref string[] args, ref RunnerOptions options)
-{
-    import std.getopt : config, getopt;
-
-    return args.getopt(
-        config.caseSensitive,
-        "i|include",
-            "Run only tests whose name matches the regular expression",
-            &options.include,
-        "e|exclude",
-            "Skip tests whose name matches the regular expression",
-            &options.exclude,
-        "v|verbose",
-            "Show durations, locations, and full stack traces",
-            &options.verbose,
-        "t|threads",
-            "Number of worker threads (0 = auto-detect)",
-            &options.threads,
-        "no-colors",
-            "Disable colored output",
-            &options.noColors,
-        "l|list",
-            "List discovered tests without running them",
-            &options.list,
-        "skip-slow",
-            "Leave out @slow tests (the summary counts them)",
-            &options.skipSlow,
-        "only-slow",
-            "Run only @slow tests",
-            &options.onlySlow,
-        "bench",
-            "Run @benchmark tests (ns/iter statistics) and @workload tests " ~
-            "(single-pass window deltas + wall decomposition) instead of regular tests",
-            &options.bench,
-        "perf",
-            "With --bench: collect hardware performance counters per benchmark " ~
-            "(Linux perf_event; IPC, instructions, cache/branch miss rates)",
-            &options.perf,
-        "perf-scaled",
-            "With --perf: keep the full counter group when the PMU would " ~
-            "multiplex it; scaled values render as labeled estimates (≈). " ~
-            "Default: the group shrinks until counts are exact",
-            &options.perfScaled,
-        "perf-iters",
-            "With --bench: pin the counting-pass iteration count (default: " ~
-            "the timing pass's count, capped) — makes per-pass counter totals " ~
-            "and amortized one-time costs reproducible across runs",
-            &options.perfIters,
-        "perf-batch",
-            "With --bench: pin how many iterations share one counting-pass " ~
-            "bracket (default: auto-sized so a bracket spans ~1ms, so the " ~
-            "bracket's own cost cannot dominate a fast body). 1 disables batching",
-            &options.perfBatch,
-        "syscalls",
-            "With --bench: count syscalls per iteration (Linux perf tracepoints). " ~
-            "Bare adds a total column; =futex,sched_yield adds one column each",
-            &options.syscalls,
-        "metrics",
-            "With --bench: comma-separated metric columns to show (glob with '*'; " ~
-            "'all' = every available; '?'/'help' = list them). Default: standard columns",
-            &options.metrics,
-        "sort-by",
-            "With --bench: sort rows by 'name' or a metric column name " ~
-            "(default: median/iter, ascending). Applied within --group-by groups",
-            &options.sortBy,
-        "group-by",
-            "With --bench: split into one table per group of the given case label " ~
-            "keys (comma-separated or repeated), e.g. =dataset,operation. " ~
-            "=all groups by every label; =list lists the available keys",
-            &options.groupBy,
-        "bench-json",
-            "With --bench: also write the results as JSON to the given file " ~
-            "(all rows in measurement order, incl. error rows, plus a meta block " ~
-            "and, when @workload tests ran, a windows array)",
-            &options.benchJson,
-        "bench-min-time",
-            "With --bench: per-case measurement budget in milliseconds — per-call " ~
-            "cases: minimum total measured time; batched: target per sample. Default 5",
-            &options.benchMinTime,
-        "list-metrics",
-            "With --bench: list the available metric columns (name, class, source) and exit",
-            &options.listMetrics,
-        "datasets",
-            "With --bench: comma-separated dataset names to run (glob with '*'; " ~
-            "'all' = every dataset; '?'/'help' = list them)",
-            &options.datasets,
-        "list-datasets",
-            "With --bench: list available benchmark datasets and exit",
-            &options.listDatasets,
-        "ctfe-trace",
-            "Evaluate @ctfe tests under LDC -ftime-trace (writing the trace " ~
-            "to the given file) and report per-test CTFE cost",
-            &options.ctfeTrace,
-        "better-c",
-            "Extract @betterC tests, compile them with -betterC, and run them",
-            &options.betterC,
-        "wasm",
-            "Extract @wasm tests, compile them for wasm32-unknown-wasip1 with the full " ~
-            "druntime and Phobos, and run them under wasmtime",
-            &options.wasm,
-        "wasm-bare",
-            "Extract @wasm tests, compile them for bare wasm32 with -betterC, and run them " ~
-            "under node, deno, bun or wasmtime",
-            &options.wasmBare,
-        "compiler",
-            "D compiler for @ctfe/--better-c/--wasm/--wasm-bare (default: $DC, then ldc2, dmd; " ~
-            "--wasm tries $SPARKLES_WASI_LDC first)",
-            &options.compiler,
-        "I|import-path",
-            "Extra import path for @ctfe/--better-c/--wasm (repeatable)",
-            &options.importPaths,
-        "include-import",
-            "Extra -i=<pattern> for --better-c/--wasm, e.g. std.ascii (repeatable)",
-            &options.includeImports,
-        "no-auto-include",
-            "Don't compile the extracted tests' own modules into --better-c/--wasm",
-            &options.noAutoInclude,
-        "require-toolchain",
-            "With --better-c/--wasm: fail instead of skipping when the toolchain is missing",
-            &options.requireToolchain,
-        "keep",
-            "Keep the files generated by @ctfe/--better-c/--wasm",
-            &options.keep,
-        "self-test",
-            "Also run the test runner's own unittests",
-            &options.selfTest,
-    );
-}
-
-@("runner.parseRunnerOptions.readableErrors")
-@system
-unittest
-{
-    // Parse failures become messages, never uncaught exceptions out of the
-    // unittest hook; stray positionals (the `--syscalls futex` trap) error too.
-    assert(parseRunnerOptions(["prog", "-t", "abc"]).error.length);
-    assert(parseRunnerOptions(["prog", "--bogus"]).error.length);
-    assert(parseRunnerOptions(["prog", "--syscalls", "futex"]).error.length);
-
-    auto ok = parseRunnerOptions(["prog", "--syscalls", "-t", "4"]);
-    assert(!ok.error.length);
-    assert(ok.options.syscalls == "*" && ok.options.threads == 4);
-
-    auto ds = parseRunnerOptions(["prog", "--datasets=twitter,canada", "--list-datasets"]);
-    assert(!ds.error.length);
-    assert(ds.options.datasets == "twitter,canada");
-    assert(ds.options.listDatasets);
-
-    auto slow = parseRunnerOptions(["prog", "--skip-slow", "--only-slow"]);
-    assert(!slow.error.length && slow.options.skipSlow && slow.options.onlySlow);
-
-    auto help = parseRunnerOptions(["prog", "--help"]);
-    assert(!help.error.length && help.helpWanted && help.helpOptions.length);
-}
-
-@("runner.parseRunnerOptions.ignoresDruntimeOptions")
-@system
-unittest
-{
-    // druntime's own options reach this argv but are not the application's to
-    // reject: the runtime has already acted on them. Rejecting them made
-    // `dub test -b unittest-cov -- --DRT-covopt=dstpath:DIR` fail *after*
-    // writing the coverage listings it was asked for.
-    auto cov = parseRunnerOptions(["prog", "--DRT-covopt=dstpath:/tmp/cov", "-t", "2"]);
-    assert(!cov.error.length, cov.error);
-    assert(cov.options.threads == 2);
-
-    // They are dropped, not treated as positionals — the stray-argument check
-    // must not fire on them either.
-    assert(!parseRunnerOptions(["prog", "--DRT-gcopt=profile:1"]).error.length);
-
-    // An option that merely looks similar is still unknown.
-    assert(parseRunnerOptions(["prog", "--DRT"]).error.length);
-}
-
-private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
+private UnitTestResult runSelected(Test[] discovered, string[] args)
 {
     import std.algorithm.iteration : filter;
     import std.array : array;
     import std.stdio : stderr, stdout;
 
-    auto parsed = parseRunnerOptions(Runtime.args);
+    auto parsed = parseRunnerOptions(args);
     if (parsed.error.length)
     {
         stderr.writeln("error: ", parsed.error, " (see --help)");
         return UnitTestResult(1, 0, false, false);
     }
     RunnerOptions options = parsed.options;
+    {
+        import sparkles.test_runner.driver : setProbeDir;
+
+        setProbeDir(options.probeDir);
+    }
 
     if (parsed.helpWanted)
     {
@@ -432,72 +171,19 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
         return UnitTestResult(0, 0, false, false);
     }
 
-    // The run modes are mutually exclusive; silently preferring one (the old
-    // behavior) turned e.g. `--ctfe-trace f --bench` into a false green — the
-    // requested trace was never written, yet the run exited 0. `--list` /
-    // `--list-metrics` remain winning queries on top of any mode.
-    const requestedModes = (options.bench ? 1 : 0)
-        + (options.ctfeTrace.length ? 1 : 0)
-        + (options.betterC || options.wasm || options.wasmBare ? 1 : 0);
-    if (requestedModes > 1)
-    {
-        stderr.writeln("error: pick one mode — --bench, --ctfe-trace, or --better-c/--wasm");
-        return UnitTestResult(1, 0, false, false);
-    }
-    if (options.wasm && options.wasmBare)
-    {
-        stderr.writeln("error: --wasm and --wasm-bare are mutually exclusive");
-        return UnitTestResult(1, 0, false, false);
-    }
-
-    if (options.skipSlow && options.onlySlow)
-    {
-        stderr.writeln("error: --skip-slow and --only-slow exclude each other");
-        return UnitTestResult(1, 0, false, false);
-    }
-    const slowSelection = options.skipSlow ? SlowSelection.skip
-        : options.onlySlow ? SlowSelection.only : SlowSelection.run;
-
     const colored = prepareConsole(options.noColors);
     // Cells available for the compact result lines; `0` (unknown / piped) skips
     // truncation so redirected output stays byte-identical.
     const width = detectTerminalWidth();
 
-    // Hide the runner's own tests unless requested — or unless the tested
-    // package is the runner itself, in which case they are the test suite.
-    if (!options.selfTest && !testingRunnerItself(hostIsRunner))
-        discovered = discovered.filter!(t => !t.isSelfTest).array;
-
-    // Validate the user-supplied patterns once up front: a malformed regex
-    // would otherwise throw `RegexException` out of this unittest hook and crash
-    // the run with a raw stack trace instead of a readable message.
+    auto selection = selectTests(discovered, options);
+    if (selection.error.length)
     {
-        import std.regex : regex, RegexException;
-        import std.stdio : stderr;
-
-        try
-        {
-            if (options.include.length)
-                cast(void) regex(options.include);
-            if (options.exclude.length)
-                cast(void) regex(options.exclude);
-        }
-        catch (RegexException e)
-        {
-            stderr.writeln("invalid --include/--exclude regular expression: ", e.msg);
-            return UnitTestResult(1, 0, false, false);
-        }
+        stderr.writeln("error: ", selection.error);
+        return UnitTestResult(1, 0, false, false);
     }
-
-    auto selected = discovered
-        .filter!(t => t.matchesFilter(options.include, options.exclude))
-        .array;
-    auto tests = selected
-        .filter!(t => t.matchesSlowSelection(slowSelection))
-        .array;
-    // What `--skip-slow` left out, for the summary — a filter that drops tests
-    // without a word would let a run that skipped everything read as a pass.
-    const slowSkipped = selected.length - tests.length;
+    auto tests = selection.tests;
+    const slowSkipped = selection.slowSkipped;
 
     if (options.list)
         return listTests(tests, colored);
@@ -524,7 +210,41 @@ private DriverOptions toDriverOptions(const RunnerOptions options)
         noAutoInclude: options.noAutoInclude,
         keep: options.keep,
         verbose: options.verbose,
+        stringImportPaths: options.stringImportPaths.dup,
+        versions: options.versions.dup,
+        dflags: options.dflags.dup,
+        probeDir: options.probeDir,
+        noDub: options.noDub,
+        harnessRoots: hello.roots.dup,
+        report: consoleReport,
     );
+}
+
+/// The modes' messages, on this process's console: their reports on stdout,
+/// their diagnostics on stderr.
+private ModeReport consoleReport()
+{
+    import std.stdio : stderr, stdout;
+
+    static void output(string text) @trusted
+    {
+        stdout.write(text);
+        stdout.flush();
+    }
+
+    static void diagnostics(string text) @trusted
+    {
+        stderr.write(text);
+    }
+
+    return ModeReport(output: toDelegate(&output), diagnostics: toDelegate(&diagnostics));
+}
+
+private auto toDelegate(F)(F fn) @trusted
+{
+    import std.functional : toDelegate;
+
+    return fn.toDelegate;
 }
 
 /// Evaluates the (already filtered) `@ctfe` tests through the driver's probe
@@ -633,7 +353,7 @@ private UnitTestResult runCtfeTraceMode(Test[] tests, in RunnerOptions options, 
         return UnitTestResult(0, 0, false, false);
     }
 
-    const compiler = detectCompiler(options.compiler);
+    const compiler = detectCompiler(options.compiler, consoleReport);
     if (!compiler.canFind("ldc"))
     {
         stderr.writeln("--ctfe-trace requires an LDC compiler for -ftime-trace " ~
@@ -707,56 +427,6 @@ private UnitTestResult listTests(Test[] tests, bool colored)
     return UnitTestResult(0, 0, false, false);
 }
 
-/// One run phase of the default mode: tests and the workers that run them.
-private struct TestPhase
-{
-    Test[] tests;
-    size_t threads;
-    /// A single worker runs on the calling thread (see `startTestWorkers`).
-    bool onCaller = true;
-}
-
-/// The default mode's phases: every test but the `@serial` ones on `threads`
-/// workers; then the `@serial` ones of any thread, one at a time on one
-/// worker; then the `mainThread` ones, one at a time on the calling thread.
-private TestPhase[3] testPhases(Test[] runnable, size_t threads) @safe pure
-{
-    import std.algorithm.iteration : filter;
-    import std.array : array;
-    import sparkles.test_runner.attributes : ThreadAffinity;
-
-    return [
-        TestPhase(runnable.filter!(t => !t.traits.isSerial).array, threads),
-        TestPhase(runnable.filter!(t => t.traits.isSerial
-            && t.traits.serialAffinity == ThreadAffinity.none).array, 1, onCaller: false),
-        TestPhase(runnable.filter!(t => t.traits.isSerial
-            && t.traits.serialAffinity == ThreadAffinity.mainThread).array, 1),
-    ];
-}
-
-@("runner.testPhases.serialRunLast")
-@safe pure
-unittest
-{
-    import sparkles.test_runner.attributes : ThreadAffinity;
-
-    Test parallel, anyThread, mainThread;
-    parallel.name = "parallel";
-    anyThread.name = "anyThread";
-    anyThread.traits.isSerial = true;
-    mainThread.name = "mainThread";
-    mainThread.traits.isSerial = true;
-    mainThread.traits.serialAffinity = ThreadAffinity.mainThread;
-
-    const phases = testPhases([mainThread, parallel, anyThread], 4);
-    assert(phases[0].threads == 4 && phases[0].tests.length == 1);
-    assert(phases[0].tests[0].name == "parallel");
-    assert(phases[1].threads == 1 && !phases[1].onCaller);
-    assert(phases[1].tests.length == 1 && phases[1].tests[0].name == "anyThread");
-    assert(phases[2].threads == 1 && phases[2].onCaller);
-    assert(phases[2].tests.length == 1 && phases[2].tests[0].name == "mainThread");
-}
-
 /// The default mode: evaluate the selected `@ctfe` tests through the probe
 /// compile, run every regular test in parallel, and count skipped benchmarks
 /// (and the `slowSkipped` tests `--skip-slow` left out before this point).
@@ -817,7 +487,7 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
 
             Mutex mutex;
             auto workers = startTestWorkers(phase.tests, phase.threads, (result) {
-                auto output = formatResultLine(result, colored, options.verbose, width) ~ "\n";
+                auto output = capturedOutput(result) ~ formatResultLine(result, colored, options.verbose, width) ~ "\n";
                 foreach (thrown; result.thrown)
                     output ~= formatThrown(thrown, colored, options.verbose);
                 stdout.lockingTextWriter.put(output);
@@ -851,8 +521,7 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
         import std.algorithm.sorting : sort;
 
         failures.sort!((a, b) => a.test.fullName < b.test.fullName);
-        const packageSelector = Runtime.args.length
-            ? rerunPackageSelector(Runtime.args[0]) : null;
+        const packageSelector = rerunPackageSelector(testBinary);
         stdout.write(formatFailedRecap(failures, colored,
             options.verbose, packageSelector));
     }
@@ -870,120 +539,40 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     import std.algorithm.searching : canFind;
     import std.array : array;
     import std.stdio : stderr, stdout;
-    import sparkles.test_runner.metrics : perfFamily, pfmSelectorNames,
-        rawSelectorEvents, selectsSource, syscallFamily, syscallSelectorNames,
-        tier0Family;
+    import sparkles.test_runner.bench_client : BenchCase, measure, probe, register, workload;
+    import sparkles.test_runner.workload : WorkloadOutcome;
+    import sparkles.test_runner.bench_session : BenchOptions, MetricsListing;
+    import sparkles.test_runner.metrics : pfmSelectorNames;
+    import sparkles.test_runner.pool : retire, takeWorker;
 
-    // Which counting passes to open: --perf OR a --metrics perf metric (so
-    // `--metrics=ipc`/`=all` populate the perf columns, mirroring tier0); a
-    // --metrics tier0 metric (opt-in, no perms); and the syscall pass for
-    // --syscalls (null = off, "*" = total only, else a name list) OR a
-    // --metrics syscall column (`syscalls`, `syscalls:<name>`, `all`).
-    const metricSyscalls = syscallSelectorNames(options.metrics);
-    const wantPerf = options.perf || options.perfScaled
-        || selectsSource(options.metrics, "perf");
-    const wantTier0 = selectsSource(options.metrics, "tier0");
-    const wantSyscalls = options.syscalls.length > 0 || metricSyscalls.length > 0
-        || selectsSource(options.metrics, "syscall");
-    auto syscallNames = (options.syscalls == "*" || !options.syscalls.length)
-        ? null : options.syscalls.splitter(',').array;
-    foreach (n; metricSyscalls)
-        if (!syscallNames.canFind(n))
-            syscallNames ~= n;
-    auto rawEvents = rawSelectorEvents(options.metrics);
-    // pfm:<name> selectors resolve to raw events through libpfm (soft
-    // dependency); a failed resolution warns and drops the column — like an
-    // unknown selector, never a run failure.
-    if (const pfmNames = pfmSelectorNames(options.metrics))
-    {
-        import sparkles.test_runner.event_naming : PfmResolver;
-        import sparkles.profiling.counters.raw : RawEvent;
-
-        auto resolver = PfmResolver.tryLoad();
-        foreach (name; pfmNames)
-        {
-            RawEvent ev;
-            string err;
-            if (resolver.resolve(name, ev, err))
-            {
-                if (!rawEvents.canFind!(e => e.id == ev.id))
-                    rawEvents ~= ev;
-            }
-            else
-                stderr.writeln("--metrics: pfm:", name, " — ", err);
-        }
-    }
-    const wantRaw = rawEvents.length > 0;
-    auto counters = CounterGroups.open(wantPerf, wantTier0, wantSyscalls, syscallNames,
-        wantRaw, rawEvents, options.perfScaled);
+    // One worker measures everything, with no other test running (TRS3).
+    auto worker = takeWorker();
     scope (exit)
-        counters.close();
-    // Absent-but-requested capabilities, one line each, re-derived from the
-    // capability reports so the header and --list-metrics share one vocabulary.
-    static void noteAbsent(string flag, in CapabilityReport report, Capability wanted)
-    {
-        foreach (ref a; report.absences)
-            if (a.capability & wanted)
-                stderr.writeln(flag, ": ", capabilityName(a.capability),
-                    " unavailable (", a.reason, ")");
-    }
+        retire(worker);
 
-    if (wantPerf && !counters.perf.available)
-        noteAbsent("--perf", counters.perf.capabilities, Capability.counting);
-    // A usable-but-degraded group (user-only fallback, dropped LLC pair,
-    // scaled mode) is disclosed too — em-dash columns alone don't say why.
-    if (wantPerf && counters.perf.available && counters.perf.degraded)
-        stderr.writeln("--perf: ", counters.perf.status());
-    if (options.perfIters > BenchConfig().perfMaxIters)
-        stderr.writeln("--perf-iters: capped at ", BenchConfig().perfMaxIters,
-            " (", options.perfIters, " requested)");
-    if (wantTier0 && !counters.tier0.available)
-        noteAbsent("--metrics", counters.tier0.capabilities, Capability.counting);
-    if (wantSyscalls && !counters.syscalls.available)
-        noteAbsent("--syscalls", counters.syscalls.capabilities, Capability.eventTracing);
-    if (wantRaw && !counters.raw.available)
-        noteAbsent("--metrics", counters.raw.capabilities, Capability.countingRaw);
-    // The group read caps the named tracepoints (SyscallGroup truncates its
-    // list); a silently dropped column reads as "never fires" — say so.
-    if (counters.syscalls.available && syscallNames.length > counters.syscalls.names.length)
-        stderr.writeln("--syscalls: only the first ", counters.syscalls.names.length,
-            " named tracepoints are counted (", syscallNames.length, " requested)");
-    // The raw group caps its event list the same way.
-    if (wantRaw && rawEvents.length > counters.raw.names.length)
-        stderr.writeln("--metrics: only the first ", counters.raw.names.length,
-            " raw/pfm events are counted (", rawEvents.length, " requested)");
+    // The worker opens the counting passes the options select and reports
+    // what is absent or degraded; the header lines are its words (TRP21).
+    const benchOptions = BenchOptions(perf: options.perf, perfScaled: options.perfScaled,
+        perfIters: options.perfIters, syscalls: options.syscalls, metrics: options.metrics);
+    const listing = options.listMetrics || options.metrics == "?" || options.metrics == "help";
+    MetricsListing metricsListing;
+    const probed = probe(worker, benchOptions, listing, metricsListing);
+    foreach (note; probed.notes)
+        stderr.writeln(note);
+    const syscallNames = probed.syscallNames;
+    const rawEvents = probed.rawEvents;
 
     // --list-metrics (also --metrics=? / --metrics=help): print the catalog,
-    // the per-backend capability block, and exit. One full-probe bundle
-    // reports true availability regardless of the flags; client metrics can't
-    // be listed without running, so they're just noted.
-    if (options.listMetrics || options.metrics == "?" || options.metrics == "help")
+    // the per-backend capability block, and exit. The worker probed every
+    // source for its true availability regardless of the flags; client
+    // metrics can't be listed without running, so they're just noted.
+    if (listing)
     {
-        auto probe = CounterGroups.open(true, true, true, null, rawWanted: true);
-        scope (exit)
-            probe.close();
-        auto cat = perfFamily(probe.perf.available,
-            fixedOnly: probe.perf.fixedCountersOnly)
-            ~ tier0Family(probe.tier0.available)
-            ~ syscallFamily(probe.syscalls.available);
-        stdout.write(formatted!writeMetricCatalog(cat, colored));
+        stdout.write(formatted!writeMetricCatalog(metricsListing.catalog, colored));
         stdout.writeln;
-        {
-            import sparkles.profiling.counters.psi : PsiSource;
-            import sparkles.test_runner.workload : WallSource, withWorkloadBlocks;
-
-            auto wallProbe = WallSource.tryOpen(true);
-            stdout.write(formatCapabilityBlock(
-                withWorkloadBlocks(probe.capabilities, wallProbe,
-                    PsiSource.tryOpen(true)), colored));
-            // The block's ✓/✗ vocabulary can't carry "counting works but
-            // runqueue attribution doesn't" — say the narrower fact here.
-            // (PSI needs no such line: its absence is a whole-source
-            // CapabilityAbsence, fully expressed in the block above.)
-            if (wallProbe.available && !wallProbe.schedOk)
-                stdout.writeln("wall: runqueue attribution unavailable (",
-                    wallProbe.schedReason, ") — workload windows fold it into `other`");
-        }
+        stdout.write(formatCapabilityBlock(metricsListing.blocks, colored));
+        if (metricsListing.wallNote.length)
+            stdout.writeln(metricsListing.wallNote);
         stdout.writeln("client throughput/level metrics are defined per @benchmark and appear when present.");
         return UnitTestResult(0, 0, false, false);
     }
@@ -992,36 +581,48 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     // several times off an optimized build's — say so up front, once per run,
     // instead of letting authoritative-looking tables mislead. (dub's stock
     // `unittest` build type is debug; a consumer wanting real numbers defines
-    // a release buildType with the `unittests` option — see the docs.)
-    version (assert)
+    // a release buildType with the `unittests` option — see the docs.) The
+    // binary's build decides, not the runner's.
+    if (hello.asserts)
         stderr.writeln("warning: assert-enabled build — benchmark numbers may be ",
             "meaningless; use an optimized unittest buildType (e.g. dub test -b bench)");
 
     import std.algorithm.mutation : SwapStrategy;
     import std.algorithm.sorting : sort;
     import std.range : iota;
-    import sparkles.test_runner.bench : errorRow, measureCase, registerBenchmark,
-        RegisteredCase;
-    import sparkles.test_runner.execution : toThrown;
-    import sparkles.test_runner.skip : TestSkipped;
-    import std.algorithm.searching : canFind;
     import sparkles.test_runner.metrics : canonicalSortKey, catalog,
         groupKeyDisplay, groupKeyOf, matchesMetricGlob, unknownMetricSelectors;
 
     auto benchTests = tests.filter!(t => t.traits.isBenchmark).array;
+
+    // A worker that a case crashed is replaced by one in the same state: the
+    // sources open and every test registered again, in the same order, so a
+    // case keeps its id (TRP26).
+    Worker restartBenchWorker()
+    {
+        retire(worker); // the crashed one: its readers, before it is dropped
+        auto fresh = takeWorker();
+        MetricsListing unused;
+        cast(void) probe(fresh, benchOptions, false, unused);
+        foreach (test; benchTests)
+            cast(void) register(fresh, test, benchConfigFor(options.benchMinTime,
+                test.traits.benchIterations, options.perfIters, options.perfBatch));
+        return fresh;
+    }
 
     // Register every @benchmark test's cases (running each body once, no
     // measurement). Cases sharing a streaming key are measured and printed
     // together — one table per group as it finishes.
     static struct Sched
     {
-        RegisteredCase c;
+        BenchCase c;
         Test test;
         BenchConfig config;
         string key;
     }
 
     Sched[] all;
+    string[] provenance;
     size_t failed;
     BenchProgress progress; // inert (active=false) until populated after registration
     void reportFailure(in TestResult result)
@@ -1037,7 +638,8 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     {
         const config = benchConfigFor(options.benchMinTime, test.traits.benchIterations,
             options.perfIters, options.perfBatch);
-        auto reg = registerBenchmark(test, config);
+        auto reg = register(worker, test, config);
+        provenance ~= reg.provenance;
         if (reg.result.skipped)
         {
             // A registration-time skipTest: the ⊘ line with its reason; the
@@ -1055,12 +657,8 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     // Suite provenance registered during the bodies above (or in module
     // constructors): one header line each, on stderr like every other note,
     // so piped stdout stays byte-stable.
-    {
-        import sparkles.test_runner.bench : provenanceLines;
-
-        foreach (line; provenanceLines)
-            stderr.writeln("provenance: ", line);
-    }
+    foreach (line; provenance)
+        stderr.writeln("provenance: ", line);
 
     // Collect distinct dataset labels across registered cases
     bool[string] datasetSet;
@@ -1333,58 +931,58 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         progress.tick(keys.length ? groupKeyDisplay(s.key) ~ "  " ~ s.c.name : s.c.name);
         static if (hasBenchTicker)
             tickerFrame(BenchStats(name: s.c.name, labels: s.c.labels));
-        try
         {
-            auto row = measureCase(s.c, s.config, counters);
-            if (row.error.length)
+            import sparkles.test_runner.bench : errorRow;
+            import sparkles.test_runner.client : WorkerDied;
+            import sparkles.test_runner.model : Thrown;
+
+            // The worker isolates what the measurement threw: a skipTest is a
+            // yellow skipped row, and a hard throw an error row in its group
+            // table with its trace beside it, counted once via the error-row
+            // path — not the separate `failed` tally.
+            immutable(Thrown)[] thrown;
+            BenchStats row;
+            try
+                row = measure(worker, s.c.id, s.config, thrown);
+            catch (WorkerDied e)
+            {
+                if (e.outsideCommand)
+                    throw e; // no case to blame: the run fails (TRP27)
+                // The case crashed its worker: an error row, and a new worker
+                // with every case registered again, in the same order, so
+                // the case ids still hold (TRP26).
+                thrown = [Thrown(type: "worker crashed",
+                    message: "the test binary " ~ e.ending ~ " while measuring this case")];
+                row = errorRow(s.c.name, s.c.labels, thrown);
+                if (e.output.length)
+                    stdout.write(e.output);
+                worker = restartBenchWorker();
+            }
+            if (row.error.length && !row.skipped)
                 errorRows++;
             bucket ~= row;
             measured ~= row;
             totalRows++;
-        }
-        catch (TestSkipped sk)
-        {
-            // A measurement-time skipTest (an environment probe inside a
-            // deferred closure): a yellow skipped row, counted as neither
-            // passed-with-numbers nor failed — the run stays green.
-            import sparkles.test_runner.bench : errorCell;
+            if (thrown.length)
+            {
+                progress.clear();
+                bool printedAbove = false;
+                static if (hasBenchTicker)
+                    if (regionLive)
+                    {
+                        // Permanent lines above the live frame — the frame repaints
+                        // beneath them (`runParallelLive`'s pattern).
+                        import std.string : lineSplitter;
 
-            auto row = BenchStats(name: s.c.name, labels: s.c.labels,
-                error: errorCell(sk.message.idup), skipped: true);
-            bucket ~= row;
-            measured ~= row;
-            totalRows++;
-        }
-        catch (Throwable t)
-        {
-            // A hard throw during measurement: surface it as an error row in its
-            // group table (like a soft Expected error) so the matrix shows exactly
-            // which case crashed, and still print the trace. Counted once via the
-            // error-row path — not the separate `failed` tally. `toThrown`
-            // re-throws OutOfMemoryError, which must abort the run.
-            auto thrown = toThrown(t);
-            auto row = errorRow(s.c.name, s.c.labels, thrown);
-            bucket ~= row;
-            measured ~= row;
-            errorRows++;
-            totalRows++;
-            progress.clear();
-            bool printedAbove = false;
-            static if (hasBenchTicker)
-                if (regionLive)
-                {
-                    // Permanent lines above the live frame — the frame repaints
-                    // beneath them (`runParallelLive`'s pattern).
-                    import std.string : lineSplitter;
-
+                        foreach (th; thrown)
+                            foreach (line; formatThrown(th, colored, true).lineSplitter)
+                                region.printAbove(line);
+                        printedAbove = true;
+                    }
+                if (!printedAbove)
                     foreach (th; thrown)
-                        foreach (line; formatThrown(th, colored, true).lineSplitter)
-                            region.printAbove(line);
-                    printedAbove = true;
-                }
-            if (!printedAbove)
-                foreach (th; thrown)
-                    stdout.write(formatThrown(th, colored, true));
+                        stdout.write(formatThrown(th, colored, true));
+            }
         }
     }
     flush();
@@ -1395,33 +993,39 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     // window — for a handful of long single-pass windows the stderr spinner
     // is disclosure enough, and keeping display I/O out of measurement is
     // the model's point.
-    import sparkles.profiling.counters.psi : PsiSource;
-    import sparkles.test_runner.workload : runWorkload, WallSource, WorkloadWindow;
+    import sparkles.test_runner.workload : WorkloadWindow;
 
     auto workloadTests = tests.filter!(t => t.traits.isWorkload).array;
     WorkloadWindow[] windows;
     if (workloadTests.length)
     {
-        auto wallSource = WallSource.tryOpen(true);
-        scope (exit)
-            wallSource.close();
-        auto psiSource = PsiSource.tryOpen(true);
-        scope (exit)
-            psiSource.close();
-        // Disclose the degraded decomposition once per run, like the perf
-        // header notes: on such hosts every window's runqueue column is an
-        // em dash and its time lands in `other`.
-        if (wallSource.available && !wallSource.schedOk)
-            stderr.writeln("workload: runqueue wait unattributable (",
-                wallSource.schedReason, ") — its time lands in `other`");
-
         progress = BenchProgress(total: workloadTests.length,
             active: progressEnabled(options.noColors) && workloadTests.length > 0,
             width: detectTerminalWidth(stderrStream: true));
         foreach (test; workloadTests)
         {
+            import sparkles.test_runner.client : WorkerDied;
+
             progress.tick(test.name);
-            auto outcome = runWorkload(test, counters, wallSource, psiSource);
+            // The worker opens the wall and PSI sources on the first window,
+            // and discloses a degraded decomposition once per run, like the
+            // perf header notes.
+            string[] notes;
+            WorkloadOutcome outcome;
+            try
+                outcome = workload(worker, test, notes);
+            catch (WorkerDied e)
+            {
+                if (e.outsideCommand)
+                    throw e; // no case to blame: the run fails (TRP27)
+                outcome.result = Worker.crashed(test, e);
+                worker = restartBenchWorker();
+            }
+            foreach (note; notes)
+            {
+                progress.clear();
+                stderr.writeln(note);
+            }
             if (outcome.result.skipped)
             {
                 progress.clear();
@@ -1476,11 +1080,9 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         // suite-provenance lines, so the artifact is self-describing.
         auto meta = collectBenchMeta(benchConfigFor(options.benchMinTime, 0,
             options.perfIters, options.perfBatch));
-        {
-            import sparkles.test_runner.bench : provenanceLines;
-
-            meta.provenance = provenanceLines;
-        }
+        meta.provenance = provenance;
+        // The binary was compiled by its own compiler, not the runner's.
+        meta.compiler = compilerDescription(hello);
         try
             write(options.benchJson, benchReportJson(measured, meta, windows));
         catch (Exception e)
@@ -1603,7 +1205,7 @@ private void runParallelLive(
 
     auto workers = startTestWorkers(runnable, threads < 1 ? 1 : threads,
         (result) {
-            auto output = formatResultLine(result, colored, options.verbose, width) ~ "\n";
+            auto output = capturedOutput(result) ~ formatResultLine(result, colored, options.verbose, width) ~ "\n";
             foreach (thrown; result.thrown)
                 output ~= formatThrown(thrown, colored, options.verbose);
             {
@@ -1650,7 +1252,9 @@ private void runParallelLive(
         ProgressLine(frame: spin, done: done, total: runnable.length,
             colored: colored, elapsed: MonoTime.currTime - started).toString(bar);
         region.update([bar[]]);
-        if (done == runnable.length)
+        // A worker thread that threw leaves tests with no result: the loop
+        // ends when the threads have, and the join rethrows what one threw.
+        if (done == runnable.length || testWorkersFinished(workers))
             break;
         spin++;
         Thread.sleep(50.msecs);
@@ -1659,4 +1263,29 @@ private void runParallelLive(
     // append happens-before its counter increment, so one more drain after
     // observing `completed == length` catches every straggler.
     drain();
+}
+
+/// The output a test wrote, ending in a line feed, or nothing: printed above
+/// its result line, where it would have appeared had the test run in this
+/// process.
+private string capturedOutput(const TestResult result) @safe pure nothrow
+{
+    if (!result.output.length)
+        return null;
+    return result.output[$ - 1] == '\n' ? result.output : result.output ~ "\n";
+}
+
+/// The test binary's compiler, from its `hello`: the format `collectBenchMeta`
+/// uses for the runner's own.
+private string compilerDescription(const Hello hello)
+{
+    import std.conv : to;
+    import std.format : format;
+
+    long frontEnd;
+    try
+        frontEnd = hello.compilerVersion.to!long;
+    catch (Exception)
+        return hello.compilerVendor;
+    return format!"%s (front-end %s.%03d)"(hello.compilerVendor, frontEnd / 1000, frontEnd % 1000);
 }

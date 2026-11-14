@@ -24,8 +24,9 @@ configuration "unittest" {
 
 That is all — the runner registers itself as druntime's unit tester, so
 `dub test` discovers and runs your `unittest` blocks through it. A thin shim
-compiles into your test binary and links a prebuilt implementation library, so
-you pay almost none of the runner's own compile cost on each build.
+compiles into your test binary and hands the run to the runner executable
+(`$SPARKLES_TEST_RUNNER`), so you pay almost none of the runner's own compile
+cost on each build; without one, the binary runs its tests itself.
 
 ## Write and run a test
 
@@ -337,7 +338,6 @@ Everything after `--` in `dub test -- <options>`. Full table:
 | `--wasm`                   | Compile and run `@wasm` tests on `wasm32-unknown-wasip1` under `wasmtime`              |
 | `--wasm-bare`              | Compile and run `@wasm` tests on bare `wasm32` with `-betterC`                         |
 | `--ctfe-trace FILE`        | Evaluate `@ctfe` tests under LDC `-ftime-trace`; per-test cost                         |
-| `--self-test`              | Also run the runner's own unittests                                                    |
 | `--compiler DC`            | Compiler for `@ctfe`/`--better-c`/`--wasm` (`$DC`, then ldc2/dmd)                      |
 | `-I`, `--import-path DIR`  | Extra import path for extraction/probe compiles (repeatable)                           |
 | `--include-import PATTERN` | Compile matching modules into `--better-c`/`--wasm` (repeatable)                       |

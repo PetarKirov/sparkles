@@ -339,9 +339,137 @@ version (linux)
         Statx sx;
         assert(fstatat(AT_FDCWD, path.toStringz, &st, AT_SYMLINK_NOFOLLOW) == 0);
         assert(statx(AT_FDCWD, path.toStringz, AT_SYMLINK_NOFOLLOW, STATX_BASIC_STATS, &sx) == 0);
-        foreach (mask; [StatMask.basic, StatMask.mtime])
+        foreach (mask; [StatMask.basic, StatMask.mtime, StatMask.identity, StatMask.change,
+                cast(StatMask)(StatMask.mtime | StatMask.identity | StatMask.change)])
             assert(statxToStat(sx, mask) == toStat(st, mask), path);
     }
+}
+
+/// A field `statx` did not fill (its `stx_mask` bit clear) is absent from
+/// the `Stat`, never a present zero a fingerprint would trust (FSC3).
+version (linux)
+@("vfs.blocking.statxMaskIsHonoured")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.event_horizon.sys.posix : STATX_BASIC_STATS, STATX_CTIME, STATX_INO, STATX_MTIME, Statx;
+    import sparkles.event_horizon.sys.vfs : statxToStat;
+
+    enum all = cast(StatMask)(StatMask.mtime | StatMask.identity | StatMask.change);
+    Statx sx;
+    sx.stx_mode = 0x8000 | 420; // S_IFREG, 0644
+    sx.stx_ino = 7;
+    sx.stx_mtime.tv_sec = 1;
+    sx.stx_ctime.tv_sec = 2;
+    sx.stx_mask = STATX_BASIC_STATS;
+    const full = statxToStat(sx, all);
+    assert(full.hasMtime && full.hasIdentity && full.hasCtime && full.inode == 7);
+
+    sx.stx_mask = STATX_BASIC_STATS & ~(STATX_CTIME | STATX_INO);
+    const partial = statxToStat(sx, all);
+    assert(partial.hasMtime && !partial.hasIdentity && !partial.hasCtime);
+    sx.stx_mask = STATX_BASIC_STATS & ~STATX_MTIME;
+    assert(!statxToStat(sx, all).hasMtime);
+}
+
+/// VFO6: a directory reached through a followed link has the identity of the
+/// directory itself, and a sibling's differs.
+@("vfs.blocking.VFO6.identity")
+@system unittest
+{
+    auto dir = scratchDir("identity");
+    scope (exit) rmdirRecurse(dir);
+    mkdirRecurse(buildPath(dir, "a/inner"));
+    mkdirRecurse(buildPath(dir, "b"));
+    symlink(".", buildPath(dir, "a/self"));
+    auto v = new BlockingVfs;
+    ResolvePolicy follow;
+    follow.symlinks = SymlinkPolicy.beneath;
+    auto root = openRoot!(Rights.readOnly)(v, dir, ambientAuthority(), follow);
+    auto a = root.value.walk("a");
+    auto self = a.value.walk("self");
+    const own = a.value.stat(StatMask.identity).value;
+    const linked = self.value.stat(StatMask.identity).value;
+    assert(own.hasIdentity && linked.hasIdentity);
+    assert(own.device == linked.device && own.inode == linked.inode);
+    assert(own.inode != root.value.statAt("b", StatMask.identity).value.inode);
+    assert(!a.value.stat().value.hasIdentity);
+}
+
+/// VFO6: a rewrite moves the change time even when the size and the
+/// modification time are put back, as `touch -r` puts them back.
+@("vfs.blocking.VFO6.change")
+@system unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+    import std.datetime.systime : SysTime;
+    import std.file : getTimes, setTimes;
+
+    auto dir = scratchDir("change");
+    scope (exit) rmdirRecurse(dir);
+    const path = buildPath(dir, "f");
+    write(path, "same size");
+    SysTime accessed, modified;
+    getTimes(path, accessed, modified);
+    // Whole seconds, which `setTimes` puts back exactly.
+    modified = SysTime.fromUnixTime(modified.toUnixTime);
+    setTimes(path, accessed, modified);
+    auto v = new BlockingVfs;
+    auto root = openRoot!(Rights.readOnly)(v, dir, ambientAuthority());
+    const mask = cast(StatMask)(StatMask.mtime | StatMask.change);
+    const before = root.value.statAt("f", mask).value;
+    assert(before.hasCtime && before.ctimeNs > 0);
+    assert(!root.value.statAt("f").value.hasCtime);
+
+    // A coarse clock can put the rewrite in the same tick; try until it moves.
+    Stat after;
+    foreach (attempt; 0 .. 200)
+    {
+        Thread.sleep(10.msecs);
+        write(path, "same SIZE");
+        setTimes(path, accessed, modified);
+        after = root.value.statAt("f", mask).value;
+        if (after.ctimeNs != before.ctimeNs)
+            break;
+    }
+    assert(after.size == before.size && after.mtimeNs == before.mtimeNs);
+    assert(after.ctimeNs > before.ctimeNs, "the change time cannot be put back");
+}
+
+/// VFO6: a hard link names the same file, so both names report one identity,
+/// and making it moves the file's change time (its link count changed).
+@("vfs.blocking.VFO6.hardLink")
+@system unittest
+{
+    import core.sys.posix.unistd : link, unlink;
+    import core.thread : Thread;
+    import core.time : msecs;
+
+    auto dir = scratchDir("hardlink");
+    scope (exit) rmdirRecurse(dir);
+    write(buildPath(dir, "f"), "linked");
+    write(buildPath(dir, "other"), "linked");
+    auto v = new BlockingVfs;
+    auto root = openRoot!(Rights.readOnly)(v, dir, ambientAuthority());
+    const mask = cast(StatMask)(StatMask.identity | StatMask.change);
+    const before = root.value.statAt("f", mask).value;
+    // A coarse clock (whole seconds on some filesystems) can put the link in
+    // the same tick; link again until the change time moves.
+    Stat f;
+    foreach (attempt; 0 .. 200)
+    {
+        Thread.sleep(10.msecs);
+        assert(link(buildPath(dir, "f").toStringz, buildPath(dir, "g").toStringz) == 0);
+        f = root.value.statAt("f", mask).value;
+        if (f.ctimeNs != before.ctimeNs || attempt == 199)
+            break;
+        assert(unlink(buildPath(dir, "g").toStringz) == 0);
+    }
+    const g = root.value.statAt("g", mask).value;
+    const other = root.value.statAt("other", mask).value;
+    assert(f.hasIdentity && g.hasIdentity && f.device == g.device && f.inode == g.inode);
+    assert(other.inode != f.inode, "equal content is not one identity");
+    assert(f.ctimeNs == g.ctimeNs && f.ctimeNs > before.ctimeNs, "the link changed the file");
 }
 
 @("vfs.blocking.VFB7.mapping")

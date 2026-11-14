@@ -1,105 +1,285 @@
-# `apps/ci` task DAG architecture
+---
+status: draft
+owner: apps/ci
+reviewed: 2026-11-01
+---
 
-_Audience: developers and coding agents implementing or extending `apps/ci`.
-This document is normative. It specifies the target architecture and command
-semantics. The independently green delivery sequence is in
-[PLAN.md](./PLAN.md). The canonical command tree replaces the existing flat
-mode flags; repository consumers migrate atomically with the cutover._
+# `apps/ci` commands on the task DAG — Specification
 
-## 1. Purpose
+## Abstract
 
-`apps/ci` has one execution model: commands plan typed tasks into a directed
-acyclic graph, one Event Horizon executor runs that graph, and one reporter
-consumes its event stream. Commands do not own worker pools, process polling,
-fail-fast loops, live regions, or ad hoc result summaries.
+`apps/ci` is the repository's CI tool: it tests and builds every package, runs
+and verifies documentation examples, checks links, citations and the docs site,
+and reports CI statistics. This specification defines its command tree and the
+task graph each command plans. Every command runs on one executor and one
+reporter, and every compile goes through one content-addressed build graph,
+so a `ci pipeline` run checks everything CI checks, in parallel, without
+compiling the same library twice.
 
-The architecture has these goals:
+## Introduction
 
-- Represent dependencies and conditional fallback explicitly.
-- Run independent work concurrently without racing dub artifacts or coverage
-  listings.
-- Bound heterogeneous work with weighted job capacity, not an unbounded thread
-  count.
-- Cancel process trees and sibling tasks structurally.
-- Keep selection, summaries, and ordinary non-TTY output deterministic.
-- Preserve useful live output on a TTY and offer explicitly interlaced output
-  when immediate logs matter more than ordering.
-- Give every current `apps/ci` work class a plan, outcome, and event history.
+`apps/ci` grew one flag per job: `--test`, `--build`, `--example-files`,
+`--check-vcs-urls` and dozens more. Each owned its own loop, worker pool,
+fail-fast logic and output. The jobs could not share work or run together, and
+their logs depended on timing.
 
-This is an orchestration architecture, not a general workflow language. Graphs
-are built in memory for one invocation. There is no YAML task format, remote
-cache protocol, daemon, or persistent scheduler state.
+This specification replaces the flags with a command tree whose commands only
+_plan_. Each command turns its inputs into a task graph. The generic
+[task DAG](../../build-primitives/task-dag/SPEC.md) executes and reports that
+graph, and the [build graph](../../build-primitives/build-graph/SPEC.md)
+supplies its compile, link and test actions, shared across commands, worktrees
+and machines. `ci pipeline` plans the union of every CI job as one graph.
 
-## 2. Command surface
+The task DAG owns the model, edges, admission, cancellation, determinism and
+reporting rules, and the build graph owns compilation and caching. This
+document does not restate either. It owns the command surface, the
+repository's selection policy, the graphs of each command, and coverage
+publication. Jobs that need a different host operating system appear in
+`ci pipeline` as explicitly skipped tasks rather than being dropped.
 
-### 2.1 Canonical commands
+Section 1 defines the command surface and §2 the mapping from the removed flags.
+Section 3 compares the design with Yarn's workspace commands, and §4 states the
+repository's selection policy. Section 5 gives each command's graph, §6 the
+build and coverage locations, §7 the module layout, and §8 the acceptance
+criteria. Delivery order is in [PLAN.md](./PLAN.md).
+
+## 1. Command surface
+
+### 1.1 Canonical commands
 
 ```text
+ci pipeline [--from SELECTOR...] [--since REF] [--dependencies] [--dependents]
+            [--backend local|nix] [--require-cached KIND...]
+            [--determinism-sample N]
+            [--placement NAME | --list-placements]
+
 ci test [--build-only | --special-modes betterc|wasm|all]
         [--from SELECTOR...] [--since REF]
         [--dependencies] [--dependents]
-        [--coverage | --no-coverage] [--fail-fast]
+        [--coverage | --no-coverage] [--sanitize address]
+        [--slow [--tests NAME...]] [--backend local|nix]
+        [--require-cached KIND...]
 
 ci docs examples [--include-files SELECTOR...] [--exclude-files SELECTOR...]
-                 [--fail-fast]
-ci docs run|verify|update
-        [--include-files SELECTOR...] [--exclude-files SELECTOR...]
-        [--fail-fast]
-ci docs links check|fix
-        [--include-files SELECTOR...] [--exclude-files SELECTOR...]
-ci docs vcs-urls check
-        [--include-files SELECTOR...] [--exclude-files SELECTOR...]
+ci docs run|verify|update [--include-files SELECTOR...] [--exclude-files SELECTOR...]
+ci docs links check|fix [--include-files SELECTOR...] [--exclude-files SELECTOR...]
+ci docs vcs-urls check [--include-files SELECTOR...] [--exclude-files SELECTOR...]
 ci docs sidebar check
-ci docs blob-paths check [--clone-root DIR]
-        [--include-files SELECTOR...] [--exclude-files SELECTOR...]
-ci docs fences audit [--root DIR] [--audit-scope site|all|excluded]
-        [--json FILE] [--include-files SELECTOR...]
+ci docs glossary check
+ci docs credits check
+ci docs spec-evidence check|update-backlog
+ci docs blob-paths check [--clone-root DIR] [--include-files SELECTOR...]
+ci docs fences audit [--root DIR] [--audit-scope site|all|excluded] [--json FILE]
+ci docs wasm check|stage [module options]
 
-ci stats [existing stats options]
+ci commits build-each [--base REF] [--packages NAME...]
 ci commit-scope [COMMIT_MESSAGE_FILE|-]
+ci cache seed-dub | check-pins | stats | list | gc
+ci cache verify [--rerun [--determinism-sample N]] [--key KEY...] [--task TASK...]
+ci cache remove --key KEY... | --task TASK... | --package NAME... | --toolchain ID
+ci cache replace TASK...
+ci cache explain TASK
+ci host probe
+ci checks mirror [--repo R] [--sha SHA] [--skip-check NAME...] [--no-write]
+ci stats [statistics options]
+ci link-rot report [report options]
+ci slow-tests list
+ci perf show|compare|history|push|fetch [options]
 ```
 
 Every command that executes a graph accepts:
 
-| Option              | Default               | Meaning                                                                                                                                          |
-| ------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--jobs N`          | host-derived capacity | Positive weighted capacity available to running tasks. It is not a count of OS threads.                                                          |
-| `--interlaced`      | off                   | Stream line-atomic, task-prefixed output as events arrive instead of replaying complete task blocks in presentation order.                       |
-| `--dry-run`         | off                   | Discover, select, plan, validate, and print the DAG without running task actions, making network requests, creating sandboxes, or writing files. |
-| `--fail-fast`       | off                   | On the first authoritative failure, stop admission and cancel the command scope as specified in section 8.                                       |
-| `--log-level LEVEL` | `info`                | Standard Sparkles logger level.                                                                                                                  |
+| Option              | Default               | Meaning                                                                                                                                            |
+| ------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--jobs N`          | host-derived capacity | Positive weighted capacity available to running tasks. It is not a count of OS threads.                                                            |
+| `--interlaced`      | off                   | Stream line-atomic, task-prefixed output as events arrive instead of replaying complete task blocks in presentation order.                         |
+| `--dry-run`         | off                   | Discover, select, plan, validate, and print the DAG without running task actions, making network requests, creating directories, or writing files. |
+| `--fail-fast`       | off                   | On the first authoritative failure, stop admission and cancel the command scope.                                                                   |
+| `--log-level LEVEL` | `info`                | Standard Sparkles logger level.                                                                                                                    |
 
-`--jobs 0` and negative values are errors. `--dry-run --interlaced` is rejected
-because a dry run has no task output to interlace. `SPARKLES_CI_JOBS` remains an
-environment fallback; an explicit `--jobs` wins. Invalid combinations fail
-before task execution.
+**CIC1: Common options.** `--jobs 0` and negative values **must** be errors.
+`--dry-run --interlaced` **must** be rejected, because a dry run has no task
+output to interlace. Without `--jobs`, `SPARKLES_CI_JOBS` sets the capacity,
+and an explicit `--jobs` wins over both. Both count weighted capacity units
+(TDM7), not concurrent tasks, so a workflow that meant two concurrent builds
+sets 4. Invalid combinations fail before any
+task runs. Repository workflows pass `--interlaced`.
 
-### 2.2 `ci test` modes
+**CIC2: One-node graphs.** A command that is a single check, such as
+`ci docs sidebar check`, **must** plan a one-node graph. It runs through the
+executor and reporter, so its outcome, exit status and output follow the same
+rules as every other command.
 
-With no mode option, `ci test` creates ordinary `dub test` tasks. Coverage is
-on by default for this mode and can be disabled with `--no-coverage`.
+**CIC3: Backends.** `--backend local`, the default, runs build actions on the
+local executor and the shared store. `--backend nix` lowers them to Nix
+derivations, which run on the configured remote builders as well
+([build graph §10](../../build-primitives/build-graph/SPEC.md#_10-the-nix-backend)).
+Non-build tasks run locally under both.
 
-`ci test --build-only` creates `dub build` tasks and does not run tests. It is
-the canonical replacement for the old `--build` mode. Coverage is invalid.
+`ci test`, `ci pipeline` and the `ci docs` commands that build also accept
+`--host-system SYSTEM` and `--host-ci-rev REV`, which re-run the command inside
+a Linux VM from macOS, as the old flags did.
+
+`ci checks mirror` reads the GitHub API even when it writes nothing. So its
+rehearsal option is `--no-write`, not the common `--dry-run`, which forbids
+network access.
+
+### 1.2 `ci test` modes
+
+With no mode option, `ci test` creates ordinary unittest tasks. Coverage is on
+by default for this mode and can be disabled with `--no-coverage`.
+
+`ci test --build-only` builds, for each selected package, its test binary, its
+dependency-library variant when a selected package depends on it, and its
+application variant when it is an executable. It runs nothing. Coverage is
+invalid.
 
 `ci test --special-modes MODE` creates the test runner's extracted special-mode
-tasks. `MODE` is a wired enum whose CLI spellings are `betterc`, `wasm`, and
-`all`; core-cli's `?`/`help` value-help forms list those values. A selected
-package receives a node only for marker attributes present in its sources and
-only if it integrates `sparkles:test-runner`. Every special invocation passes
-`--self-test` and `--require-toolchain`. An empty repository-wide special-mode
-plan is an error, not a successful no-op. Coverage is invalid for special modes.
+tasks:
 
-`--build-only` and `--special-modes` are mutually exclusive. Supplying
-`--special-modes` selects special modes instead of ordinary unittests. Separate
-invocations are used when both ordinary and extracted tests are required by CI.
+- `MODE` is a wired enum whose CLI spellings are `betterc`, `wasm` and `all`;
+  core-cli's `?`/`help` value-help forms list them.
+- A selected package gets a task only for marker attributes present in its
+  sources, and only if it integrates `sparkles:test-runner`.
+- Every special invocation passes `--require-toolchain`.
+- An empty repository-wide special-mode plan is an error, not a successful
+  no-op.
+- Coverage is invalid.
 
-### 2.3 Removed flat mode flags
+`--sanitize address` builds and tests every selected package under
+AddressSanitizer, as a separate variant; it requires LDC on Linux. `--slow` runs
+the `@slow` tests instead of the ordinary ones, optionally only those named by
+`--tests`.
 
-The former `--build`, `--test`, `--test-extracted`, `--example-files`, default
-markdown mode, and other flat mode flags are removed at cutover. Active
-workflows, hooks, and documentation migrate in the same change. There is no
-legacy parser, alias translation, precedence table, or fallback dispatch path.
+`--build-only` and `--special-modes` are mutually exclusive.
+
+**CIC12: Required hits.** `--require-cached KIND...` **must** fail every
+build-graph action of a listed kind (`compile`, `archive`, `link`, `generate`)
+that would execute instead of reusing a result. The action fails before it
+starts, with the miss's explanation
+([BGS8](../../build-primitives/build-graph/SPEC.md#_6-the-shared-store)) as its
+diagnostic. A dry run reports which actions would fail. The actions the
+determinism check (CIC13) re-executes are exempt, since executing them is its
+purpose.
+
+### 1.3 `ci pipeline`
+
+`ci pipeline` plans, as one graph:
+
+- every `ci test` mode CI runs;
+- `ci docs examples` and the markdown verification CI runs;
+- every `ci docs … check`;
+- `ci commit-scope` for the commits of the range;
+- `ci cache check-pins`, the build-settings check
+  (`standardize-build-settings --check`), and the native comparison archives
+  that the Event Horizon examples link;
+- the configuration-specific test jobs CI runs, such as `terminal`'s
+  `unittest-vulkan` and `base`'s `unittest-portable`, and the GPU shader lane,
+  which is skipped where no GPU exists.
+
+It runs on the build graph's shared store. Its `--from` and `--since` narrow
+the package-derived tasks only. Tasks that require another host operating
+system or another architecture are `Skipped(platform)` under the local
+backend. Under the [Nix backend](../../build-primitives/build-graph/SPEC.md#_10-the-nix-backend)
+they run on remote builders of that system.
+
+**CIC13: The determinism check runs on every run.** Every CI run **must** run
+the build graph's cold, unshared check
+([BGS9](../../build-primitives/build-graph/SPEC.md#_6-the-shared-store)) over a
+sample of the actions its builds ran or reused, once they have finished.
+`ci pipeline` plans it as a task of its graph. A workflow that splits its builds
+across jobs runs `ci cache verify --rerun --determinism-sample N` in a job
+that shares their store, or in each job over that job's actions.
+
+- **The sample:** order the run's cacheable actions (`compile`, `archive`,
+  `link`, `generate`) by the SHA-256 digest of the `HEAD` commit id followed by
+  the result key. Take the first four compiles, and the first four actions of
+  the other kinds together. `--determinism-sample N` changes four to `N`; zero
+  is an error.
+- **Rotation:** the order changes with every commit, so successive runs check
+  different actions, while a rerun of one commit checks the same ones.
+- **Whatever the run did:** the sample is drawn whether the run reused or
+  executed an action. Each sampled action's result is compared with a fresh
+  execution that bypasses its own lookup and publishes only to the check's
+  private store.
+
+A difference fails the task as an authoritative failure, naming the action
+and what differed, and removes the suspect result from the store. The
+determinism-check task itself is never skipped by a stored result, a shared
+verdict ([BGX4](../../build-primitives/build-graph/SPEC.md#_9-test-actions-and-result-reuse))
+or any other memo of an earlier run.
+
+**CIC14: Placements.** `ci pipeline` **must** partition its graph into named
+**placements**, each a host system, a runner class and a capacity, declared in
+one data file:
+
+- **Running one:** `ci pipeline --placement NAME` runs that placement's tasks
+  and the build actions they need. Every other task ends `Skipped(placement)`,
+  a skip reason beside `platform`; none is dropped from the graph.
+- **Listing them:** `ci pipeline --list-placements` prints the placements and
+  their shards as JSON, and sets it as an output through the CI-provider
+  module (TDO6). The repository's workflows are generated from that output.
+- **Shards:** a placement's tasks are packed into its shards longest first, by
+  the `task.wall` that the
+  [run records](../../build-primitives/observability/SPEC.md#_11-run-records)
+  hold. A task
+  with no recorded wall time takes a declared default weight.
+
+**CIC15: No diffs on CI.** The repository's workflows **must not** pass
+`--since`. On CI, reuse comes from keys, not from diffs. `--since` stays a
+local convenience.
+
+_Rationale:_ a diff depends on the base a run is compared with, which changes
+across rebases, reruns and the merge queue. A key depends only on the inputs.
+See [build graph D43](../../build-primitives/build-graph/decisions.md#d43-amendments-from-the-nix-generated-ci-pr-accepted).
+
+## 2. Removed flags
+
+The flags in the first column below are not part of the command line. There is
+no legacy parser, alias, precedence table, or fallback dispatch.
+
+| Removed flag                      | Replacement                            |
+| --------------------------------- | -------------------------------------- |
+| `--test`, `-t`                    | `ci test`                              |
+| `--build`                         | `ci test --build-only`                 |
+| `--test-extracted`                | `ci test --special-modes all`          |
+| `--test-sanitize`                 | `ci test --sanitize address`           |
+| `--test-slow`                     | `ci test --slow`                       |
+| `--packages` (with `--test-slow`) | `ci test --slow --from`                |
+| `--files`                         | `--include-files`                      |
+| `--list-slow-tests`               | `ci slow-tests list`                   |
+| `--coverage`                      | `ci test --coverage`                   |
+| `--example-files`, `-x`           | `ci docs examples`                     |
+| default markdown mode             | `ci docs run`                          |
+| `--verify`, `-V`                  | `ci docs verify`                       |
+| `--update`, `-u`                  | `ci docs update`                       |
+| `--dedup-reference-links`, `-d`   | `ci docs links check`                  |
+| `--fix-reference-links`, `-f`     | `ci docs links fix`                    |
+| `--check-vcs-urls`                | `ci docs vcs-urls check`               |
+| `--check-docs-sidebar`            | `ci docs sidebar check`                |
+| `--check-glossary`                | `ci docs glossary check`               |
+| `--check-credits`                 | `ci docs credits check`                |
+| `--check-spec-evidence`           | `ci docs spec-evidence check`          |
+| `--update-spec-evidence-backlog`  | `ci docs spec-evidence update-backlog` |
+| `--check-blob-paths`              | `ci docs blob-paths check`             |
+| `--audit-fences`                  | `ci docs fences audit`                 |
+| `--check-wasm-modules`            | `ci docs wasm check`                   |
+| `--stage-docs-wasm`               | `ci docs wasm stage`                   |
+| `--build-each-commit`             | `ci commits build-each`                |
+| `--check-commit-scope`            | `ci commit-scope`                      |
+| `--seed-dub-cache`                | `ci cache seed-dub`                    |
+| `--check-pin-cache`               | `ci cache check-pins`                  |
+| `--linux-host-probe`              | `ci host probe`                        |
+| `--mirror-checks`                 | `ci checks mirror`                     |
+| `--mirror-checks --dry-run`       | `ci checks mirror --no-write`          |
+| `--ci-stats`, `-C`                | `ci stats`                             |
+| `--report-link-rot`               | `ci link-rot report`                   |
+
+**CIC4: No removed flag survives.** The parser **must** reject every flag in the
+table's first column, with a diagnostic naming its replacement. Option-only
+flags keep their spelling on the command that owns them; for example, `--json`,
+`--root` and `--audit-scope` move to `ci docs fences audit`, and `--tests` to
+`ci test --slow`.
 
 ## 3. Yarn inspiration and Sparkles differences
 
@@ -111,318 +291,152 @@ Yarn's workspace `foreach` command:
 - `--dependencies` and `--dependents` expand graph closure.
 - `--jobs` bounds parallel work.
 - `--interlaced` opts into immediate mixed output.
-- Dependency edges provide topological execution.
 
 Sparkles differs in load-bearing ways:
 
 | Yarn-inspired idea  | Sparkles definition                                                                                                                              |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Workspace           | A root `dub.sdl` sub-package with a stable package name and repository-relative directory. The root package is metadata, not an executable task. |
-| Topological command | The induced in-tree dub dependency graph. A dependency task must complete successfully before its selected dependent may start.                  |
+| Topological command | Builds follow the in-tree dependency graph. Tests do not wait for other packages' tests, only for the builds their binaries need.                |
 | Job count           | Weighted capacity. A compiler-heavy task can consume more than one unit.                                                                         |
 | `--from`            | Matches Sparkles package name, qualified name, or path. It does not mean "start at this textual position."                                       |
 | `--since`           | Uses Git change ownership plus explicit repository-wide invalidators, not workspace manifest timestamps.                                         |
 | Recursive selection | Explicit `--dependencies` and `--dependents`; there is no implicit Yarn `-R`/`-A` mode.                                                          |
 | Interlacing         | Line-atomic, prefixed event streaming on TTY and non-TTY alike. Raw byte chunks are never written concurrently.                                  |
-| Failure             | A structured `Outcome`, with blocked, cancelled, skipped, and degraded distinct from failed.                                                     |
+| Failure             | A structured outcome, with blocked, cancelled, skipped, and degraded distinct from failed.                                                       |
 | Execution           | Event Horizon scopes, subprocesses, clocks, and wakeups only. No `std.parallelism` pool or polling thread is permitted.                          |
-| Cache               | No task-result cache in v1. Dub may use a sandbox-local dependency cache, but prior task success is never inferred from it.                      |
+| Cache               | A content-addressed build store shared by every worktree. Test results are reused only under the build graph's rules.                            |
 
-Yarn behavior is therefore a usability reference, not an external compatibility
-contract.
+## 4. Selection policy
 
-## 4. Package discovery and focused selection
+Focused selection follows the [task DAG's selection
+algebra](../../build-primitives/task-dag/SPEC.md#_2-package-discovery-and-focused-selection).
+Only `ci test` and `ci pipeline` accept focused selectors; docs and example
+commands keep their file selectors.
 
-### 4.1 Package graph
+**CIC5: The repository's invalidators.** These repository-relative paths
+**must** select every package, ahead of package ownership:
 
-Discovery reads the root `dub.sdl`, each sub-package manifest, and the selected
-configuration's in-tree dependencies. Each package has:
+- `dub.sdl`, `dub.selections.json`, `nix/dub-lock.json` and
+  `nix/ci-dub-lock.json`;
+- `flake.nix`, `flake.lock`, `nix/d-toolchain.nix` and `nix/shells/`;
+- `libs/build-primitives/src/sparkles/build_primitives/task/`,
+  `libs/build-primitives/src/sparkles/build_primitives/workspace/`,
+  the build graph's modules and `dub_manifest.d` under the same directory;
+- `apps/ci/src/commands/`, `apps/ci/src/cli.d`, `apps/ci/src/ci_main.d`,
+  `apps/ci/src/app.d` and `apps/ci/tools/standardize-build-settings.d`;
+- `nix/packages/`, which builds the native libraries and import paths that
+  every package's actions read.
 
-```d
-struct Package
-{
-    PackageId id;            // stable qualified package name
-    string shortName;        // e.g. "base"
-    string path;             // e.g. "libs/base"
-    PackageId[] dependencies;
-    PlatformSet platforms;
-}
-```
+The list **must** cover the build graph's planning read set
+([BGP1](../../build-primitives/build-graph/SPEC.md#_11-public-surface)): a test
+fails when a path in the read set of the repository's own plan lies in no
+package's directory and under no invalidator.
 
-An edge `A -> B` means B depends on A. Graph validation rejects duplicate ids,
-unknown in-tree dependencies, self-edges, and cycles before execution. Lists are
-normalized by `PackageId`, never associative-array iteration order.
+Other `apps/ci/` changes select only `ci`, which owns them.
 
-The selected command mode determines the active dub configuration. Dependency
-edges are induced only between selected packages. An unselected dependency may
-still be compiled by dub, but it does not acquire a separate CI task unless
-closure expansion selected it.
+> [!NOTE]
+> TODO: `apps/ci/src/repository_invalidators.d` lists the build graph's
+> modules once they exist; the read-set check above fails until it does.
 
-### 4.2 `--from`
+## 5. Command graphs
 
-`--from` may be repeated and each occurrence may take one or more selectors. A
-selector matches any of:
+The diagrams show graph shape. Real node ids include package and file
+identity. Build nodes are the build graph's actions, shared by every command in
+one run and reused from the store across runs.
 
-- Short package name, such as `base`.
-- Qualified name, such as `sparkles:base`.
-- Repository-relative directory, such as `libs/base`.
-- A git-style glob over any of those forms, such as `sparkles:ui-*` or
-  `libs/ui*`.
-
-Matches from all `--from` selectors are unioned. A non-glob selector that
-matches nothing is an error. A glob that matches nothing is also an error, so a
-misspelled CI selector cannot become a green no-op.
-
-### 4.3 `--since`
-
-`--since REF` computes changes from `merge-base(REF, HEAD)` through the working
-tree, including staged, unstaged, and untracked paths. `--since` with no value
-resolves the current branch's upstream; if there is none, it tries
-`origin/main`. Failure to resolve a base is an actionable selection error.
-
-A path belongs to the package with the longest directory-prefix match. A
-deleted path is resolved against both the base tree and current package map.
-Changes outside every package do not normally select a package.
-
-These repository-wide inputs select every package because they can change all
-builds:
-
-- Root `dub.sdl`, `dub.selections.json`, and `nix/dub-lock.json`.
-- Compiler and package construction under `nix/d-toolchain.nix` and
-  `nix/packages/dub-builder/`.
-- CI command construction or package-discovery modules under `apps/ci/` when
-  the selected set would otherwise omit `ci`.
-
-The invalidator list is declarative and unit-tested. It must not silently grow
-from arbitrary top-level changes.
-
-### 4.4 Selection algebra
-
-Selection is evaluated in this order:
-
-1. Discover and validate the full package graph.
-2. If neither `--from` nor `--since` is present, seed all packages.
-3. If only `--from` is present, seed its union of matches.
-4. If only `--since` is present, seed changed packages.
-5. If both are present, seed the union of both match sets.
-6. If `--dependencies` is present, add the transitive dependency closure.
-7. If `--dependents` is present, add the transitive reverse-dependency closure.
-8. If both closure flags are present, compute both to a fixed point from the
-   original seed. The result is the union, not an order-dependent expansion.
-9. Apply platform eligibility. Ineligible packages remain visible as skipped
-   nodes rather than disappearing.
-10. Sort by stable package id and build the induced task graph.
-
-An empty final selection is an error unless every seed was represented by an
-explicit platform-skipped node. Focused selectors are accepted only by
-`ci test`; docs and example commands retain their file selectors.
-
-## 5. Core model
-
-### 5.1 Task nodes
-
-```d
-struct TaskNode
-{
-    TaskId id;                 // stable, unique, printable
-    TaskKind kind;
-    string label;
-    PresentationKey order;
-    ResourceClaim resources;
-    TaskAction action;
-    FailurePolicy failurePolicy;
-    OutputPolicy outputPolicy;
-}
-```
-
-`TaskId` is derived from semantic identity, for example
-`test:sparkles.base:unittest` or `docs:verify:README.md:readme_versions`. It does
-not contain a memory address, random number, temporary path, or discovery index.
-
-`PresentationKey` is a tuple of command phase, package/file key, work-kind key,
-and within-owner ordinal. It defines dry-run output, buffered output replay,
-failure replay, and summaries.
-
-`TaskAction` is a closed sum type for known work, not an arbitrary shell string.
-The process variant contains argv, environment delta, cwd, stdin policy,
-timeout, and sandbox policy as data. In-process actions identify a typed command
-handler. Secrets may be marked redacted and are never included in events or dry
-runs.
-
-### 5.2 Edges
-
-```d
-enum EdgeCondition { onSuccess, onFailure, onCompletion, always }
-
-struct TaskEdge
-{
-    TaskId prerequisite;
-    TaskId dependent;
-    EdgeCondition condition;
-    EdgeReason reason;
-}
-```
-
-Normal dependency edges use `onSuccess`. Reducers that must summarize failed
-work use `onCompletion`. Cleanup uses `always`. Coverage fallback uses
-`onFailure`, with the first attempt's failure policy suppressing fail-fast until
-the fallback classifies the package result.
-
-An edge condition that becomes impossible produces a blocked outcome for the
-dependent. Cleanup nodes are idempotent and execute under a cancellation
-protection region.
-
-### 5.3 Resource claims
-
-```d
-struct ResourceClaim
-{
-    uint jobsWeight;       // >= 1 for runnable work
-    ulong memoryHintBytes; // planning/reporting hint, not a second scheduler
-    string[] exclusiveKeys;
-}
-```
-
-The executor owns `--jobs N` weighted tokens. A node starts only when all its
-exclusive keys are free and `jobsWeight` tokens are available. A claim larger
-than total capacity is clamped to total capacity so it runs alone rather than
-deadlocking.
-
-Default weights are declared by work kind and may have narrowly documented
-package overrides:
-
-| Work kind                               | Default weight                  |
-| --------------------------------------- | ------------------------------- |
-| Pure scan, parse, reduce, or git query  | 1                               |
-| One standalone or markdown D build/run  | 2                               |
-| `dub build` or ordinary `dub test`      | 2                               |
-| Extracted `--better-c` or `--wasm` test | 2                               |
-| Known DMD-frontend-heavy package task   | 4                               |
-| Mutating docs rewrite                   | 1 plus `workspace-write:<path>` |
-
-The host-derived capacity starts from `hwParallelism`, is constrained by the
-existing memory/load policy, and retains a hard safety cap. Explicit `--jobs`
-sets capacity exactly. Compiler subprocesses receive an LDC codegen-thread cap
-derived from their claim and currently free capacity so task-level parallelism
-does not multiply into unbounded compiler threads.
-
-Exclusive keys protect semantic resources, not implementation mutexes. Examples
-are `workspace-write:README.md`, `coverage-publish`, and a final destination
-artifact. stdout is not an exclusive task resource because the reporter is its
-only writer.
-
-### 5.4 Outcomes
-
-```d
-alias TaskOutcome = SumType!(
-    Succeeded,
-    Failed,
-    Skipped,
-    Cancelled,
-    Blocked,
-    Degraded,
-);
-```
-
-| Outcome     | Meaning                                                                                 | Fails command                                                                           |
-| ----------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `Succeeded` | Authoritative work completed and its contract holds.                                    | No                                                                                      |
-| `Failed`    | Work ran, or could not start, and its authoritative contract does not hold.             | Yes                                                                                     |
-| `Skipped`   | A declared eligibility rule excluded the work, such as platform support.                | No                                                                                      |
-| `Cancelled` | Work was admitted or pending but interrupted by fail-fast, signal, or shutdown.         | No additional failure; the initiating cause controls exit.                              |
-| `Blocked`   | A required predecessor did not succeed or its edge condition was impossible.            | Yes if the block descends from failure; otherwise reported with the cancellation cause. |
-| `Degraded`  | The authoritative contract passed, but optional evidence or measurement is unavailable. | No                                                                                      |
-
-Every non-success outcome carries a typed reason and causal task ids where
-applicable. Process status, timeout, signal, bounded output references, elapsed
-time, and sampled usage are observations attached to an outcome, not booleans
-that replace it.
-
-### 5.5 Events
-
-```d
-alias TaskEvent = SumType!(
-    GraphPlanned,
-    TaskReady,
-    TaskStarted,
-    TaskOutput,
-    TaskUsage,
-    TaskFinished,
-    CancellationRequested,
-    RunFinished,
-);
-```
-
-Every event has a run-local monotonic sequence number and monotonic timestamp.
-Task output additionally has task-local stream and chunk sequence numbers. The
-executor is the sole producer of lifecycle events; process and CPU adapters
-send observations back to it through bounded Event Horizon channels, including
-between scheduler workers. Cross-worker delivery preserves ownership and
-backpressure; the intra-worker-only `Channel` is not sufficient. Reporters are
-consumers and cannot alter scheduling.
-
-Events contain no borrowed child buffers. Output is line-assembled at the
-boundary, with an explicit final unterminated line event. Per-task output is
-bounded in memory and spills to its sandbox when necessary. A failed task's
-diagnostic tail and spill path remain available until final reporting.
-
-## 6. Graphs for current work
-
-The diagrams show graph shape. Real node ids include package/file identity.
-
-### 6.1 Package build-only
+### 5.1 Package build-only
 
 ```text
-discover packages -> select packages -> validate graph
-                                      -> build dependency A -> build dependent B
-                                      -> build independent C
+discover -> select -> plan builds
+                   -> compile/archive/link (variant A) -> compile/archive/link (dependent B)
 all selected build nodes --onCompletion--> run summary
 ```
 
-Each build node executes `dub build :name` with the checked/debug behavior
-already selected by command construction. Dependency edges are induced among
-selected packages. A failed dependency blocks its selected dependents.
+A failed build blocks the builds that link against it.
 
-### 6.2 Ordinary package tests and coverage
+### 5.2 Ordinary package tests and coverage
 
 ```text
-discover -> select -> prepare run
-                  -> coverage test A --success-------------------+
-                                     --failure--> plain test A ---+-> classify A
-                  -> coverage test B --success-------------------+-> classify B
-all classifications --onCompletion--> merge coverage -> coverage report
+discover -> select -> plan builds
+coverage build A = [-cov dependency libraries -> -cov compile -> -cov link]   (provisional)
+coverage build A --onSuccess--> coverage test A                               (authoritative)
+coverage build A --onFailure--> [plain compile -> plain link -> plain test]
+coverage test A, plain test A --onCompletion--> classify A
+all classifications --onCompletion--> merge coverage -> coverage-publish
 all classifications --onCompletion--> run summary
 ```
 
-Without coverage, each package has one ordinary test node and one classification
-node. With coverage, every package writes listings to its own task directory.
-A coverage attempt failure schedules a plain retry. If plain tests pass, the
-package classification is `Degraded(noCoverage)`; if plain tests fail, it is
-`Failed`, retaining both attempts. The initial coverage failure is provisional
-and does not trigger fail-fast.
+**CIC6: Test edges.** A package's test task **must** depend only on its own test
+binary. Its binary depends on its test-root compile and on the
+dependency-library archives it links. No test waits for another package's test.
+A dependency whose library fails to build blocks the link of each test binary
+that needs it.
 
-The coverage reducer runs after all package classifications, even when some
-failed. It merges only valid successful coverage attempts, reports failed and
-unmeasured packages, and publishes the final listing set atomically.
+An ordinary test runs in two legs, `-t 1` and then `-t N`, both with
+`--skip-slow`, so a test that overflows a worker's stack cannot hide on the main
+thread. A sanitizer test runs one `-t N` leg on 4 MiB workers.
 
-### 6.3 Extracted test modes
+**CIC11: Tests through the runner core.** ci **must** run a test binary through
+the test runner's core library, never through the standalone runner or dub
+([test-runner §9](../../test-runner/process-model.md#_9-two-clients-the-standalone-runner-and-ci)):
+
+- **Nodes:** each leg is one test action and one node, the build graph's unit
+  of reuse. Its claimed weight `N` is its `-t N`: it runs up to `N` worker
+  sessions as supervised process groups (TDE1), places the binary's tests on
+  them, and runs the `@serial` tests after the others. The `-t 1` leg has
+  weight one and runs each test on its worker's main thread.
+- **Output:** the leg's output is the lines the core's plain-text renderer
+  makes of its events, and its observations include the passed, failed and
+  skipped counts and the failed tests' names (TDM11). ci's reporters render
+  them as any task's output; ci has no test reporter of its own.
+- **Options:** ci passes the runner options through the core's parser, and a
+  leg's outcome is the core's verdict, so `ci test` and a plain `dub test`
+  agree on which tests ran and on what failed.
+- **Coverage:** a coverage leg's workers write to the leg's task directory,
+  ended one at a time with the coverage merge (CIC7).
+
+**CIC7: Coverage attempts.** Without coverage, each package has one test node
+and one classification node. With coverage:
+
+- **The coverage build:** the `-cov` builds of a package's test binary form one
+  chain: the `-cov` dependency libraries, the compile and the link. Every node
+  in it has a provisional failure policy. A failure anywhere in it, and the
+  provisional blocks it causes, neither triggers fail-fast nor fails the
+  command (TDC4).
+- **The fallback:** the plain compile, link and test sit behind an `onFailure`
+  edge from the coverage link. They run only when the coverage build failed, and
+  otherwise end `Blocked(conditionUnmet)`, which the summary counts as
+  unneeded.
+- **The test is authoritative:** once the coverage build succeeded, the
+  coverage test is the package's only test. A failing coverage test is a
+  failure, never retried without coverage.
+- **Classification:** a passing coverage test classifies the package
+  `Succeeded`. A failed coverage build with passing plain tests is
+  `Degraded(noCoverage)`. A failing plain or coverage test is `Failed`.
+- **Listings:** each coverage test writes its listings to its own task
+  directory. LDC coverage variants use `--cov-increment=atomic`, because tests
+  run on several threads. The test binary receives `--DRT-covopt` with
+  `dstpath:` set to its task directory and `srcpath:` set to the worktree root,
+  so the root-relative paths it records resolve.
+
+### 5.3 Extracted test modes
 
 ```text
 discover -> select -> scan marker attributes
-                  -> better-c(package A)
-                  -> wasm(package A)
-                  -> wasm(package B)
+                   -> better-c(package A)
+                   -> wasm(package A)
+                   -> wasm(package B)
 all special nodes --onCompletion--> run summary
 ```
 
-The marker scan is a planning action. Special nodes use the same selected
-package dependency edges within each mode. Different modes for the same package
+The marker scan is a planning action. Different modes for the same package
 are independent unless resource capacity serializes them.
 
-### 6.4 Markdown examples
+### 5.4 Markdown examples
 
 ```text
-discover markdown -> parse each file -> execute each runnable example
+discover markdown -> parse each file -> build and run each runnable example
                                      -> skipped directive outcome
 execute nodes --onCompletion--> file run/verify reducer
 file reducers --onCompletion--> command summary
@@ -431,50 +445,58 @@ update only:
 file reducer --onSuccess--> atomic rewrite(file)
 ```
 
-`docs run`, `docs verify`, and `docs update` share discovery, extraction,
-in-tree dependency rewriting, process execution, and result models. Run renders
-captured output. Verify compares normalized output or wildcard patterns. Update
-computes a complete replacement in memory and writes a file only when every
-required example in that file succeeded. Multiple files may rewrite in
-parallel; one file has one exclusive write key and one atomic rename.
+- **Shared machinery:** `docs run`, `docs verify` and `docs update` share
+  discovery, extraction, in-tree dependency rewriting, building, process
+  execution and result models.
+- **Run** renders captured output, and **verify** compares normalized output
+  or wildcard patterns.
+- **Update** computes a complete replacement in memory and writes a file only
+  when every required example in that file succeeded.
+- **Concurrency:** multiple files may rewrite in parallel; one file has one
+  exclusive write key and one atomic rename.
 
-Each markdown example gets a private source directory, `DUB_HOME`, and temp
-build root. Input order defines presentation order even when execution is
-parallel.
+**CIC8: Examples reuse planned variants.** Each example **must** be a
+single-file package. Its planner picks the build type whose dependency-library
+variants the same run already plans, so examples add no library compiles.
+Without tests in the run, it picks the application variants. A build type that
+removes assertions is never chosen. Its extracted source
+**must** live at a content-addressed path (build graph BGG4), so an unchanged
+example is not recompiled. Input order defines presentation order even when
+execution is parallel.
 
-### 6.5 Standalone examples
+### 5.5 Standalone examples
 
 ```text
 discover example files -> parse platform/directive
                        -> skipped(platform)
-                       -> dub run(file)
-                       -> dub build(file marked build-only)
+                       -> build and run(file)
+                       -> build(file marked build-only)
 all terminal nodes --onCompletion--> command summary
 ```
 
-`// ci: build-only` selects a build action and never executes the binary.
-Run arguments remain part of the parsed directive. Platform-ineligible examples
+`// ci: build-only` selects a build and never executes the binary. Run
+arguments remain part of the parsed directive. Platform-ineligible examples
 are explicit skipped outcomes. Missing selected files are failed planning
 nodes, so fail-fast and summaries treat them consistently.
 
-### 6.6 Documentation commands
+### 5.6 Documentation commands
 
-All current documentation work is represented as follows:
-
-| Command                 | DAG                                                                                                                                                                                       |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `docs links check`      | file reads -> pure duplicate groups -> report node. Duplicate groups make the report fail.                                                                                                |
-| `docs links fix`        | file reads -> duplicate groups -> one atomic rewrite node per changed file -> report. Reads complete before writes.                                                                       |
-| `docs vcs-urls check`   | one scan node per selected markdown file -> deterministic violation reducer.                                                                                                              |
-| `docs sidebar check`    | load sidebar + load docs config + enumerate tracked docs -> pure bidirectional consistency check -> report.                                                                               |
-| `docs blob-paths check` | parse citations -> index local clones -> one batched git query node per clone/revision group -> report. Missing clone/revision evidence is degraded; a resolvable missing path is failed. |
-| `docs fences audit`     | load site config + select corpus -> one parse/classification node per file -> aggregate inventory -> optional atomic JSON write -> report.                                                |
+| Command                                     | DAG                                                                                                                                                                                       |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docs links check`                          | file reads -> pure duplicate groups -> report node. Duplicate groups make the report fail.                                                                                                |
+| `docs links fix`                            | file reads -> duplicate groups -> one atomic rewrite node per changed file -> report. Reads complete before writes.                                                                       |
+| `docs vcs-urls check`                       | one scan node per selected markdown file -> deterministic violation reducer.                                                                                                              |
+| `docs sidebar check`                        | load sidebar + load docs config + enumerate tracked docs -> pure bidirectional consistency check -> report.                                                                               |
+| `docs blob-paths check`                     | parse citations -> index local clones -> one batched git query node per clone/revision group -> report. Missing clone/revision evidence is degraded; a resolvable missing path is failed. |
+| `docs fences audit`                         | load site config + select corpus -> one parse/classification node per file -> aggregate inventory -> optional atomic JSON write -> report.                                                |
+| `docs glossary`, `credits`, `spec-evidence` | one check node, reading its inputs and reporting its violations.                                                                                                                          |
+| `docs wasm check`                           | build the WebAssembly modules and their native counterparts -> one comparison node per module.                                                                                            |
 
 File selection preserves `--include-files`/`--files` and `--exclude-files`
 semantics. Inputs and diagnostics are sorted by normalized repository-relative
 path, then source position. Mutating commands never write under `--dry-run`.
 
-### 6.7 CI statistics
+### 5.7 CI statistics
 
 ```text
 resolve repository/options -> fetch workflow-run pages
@@ -498,293 +520,127 @@ Statistics use these degraded semantics:
   partial side is degraded and visibly marked.
 - Missing step timing, runner labels, or optional rate-limit metadata degrades
   only the affected view. It does not invent zero-duration observations.
-- Unavailable process RSS/CPU sampling is `Degraded(usageUnavailable)` metadata
-  on the task/run. It never changes an otherwise authoritative command outcome.
+- Unavailable process RSS/CPU sampling is a reported absence in the run
+  record and a run degradation
+  ([observability OBD11](../../build-primitives/observability/SPEC.md#_11-run-records)),
+  never a task outcome.
 
 A degraded report must contain a warning in human output and a structured
 `degradations[]` field in JSON. It must never look identical to a complete
 report.
 
-### 6.8 Commit-scope check
+### 5.8 Commit checks
 
 ```text
 read message -> parse subject -> optional staged-path query -> policy check
 ```
 
-This small command still uses the common models and summary but defaults to a
-compact reporter suitable for a commit hook. stdin is an explicit input action,
-not inherited by subprocess tasks.
+`ci commit-scope` uses the common models and summary but defaults to a compact
+reporter suitable for a commit hook. stdin is an explicit input action, not
+inherited by subprocess tasks. `ci commits build-each` plans one build of the
+selected packages per commit of the range, each in its own scratch worktree,
+all on the shared store.
 
-## 7. Event Horizon-only execution
+### 5.9 Maintenance commands
 
-`sparkles:event-horizon` is the sole concurrency and asynchronous-I/O runtime
-inside `apps/ci`.
+**CIC10: Slow-test listing.** `ci slow-tests list` **must** print the `@slow` tests
+as the JSON array the `slow-tests` CI matrix expands, and set it as the
+`matrix` output through the CI-provider module (TDO6). A `@slow` test without a
+name, or an empty list, is an error.
 
-- The command starts one `LoopGroup` and one root structured scope.
-- Scheduler tasks are Event Horizon fibers.
-- Subprocesses use Event Horizon M19's `supervise` API, piped stdio, async reap,
-  and an owned POSIX process group or Windows Job Object.
-- Timers and timeouts use the Event Horizon clock. There is no sleep/poll loop.
-- Executor communication uses bounded Event Horizon channels with cross-worker
-  delivery; the executor is not restricted to one scheduler worker.
-- Blocking or CPU work that should leave the loop thread uses Event Horizon's
-  scheduler-integrated `BlockingPool`; completion wakes the loop through its
-  supported seam.
-- Legacy blocking adapters, including an HTTP implementation not yet native to
-  `sparkles:http`, run only through that Event Horizon-owned CPU-job path. They
-  never block a scheduler worker.
-- `std.parallelism.TaskPool`, detached `core.thread.Thread` workers,
-  `std.process.execute` for task execution, and ad hoc atomic status polling are
-  forbidden in command and executor modules.
+The other maintenance commands, `ci cache`, `ci host probe`, `ci checks mirror`
+and `ci link-rot report`, are one-node graphs (CIC2) over their existing
+behaviour.
 
-Small bounded planning reads may run synchronously before `LoopGroup.run`.
-Anything represented as a `TaskNode` executes through the Event Horizon
-executor. There is no fallback executor when Event Horizon loop creation fails;
-the command reports a structured setup failure.
+## 6. Build and coverage locations
 
-The executor is generic over the Event Horizon capability row where practical.
-Pure graph tests use a deterministic fake action driver and `TestSched`/fake
-clock. Process integration tests use real short-lived children.
+Compiled output lives in the build graph's shared store, never in a package's
+checked-in `build/` directory, the repository root or a private `DUB_HOME`.
+Each task that writes anything else gets a task directory under
+`$XDG_CACHE_HOME/sparkles/ci/runs/<run-id>/<task-key>/`, outside the worktree. The printable task id stays stable, and
+`run-id` is a filesystem name only, never an ordering input. A task directory
+holds:
 
-## 8. Structured cancellation and fail-fast
-
-The root command scope owns all scheduler fibers, child processes, channels,
-sandboxes, and the reporter. A task may not outlive it.
-
-On an authoritative task failure with `--fail-fast`:
-
-1. The executor records `TaskFinished(Failed)` completely.
-2. It emits `CancellationRequested(failFast, causalTaskId)` exactly once.
-3. It closes admission. No newly ready ordinary node starts.
-4. Pending nodes become `Cancelled(notAdmitted)` unless a failed dependency
-   makes them `Blocked`.
-5. Running in-process tasks observe scope cancellation at defined yield points.
-6. Running child process groups receive `SIGTERM` on POSIX, then `SIGKILL`
-   after a bounded grace period. Peer platforms use the equivalent owned-tree
-   termination primitive.
-7. stdout/stderr pipes are drained through terminal completion and every child
-   is reaped.
-8. Cleanup, sandbox removal, and final reporters run inside a protected cleanup
-   scope.
-
-Coverage-attempt failure is provisional and does not initiate fail-fast. Its
-plain fallback classifies the authoritative package result. A degraded result
-does not initiate fail-fast.
-
-SIGINT and SIGTERM follow the same path with an external-interrupt cause. Exit
-codes are `130` for SIGINT, `143` for SIGTERM, and `1` for task/planning failure.
-Success, skips, and degradations return `0`. A second interrupt shortens the
-grace period but still attempts child reap and terminal restoration.
-
-Without `--fail-fast`, independent branches continue. Nodes with unsuccessful
-required predecessors become blocked; reducers connected by `onCompletion`
-still run and summarize the complete attempted set.
-
-## 9. Determinism
-
-The following are deterministic for the same repository state, options, and
-declared action outcomes:
-
-- Node ids, edge set, resource claims, and dry-run plan.
-- Package and file selection.
-- Ready-queue tie-breaking by `PresentationKey`, then `TaskId`.
-- Buffered task-block replay, diagnostics within a block, failure replay, and
-  final summaries.
-- Coverage merge and report ordering.
-- Exit status and causal failure selection. If multiple failures arrive in one
-  loop turn, the lowest presentation key is the primary cause.
-
-Actual task completion times are not deterministic. TTY live animation reflects
-real completion order, and `--interlaced` intentionally exposes runtime output
-order. Neither may affect final ordering or outcome selection.
-
-Graph construction must not depend on associative-array iteration, directory
-iteration, completion order, wall-clock timestamps, random ids, or temporary
-paths. A graph cycle reports the stable shortest discovered cycle with ids
-ordered from its lowest member.
-
-## 10. Reporting and output
-
-### 10.1 Single writer
-
-One reporter fiber is the only writer to stdout/stderr UI streams. Logger
-records that are part of task presentation enter the event channel rather than
-writing from workers. This makes every emitted line atomic and keeps terminal
-control sequences owned by one component.
-
-### 10.2 Interactive TTY
-
-The default TTY reporter adapts `TaskReporter` over task events:
-
-- All planned nodes register before execution so totals do not move.
-- Running tasks show spinner, elapsed time, and a bounded tail.
-- Pending tasks may be collapsed after a height limit, with visible counts.
-- Terminal transitions graduate into scrollback.
-- Failures retain a bounded diagnostic tail and are replayed in deterministic
-  presentation order after the live region finishes.
-- The final summary contains succeeded, failed, degraded, skipped, blocked, and
-  cancelled counts plus wall/CPU/RSS statistics when available.
-
-TaskReporter graduation follows real event order because it is a live view. The
-post-live failure replay and summary are deterministic. Terminal restoration is
-protected cleanup and runs on success, failure, or cancellation.
-
-### 10.3 Non-TTY default
-
-Non-TTY output contains no cursor movement, spinner frames, color when terminal
-capabilities disable it, or rewritten lines. Task output is buffered/spooled per
-node and emitted as a complete prefixed block in `PresentationKey` order once
-all earlier blocks are terminal. Each task has exactly one terminal transition
-line. This transcript is stable even when jobs finish in a different order.
-
-A heartbeat may report aggregate `completed/total` progress to stderr for a
-long silent run, but it contains no task output and is disabled when stderr is
-not independently writable. Heartbeats are omitted from machine-readable
-output.
-
-### 10.4 `--interlaced`
-
-Interlaced mode emits each assembled output line as soon as the reporter
-receives it:
-
-```text
-[test:sparkles.base:unittest stdout] ...
-[test:sparkles.ui:unittest stderr] ...
-```
-
-Prefixes are mandatory even when only one task currently runs. A line is never
-split by another task, stdout and stderr identity is retained, and an
-unterminated final fragment is emitted once. Ordering across tasks is explicitly
-nondeterministic. Final terminal lines, failure summaries, and aggregate tables
-remain sorted.
-
-On a TTY, `--interlaced` disables per-task live tails and prints above a compact
-aggregate TaskReporter frame. On non-TTY it is the opt-in path for immediate CI
-logs. With `--jobs 1` it still prefixes output but naturally does not mix tasks.
-
-### 10.5 Machine output
-
-A command that owns a JSON mode emits one JSON document and no human UI on
-stdout. Logs and warnings go to stderr. Task events may later gain a separate
-JSON-lines option, but that is outside v1 and must not be conflated with a
-command's report JSON.
-
-## 11. Build and coverage isolation
-
-Every compiler-bearing node has a sandbox under a run directory such as
-`build/ci/runs/<run-id>/<task-key>/`. The printable task id remains stable;
-`run-id` is filesystem-only and never affects ordering.
-
-Each sandbox owns:
-
-- Temporary source material generated for markdown examples.
-- A private writable `DUB_HOME`.
-- A private dub build root selected with `--temp-build` or the equivalent
-  explicit build setting.
-- Captured/spilled output.
-- Coverage listings for that attempt.
-
-Concurrent tasks never write a package's checked-in `build/` directory, the
-repository root, another task's `DUB_HOME`, or the final coverage directory.
-Dependency downloads may be seeded from a prepared read-only cache snapshot;
-the task always writes to its private cache. Correctness must not depend on the
-snapshot.
+- spilled output;
+- the coverage listings of one coverage attempt, written there through the test
+  binary's coverage destination option.
 
 Coverage publication has two stages:
 
-1. Successful coverage attempts are parsed from private directories and merged
-   by normalized source path and line. Hit counts are summed with saturation;
-   coverability disagreements are errors in that file's evidence and degrade
-   its report rather than guessing.
-2. A single `coverage-publish` node writes a fresh temporary destination and
-   atomically replaces `build/coverage`. A cancelled or failed run leaves no
-   half-published directory. Whether the previous complete directory is kept or
-   removed is reported explicitly; stale data is never presented as this run's
-   result.
+1. Successful coverage attempts are parsed from their task directories and
+   merged by normalized source path and line. Hit counts are summed with
+   saturation. A line is coverable if any listing compiled code for it, because
+   a test root and a dependency library compile different code from one file.
+   Only listings of one file that disagree on its source lines are an error,
+   which degrades that file's report rather than guessing.
+2. A single `coverage-publish` node writes a fresh, versioned destination and
+   then atomically replaces the `build/coverage` pointer. A cancelled or failed
+   run leaves no half-published result. Whether the previous result is kept or
+   removed is reported explicitly, and stale data is never presented as this
+   run's result.
 
 Package percentages count only files owned by that package. Low coverage is
 informational and never fails a task. A package that passes only without
 coverage is degraded and omitted from numeric aggregation, not rendered as
 zero percent.
 
-Sandbox cleanup runs after reporting. Failed sandboxes are retained when
-requested by the diagnostic policy and their paths are printed; successful
-sandboxes are removed. Dry-run creates none.
+Task directories are removed after reporting. A failed task's directory is kept
+when the diagnostic policy asks for it, and its path is printed. A dry run
+creates none. The `runs/` directory holds a `CACHEDIR.TAG` file (BGS7), and
+`ci cache gc` removes the directories of runs that have ended.
 
-## 12. Dry-run contract
+Every run that executes a graph also writes a
+[run record](../../../glossary.md#run-record) of its measurements, outside the
+worktree and outside this directory. The `ci perf` commands read and share
+them; both are specified by
+[observability](../../build-primitives/observability/SPEC.md#_11-run-records).
 
-`--dry-run` performs all side-effect-free discovery needed for a faithful plan,
-including manifest reads, package graph construction, git change queries for
-`--since`, markdown extraction, marker scans, platform evaluation, and graph
-validation.
+## 7. Module layout
 
-It does not:
+| Module                       | Responsibility                                                                                                              |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `ci_main.d`                  | Executable entry point only.                                                                                                |
+| `app.d`                      | The composition root: commands wire planners to the executor and reporters.                                                 |
+| `cli.d`                      | Canonical subcommands, validation, and help.                                                                                |
+| `reporter_tty.d`             | The interactive reporter over `sparkles:ui`'s `TaskReporter`.                                                               |
+| `commands/test_.d`           | Build-only, ordinary, coverage-fallback, sanitizer, slow and special test planners.                                         |
+| `commands/pipeline.d`        | The union graph of every CI job.                                                                                            |
+| `commands/docs.d`            | Docs subcommand dispatch and shared file selection.                                                                         |
+| `commands/docs_examples.d`   | Markdown run/verify/update graph and reducers.                                                                              |
+| `commands/docs_standalone.d` | Standalone example planner and directives.                                                                                  |
+| `commands/docs_checks.d`     | Reference, URL, sidebar, glossary, credits, spec-evidence, blob, fence-audit and WebAssembly planners.                      |
+| `commands/stats.d`           | Statistics graph; pure stats remain in `ci_stats.d`.                                                                        |
+| `commands/maintenance.d`     | `commits`, `commit-scope`, `cache`, `host`, `checks`, `link-rot` and `slow-tests` planners.                                 |
+| Pure domain modules          | `coverage.d`, `dub_deps.d`, `example_manifest.d`, `blob_paths.d`, `docs_sidebar.d` and `fence_audit.d`, as reusable leaves. |
 
-- Spawn task actions or contact GitHub.
-- Create build, temp, coverage, cache, or output directories.
-- Rewrite documentation.
-- Probe optional toolchains by executing them.
-- Claim success for tasks.
+The generic layers live in `sparkles:build-primitives` (see the [task DAG's
+module layout](../../build-primitives/task-dag/SPEC.md#_9-module-layout)).
+Command modules may import them and their domain leaves. They must not import
+concrete reporters.
 
-The output lists selection reasons, nodes in presentation order, resource
-claims, redacted action summaries, and edges with conditions/reasons. It ends
-with counts by kind and total weighted capacity. A planning error still exits
-nonzero. A valid dry run exits zero and emits no `TaskStarted` events.
+## 8. Acceptance criteria
 
-## 13. Module layout
+**CIC9: Completion.** The implementation is complete when all of these hold:
 
-The target layout keeps models and planners independent from execution and UI:
-
-| Module                       | Responsibility                                                                                                                                                                         |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ci_main.d`                  | Executable entry point only.                                                                                                                                                           |
-| `app.d`                      | Composition root during migration; domain code leaves it as planners move out.                                                                                                         |
-| `cli.d`                      | Canonical subcommands, validation, and help.                                                                                                                                           |
-| `task/model.d`               | Task ids, nodes, edges, resources, outcomes, events. Leaf module.                                                                                                                      |
-| `task/graph.d`               | Graph builder, validation, stable topological utilities, dry-run projection.                                                                                                           |
-| `task/executor.d`            | Weighted admission, edge resolution, Event Horizon scopes, cancellation. No command knowledge.                                                                                         |
-| `task/action.d`              | Closed action vocabulary and handler dispatch.                                                                                                                                         |
-| `task/process.d`             | Event Horizon child-process adapter, pipe events, timeout, process-group termination.                                                                                                  |
-| `task/reporter.d`            | Event consumer interface and shared ordered buffering.                                                                                                                                 |
-| `task/reporter_tty.d`        | `TaskReporter` live implementation.                                                                                                                                                    |
-| `task/reporter_plain.d`      | Deterministic non-TTY and interlaced implementation.                                                                                                                                   |
-| `workspace/package_graph.d`  | Dub package discovery and dependency graph.                                                                                                                                            |
-| `workspace/select.d`         | `--from`, `--since`, dependency/dependent closure, selection reasons.                                                                                                                  |
-| `workspace/sandbox.d`        | Run/task paths, private dub homes/build roots, cleanup.                                                                                                                                |
-| `commands/test_.d`           | Build-only, ordinary, coverage-fallback, and special test planners.                                                                                                                    |
-| `commands/docs_standalone.d` | `ci docs examples` standalone example planner and directives.                                                                                                                          |
-| `commands/docs.d`            | Docs subcommand dispatch and shared file selection.                                                                                                                                    |
-| `commands/docs_examples.d`   | Markdown run/verify/update graph and reducers.                                                                                                                                         |
-| `commands/docs_checks.d`     | Reference, URL, sidebar, blob, and fence-audit planners.                                                                                                                               |
-| `commands/stats.d`           | Statistics graph; pure stats remain in `ci_stats.d` until separately reorganized.                                                                                                      |
-| Existing pure modules        | `coverage.d`, `dub_deps.d`, `example_manifest.d`, `blob_paths.d`, `docs_sidebar.d`, and `fence_audit.d` remain reusable leaves and move only when a split materially improves imports. |
-
-Command modules may import model/graph/workspace and their domain leaves. They
-must not import concrete reporters. Reporter modules know events, not commands.
-The executor knows action handlers, not CLI parameter structs. Pure modules do
-not import Event Horizon or UI modules.
-
-## 14. Invariants and acceptance criteria
-
-The implementation is complete when all of these hold:
-
-- Every current work class reaches execution through a validated `TaskGraph`.
+- Every command reaches execution through a validated task graph.
 - There is no `std.parallelism` or task-status polling path in `apps/ci`.
-- A failed/cancelled command leaves no live child or unreaped process.
-- No concurrent compiler task shares a writable build/cache/coverage location.
+- A failed or cancelled command leaves no live child or unreaped process.
+- No compile runs through dub, and no library variant is compiled twice in one
+  run.
+- A second run in another worktree with no source change compiles nothing:
+  it passes under `--require-cached compile archive link` (CIC12).
 - `--jobs` enforces weighted capacity and exclusive keys.
-- Focused package selection follows section 4 exactly and is visible under
-  `--dry-run`.
+- Focused package selection is visible under `--dry-run`.
 - Default non-TTY transcripts and final summaries are stable under randomized
   completion order.
-- TTY output uses TaskReporter, degrades without control sequences, and restores
-  the terminal on interruption.
-- Interlaced output is immediate, line-atomic, and prefixed.
+- TTY output uses `TaskReporter`, degrades without control sequences, and
+  restores the terminal on interruption.
+- Interlaced output is immediate, line-atomic and prefixed. On CI providers that
+  support groups, block-mode task blocks, and the closing sections of an
+  interlaced run, are grouped (TDO7).
 - Coverage fallback cannot trigger fail-fast before plain-test classification.
 - Degraded stats and coverage are visibly distinct from complete success.
-- The parser exposes only the canonical command tree and rejects removed flat
-  mode flags.
-
-Performance is bounded by useful work: the executor has no periodic polling
-wakeup while idle, event buffering is bounded, and planning remains linear in
-nodes plus edges apart from explicit sorting for deterministic presentation.
+- The parser exposes only the canonical command tree and rejects every removed
+  flag.
+- `ci pipeline` covers every job `.github/workflows/ci.yml` runs, or names it
+  as skipped with its reason.

@@ -293,6 +293,15 @@ mixin template DirOperations(V, Rights R)
         return self.vfs.mkdirAt(self.handle, name, resolveSharing(sharing));
     }
 
+    /// Stats the directory this handle holds (VFO6).
+    IoResult!Stat stat()(StatMask mask = StatMask.basic) scope
+    {
+        need!(Rights.stat, "stat");
+        if (!alive)
+            return emptyHandle!(Stat)();
+        return self.vfs.fstat(self.handle, mask);
+    }
+
     /// Stats the entry `name` itself (VFO2, VFO6).
     IoResult!Stat statAt()(scope const(char)[] name, StatMask mask = StatMask.basic) scope
     {

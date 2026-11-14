@@ -285,6 +285,52 @@ pass.
 
 **Raised by:** `sparkles:event-horizon`'s bench port.
 
+## O15 — Start-up cost paid once per worker
+
+**Where it bites:** [process-model.md](./process-model.md) TRS1 and
+[TRD3](./decisions.md#trd3-worker-processes-one-test-at-a-time-proposed). Every
+worker runs the binary's module constructors and builds its own lazily
+initialized fixtures, such as a font corpus or a parsed grammar. A suite whose
+fixtures are expensive pays that cost `T` times, and holds `T` copies in
+memory, where one process with `T` threads paid it once.
+
+**Options:** (A) accept it; (B) let `hello` carry a worker cap the binary
+declares; (C) start workers lazily, adding one only when the queue outgrows
+the ones running.
+
+**Leaning:** measure `font`, `hue` and `syntax` under the runner first; (C)
+costs nothing for small suites and is the first candidate.
+
+## O16 — Android tests without the runner
+
+**Where it bites:** [SPEC §9](./SPEC.md#_9-portability-and-privilege), the
+Android row. A device has no runner, so its tests run in the fallback: one at
+a time, with no benchmarks, workloads or `@ctfe` evaluation.
+
+**Options:** (A) keep the fallback on devices; (B) cross-build the runner for
+the device's ABI and push it beside the test binary; (C) run the runner on the
+host and the workers on the device, carrying the protocol over `adb shell`.
+
+**Leaning:** (A) until a device-only failure needs the runner's isolation;
+(C) reuses the protocol unchanged, because it needs only standard streams.
+
+## O17 — Timeouts for a hung test
+
+**Where it bites:** [process-model.md](./process-model.md) leaves timeouts out
+of scope, so a test that never returns holds its worker, and the run, forever.
+
+**Options:** (A) none, as now; (B) Zig's two clocks, as its build runner
+drives `--listen` test binaries (Zig `master` at 8e8cf3835a96,
+`lib/compiler/Maker/Step/Run.zig`): a per-test
+deadline that starts at the worker's `started` frame, so a loaded host's
+scheduling delay before the test counts against nothing, and a longer
+deadline for any reply between tests. A deadline that passes is TRP26's
+crash: kill the worker, fail the test, start a new worker.
+
+**Leaning:** (B). Both clocks hang off the frames TRP16 already has, so the
+protocol needs no new frame, only the runner's `--test-timeout` option and a
+`timedOut` cause in the result.
+
 ## Validation cross-references
 
 Findings from the wired-bench validation that are covered by shipped work or

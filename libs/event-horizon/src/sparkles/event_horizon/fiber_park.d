@@ -424,6 +424,18 @@ private bool fpProtected(void* ctx) @trusted nothrow @nogc => taskOf(ctx).ectx.p
 /// Whether the default backend lowers the ring futex operations.
 private enum bool ringOps = canSubmitOp!(DefaultBackend, OpFutexWait);
 
+/// Ring wakes of other workers' park words that this thread submitted and
+/// has not reaped (EFP9). Thread-local: a wake completes on the ring of the
+/// thread that submitted it.
+private uint ringWakesInFlight;
+
+/**
+Whether this thread holds a ring wake its ring has not completed: until it
+does, a busy tick must still flush and reap (EFP9's "no later than its next
+submission point"), or the wake would wait for the worker to go idle.
+*/
+package bool ringWakesPending() @safe nothrow @nogc => ringWakesInFlight > 0;
+
 /**
 The submission point's half of a ring sleep (EFP8): writes its wait, or,
 when the sleep was resolved since it queued — or its fiber's interrupt is
@@ -563,6 +575,7 @@ static if (ringOps)
     /// no longer touches its owner (EFP4).
     private void onRingWake(void* ctx, ref Completion) nothrow @nogc
     {
+        --ringWakesInFlight;
         atomicOp!"-="((cast(Sched*) ctx)._pendingDeliveries, 1);
     }
 
@@ -604,7 +617,10 @@ private bool wakeParkWord(Sched* owner, FiberTask t, bool counted) @trusted noth
             auto h = current.owner.loop.submit(OpFutexWake(cast(shared(uint)*) &t.park.word, 1),
                 &onRingWake, cast(void*) owner);
             if (h.hasValue)
+            {
+                ++ringWakesInFlight;
                 return true;
+            }
         }
         P.seamWake(t.park.word, WakeCount.one);
         version (unittest)

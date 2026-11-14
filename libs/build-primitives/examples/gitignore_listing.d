@@ -12,22 +12,21 @@
     }
 +/
 
-// `sparkles.build_primitives` walking a directory with nested-`.gitignore`
-// awareness: a custom DbI hook (`enterDir`/`leaveDir`/`includeFile`/`onFile`)
-// maintains a `GitIgnoreStack` so deeper `.gitignore` files override shallower
-// ones, and can list either side of the split (ignored / not ignored). The
+// Either side of a directory's `.gitignore` split, as a fileset: the files git
+// keeps (`everything - gitignored - /.git`) or the ones it ignores
+// (`gitignored - /.git`). `listRepository` resolves the fileset at the
+// enclosing repository's root, so the `.gitignore` files above the directory
+// apply too, and a deeper one overrides a shallower one, as in git. The
 // matched paths then render both flat and as a `renderTree` view.
 
-import std.algorithm.searching : startsWith;
 import std.array : split;
 import std.exception : enforce;
 import std.file : exists, isDir;
-import std.path : buildPath;
 import std.stdio : writeln;
 
 import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
-import sparkles.build_primitives.dir_walk : repositoryGitIgnoreStack, walkDir;
-import sparkles.build_primitives.gitignore : GitIgnore, GitIgnoreStack;
+import sparkles.build_primitives.fileset.listing : listRepository, workTree;
+import sparkles.build_primitives.fileset.value : Fileset, Filesets;
 import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 import sparkles.ui.components.tree : renderTree, TreeNode;
 
@@ -45,65 +44,6 @@ struct CliParams
 
     @(Option("r|root", description: "Directory root to scan (default: .)"))
     string root = ".";
-}
-
-/// Walk hook selecting one side of the gitignore split. Unlike
-/// `GitRepositoryFilter` it never prunes ignored directories — it must descend
-/// into them to list their files under `--mode=ignored`.
-struct ListingHook
-{
-    string root;
-    ListingMode mode;
-    GitIgnoreStack stack;
-    bool[] dirIgnored; // one entry per entered directory (parallels the stack)
-    string[] matches;
-
-    bool enterDir(const(char)[] relativePath) @safe
-    {
-        if (isGitMetadataPath(relativePath))
-            return false;
-
-        // Once a directory is ignored its whole subtree is: a deeper
-        // `.gitignore` cannot re-include below an excluded directory.
-        const ignored = insideIgnoredDir || stack.isIgnored(relativePath, true);
-        dirIgnored ~= ignored;
-
-        const dirPrefix = relativePath.idup;
-        stack.push(dirPrefix, GitIgnore.fromFile(buildPath(root, dirPrefix, ".gitignore")));
-        return true;
-    }
-
-    void leaveDir(const(char)[] relativePath) @safe pure
-    {
-        stack.pop();
-        dirIgnored = dirIgnored[0 .. $ - 1];
-    }
-
-    bool includeFile(const(char)[] relativePath) const @safe pure
-    {
-        if (isGitMetadataPath(relativePath))
-            return false;
-
-        const ignored = insideIgnoredDir || stack.isIgnored(relativePath, false);
-        return mode == ListingMode.ignored ? ignored : !ignored;
-    }
-
-    void onFile(const(char)[] relativePath) @safe pure
-    {
-        matches ~= relativePath.idup;
-    }
-
-private:
-
-    bool insideIgnoredDir() const @safe pure nothrow @nogc
-    {
-        return dirIgnored.length > 0 && dirIgnored[$ - 1];
-    }
-
-    bool isGitMetadataPath(const(char)[] relativePath) const @safe pure nothrow @nogc
-    {
-        return relativePath == ".git" || relativePath.startsWith(".git/");
-    }
 }
 
 int main(string[] args)
@@ -126,38 +66,40 @@ int main(string[] args)
     enforce(cli.root.exists, "Directory does not exist: " ~ cli.root);
     enforce(cli.root.isDir, "Path is not a directory: " ~ cli.root);
 
-    auto hook = ListingHook(
-        root: cli.root,
-        mode: cli.mode,
-        stack: repositoryGitIgnoreStack(cli.root),
-    );
-    walkDir(cli.root, hook);
+    // Once a directory is ignored its whole subtree is, which the fileset's
+    // `gitignored` leaf already says: a deeper `.gitignore` cannot re-include
+    // below an excluded directory.
+    const mode = cli.mode;
+    auto listed = listRepository(cli.root, (ref Filesets s) @safe => mode == ListingMode.ignored
+        ? s.difference(s.gitignored, s.glob("/.git").value) : workTree(s));
+    enforce(!listed.hasError, listed.hasError ? listed.error : "");
+    const matches = listed.value.files;
 
     writeln(cli.prettyPrint(PrettyPrintOptions!void(softMaxWidth: 0)));
 
     writeln("\nFlat List:");
-    if (hook.matches.length == 0)
+    if (matches.length == 0)
         writeln("(no files)");
     else
-        foreach (path; hook.matches)
+        foreach (path; matches)
             writeln(path);
 
     writeln("\nTree View:");
-    if (hook.matches.length == 0)
+    if (matches.length == 0)
     {
         writeln("(no files)");
         return 0;
     }
 
-    foreach (line; renderTree(toTreeNodes(hook.matches)))
+    foreach (line; renderTree(toTreeNodes(matches)))
         writeln(line);
 
     return 0;
 }
 
-/// Converts walk-ordered relative paths into the flat pre-ordered
-/// `(label, depth)` nodes `renderTree` consumes, emitting each shared
-/// directory segment once (the walk keeps a directory's subtree contiguous).
+/// Converts sorted relative paths into the flat pre-ordered `(label, depth)`
+/// nodes `renderTree` consumes, emitting each shared directory segment once
+/// (sorting keeps a directory's subtree contiguous).
 private TreeNode[] toTreeNodes(in string[] walkOrderedPaths) @safe pure
 {
     TreeNode[] nodes;

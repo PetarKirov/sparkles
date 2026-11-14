@@ -16,10 +16,10 @@ files, not a parallel mechanism.
 
 A set is either $(B one directory deep) or the whole $(B subtree)
 (`collectSources(recursive: true)`, `SRC9`). The recursive arm does not walk the
-tree itself: it drives `sparkles:build-primitives`' `globWalkGitRepository`, so
-`.gitignore` (nested and ancestor scopes), `.git/` exclusion, and the
-`--include`/`--exclude` glob precedence come from the library that already
-implements them rather than from a skip-list here.
+tree itself: it lists a fileset with `sparkles:build-primitives`'
+`listRepository`, so `.gitignore` (nested and ancestor scopes), `.git/`
+exclusion, and the `--include`/`--exclude` glob precedence come from the
+library that already implements them rather than from a skip-list here.
 
 Layered as $(B pure predicates + a thin I/O shell): $(LREF isRenderable),
 $(LREF entryName), $(LREF entryRelPath) and the tally functions are `@safe pure`
@@ -33,7 +33,8 @@ import std.conv : text, to;
 import std.path : baseName, extension;
 import std.string : chompPrefix, endsWith;
 
-import sparkles.build_primitives.glob_walk : globWalkGitRepository, passesGlobs;
+import sparkles.base.logger : warning;
+import sparkles.build_primitives.fileset.listing : GlobFilter, listRepository;
 import sparkles.syntax : canonicalLanguage, canonicalLanguageOfPath;
 import sparkles.twoslash : Node, NodeType;
 
@@ -293,15 +294,15 @@ path, summarizing each ($(LREF twoslashTally) for a twoslash payload,
 $(LREF plainTally) otherwise).
 
 `recursive` selects the whole subtree instead of just `dir`'s own entries
-(`SRC9`); the descent is `globWalkGitRepository`'s, so `.gitignore` (the walk root's,
+(`SRC9`); the descent is `listRepository`'s, so `.gitignore` (the walk root's,
 every nested one, and the enclosing repository's ancestor scopes) and `.git/` are
 excluded by the library rather than re-decided here. `root` is the directory the
 entries' $(D relPath)s — and therefore the mirrored output tree — are relative
 to; it defaults to `dir`. `include`/`exclude` are the `--include`/`--exclude`
-globs (`sparkles.build_primitives.glob_walk.passesGlobs`); an `include` glob also re-admits a file
-`.gitignore` excluded, matching the flag's explorer meaning. (An ignored
-$(I directory) is still not descended: the walker's scope stack owns entering,
-and a set is not worth unbalancing it for.)
+globs, read as fileset patterns (`sparkles.build_primitives.fileset.listing`);
+an `include` glob also re-admits a file `.gitignore` excluded, matching the
+flag's explorer meaning, even beneath an ignored directory. A glob that is not
+a pattern throws.
 
 The one function here that touches the filesystem. A file that cannot be read or
 parsed still gets an entry, summarized as unreadable (`GAL8`); dropping it is the
@@ -328,7 +329,12 @@ SourceSet collectSources(string dir, bool twoslash, bool recursive = false,
     {
         import std.path : buildPath;
 
-        foreach (rel; globWalkGitRepository(dir, include, exclude))
+        auto listed = listRepository(dir, include, exclude);
+        if (listed.hasError)
+            throw new Exception(listed.error);
+        if (const note = listed.value.caveat)
+            warning(i"$(dir): $(note)");
+        foreach (rel; listed.value.files)
             if (isRenderable(rel, twoslash))
                 take(buildPath(dir, rel), rel);
     }
@@ -336,11 +342,13 @@ SourceSet collectSources(string dir, bool twoslash, bool recursive = false,
     {
         import std.file : dirEntries, SpanMode;
 
+        auto globs = GlobFilter.make(include, exclude);
+        if (globs.hasError)
+            throw new Exception(globs.error);
         foreach (e; dirEntries(dir, SpanMode.shallow))
         {
             const base = e.name.baseName;
-            if (e.isFile && isRenderable(e.name, twoslash)
-                && passesGlobs(base, include, exclude))
+            if (e.isFile && isRenderable(e.name, twoslash) && globs.value.passes(base))
                 take(e.name, base);
         }
     }

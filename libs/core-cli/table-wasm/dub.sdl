@@ -6,11 +6,12 @@ license "BSL-1.0"
 
 targetPath "build"
 
+// The marker attributes (`@wasm`).
+dependency "sparkles:test-attributes" path="../../.."
 dependency "sparkles:base" path="../../.."
 dependency "sparkles:ui" path="../../.."
 
-// The marker attributes (`@wasm`) resolve against the runner shim.
-importPaths "src" "../../test-runner/src"
+importPaths "src"
 
 dflags "-preview=in" "-preview=dip1000"
 

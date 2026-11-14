@@ -2082,7 +2082,8 @@ struct GrepFinder
         scope const(string)[] excludeGlobs = null,
         SessionDocs session = SessionDocs.init) @safe
     {
-        import sparkles.build_primitives.glob_walk : globWalkGitRepository;
+        import sparkles.base.logger : warning;
+        import sparkles.build_primitives.fileset.listing : listRepository;
 
         root_ = root;
         paths_ = null;
@@ -2092,12 +2093,12 @@ struct GrepFinder
         modePinned_ = false;
         fellBack_ = false;
         grepMode_ = GrepMode.init;
-        auto walk = globWalkGitRepository(root, includeGlobs, excludeGlobs);
-        while (!walk.empty)
-        {
-            paths_ ~= walk.front;
-            walk.popFront();
-        }
+        auto listed = listRepository(root, includeGlobs, excludeGlobs);
+        if (listed.hasError)
+            throw new Exception(listed.error);
+        if (const note = listed.value.caveat)
+            warning(i"grep picker, $(root): $(note)");
+        paths_ = listed.value.files;
         corpus_.rebuild(session, RepoDocs(root: root, paths: paths_));
 
         if (hits_.length == 0)

@@ -4,18 +4,17 @@ Everything after `--` in `dub test :pkg -- <options>` goes to the runner.
 
 ## Selection and output
 
-| Option            | Description                                                                                                                                                                                                                                                                                                                                |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `-i`, `--include` | Run only tests whose `fullName name` matches the regular expression                                                                                                                                                                                                                                                                        |
-| `-e`, `--exclude` | Skip tests whose `fullName name` matches; combines with `-i` (a test must match `-i` and not match `-e`)                                                                                                                                                                                                                                   |
-| `-v`, `--verbose` | Durations, `[file:line]` locations, full stack traces                                                                                                                                                                                                                                                                                      |
-| `-t`, `--threads` | Worker threads; `0` (default) auto-detects, `1` runs on the main thread. `N>1` uses `N` workers, each with a **512 KiB** stack (Darwin's pthread default). The main thread never runs a test body in that case. A test that grows the stack more than **384 KiB** fails with `stack budget exceeded` instead of a process-killing SIGSEGV. |
-| `--no-colors`     | Disable colored output (also honors `$NO_COLOR` and non-tty stdout)                                                                                                                                                                                                                                                                        |
-| `-l`, `--list`    | List discovered tests with `@ctfe`/`@benchmark`/`@workload`/`@betterC`/`@wasm`/`@slow` markers                                                                                                                                                                                                                                             |
-| `--skip-slow`     | Leave out `@slow` tests; the summary counts them. Excludes `--only-slow`                                                                                                                                                                                                                                                                   |
-| `--only-slow`     | Run only `@slow` tests (with `-i`/`-e`, only the slow tests that match)                                                                                                                                                                                                                                                                    |
-| `--self-test`     | Also run the test runner's own unittests                                                                                                                                                                                                                                                                                                   |
-| `-h`, `--help`    | Option summary                                                                                                                                                                                                                                                                                                                             |
+| Option            | Description                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `-i`, `--include` | Run only tests whose `fullName name` matches the regular expression                                                                                                                                                                                                                                                                                                      |
+| `-e`, `--exclude` | Skip tests whose `fullName name` matches; combines with `-i` (a test must match `-i` and not match `-e`)                                                                                                                                                                                                                                                                 |
+| `-v`, `--verbose` | Durations, `[file:line]` locations, full stack traces                                                                                                                                                                                                                                                                                                                    |
+| `-t`, `--threads` | Worker processes; `0` (default) auto-detects, `1` runs each test on the worker's main thread. `N>1` uses `N` worker processes, each with a **512 KiB** stack (Darwin's pthread default). The main thread never runs a test body in that case. A test that grows the stack more than **384 KiB** fails with `stack budget exceeded` instead of a process-killing SIGSEGV. |
+| `--no-colors`     | Disable colored output (also honors `$NO_COLOR` and non-tty stdout)                                                                                                                                                                                                                                                                                                      |
+| `-l`, `--list`    | List discovered tests with `@ctfe`/`@benchmark`/`@workload`/`@betterC`/`@wasm`/`@slow` markers                                                                                                                                                                                                                                                                           |
+| `--skip-slow`     | Leave out `@slow` tests; the summary counts them. Excludes `--only-slow`                                                                                                                                                                                                                                                                                                 |
+| `--only-slow`     | Run only `@slow` tests (with `-i`/`-e`, only the slow tests that match)                                                                                                                                                                                                                                                                                                  |
+| `-h`, `--help`    | Option summary                                                                                                                                                                                                                                                                                                                                                           |
 
 ## Modes
 
@@ -64,6 +63,30 @@ would fail. See
 | `--no-auto-include`        | Don't compile the extracted tests' own modules in                                                           |
 | `--require-toolchain`      | Fail instead of skipping when an extracted mode's tools are gone                                            |
 | `--keep`                   | Keep the generated program files and print their location                                                   |
+| `--string-import-path DIR` | Extra string import path (`-J`; repeatable)                                                                 |
+| `--version ID`             | Version identifier for the generated programs (repeatable)                                                  |
+| `--dflag FLAG`             | Extra compiler flag, e.g. `-preview=dip1000` (repeatable)                                                   |
+| `--probe-dir DIR`          | Where the generated programs go (default: a directory under the temp directory)                             |
+| `--no-dub`                 | Never run `dub describe` to complete the import paths and language flags                                    |
+
+## The runner and the test binary
+
+A test binary hands its run to the runner executable, `sparkles-test-runner`,
+and the runner starts the binary again as worker processes
+([process model](../../../specs/test-runner/process-model.md)). These options
+choose how:
+
+| Option               | Meaning                                                                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `--runner=PATH`      | The runner to delegate to; overrides `$SPARKLES_TEST_RUNNER`. A path that is not an executable stops the run                          |
+| `--no-runner`        | Run the tests in this process, one at a time: the fallback, and the way to run a test under a debugger                                |
+| `--test-binary=PATH` | The runner's own: the binary whose tests it runs. A launcher passes it; the build engine passes it when it starts the runner directly |
+
+Without a runner — `--no-runner`, or no `$SPARKLES_TEST_RUNNER` — the binary
+accepts `-i`, `-e`, `-v`, `-l`, `-t`, `--no-colors`, `--skip-slow`,
+`--only-slow`, `--help` and the toolchain options above, runs no
+`@benchmark`, `@workload` or `@ctfe` test, and stops with an error on any
+other option.
 
 ## Skipped tests
 

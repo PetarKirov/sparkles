@@ -142,6 +142,13 @@
       url = "github:dlang/dub/5efed360e1c9342453bc5dd19339c75981526d83";
       flake = false;
     };
+    # Snix, whose `snix-castore ingest` is the oracle of the default content
+    # identity (filesets decision A19); not a production dependency. Not a
+    # flake, and its forge serves no tarballs: a shallow git fetch.
+    snix-src = {
+      url = "git+https://git.snix.dev/snix/snix?rev=c27950ab360b92bbb8f2ca246efd0ed895ce1e58&shallow=1";
+      flake = false;
+    };
     # PngSuite and libpng's own test images (contrib/pngsuite,
     # contrib/testpngs): the PNG decoder's differential corpus.
     libpng-src = {
@@ -268,6 +275,7 @@
         ./nix/packages/libghostty-vt.nix
         ./nix/packages/static-apps.nix
         ./nix/packages/shader-compile.nix
+        ./nix/packages/test-runner.nix
         ./nix/packages/android-dev-env-probe.nix
         ./nix/packages/ui-shaders.nix
         ./nix/packages/skia.nix
@@ -280,6 +288,8 @@
         ./nix/packages/uwidth-rs.nix
         ./nix/packages/wired-bench-data.nix
         ./nix/packages/json-test-suite.nix
+        ./nix/packages/snix-castore.nix
+        ./nix/packages/bao-outboard.nix
         ./nix/packages/wired-bench-yyjson.nix
         ./nix/packages/wired-bench-cpp-shim.nix
         ./nix/packages/wired-bench-rs.nix

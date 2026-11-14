@@ -10,6 +10,7 @@ public import sparkles.event_horizon.errors;
 public import sparkles.event_horizon.cause;
 public import sparkles.event_horizon.capability;
 public import sparkles.event_horizon.channel;
+public import sparkles.event_horizon.cross_channel;
 public import sparkles.event_horizon.scope_;
 public import sparkles.event_horizon.schedule;
 public import sparkles.event_horizon.clock;
@@ -26,6 +27,9 @@ public import sparkles.event_horizon.vfs;
 version (Windows)
 {
     public import sparkles.event_horizon.backend.iocp;
+    public import sparkles.event_horizon.live;
+    public import sparkles.event_horizon.proc;
+    public import sparkles.event_horizon.supervise;
     public import sparkles.event_horizon.loop;
     public import sparkles.event_horizon.sched;
     public import sparkles.event_horizon.io;
@@ -41,6 +45,7 @@ version (Posix)
     public import sparkles.event_horizon.endpoint;
     public import sparkles.event_horizon.live;
     public import sparkles.event_horizon.proc;
+    public import sparkles.event_horizon.supervise;
     public import sparkles.event_horizon.supervise;
 }
 

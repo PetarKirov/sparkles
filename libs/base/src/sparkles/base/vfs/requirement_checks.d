@@ -179,6 +179,52 @@ auto rootOf(Rights R = Rights.all)(MemVfs* v, string path = "r",
     assert(!basic.hasMtime);
     auto timed = root.value.statAt("f", StatMask.mtime).value;
     assert(timed.hasMtime && timed.mtimeNs == 42);
+    assert(!timed.hasIdentity);
+}
+
+/// VFO6: the change time is filled only when asked for, and every change
+/// stamps it, including one that puts the modification time back.
+@("vfs.check.VFO6.change")
+@safe unittest
+{
+    auto v = testVfs();
+    v.clockNs = 10;
+    v.writeFile("r/f", cast(const(ubyte)[]) "hello");
+    v.setMtime("r/f", 7);
+    auto root = rootOf(v);
+    assert(!root.value.statAt("f").value.hasCtime);
+    auto before = root.value.statAt("f", StatMask.change).value;
+    assert(before.hasCtime && before.ctimeNs == 10 && !before.hasMtime);
+
+    v.clockNs = 20;
+    {
+        auto f = root.value.openFile!(OpenMode.write)("f");
+        assert(!f.value.write(cast(const(ubyte)[]) "j").hasError);
+    }
+    v.setMtime("r/f", 7);
+    const mask = cast(StatMask)(StatMask.mtime | StatMask.change);
+    auto after = root.value.statAt("f", mask).value;
+    assert(after.size == before.size && after.mtimeNs == 7);
+    assert(after.ctimeNs == 20, "a write and a restored mtime still move the change time");
+}
+
+/// VFO6: a directory's identity is the same through its own handle and
+/// through its parent, and differs from its sibling's.
+@("vfs.check.VFO6.identity")
+@safe unittest
+{
+    auto v = testVfs();
+    v.mkdirs("r/a");
+    v.mkdirs("r/b");
+    auto root = rootOf(v);
+    auto a = root.value.openDir("a");
+    auto own = a.value.stat(StatMask.identity).value;
+    auto viaParent = root.value.statAt("a", StatMask.identity).value;
+    auto sibling = root.value.statAt("b", StatMask.identity).value;
+    assert(own.hasIdentity && viaParent.hasIdentity);
+    assert(own.device == viaParent.device && own.inode == viaParent.inode);
+    assert(own.inode != sibling.inode);
+    assert(!a.value.stat().value.hasIdentity);
 }
 
 @("vfs.check.VFO7.listing")

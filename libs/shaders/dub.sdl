@@ -7,16 +7,11 @@ license "BSL-1.0"
 targetType "library"
 targetPath "../../build"
 
-// Cycle-safe runner integration (the recipe `sparkles:input` documents):
-// `sparkles:ui` depends on this package and sits in the test-runner-impl's
-// closure, so a `dependency "sparkles:test-runner"` here would close
-// `ui -> shaders -> test-runner -> impl -> ui`. Source-include the shim and
-// the impl instead; only the shim is on the top-level import paths.
-importPaths "src" "../test-runner/src"
 sourcePaths "src"
 
 // The vector and matrix types are `sparkles:math`'s (`SHV10`).
 dependency "sparkles:math" path="../.."
+dependency "sparkles:test-attributes" path="../.."
 
 dflags "-preview=in" "-preview=dip1000"
 
@@ -25,11 +20,8 @@ configuration "library" {
 }
 
 configuration "unittest" {
-    // The source-included impl reaches for base's lifetime helpers.
-    dependency "sparkles:base" path="../.."
-    sourcePaths "../test-runner/src" "../test-runner-impl/src" "../profiling/src/sparkles/profiling/counters"
-    importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../profiling/src"
     dflags "-checkaction=context" "-allinst"
+    dependency "sparkles:test-runner" path="../.."
 }
 // The device build: what LDC's dcompute target compiles for the GPU. Never
 // built by dub — `shader-compile` asks `dub describe` for it and compiles the

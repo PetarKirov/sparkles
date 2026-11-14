@@ -66,9 +66,11 @@ measurement layer in depth. Test discovery and the compile-time,
 runtime-free, and WebAssembly modes appear only as far as their package
 layout and command-line contract; the
 [library docs](../../libs/test-runner/index.md) describe their behavior and
-carry the tutorials and how-to guides. The runner ships as a thin shim
-compiled into every test binary plus a prebuilt implementation library,
-`sparkles:test-runner-impl`. Its floor is the timing and resource counters
+carry the tutorials and how-to guides. A test binary holds its tests and the
+measurement layer; a separate runner executable, built from a pinned
+revision, drives it over a pipe, and
+[process-model.md](./process-model.md) specifies that boundary. Its floor is
+the timing and resource counters
 an operating system grants every process, and it needs no privileges; every
 source beyond it is optional and degrades on its own. C libraries enter only
 as soft dependencies, used when present and reported absent otherwise. The
@@ -81,6 +83,8 @@ a test uses; §4 fixes the measurement protocol for both models. Sections 5–6
 define the metric catalog and the backend contract, including capabilities
 and the rules for degrading. Sections 7–8 pin the command line and the
 output surfaces, and §9 the per-platform floors and privilege rules.
+[process-model.md](./process-model.md) specifies the two processes and the
+protocol between them, and [decisions.md](./decisions.md) records why.
 Passages marked _target_ belong to the contract but are delivered by the
 [PLAN.md](./PLAN.md) milestone they name; PLAN.md also holds the delivery
 order. Unresolved behavioral questions live in
@@ -120,37 +124,51 @@ Three invariants shape everything:
 
 ## 2. Package and module layout
 
-The runner is two dub packages:
+The runner spans four dub packages and two processes;
+[process-model.md](./process-model.md) owns the boundary between them:
 
-- **`sparkles:test-runner`** (`libs/test-runner`) — a thin `sourceLibrary`
-  shim (compile-time discovery + registration) compiled into each test
-  binary.
-- **`sparkles:test-runner-impl`** (`libs/test-runner-impl`) — the prebuilt
-  implementation library, linked across an `extern(C)` seam.
+- **`sparkles:test-attributes`** (`libs/test-attributes`) — the marker
+  attributes, the only part of the runner a library build imports.
+- **`sparkles:test-harness`** (`libs/test-harness`) — the code that runs
+  inside a test binary: the test model, discovery, execution with the stack
+  budget, the fallback, the protocol's binary side, and the measurement
+  layer. It depends on no repository package but the attributes and
+  `sparkles:profiling-counters` (TRD13).
+- **`sparkles:test-runner`** (`libs/test-runner`) — a `sourceLibrary` shim,
+  the registration hook compiled into each test root.
+- **`sparkles:test-runner-impl`** (`libs/test-runner-impl`) — the runner
+  executable, `sparkles-test-runner`, built from a pinned revision: the
+  command line, scheduling, reports, `--bench-json`, and the compile-time and
+  extracted modes.
 
-Measurement modules, under `libs/test-runner-impl/src/sparkles/test_runner/`
-except the counters marked †, which live in `sparkles:profiling` as
-`sparkles.profiling.counters.*` (`libs/profiling/src/sparkles/profiling/counters/`)
-so a frame loop reads the same counters a benchmark does:
+Measurement modules, under `src/sparkles/test_runner/` of the package named,
+except the counters, which `sparkles:profiling` owns as
+`sparkles.profiling.counters.*` so a frame loop reads the same counters a
+benchmark does. They are built as `sparkles:profiling-counters`
+(`libs/profiling-counters/`), which depends only on the attributes, so the
+harness and `sparkles:profiling` both depend on it (TRD13):
 
-| Module           | Role                                                                   |
-| ---------------- | ---------------------------------------------------------------------- |
-| `bench.d`        | protocol driver, `benchIter`/`benchCase`/`blackBox`, `BenchStats`      |
-| `perf.d` †       | hardware-counter tier (`perf_event` group)                             |
-| `perf_group.d` † | shared counting bracket + multiplex-delta scaling                      |
-| `tier0.d`        | no-privilege tier (`getrusage` + `/proc/self/io`)                      |
-| `syscalls.d` †   | syscall-tracepoint tier                                                |
-| `metrics.d`      | the metric catalog seam (§5)                                           |
-| `capability.d` † | the capability seam: flags, reports, backend trait, host probes (§6.2) |
-| `raw.d` †        | raw hardware-event tier (`raw:r<hex>` selectors)                       |
-| `event_naming.d` | symbolic event names via soft libpfm4 (`pfm:<name>`)                   |
-| `rdpmc.d` †      | user-space counter reads (the `selfMonitoring` primitive)              |
-| `workload.d`     | the `@workload` window model: wall source, decomposition, driver       |
-| `psi.d` †        | PSI stall integrals (`/proc/pressure` parser + diagnostic source)      |
-| `cache_regime.d` | page-cache regime control: fs probes, residency, the stamp policy      |
-| `bench_json.d`   | the `--bench-json` emitter (§8.3)                                      |
-| `reporting.d`    | tables, live displays, progress                                        |
-| `skip.d`         | `skipTest`                                                             |
+| Module           | Package              | Role                                                                   |
+| ---------------- | -------------------- | ---------------------------------------------------------------------- |
+| `bench.d`        | `test-harness`       | protocol driver, `benchIter`/`benchCase`/`blackBox`, `BenchStats`      |
+| `perf.d`         | `profiling-counters` | hardware-counter tier (`perf_event` group)                             |
+| `perf_group.d`   | `profiling-counters` | shared counting bracket + multiplex-delta scaling                      |
+| `tier0.d`        | `test-harness`       | no-privilege tier (`getrusage` + `/proc/self/io`)                      |
+| `syscalls.d`     | `profiling-counters` | syscall-tracepoint tier                                                |
+| `metrics.d`      | `test-harness`       | the metric catalog seam (§5)                                           |
+| `capability.d`   | `profiling-counters` | the capability seam: flags, reports, backend trait, host probes (§6.2) |
+| `raw.d`          | `profiling-counters` | raw hardware-event tier (`raw:r<hex>` selectors)                       |
+| `event_naming.d` | `test-harness`       | symbolic event names via soft libpfm4 (`pfm:<name>`)                   |
+| `rdpmc.d`        | `profiling-counters` | user-space counter reads (the `selfMonitoring` primitive)              |
+| `workload.d`     | `test-harness`       | the `@workload` window model: wall source, decomposition, driver       |
+| `psi.d`          | `profiling-counters` | PSI stall integrals (`/proc/pressure` parser + diagnostic source)      |
+| `cache_regime.d` | `test-harness`       | page-cache regime control: fs probes, residency, the stamp policy      |
+| `skip.d`         | `test-harness`       | `skipTest`                                                             |
+| `bench_json.d`   | `test-runner-impl`   | the `--bench-json` emitter (§8.3)                                      |
+| `reporting.d`    | `test-runner-impl`   | tables, live displays, progress                                        |
+
+The harness also holds `execution.d` and `stack_budget.d`, which run one test
+on a budgeted thread, and `macos_trace.d`, the in-process trace handler.
 
 Planned modules _(targets)_:
 `provenance.d`/`cgroup.d` (M7–M8), `histogram.d` (B5),
@@ -194,7 +212,7 @@ unconditionally (not under `version (unittest)`).
   the test must not run beside other tests (process-wide state). Whatever
   `-t` asks for, serial tests run one at a time after every other test has
   finished, on workers with the same stack budget; `mainThread` also pins
-  them to the runner's main thread, for a library confined to the thread
+  them to the main thread of the process running them, for a library confined to the thread
   that initialized it.
 - **`skipTest(reason)`** (`sparkles.test_runner.skip`, `@safe pure nothrow
 @nogc`) — skip the enclosing test at runtime: a yellow `⊘` line plus an
@@ -316,6 +334,11 @@ host); attributing only provable zeros (flaps baselines between `0` and
 ## 5. The metric catalog
 
 ### 5.1 Types
+
+These types belong to the metric vocabulary that the build, test and CI
+[observability](../build-primitives/observability/SPEC.md#_3-the-metric-vocabulary)
+specification shares with this runner, which places them in its vocabulary
+package (OBV1).
 
 Everything downstream renders through two types (`metrics.d`):
 
@@ -512,6 +535,10 @@ The authoritative option list lives in the
 [CLI reference](../../libs/test-runner/reference/cli.md); this section pins
 the contracts.
 
+- **The process boundary** — `--runner`, `--no-runner`, `--test-binary`,
+  `--no-dub` and the compile-context arguments are specified in
+  [process-model.md](./process-model.md) (TRL2–TRL4, TRX1–TRX3), and the
+  options a binary accepts without a runner in its fallback (TRF2).
 - **Mode exclusivity** — `--bench`, `--ctfe-trace`, and
   `--better-c`/`--wasm` are mutually exclusive (hard error); `--better-c`
   with `--wasm` is one extraction family; `--list`/`--list-metrics` are
@@ -624,14 +651,14 @@ residentBefore, residentAfter, note?}`, the page-cache regime
 Per-OS floors, with shipped-vs-target markers. The full evidence base is the
 research [capability matrix](../../research/cpu-pmu/comparison.md).
 
-| Platform                    | Floor (unprivileged)                                                                     | Beyond the floor                                                                                                                      | Status                                              |
-| --------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| Linux x86_64                | tier-0 (`getrusage` + `/proc/self/io`); perf counting at `paranoid ≤ 2`\*                | tracepoints (tracefs, usually root); precise memory (B5); sampling (B6)                                                               | shipped / targets                                   |
-| macOS (Apple Silicon)       | `proc_pid_rusage` → true instructions/cycles/IPC, process-scope\*\*                      | kpc: root-or-blessed-pid + kernel allowlist, single-owner `EBUSY`; sampling via xctrace only; **no DTrace cpc provider**              | shipped                                             |
-| Windows                     | `CycleTime` via thread profiling (driver-free)                                           | ETW PMC counting (admin + `SeSystemProfilePrivilege`, 3–4 PMC hard budget, no multiplex scaling); public precise sampling: **absent** | target — B4 (blocked: no hardware bed)              |
-| ARM-Linux                   | generic events port as-is (PMUv3)                                                        | big.LITTLE: events must open on the pinned core's PMU (wrong cluster counts silent zero); SPE/BRBE gated                              | target — M11 (source-verified only)                 |
-| RISC-V                      | counting always (SBI-mediated)                                                           | sampling iff Sscofpmf; `exclude_*` iff Sscofpmf; precise/data-source: **permanently absent**; branch records: no kernel consumer      | target — M11 (capability subset by construction)    |
-| Android (x86_64, arm64-v8a) | unittests in-process, through the same runner (`buildDAndroidTests`); plain-text reports | perf counters, tracepoints and PSI only where the device exposes them; no `@ctfe` probe (no compiler on the device)                   | shipped (x86_64 emulator); arm64 built, not yet run |
+| Platform                    | Floor (unprivileged)                                                                                                            | Beyond the floor                                                                                                                      | Status                                                             |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Linux x86_64                | tier-0 (`getrusage` + `/proc/self/io`); perf counting at `paranoid ≤ 2`\*                                                       | tracepoints (tracefs, usually root); precise memory (B5); sampling (B6)                                                               | shipped / targets                                                  |
+| macOS (Apple Silicon)       | `proc_pid_rusage` → true instructions/cycles/IPC, process-scope\*\*                                                             | kpc: root-or-blessed-pid + kernel allowlist, single-owner `EBUSY`; sampling via xctrace only; **no DTrace cpc provider**              | shipped                                                            |
+| Windows                     | `CycleTime` via thread profiling (driver-free)                                                                                  | ETW PMC counting (admin + `SeSystemProfilePrivilege`, 3–4 PMC hard budget, no multiplex scaling); public precise sampling: **absent** | target — B4 (blocked: no hardware bed)                             |
+| ARM-Linux                   | generic events port as-is (PMUv3)                                                                                               | big.LITTLE: events must open on the pinned core's PMU (wrong cluster counts silent zero); SPE/BRBE gated                              | target — M11 (source-verified only)                                |
+| RISC-V                      | counting always (SBI-mediated)                                                                                                  | sampling iff Sscofpmf; `exclude_*` iff Sscofpmf; precise/data-source: **permanently absent**; branch records: no kernel consumer      | target — M11 (capability subset by construction)                   |
+| Android (x86_64, arm64-v8a) | unittests in-process, in the fallback ([TRF1](./process-model.md#_7-fallback)): the device has no runner (`buildDAndroidTests`) | perf counters, tracepoints and PSI only where the device exposes them; no `@ctfe` probe, benchmarks or workloads (fallback only)      | target — P1 (the in-process runner shipped on the x86_64 emulator) |
 
 \* All hardware verification to date ran at `perf_event_paranoid = −1`;
 behavior at stricter levels is literature-derived until probed

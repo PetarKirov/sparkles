@@ -825,7 +825,7 @@ private string[] runningLanes(string status) @safe pure
     // The page is a string import of ui-app's own test configuration; a
     // consumer that compiles these sources with `-unittest` has no path to it.
     static if (!__traits(compiles, import("resilience.md")))
-        return skipTest("docs/specs/ui-app/resilience.md is not on the -J path here");
+        return skipTest("resilience.md (libs/ui-app/spec) is not on the -J path here");
     else
     {
     enum page = import("resilience.md");

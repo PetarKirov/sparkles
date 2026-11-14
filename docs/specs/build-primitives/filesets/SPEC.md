@@ -1,7 +1,10 @@
 # `sparkles:build-primitives` filesets — Specification
 
-_**Status:** proposed; no requirement is implemented · **Date:** September 21, 2026
-· **Owner:** `sparkles:build-primitives`_
+_**Status:** proposed; every milestone delivered, M0 to M7 and M9 (see the
+[evidence ledger](#evidence-ledger)), and awaiting the owner's acceptance;
+resumed on November 7, 2026 as the build graph's file-system layer ·
+**Date:** September 21, 2026 ·
+**Owner:** `sparkles:build-primitives`_
 
 _Normative at the contract level. Delivery order and gates live in
 [PLAN.md](./PLAN.md); consequential choices and unresolved questions live in
@@ -31,21 +34,22 @@ scheme seam; drivers; error and partial-result semantics; the file-system
 object vocabulary shared with content addressing.
 
 **Non-goals for the first delivery.** The textual query language (separate
-track). Content digests, serialization and NAR/Merkle schemes — a sibling
-contract under `docs/specs/build-primitives/content-addressing/`, not yet
-written; this document specifies only the _seam_ such a scheme plugs into.
+track). Content digests, serialization and NAR/Merkle schemes — the sibling
+[content-addressing contract](../content-addressing/SPEC.md); this document
+specifies only the _seam_ such a scheme plugs into.
 Filesystem watching. Extended attributes. A REPL.
 
-**Deferred with entry conditions.** Cross-run subtree caching (`FSC*`) is
-specified but not delivered until a Merkle scheme exists to key it; see
-[decisions.md](./decisions.md#d1-which-merkle-shape).
+**Cross-run caching.** A Merkle scheme
+([A19](./decisions.md#a19-content-addressing-is-a-family-of-schemes-with-snix-castore-as-the-default))
+can keep its ids from one run to the next. [§12](#12-the-subtree-cache-fsc)
+specifies the cache, which is advisory.
 
 ## 2. Invariants
 
 Normative, and every later requirement is read against them.
 
-1. **The library performs no I/O.** No module under
-   `sparkles.build_primitives` opens, reads, stats, or enumerates anything. All
+1. **The fileset library performs no I/O.** No fileset module opens, reads,
+   stats, or enumerates anything. All
    filesystem effects are performed by a driver outside the library and
    supplied as responses to explicit requests (`FSM*`).
 2. **Evaluation is `@safe pure nothrow @nogc` and allocation-free.**
@@ -116,11 +120,22 @@ for the directory.
 
 **`FSV4` — Empty directories are reported, not contained.** The resolution
 result must carry, separately from its members, the set of directories that
-were entered and yielded no members. _Rationale:_ nixpkgs' `lib.fileset`
+were entered and yielded no members: a directory the resolution listed that
+holds no member file and no subdirectory the resolution entered. Only the
+deepest memberless directories are reported, so a memberless parent of a
+reported directory is not
+([A13](./decisions.md#a13-an-empty-directory-is-a-memberless-leaf-of-the-walk)).
+Only a directory whose whole content the fileset selects, once each
+difference's excluded side is set aside, is reported: `src/**` and the work
+tree report their empty directories, while `*.md` does not report each
+directory it searched and found no Markdown in
+([D5](./decisions.md#d5-the-extent-of-the-empty-directory-report-accepted)).
+_Rationale:_ nixpkgs' `lib.fileset`
 documents the absence of this as a known gap requiring an extra `toSource`
 argument; making it an explicit side output costs nothing and closes it.
 _Detection:_ a fixture containing an empty directory under the selected roots
-reports exactly that directory and no members.
+reports exactly that directory and no members; the same fixture under an
+unanchored pattern reports none.
 
 **`FSV5` — Compilation is fallible; evaluation is not.** Constructing a fileset
 from patterns may fail (a malformed glob, a bound exceeded) and returns
@@ -132,19 +147,28 @@ non-`Expected` types.
 
 **`FSG1` — Anchoring.** A pattern containing `/` is anchored to the fileset
 root; a pattern containing no `/` matches at any depth; a leading `/` forces
-the root. This is `.gitignore`'s rule. _Detection:_ `*.md` matches `a/b.md`;
-`src/*.d` does not match `lib/src/x.d`; `/*.md` does not match `a/b.md`.
+the root. This is `.gitignore`'s rule. A trailing `/` restricts the pattern to
+directories, and a pattern that matches a directory selects every file
+beneath it (`FSV3`). A pattern is matched one path component at a time, so a
+brace alternative may not contain `/`, and a `.` or `..` component is refused;
+a leading `!` is refused too, because in `.gitignore` it negates and a fileset
+spells negation as a difference (`FSV2`). Each refusal is a returned
+`unsupportedPattern` error ([A11](./decisions.md#a11-patterns-compile-one-component-at-a-time)).
+_Detection:_ `*.md` matches `a/b.md`; `src/*.d` does not match `lib/src/x.d`;
+`/*.md` does not match `a/b.md`.
 
-**`FSG2` — This replaces `globAny`.** The current implementation matches each
-glob against both the base name and the root-relative path, which makes
+**`FSG2` — This replaces `globAny`.** The old implementation matched each
+glob against both the base name and the root-relative path, which made
 anchoring inexpressible. `FSG1` is a behaviour change to `apps/hue`'s tree pane
 and `libs/docs`' `srcExclude`; those call sites must be reviewed during
 migration (`PLAN` M9). _Detection:_ the M4 differential gate reports the
 divergence set rather than hiding it.
 
 **`FSG3` — Case and normalization are matching policy only.** A fileset carries
-an explicit case policy. Its default is case-sensitive. No policy affects
-identity or ordering (invariant 5). _Detection:_ changing the policy changes
+an explicit case policy. Its default is case-sensitive. Matching always
+normalizes both the pattern and the name to NFC, which is the glob engine's
+policy: a pattern written in one normalization form matches a name stored in
+the other. No policy affects identity or ordering (invariant 5). _Detection:_ changing the policy changes
 which entries match and never changes the ordering of those that do.
 
 **`FSG4` — Glob compilation is bounded.** Patterns compile to the bounded
@@ -167,8 +191,15 @@ a failure.
 the fileset's literal path prefixes, with a `⊤` (unknown) element for
 constructs it cannot analyse. Union takes the union of prefix sets;
 intersection may take the longest; difference takes the left operand's roots.
+A literal component joins a root only if no other name matches it under the
+matching policy (`FSG3`). Under the case-sensitive policy that means an ASCII
+component that contains none of `K`, `` ` `` or `;`: NFC's canonical
+singletons U+212A, U+1FEF and U+037E normalize to exactly those three. Any
+other literal stays a filter that the directory verdicts apply after listing
+([A12](./decisions.md#a12-a-start-root-is-a-literal-no-other-name-matches)).
 _Detection:_ `src/**/*.d` starts at `src`; `src/** | libs/**` starts at both;
-an expression containing an unanalysable operand starts at the fileset root.
+an expression containing an unanalysable operand starts at the fileset root;
+`src/Keep/*.d` starts at `src`.
 
 **`FSA3` — Directory verdicts.** A plan assigns each entered directory exactly
 one of `skip` (do not enumerate), `descend` (enumerate and evaluate children),
@@ -184,9 +215,9 @@ a definite verdict after.
 
 **`FSA5` — Forced entry.** If a fileset admits any file beneath a directory
 that a `.gitignore` scope would exclude, the plan must still `descend` that
-directory. _Rationale:_ the current `GitGlobFilter` documents the opposite — an
+directory. _Rationale:_ the old `GitGlobFilter` documented the opposite — an
 include glob "re-admits files the walk reaches, it does not force entry" — so
-`gitTracked | build/**/*.o` is unobtainable today. _Detection:_ that exact
+`gitTracked | build/**/*.o` was unobtainable. _Detection:_ that exact
 fileset over a fixture with an ignored `build/` yields the object files.
 
 **`FSA6` — Statically empty expressions are detectable.** The planner must
@@ -217,10 +248,15 @@ cannot perform one answers with the VFS's `unsupported` kind, which the
 driver reports as `unsupportedRequest`.
 
 **`FSM3` — Requests are batched per directory.** All requests arising from one
-directory's entries must be emitted as one batch. _Rationale:_ a
-request-at-a-time coroutine serializes the fan-out the design exists for, and a
-driver can submit a batch as one `io_uring_enter`. _Detection:_ resolving a
-directory of `n` entries needing metadata emits one batch, not `n` batches.
+directory's entries must be emitted as one batch or, when there are more than
+the configured batch size, as consecutive full batches and one holding the
+rest. A directory's stats and its subdirectories' listings are batched alike.
+_Rationale:_ a request-at-a-time coroutine serializes the fan-out the design
+exists for, and a driver can submit a batch as one `io_uring_enter`. The batch
+size bounds only the storage requests take; what a resolution can hold is
+bounded by `FSM7`'s storage limits. _Detection:_ resolving a directory of `n` entries needing metadata emits
+one batch, not `n` batches; with a batch size of 2, its 5 stats arrive as 2, 2
+and 1 and its 3 subdirectories as 2 and 1, with the result one batch gives.
 
 **`FSM4` — The machine issues no content requests.** `readFile` exists to
 satisfy `.gitignore` scopes (`FSI*`) only. File _content_ is never requested by
@@ -233,18 +269,42 @@ single content byte being read.
 entries as one unit, in the scheme's declared order (`FSS1`). _Detection:_ a
 fold scheme receives each directory exactly once, after its children.
 
-**`FSM6` — Bounded work per step.** A step performs work bounded by a
-caller-supplied budget and returns a resumable cursor. A cursor is valid only
+**`FSM6` — Bounded work per step.** A step evaluates at most a
+caller-supplied budget of entries and returns a resumable cursor. Absorbing
+the batch a step begins with, sorting a listing and issuing the next
+requests are not counted against the budget; `FSM7`'s limits on entries
+and pending requests bound them instead. A cursor is valid only
 for the resolution that produced it. _Detection:_ a fixture resolved in one
 step and in many steps with a small budget yields identical results; a cursor
 from one resolution is rejected by another.
 
-**`FSM7` — Bounds.** Directory nesting, entry-name length and pending-request
-count are bounded by configured limits. Exceeding a limit is a returned error.
+**`FSM7` — Bounds.** Directory nesting, entry-name length, the batch size
+and the storage a resolution holds are bounded by configured limits.
+Exceeding the nesting or name limit is a returned error; a directory needing
+more requests than a batch holds is batched as `FSM3` says. The storage is
+allocated when the resolution is made, and running out of it is the error
+`capacityExceeded`, never growth:
+
+- **entries held at once** (`maxEntries`): the listing of each directory on
+  the path from the start root down to the one being resolved, together
+  with the listings of all its siblings, since a directory's subdirectories
+  are all listed before the first is entered;
+- **directories held at once** (`maxFrames`): each directory on that path
+  and its siblings;
+- **bytes of names held at once** (`maxNameBytes`): the names of those
+  entries, and the plan's start roots.
+
 Defaults: depth 64, name 255 bytes — the values NAR and Snix independently
-chose, the former explicitly to bound stack use on a coroutine stack.
+chose, the former explicitly to bound stack use on a coroutine stack — and
+65,536 entries, 4,096 directories and 4 MiB of names, which commit about
+22 MiB when a resolution is made
+([A25](./decisions.md#a25-the-storage-bounds-stay-fixed)). A directory of
+more than 65,536 entries, or sibling directories holding more than that
+between them, needs larger limits.
 _Detection:_ fixtures at depth 65 and with a 256-byte name return the
-respective errors.
+respective errors; one directory of `maxEntries + 1` entries, and sibling
+directories whose entries exceed `maxEntries` together, return
+`capacityExceeded`, and each resolves with the limit raised.
 
 ## 8. The scheme seam (`FSS`)
 
@@ -267,8 +327,12 @@ no `stat` on that account.
 **`FSS3` — Declared traversal mode.** A scheme is `stream` (pre-order,
 side-effecting into a sink) or `fold` (post-order, returning a value per
 directory computed from its sorted entries and its children's values). The
-machine's completion order is derived from the declaration. _Detection:_ a fold
-scheme's directory callback is never invoked before all of its children's.
+machine's completion order is derived from the declaration. A stream may
+also ask to hear when a directory and everything beneath it are done, which
+a serial format needs to write a directory's later entries after an earlier
+subdirectory's subtree. _Detection:_ a fold scheme's directory callback is
+never invoked before all of its children's; a stream's end of a directory
+comes after every directory beneath it, while its entries can still be read.
 
 **`FSS4` — Schemes own their content I/O.** The machine hands a scheme an
 opaque driver-defined reference per entry, never bytes and never a digest. A
@@ -299,6 +363,19 @@ _Rationale:_ APK v4 ships `.apk.idsig` alongside the artifact; iroh stores an
 outboard. _Detection:_ the scheme interface accepts a supplied tree and the
 verification path does not require hashing the artifact.
 
+How the seam reads in code, and the choices `FSS1`–`FSS8` leave open, are
+recorded in [A18](./decisions.md#a18-the-scheme-seam-as-built). Three are
+observable:
+
+- **A fold ends at the fileset root.** When the plan starts beneath it, each
+  directory above a start root is handed over too, holding only the
+  subdirectories through which something was reached. The fileset root is
+  always handed over, even empty.
+- **A stream sees a directory once its subdirectories are listed.** Its unit
+  arrives before any subdirectory's, and knows which of them opened.
+- **An `FsoRef` is borrowed for one call.** Work a scheme spawns for later
+  opens its files during that call and owns them.
+
 ## 9. Ignore scopes (`FSI`)
 
 **`FSI1` — Immutable shareable scopes.** A `.gitignore` scope chain is an
@@ -320,8 +397,17 @@ git's for every path.
 
 **`FSI4` — Deeper scopes win.** Precedence is git's: within a scope, the last
 matching rule decides; a deeper scope overrides a shallower one; a negation
-cannot re-include a file beneath an excluded directory. _Detection:_ a nested
-fixture exercising each clause matches `git check-ignore`'s verdicts.
+cannot re-include a file beneath an excluded directory. Each line is read as
+git reads it ([A15](./decisions.md#a15-a-gitignore-line-is-read-as-git-reads-it)).
+_Detection:_ a nested fixture exercising each clause matches
+`git check-ignore`'s verdicts.
+
+**Which `.gitignore` files apply.** `Filesets.gitignored` names what the
+scopes exclude. A resolution reads the `.gitignore` of the fileset root and of
+each directory down to a start root before listing it, and each entered
+directory's own before evaluating its entries. It never reads one inside an
+excluded directory, and nothing outside the fileset root
+([A16](./decisions.md#a16-the-resolution-finds-the-scopes-and-reads-only-gitignore-files)).
 
 ## 10. Errors and partial results (`FSE`)
 
@@ -361,7 +447,7 @@ adapter over any backend satisfying the VFS's
 synchronous and `sparkles:event-horizon` drivers are that adapter instantiated
 over `MemVfs`, `BlockingVfs` and `RingVfs`. No driver performs a file-system
 operation the adapter does not route through a `Dir`. _Detection:_ the
-differential gate in [§12](#12-evidence-and-oracles) runs the adapter over all
+differential gate in [§13](#13-evidence-and-oracles) runs the adapter over all
 three backends on one fixture set and compares results byte for byte; the
 fileset modules declare no system call.
 
@@ -408,8 +494,27 @@ Which resolver serves the root is reported by the root
 consumer that requires the kernel's guarantee opens the root with
 `requireKernel`, and gets `unsupported` where it is absent
 ([`VFR3`](../../base/vfs/SPEC.md#vfr3-a-root-may-require-the-kernel-resolver)).
-_Detection:_ a fixture whose root contains a symbolic link to `/etc` resolves
-no entry outside the root, on every backend.
+A consumer may instead open a root with `symlinks = beneath`
+([`VFP5`](../../base/vfs/SPEC.md#vfp5-beneath)): a link whose target stays
+beneath the root resolves, and any other fails with `escapesRoot`. The build
+graph opens a worktree this way, because the repository commits relative links
+([BGF3](../build-graph/SPEC.md#_12-file-system-access)). _Detection:_ a
+fixture whose root contains a symbolic link to `/etc` resolves no entry outside
+the root, on every backend and under either policy; under `beneath`, a link to
+a sibling directory resolves to that directory's entries.
+
+The driver opens every directory, the roots and each child, with `walk` on
+the name it holds, never with `openDir`: only `walk` applies the root's link
+and mount policy to the name. Under `beneath` a link is then judged twice:
+as a directory, entered at the link's own path if its target is one, and as
+the file it is otherwise. A link to a file, or a dangling link, stays a
+member as the link value it is. A link the policy refuses, `escapesRoot`
+among them, is reported as incomplete (`FSE2`) and is not a member. Under
+`beneath` each directory's identity is read when it is opened, and a
+directory reached through a link that is one of the directories above it,
+as `self -> .` is, is reported as incomplete with `symlinkLoop` and not
+entered; the resolution goes on
+([D6](./decisions.md#d6-a-symlink-cycle-under-symlinks-beneath-accepted)).
 
 _Superseded:_ this requirement formerly required `openat2` with
 `RESOLVE_BENEATH`, `RESOLVE_NO_MAGICLINKS` and `RESOLVE_NO_XDEV`, and forbade
@@ -433,31 +538,167 @@ system by default, and reports the boundary.
 belongs to a driver, never to the machine or the seam. _Detection:_ the machine
 contains no descriptor accounting.
 
-## 12. Evidence and oracles
+## 12. The subtree cache (`FSC`)
+
+A Merkle scheme names every directory, so one run's ids can save the next
+run's work, as git's `cache-tree` saves it when git writes a tree. The
+cache is a scheme's, not the machine's: the machine still lists every
+directory and stats every member. What the cache saves is reading files
+and encoding directories. Filesystem watching is out of scope
+([A9](./decisions.md#a9-incremental-invalidation-stops-at-level-2)).
+
+**`FSC1` — The cache is advisory.** A fold given a cache **must** produce
+the id that a fold given none produces. That holds for every tree and every
+cache: none, one recorded on the same tree, one recorded before any number
+of changes, and one that is damaged or was recorded by another scheme. A
+cache may only save work. _Detection:_ on every oracle tree, a run with a
+cache recorded on the same tree and a run with the cache deleted both give
+the cold run's id. On random trees, after each change in a script that
+covers every kind of change, the cached id equals a cold run's.
+
+**`FSC2` — A file is known by its fingerprint.** The cache keys a file's
+id by the `FsoFingerprint` of the `stat` that the walk issued before the file
+was read: its size, its modification and status-change times, its device
+and its inode. A scheme receives the fingerprint by declaring
+`FsoMetadata.fingerprint`, from the one `stat` that brings the rest of its
+declared metadata (`FSS2`). _Detection:_ a scheme declaring the fingerprint
+receives it for each member file from one `stat` each, and receives none for
+a link.
+
+**`FSC3` — No false "unchanged" for a change `stat` can see.** A recorded
+id **must** be reused only when the file's fingerprint is unchanged and its
+recorded status-change time precedes the recording run's stamp by more than
+a margin that covers timestamp granularity. A file whose `stat` lacks any
+part of the fingerprint, or whose change time a caller can set, has none,
+and is read. A false "changed" is permitted
+([A9](./decisions.md#a9-incremental-invalidation-stops-at-level-2)). The
+guarantee is the one `stat` gives, as git's racy-git
+([A24](./decisions.md#a24-what-the-fingerprint-can-promise)) is: a change
+that moves none of size, both times, device and inode, such as a write
+through a shared mapping to a page already dirty, or a file system that
+lets a caller set the change time on a backend that cannot tell, is outside
+it.
+_Rationale:_ a file's size and modification time can be put back, as
+`touch -r` puts them back, but on a POSIX file system that keeps its own
+change time, it cannot. On Windows a caller can set it too, so there a
+backend reports it as settable and the file has no fingerprint: it is read
+on every run. A change in the same timestamp tick as the `stat` that
+recorded the file leaves an identical fingerprint, git's racy-git problem,
+and only the stamp rule catches it.
+_Detection:_ the validator rejects a change in any field and a change time
+within the margin. Under fault injection, a validator that trusts every
+file, one that ignores the change time and one that drops the stamp rule
+each make the cache oracle report a divergence, while the real validator
+passes the same scripts.
+
+**`FSC4` — Invalidation runs upward from a change.** A directory's recorded
+id **must** be reused only when every entry matches its record: the same
+names and kinds, every file accepted under `FSC3`, every link target
+unchanged, and every subdirectory's id equal to the recorded one. Ids are
+derived from content, so a change re-encodes exactly the directories on its
+path to the fileset root. _Detection:_ after one file three levels deep
+changes, the run re-encodes the four directories on that file's path,
+reuses the fifth directory, and reads only that file.
+
+**`FSC5` — The cache is bytes the caller keeps.** A cache encodes to bytes
+and loads from them, and the library performs no I/O
+([invariant 1](#2-invariants)). A run that did not complete encodes
+nothing. _Detection:_ `encode` writes nothing for an unfinished run, and a
+cache loaded from an encoding is reused in full.
+
+**`FSC6` — A cache is rejected whole.** An encoding that is truncated or
+damaged, that has another format version or record layout, or that was
+recorded by another directory encoding or file identity **must** be
+rejected entirely, never used in part. The run then proceeds as it would
+with no cache. _Rationale:_ a checksum over every byte detects damage. A
+canary detects an encoding that changed under the same name: the current
+scheme computes the ids of a fixed tree, and they must match the ones the
+cache recorded. _Detection:_ each kind of rejection is followed by a run that
+reads every file and gives the cold id.
+
+## 13. Evidence and oracles
 
 The trace required for acceptance is
 `requirement -> falsifying scenario -> oracle -> scoped evidence`.
 
-| Oracle                                                                                                       | Independence                                                | Establishes                                                 |
-| ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- | ----------------------------------------------------------- |
-| **Brute-force resolution** — evaluate the predicate against every file under the root, ignoring all verdicts | A different algorithm, not a second instance of the planner | `FSA1` widening soundness; `FSA3` and `FSA5` verdicts       |
-| **Three-backend differential** — the adapter over `MemVfs`, `BlockingVfs` and `RingVfs` on one fixture set   | Three independent effect implementations                    | `FSD1`; `FSM1`'s claim that the machine is effect-free      |
-| **`git check-ignore -v`**                                                                                    | An independent implementation of the semantics being copied | `FSI3` provenance, `FSI4` precedence                        |
-| **The old walker** — retained until M9                                                                       | The implementation being replaced                           | M4's behaviour-preservation gate; the `FSG2` divergence set |
-| **`a` versus `a.b` fixture**                                                                                 | A published, reproducible ordering divergence               | `FSS1`'s two orderings are not one function                 |
-| **Allocation instrumentation** — libc wrap plus the GC counter, as `sparkles:fuzzy` does                     | Measures the property `@nogc` does not prove                | Invariant 2                                                 |
+| Oracle                                                                                                       | Independence                                                | Establishes                                                                                  |
+| ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| **Brute-force resolution** — evaluate the predicate against every file under the root, ignoring all verdicts | A different algorithm, not a second instance of the planner | `FSA1` widening soundness; `FSA3` and `FSA5` verdicts                                        |
+| **Three-backend differential** — the adapter over `MemVfs`, `BlockingVfs` and `RingVfs` on one fixture set   | Three independent effect implementations                    | `FSD1`; `FSM1`'s claim that the machine is effect-free                                       |
+| **`git check-ignore -v`**                                                                                    | An independent implementation of the semantics being copied | `FSI3` provenance, `FSI4` precedence                                                         |
+| **The old walker** — retained until M9                                                                       | The implementation being replaced                           | M4's behaviour-preservation gate; the `FSG2` divergence set                                  |
+| **`a` versus `a.b` fixture**                                                                                 | A published, reproducible ordering divergence               | `FSS1`'s two orderings are not one function                                                  |
+| **Allocation instrumentation** — libc wrap plus the GC counter, as `sparkles:fuzzy` does                     | Measures the property `@nogc` does not prove                | Invariant 2                                                                                  |
+| **A cold run** — the same fold with no cache                                                                 | The cache is not consulted at all                           | `FSC1`; with fault-injected validators, that the oracle catches a false "unchanged" (`FSC3`) |
 
 Each requirement's evidence state is `unverified`, `partial` (naming the
 missing case), or `verified` (naming the configuration whose acceptance suite
-passed). Every requirement in this document is currently **unverified**.
+passed). The ledger below records the state of each; a requirement it does
+not list is **unverified**.
+
+### Evidence ledger
+
+| Requirements           | State                   | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Gap                                                                                                                                  |
+| ---------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `FSO1`                 | verified (Linux x86_64) | `FsoKind` has three members and `FsoNode` is made only by `FsoNode.regular`, `FsoNode.directory` and `FsoNode.symlink`, so no other shape constructs outside its module (`fileset.fso.FSO1.nodes`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | —                                                                                                                                    |
+| `FSO2`                 | verified (Linux x86_64) | a link's target is read by `readlink` on the link's own directory and handed over as data (`Resolution.linkRead`); with links to `/etc/passwd`, out of the root and into it, no request names a target's path, and a link is never stat-ed to decide its executable bit (`fileset.scheme.FSO2.linkTargetsAreData`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | —                                                                                                                                    |
+| `FSO3`                 | verified (Linux x86_64) | two native trees differing in every permission bit but the executable one, and in mtime, resolve the same members for `everything`, `executable` and their difference (`fileset.scheme.FSO3.excludedMetadata`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | macOS and Windows legs                                                                                                               |
+| `FSO4`                 | verified (Linux x86_64) | a scheme declaring no metadata resolves with zero `stat` and zero `readlink` requests; one declaring `executable` stats each member file once and no link (`fileset.scheme.FSS2.metadata`, `fileset.machine.noStatWithoutNeed`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | —                                                                                                                                    |
+| `FSV1`, `FSV2`, `FSV5` | verified (Linux x86_64) | `Filesets.union_`, `Filesets.intersection` and `Filesets.difference` return a plain `Fileset`; no complement member exists; `Filesets.glob` and `Filesets.ignored` return `FilesetExpected`, and `FilesetEvaluator.contains` returns `bool` (`fileset.value.algebra`, `fileset.value.globFails`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | —                                                                                                                                    |
+| `FSV3`                 | verified (Linux x86_64) | a pattern naming a directory selects the files beneath it and no directory is ever evaluated as a member (`fileset.value.directoryNamesSubtree`, and the M1 gate)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | —                                                                                                                                    |
+| `FSG1`, `FSG3`         | verified (Linux x86_64) | `PatternSet.add` with the detection cases verbatim (`fileset.pattern.anchoring`, `fileset.pattern.globstar`, `fileset.pattern.casePolicy`, `fileset.pattern.normalization`); the M1 gate: `FilesetEvaluator` agrees with `naiveContains`, a backtracking interpreter of the pattern text, on every file of 3 hand-written fixtures and 2400 seeded random tree × fileset pairs, case policy random                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | —                                                                                                                                    |
+| `FSG4`                 | verified (Linux x86_64) | `SegmentProgram` is fuzzy's bounded NFA; a 70-instruction segment and a 63-segment pattern return `patternTooComplex` and leave nothing behind (`fileset.pattern.bounds`); a name up to `maxMatchedNameBytes` of any bytes never fails the engine (`fileset.pattern.nameBound`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | —                                                                                                                                    |
+| `FSG2`                 | verified (Linux x86_64) | the M4 gate ran the old walker and the machine over real repositories and reported every divergence by class; the record is [A17](./decisions.md#a17-the-m4-divergence-record), closed by M9, which deleted the old walker and the gate with it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | —                                                                                                                                    |
+| invariant 2            | verified (Linux x86_64) | zero libc and zero GC allocations while `FilesetEvaluator` evaluates (`fileset.allocation.evaluationHasZeroCalls`) and while `Resolution.step` runs a whole resolution with the in-memory driver answering it (`fileset.allocation.resolutionStepsHaveZeroCalls`), configuration `allocation-audit`, DMD and LDC                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | —                                                                                                                                    |
+| `FSD1`, `FSM1`         | verified (Linux x86_64) | the M3 gate (`fileset.gate.m3.threeBackends`): `resolveWith` over `MemVfs`, `BlockingVfs` and `RingVfs` (on scheduler fibers through `LoopExecutor`, with more than one request in flight) produces byte-identical `PathCollector.transcript`s on the M1 fixture set and 30 random pairs; `fileset.machine.FSM1.importsNothingEffectful` reads the machine's modules and finds no effectful import                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | macOS and Windows legs                                                                                                               |
+| `FSD2`                 | verified (Linux x86_64) | `memTree` and `FilesetDriver` over `MemVfs` answer every machine test and both gates                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | the acceptance suite on Windows and macOS                                                                                            |
+| `FSD3`                 | verified                | `BlockingVfs` is instantiated only in `fileset/testing.d`, which the library configuration excludes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | —                                                                                                                                    |
+| `FSD4`, `FSD5`         | verified (Linux x86_64) | the machine counts no descriptor and only names a `Resolution.retired` directory; `FilesetDriver` holds a `Dir` per directory in progress, and a directory renamed before its entries are stat-ed still resolves them (`fileset.driver.FSD5.renameMidWalk`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | —                                                                                                                                    |
+| `FSD6`, `FSD7`         | verified (Linux x86_64) | a link to an absolute target and one climbing out resolve nothing outside the root under either policy; under `beneath` a link to a sibling directory resolves its entries and the escaping links are reported (`fileset.driver.FSD6.confinement`); a link to its own directory is one `symlinkLoop` entry, reached directly and through a second link, on `MemVfs`, `BlockingVfs` and `RingVfs` (`fileset.driver.FSD6.cycle`, `Resolution.identified`); a mount is not crossed by default and is reported, and is crossed with `crossMounts` (`fileset.driver.FSD7.mounts`); the confinement fixture gives the same transcripts on `BlockingVfs` and `RingVfs` under either policy (`fileset.driver.FSD6.confinementNative`), and on a real mount, `/dev/shm` beneath a root at `/dev`, both backends stop and report `crossesMount` by default and read a file there with `crossMounts` (`fileset.driver.FSD7.realMount`) | the real-mount case runs on Linux only, and skips where `/dev/shm` is not its own writable mount                                     |
+| `FSM2`                 | verified (Linux x86_64) | `RequestKind`; a request answered `unsupported` fails the resolution with `unsupportedRequest` naming its kind (`fileset.machine.FSM2.unsupportedRequest`); `FilesetDriver` performs `readFile` on a root with read rights, and a `gitignored` fileset over one without fails naming `readFile` (`fileset.driver.FSI.needsReadRights`); it performs `readlink` with `readlinkAt` (`fileset.scheme.FSO2.linkTargetsAreData`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | —                                                                                                                                    |
+| `FSM3`                 | verified (Linux x86_64) | a directory whose 5 entries need a stat and whose 3 subdirectories are entered issues one stat batch and one listing batch (`fileset.machine.FSM3.oneBatchPerDirectory`); with `ResolutionLimits.maxPending` at 2 the batches are 2, 2, 1 and 2, 1 (`fileset.machine.FSM3.splitBatches`); a directory of 10 files more than the default resolves in two stat batches (`fileset.machine.FSM3.directoryPastTheLimit`); the M3 oracle gives the same transcript at batch sizes 1 and 2 (`fileset.gate.m3.machineAgreesWithOracles`), and the Git tree ids of 50 oracle trees are unchanged at 1, 2 and 3 (`content_addressing.merkle.FSM3.splitBatches`)                                                                                                                                                                                                                                                                       | —                                                                                                                                    |
+| `FSM4`                 | verified (Linux x86_64) | the machine constructs no `readlink` request, and a `readFile` request only for a `.gitignore` of a fileset with a `gitignored` leaf (`fileset.machine.FSI4.nestedScopes`, `fileset.machine.FSI.prefixScopes`); the gates read no content byte                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | —                                                                                                                                    |
+| `FSM5`                 | verified (Linux x86_64) | `Resolution.unitEntries` hands over one directory's members and entered subdirectories in the declared order (`fileset.scheme.FSS1.orders`); a fold receives each directory once, after its children (`fileset.scheme.FSS3.traversal`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | —                                                                                                                                    |
+| `FSM6`                 | verified (Linux x86_64) | a budget of one yields the same transcript as an unbounded one on every hand-written fixture and 200 random ones (`fileset.gate.m3.machineAgreesWithOracles`); a `Cursor` from another resolution, or an old one, fails with `staleCursor` (`fileset.machine.FSM6.staleCursor`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | —                                                                                                                                    |
+| `FSM7`                 | verified (Linux x86_64) | 65 nested directories fail with `depthExceeded`, 64 do not; a name over `ResolutionLimits.maxNameLength` fails with `nameTooLong` (`fileset.machine.FSM7.bounds`, with the limit lowered to 15, since `MemVfs` stores at most 255 bytes); with `maxEntries` at 16, a directory of 17 files and three of 6 each fail with `capacityExceeded`, and both resolve at 21 (`fileset.machine.FSM7.storageBounds`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | a 256-byte name on a native backend                                                                                                  |
+| `FSV4`                 | verified (Linux x86_64) | `Resolution.unitEmpty`; a fixture with `src/empty/` and `src/deep/er/` reports exactly those two (`fileset.machine.FSV4.emptyDirectories`); `*.md` reports none, `src/**` united with `*.md` only `src/empty`, `everything - *.d` every empty leaf (`fileset.machine.FSV4.wholeContentOnly`); `FilesetEvaluator.wholeContent`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | —                                                                                                                                    |
+| `FSE1`, `FSE2`         | verified (Linux x86_64) | an unreadable entry is `StepKind.incomplete` and the resolution continues; a scheme hears it through `incomplete`, and `PathScheme`'s result lists it with its reason; a scheme failing mid-file fails the resolution with `schemeFailed`, and a digest refusing incompleteness refuses a resolution with a mount it did not cross (`fileset.scheme.FSE.failures`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | —                                                                                                                                    |
+| `FSE4`                 | verified (Linux x86_64) | `resolveScheme` returns `SchemeResult`, the scheme's own `Result`: `PathScheme.Paths` for a path collector, a `ulong` for a digest (`fileset.scheme.FSE.failures`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | —                                                                                                                                    |
+| `FSE3`                 | verified (Linux x86_64) | an entry removed between `readDir` and `stat` is reported `notFound` and the resolution completes (`fileset.machine.FSE3.vanishingEntry`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | —                                                                                                                                    |
+| `FSS1`                 | verified (Linux x86_64) | `EntryOrder` and `precedes` (`fileset.fso.FSS1.precedes`); the `a` versus `a.b` fixture, with a link to tell `partitionedOrder` apart, orders a stream's and a fold's entries three different ways (`fileset.scheme.FSS1.orders`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | —                                                                                                                                    |
+| `FSS2`                 | verified (Linux x86_64) | `FsoMetadata`; a scheme declaring `mtime` receives each member file's and link's, from the stat that also brings the executable bit (`fileset.scheme.FSS2.metadata`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | —                                                                                                                                    |
+| `FSS3`                 | verified (Linux x86_64) | `Traversal`; a fold sees each directory once, after its subdirectories, then the directories above the start roots and the fileset root; a stream sees each directory before its subdirectories (`fileset.scheme.FSS3.traversal`), and one declaring `leave` hears each end with its entries still readable (`fileset.scheme.FSS3.leave`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | —                                                                                                                                    |
+| `FSS4`                 | verified (Linux x86_64) | a `SchemeEntry` carries an `FsoRef`, a directory handle and a name; a scheme reading both halves of each file concurrently, on work it spawns, runs over `RingVfs` (`fileset.scheme.FSS4.schemeOwnedReads`), and the machine requests no content (`fileset.scheme.FSE.failures`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | —                                                                                                                                    |
+| `FSS5`                 | verified                | `shapeOf` rejects a fold over `EntryOrder.none`, and `resolveScheme` with it does not compile (`fileset.scheme.FSS5.foldNeedsOrder`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | —                                                                                                                                    |
+| `FSS6`                 | verified (Linux x86_64) | `LoopExecutor` admits every request, and every piece of work a scheme spawns, through one shared `Admission`; with a budget of one the resolution completes and never has two in flight, walk and scheme together (`fileset.driver.FSS6.budgetOfOne`, `fileset.scheme.FSS4.schemeOwnedReads`); a batch of 100 is shared by as many workers as the smaller of the budget and the free fibers (`fileset.driver_loop.workersFitTheBatch`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | —                                                                                                                                    |
+| `FSS7`                 | verified (Linux x86_64) | `resolveScheme` joins the scheme's spawned work before `finish`, on success and on failure; a scheme whose reads all run on spawned work sees every one done when it finishes (`fileset.scheme.FSS4.schemeOwnedReads`); a scheme that spawns work and then aborts fails the resolution only after that work has run (`fileset.scheme.FSS7.failureJoins`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | —                                                                                                                                    |
+| `FSS8`                 | verified (Linux x86_64) | a scheme finds a supplied tree through an entry's `FsoRef` and verifies against it without opening the entry (`fileset.scheme.FSS8.suppliedTree`); the tree's type is iroh's outboard, which a castore fold takes through its `Supply` and names the file by without opening it ([`CAO1`](../content-addressing/SPEC.md#_7-a-file-s-supplied-tree-cao), `content_addressing.outboard.CAO1.supplied`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | —                                                                                                                                    |
+| `FSA1`, `FSA6`         | verified (Linux x86_64) | the M2 gate (`fileset.gate.m2.plannedEqualsBruteForce`): a walk that follows `plan` and the verdicts of `FilesetEvaluator` finds the same members as `bruteForceFiles` filtered by the predicate, for every fileset of the M1 fixture set (3 hand-written fixtures, 2400 seeded random pairs, random case policy); every fileset `Plan.staticallyEmpty` proves empty has no member there. Injecting an unsound directory verdict turns the gate red                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | —                                                                                                                                    |
+| `FSA2`                 | verified (Linux x86_64) | `plan` with the detection cases (`fileset.plan.roots`, `fileset.plan.unsafeLiterals`); `rootSafe` excludes literals another name can match                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | —                                                                                                                                    |
+| `FSA3`, `FSA4`         | verified (Linux x86_64) | `DirVerdict` and `FileVerdict` (`fileset.value.verdicts`); a walk beneath an `acceptAll` directory makes no segment match, and only an `undecided` file is stat-ed (`fileset.plan.FSA3.acceptAllWithoutMatching`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | —                                                                                                                                    |
+| `FSA5`                 | verified (Linux x86_64) | `(everything - ignored("build/")) \| build/**/*.o` enters `build/` and yields its object files (`fileset.plan.FSA5.forcedEntry`); so does `(everything - gitignored) \| build/**/*.o` with `build/` excluded by the root's `.gitignore`, whose `build/.gitignore` is never read (`fileset.machine.FSI.prefixScopes`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | —                                                                                                                                    |
+| `FSI1`                 | verified (Linux x86_64) | `IgnoreState` is one word naming a positions block and a latch; `IgnoreScopes.add` and `IgnoreScopes.enter` never change a scope, so a sibling's scope reaches neither its sibling nor a directory entered after it (`fileset.ignore.FSI1.immutableChain`); two sibling directories decide their entries on two threads against one shared chain, each with its own scratch, and every decision equals the one made alone (`fileset.ignore.FSI1.concurrentSiblings`)                                                                                                                                                                                                                                                                                                                                                                                                                                                        | deciding is what is shared: adding a scope or entering a directory extends the arena, which one resolution does on one thread        |
+| `FSI2`                 | verified (Linux x86_64) | `Resolution` owns its `IgnoreScopes`, sized by `IgnoreLimits` and released in the walk's stack order; `Resolution.ignorePeakScopes` reports the peak, 3 for a tree with 4 `.gitignore` files of which no more than 3 are on the walk at once (`fileset.machine.FSI2.residency`, `fileset.ignore.FSI2.release`); reading, parsing and applying scopes allocates nothing (`fileset.allocation.scopedResolutionHasZeroCalls`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | —                                                                                                                                    |
+| `FSI3`                 | verified (Linux x86_64) | every rule carries its file and line (`ScopeRule`); a sink with `ignoreDecision` hears the deciding rule of each entry, and on a nested fixture in a real repository its file and line equal `git check-ignore -v`'s for every path, beneath an excluded directory that directory's rule (`fileset.machine.FSI3.checkIgnoreParity`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | entries whose kind only a `stat` supplies are not traced                                                                             |
+| `FSI4`                 | verified (Linux x86_64) | `Filesets.gitignored`; on the nested fixture `everything - gitignored - /.git` equals `git ls-files --others --exclude-standard` (`fileset.machine.FSI4.matchesGit`), each clause checked on `MemVfs` (`fileset.machine.FSI4.nestedScopes`), and the three backends agree (`fileset.driver.FSI.threeBackends`); lines are read as git reads them (`fileset.ignore.readIgnoreLine`, `fileset.value.ignoredReadsAsGit`), and on each work tree of `gitIgnoreCases` (a trailing `/**`, a bracket expression holding `/`, `\/`, a byte order mark) a listing equals `git ls-files --others --exclude-standard` (`fileset.listing.FSI4.linesMatchGit`)                                                                                                                                                                                                                                                                           | —                                                                                                                                    |
+| `FSC1`                 | verified (Linux x86_64) | `CachedFold`, a `MerkleFold` keeping a `SubtreeCache`; on 58 oracle trees a run with a cache recorded on the same tree reads none of their files and encodes no directory, and both it and a run with the cache deleted give the cold id (`content_addressing.cache.FSC1.advisory`); 129 scripts of 12 random changes of every kind, on 43 trees at ticks of 0, 1 and 3 seconds, keep the cached id equal to a cold run's (`content_addressing.cache.FSC1.throughChanges`)                                                                                                                                                                                                                                                                                                                                                                                                                                                  | the oracle runs on `MemVfs`, whose clock the test moves; a native file system's coarse clock is covered by the margin, not by a test |
+| `FSC2`                 | verified (Linux x86_64) | `FsoFingerprint`, `FsoMetadata.fingerprint`; one `stat` per member file brings it, and a link gets none (`fileset.scheme.FSC2.fingerprint`); the change time is `VFO6`'s ([DV32](../../base/vfs/decisions.md#dv32-the-change-time))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | —                                                                                                                                    |
+| `FSC3`                 | verified (Linux x86_64) | `StatValidator` rejects a change in each field and a change time within its margin (`content_addressing.cache.FSC3.statValidator`); `TrustingValidator`, `MtimeValidator` and `RacyValidator` each make `cacheDivergence` report a divergence, and `StatValidator` passes the same scripts (`content_addressing.cache.M7.faultInjection`); a backend whose change time is settable, as Windows's is, gives no fingerprint, and every file is read (`content_addressing.cache.FSC3.settableChangeTime`)                                                                                                                                                                                                                                                                                                                                                                                                                      | —                                                                                                                                    |
+| `FSC4`                 | verified (Linux x86_64) | changing one file three levels deep re-encodes four directories, reuses the fifth, and reads one file (`content_addressing.cache.FSC4.pathUpward`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | —                                                                                                                                    |
+| `FSC5`, `FSC6`         | verified (Linux x86_64) | `SubtreeCache.encode`, `SubtreeCache.load`, `CacheRejection`; a truncated, damaged, other-version and other-identity cache are each rejected, the next run reads every file and gives the cold id, and an unfinished run encodes nothing (`content_addressing.cache.FSC5.rejections`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | a changed encoding under the same type names is caught by the canary alone, which no test changes                                    |
+
+Every row was verified with DMD 2.112.1 and LDC 1.43.0 by
+`dub test :build-primitives`, and invariant 2's rows by its
+`allocation-audit` configuration.
 
 Two limits are stated rather than papered over. The three-driver differential
 proves the drivers agree, not that any of them is correct; the brute-force
 oracle supplies that for membership. And a deterministic in-memory driver does
-not establish that real concurrent interleavings are safe — `FSI1` and `FSS6`
-need native concurrent tests, not model-level ones.
+not establish that real concurrent interleavings are safe, so `FSI1` and
+`FSS6` each have a native concurrent test: two threads deciding against one
+scope chain, and the budget on `RingVfs`.
 
-## 13. Requirement index
+## 14. Requirement index
 
 | Group                                                     | Covers                                                                                                                  |
 | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
@@ -470,6 +711,7 @@ need native concurrent tests, not model-level ones.
 | [`FSI1`–`FSI4`](#9-ignore-scopes-fsi)                     | Immutable scopes, arena lifetime, provenance, precedence                                                                |
 | [`FSE1`–`FSE4`](#10-errors-and-partial-results-fse)       | Fatal versus incomplete, observability, vanishing entries, result type                                                  |
 | [`FSD1`–`FSD7`](#11-drivers-fsd)                          | One adapter over the VFS backends, in-memory ships, synchronous is test-only, handles, confinement, mounts, descriptors |
+| [`FSC1`–`FSC6`](#12-the-subtree-cache-fsc)                | Advisory, fingerprint, no false "unchanged", upward invalidation, caller-kept bytes, whole rejection                    |
 
 Consumers of this contract: `apps/hue`'s picker ([`PKS1`, `PKC4`](../../hue/picker.md)),
 `libs/docs`' source set, and `apps/ci`.

@@ -502,13 +502,12 @@ version (linux)
         private bool _cgroupCpuFailed, _cgroupMemFailed, _cgroupTasksFailed;
         private bool _rootZombie;
 
-        version (unittest)
-        {
-            /// Test hook: runs between the two root validations of a sample.
-            package void delegate() nothrow testBetweenValidations;
-            /// Test hook: every member open fails with `EMFILE` while set.
-            package bool testFailMemberOpens;
-        }
+        // Test seams, declared in every build so a `-unittest` consumer
+        // agrees with the library on the layout.
+        /// Test hook: runs between the two root validations of a sample.
+        package void delegate() nothrow testBetweenValidations;
+        /// Test hook: every member open fails with `EMFILE` while set.
+        package bool testFailMemberOpens;
 
         /// Whether pid-based sampling is possible for this run.
         bool anchored() const @safe pure nothrow @nogc => _anchored;
@@ -620,6 +619,7 @@ version (linux)
                     break;
                 case SampleSource.none:
                 case SampleSource.darwinTree:
+                case SampleSource.jobObject:
                     break;
                 }
             }
@@ -1087,6 +1087,10 @@ else version (OSX)
 {
     package import sparkles.event_horizon.sampling_darwin : TreeSampler;
 }
+else version (Windows)
+{
+    package import sparkles.event_horizon.sampling_windows : TreeSampler;
+}
 else
 {
     /**
@@ -1460,6 +1464,8 @@ version (linux)
             "sleep 0.05; (while :; do :; done) >/dev/null 2>&1 & exit 0"]);
         assert(spawned.hasValue);
         auto child = move(spawned.value);
+        // A failed assertion below must not orphan the burning daemon.
+        scope (exit) cast(void) killTree(run);
         assert(migrateInto(run, child.pid) == 0);
         TreeSampler sampler;
         sampler.anchor(child.pid, &run);

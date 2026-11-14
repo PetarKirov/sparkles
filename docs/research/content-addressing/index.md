@@ -255,5 +255,5 @@ files to name), [iroh][iroh] (the peer-to-peer side of Bao), and
 [fsl]: ../fileset-languages/index.md
 [iroh]: ../iroh/index.md
 [monorepo]: ../monorepo-tooling/index.md
-[bp]: ../../../libs/build-primitives/src/sparkles/build_primitives/gitignore.d
+[bp]: https://github.com/PetarKirov/sparkles/blob/e70f9016cc5d6dfaf80468b46d8fe2f95924e58f/libs/build-primitives/src/sparkles/build_primitives/gitignore.d
 [nixspec]: ../../specs/nix/SPEC.md

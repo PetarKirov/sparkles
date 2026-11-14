@@ -1,0 +1,1006 @@
+/**
+ * Process orchestration for the `--better-c`, `--wasm` and `--wasm-bare` runner modes:
+ * extract the annotated tests (see $(MREF sparkles,test_runner,extract)),
+ * generate a standalone program, compile it for the special environment, and
+ * execute it.
+ *
+ * Uses only `std.process`/`std.file` so it works in every host package —
+ * including `sparkles:base`, whose test build has no `core-cli`.
+ */
+module sparkles.test_runner.driver;
+
+import sparkles.test_runner.extract : CtfeTarget, ExtractedTest,
+    extractUnittestBody, generateBetterCProgram, generateCtfeProgram,
+    generateWasiProgram, generateWasmBareJsShim, generateWasmBareProgram, sourceRootOf;
+import sparkles.test_runner.model : Test;
+
+/// Where the modes' messages go. The core prints nothing (process-model
+/// TRM1): its client renders these, to a terminal or as task output.
+struct ModeReport
+{
+    /// A mode's report: per-test lines, the tests' own output.
+    void delegate(string) @safe output;
+    /// Why a mode skipped or failed, and the commands echoed under `-v`.
+    void delegate(string) @safe diagnostics;
+}
+
+/// `args` and a line feed, to `report`'s output.
+private void say(Args...)(in DriverOptions options, Args args)
+{
+    import std.conv : text;
+
+    if (options.report.output !is null)
+        options.report.output(text(args, "\n"));
+}
+
+/// `text`, as it is, to `report`'s output.
+private void sayRaw(in DriverOptions options, string text)
+{
+    if (options.report.output !is null)
+        options.report.output(text);
+}
+
+/// `args` and a line feed, to `report`'s diagnostics.
+private void warn(Args...)(in DriverOptions options, Args args)
+{
+    warnTo(options.report, args);
+}
+
+/// ditto
+private void warnTo(Args...)(in ModeReport report, Args args)
+{
+    import std.conv : text;
+
+    if (report.diagnostics !is null)
+        report.diagnostics(text(args, "\n"));
+}
+
+/// Options shared by both driver modes.
+struct DriverOptions
+{
+    string compiler; /// explicit D compiler; empty = `$DC`, then `ldc2`, `dmd`
+    string[] importPaths; /// extra `-I` paths
+    string[] includeImports; /// extra `-i=<pattern>` module-inclusion patterns
+    bool noAutoInclude; /// don't compile the extracted tests' own modules in
+    bool keep; /// keep the generated files and print their location
+    bool verbose; /// echo the commands that are run
+    ModeReport report; /// where the modes' messages go
+    string[] stringImportPaths; /// extra `-J` paths
+    string[] versions; /// version identifiers
+    string[] dflags; /// extra compiler flags
+    string probeDir; /// where generated programs go; empty = the temp directory
+    bool noDub; /// never run `dub describe` (process-model TRX2)
+    string[] harnessRoots; /// the source roots the test binary reported
+}
+
+/// The probe directory of the current run (`DriverOptions.probeDir`).
+private __gshared string probeRoot;
+
+/// Sets where generated programs go for the rest of the run.
+void setProbeDir(string dir)
+{
+    probeRoot = dir;
+}
+
+/// The outcome of one driver run.
+struct DriverOutcome
+{
+    size_t testCount;
+    bool succeeded = true;
+    bool skipped; /// missing toolchain — reported but not a failure
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Whether an executable is reachable through `searchPath` (`$PATH` by
+/// default). On Windows the file is `name.exe`, as `CreateProcess` finds it:
+/// `$DC=ldc2` names `ldc2.exe` there.
+///
+/// A local re-implementation rather than `sparkles.core_cli.process_utils.isInPath`:
+/// this module is source-compiled into `base`'s test build, which has no
+/// `core-cli` dependency (the impl-library cycle is `impl → base`).
+private bool inPath(string name, string searchPath = null) @safe
+{
+    import std.algorithm.iteration : splitter;
+    import std.file : exists, isFile;
+    import std.path : buildPath, extension, pathSeparator;
+    import std.process : environment;
+
+    if (searchPath is null)
+        searchPath = environment.get("PATH", "");
+    version (Windows)
+        const file = name.extension.length ? name : name ~ ".exe";
+    else
+        const file = name;
+    foreach (dir; searchPath.splitter(pathSeparator))
+    {
+        const candidate = buildPath(dir, file);
+        if (dir.length && candidate.exists && candidate.isFile)
+            return true;
+    }
+    return false;
+}
+
+@("inPath.platformExecutableName")
+@safe
+unittest
+{
+    import std.conv : text;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath, pathSeparator;
+    import std.process : thisProcessID;
+
+    const dir = buildPath(tempDir, text("sparkles-inpath-", thisProcessID));
+    mkdirRecurse(dir);
+    scope (exit)
+        rmdirRecurse(dir);
+    version (Windows)
+        write(buildPath(dir, "probe-tool.exe"), "");
+    else
+        write(buildPath(dir, "probe-tool"), "");
+
+    const search = "" ~ pathSeparator ~ dir;
+    assert(inPath("probe-tool", search), "found by the name a caller spawns");
+    assert(!inPath("absent-tool", search));
+}
+
+/// The D compiler to use: explicit choice, `$DC`, or the first of
+/// `ldc2`/`dmd` found in `$PATH` (empty string when none). An explicit choice
+/// that doesn't resolve is reported to `report` and treated as "no compiler", so
+/// the caller's toolchain-missing skip fires instead of a raw
+/// `ProcessException` escaping from the spawn.
+string detectCompiler(string preferred, in ModeReport report = ModeReport.init) @safe
+{
+    import std.process : environment;
+
+    static bool resolves(string compiler) @safe
+    {
+        import std.algorithm.searching : canFind;
+        import std.file : exists, isFile;
+
+        return compiler.canFind('/') || compiler.canFind('\\')
+            ? compiler.exists && compiler.isFile : inPath(compiler);
+    }
+
+    string checked(string compiler, string origin) @safe
+    {
+
+        if (resolves(compiler))
+            return compiler;
+        warnTo(report, origin, ": compiler '", compiler, "' not found");
+        return null;
+    }
+
+    if (preferred.length)
+        return checked(preferred, "--compiler");
+    if (const dc = environment.get("DC", null))
+        return checked(dc, "$DC");
+    foreach (candidate; ["ldc2", "dmd"])
+        if (inPath(candidate))
+            return candidate;
+    return null;
+}
+
+/// `-I` roots derived from every discovered test's module-name ↔ file-path
+/// pair, after the extras: the user's, then the harness roots the binary
+/// reported. Never the runner's own root: the pinned runner's copy of the
+/// attributes is not the one the tested package was compiled against
+/// (process-model TRX4).
+string[] deriveImportPaths(in Test[] allTests, in string[] extra) @safe pure
+{
+    import std.algorithm.searching : canFind;
+
+    string[] roots = extra.dup;
+    foreach (ref test; allTests)
+    {
+        const root = sourceRootOf(test.location.file, probeModuleName(test));
+        if (root !is null && !roots.canFind(root))
+            roots ~= root;
+    }
+    return roots;
+}
+
+@("deriveImportPaths.uniqueRoots")
+@safe pure
+unittest
+{
+    import sparkles.test_runner.model : TestLocation;
+
+    const tests = [
+        Test(fullName: "pkg.a.__unittest_L1_C1", name: "a",
+            location: TestLocation(file: "src/pkg/a.d", line: 1, column: 1)),
+        Test(fullName: "pkg.b.__unittest_L1_C1", name: "b",
+            location: TestLocation(file: "src/pkg/b.d", line: 1, column: 1)),
+        Test(fullName: "other.c.__unittest_L1_C1", name: "c",
+            location: TestLocation(file: "lib2/src/other/c.d", line: 1, column: 1)),
+    ];
+    assert(deriveImportPaths(tests, ["extra"]) == ["extra", "src", "lib2/src"]);
+}
+
+/// The dub package root containing `sourceRoot`: the nearest ancestor
+/// directory (including itself) with a `dub.sdl`/`dub.json`, or `null`.
+private string findPackageRoot(string sourceRoot) @safe
+{
+    import std.file : exists;
+    import std.path : buildPath, dirName;
+
+    for (string dir = sourceRoot; dir.length && dir != "/" && dir != ".";
+        dir = dir.dirName)
+    {
+        if (buildPath(dir, "dub.sdl").exists || buildPath(dir, "dub.json").exists)
+            return dir;
+    }
+    return null;
+}
+
+/// Import paths reported by `dub describe` for the packages containing the
+/// derived source roots — this is how paths of registry dependencies (e.g.
+/// `expected`) are found. Best-effort: failures yield an empty list.
+private string[] dubDescribeImportPaths(in string[] sourceRoots, in DriverOptions options)
+{
+    import std.algorithm.iteration : filter;
+    import std.algorithm.searching : canFind;
+    import std.string : lineSplitter;
+
+    if (!inPath("dub"))
+        return null;
+
+    string[] packageRoots;
+    foreach (root; sourceRoots)
+    {
+        const packageRoot = findPackageRoot(root);
+        if (packageRoot !is null && !packageRoots.canFind(packageRoot))
+            packageRoots ~= packageRoot;
+    }
+
+    string[] paths;
+    foreach (packageRoot; packageRoots)
+    {
+        // The unittest configuration first: the tests' modules import what
+        // only it depends on (`sparkles:dql`'s integration schemas import
+        // `sparkles:input`). A package without one falls back to its default.
+        auto result = run(["dub", "describe", "--root", packageRoot, "--config=unittest",
+            "--data=import-paths", "--data-list"], options);
+        if (result.status != 0)
+            result = run(["dub", "describe", "--root", packageRoot,
+                "--data=import-paths", "--data-list"], options);
+        if (result.status != 0)
+            continue;
+        foreach (line; result.output.lineSplitter.filter!(l => l.length))
+            if (!paths.canFind(line))
+                paths ~= line;
+    }
+    return paths;
+}
+
+/++
+The language-semantics switches (`-preview=`, `-revert=`, `-transition=`) that
+`dub describe` reports for the packages containing the derived source roots.
+A program compiled outside dub needs them to see the packages' code the way
+their own builds do (`-preview=dip1000` changes attribute inference).
+Best-effort: failures yield an empty list.
++/
+private string[] dubDescribeLanguageFlags(in string[] sourceRoots, in DriverOptions options)
+{
+    import std.algorithm.searching : canFind, startsWith;
+    import std.string : lineSplitter;
+
+    if (!inPath("dub"))
+        return null;
+
+    string[] packageRoots;
+    foreach (root; sourceRoots)
+    {
+        const packageRoot = findPackageRoot(root);
+        if (packageRoot !is null && !packageRoots.canFind(packageRoot))
+            packageRoots ~= packageRoot;
+    }
+
+    string[] flags;
+    foreach (packageRoot; packageRoots)
+    {
+        const result = run(["dub", "describe", "--root", packageRoot,
+            "--data=dflags", "--data-list"], options);
+        if (result.status != 0)
+            continue;
+        foreach (line; result.output.lineSplitter)
+            if ((line.startsWith("-preview=") || line.startsWith("-revert=")
+                    || line.startsWith("-transition=")) && !flags.canFind(line))
+                flags ~= line.idup;
+    }
+    return flags;
+}
+
+/// Slices the bodies of `tests` out of their source files. Files are read
+/// relative to the working directory — the same place the compiler resolved
+/// them from when the test build was created.
+ExtractedTest[] extractTests(in Test[] tests)
+{
+    import std.conv : text;
+    import std.file : readText;
+
+    string[string] sources;
+    ExtractedTest[] extracted;
+    foreach (ref test; tests)
+    {
+        auto source = test.location.file in sources;
+        if (source is null)
+        {
+            sources[test.location.file] = readText(test.location.file);
+            source = test.location.file in sources;
+        }
+
+        const body_ = extractUnittestBody(*source, test.location.line);
+        if (body_ is null)
+            throw new Exception(text("could not extract the unittest at ",
+                test.location.file, ":", test.location.line, " (", test.name, ")"));
+
+        extracted ~= ExtractedTest(
+            name: test.name,
+            // Strip aggregate qualifiers so a test nested in a struct/class emits
+            // `import pkg.mod;`, not `import pkg.mod.Aggregate;` (mirrors the @ctfe
+            // path, which also uses probeModuleName).
+            moduleName: probeModuleName(test),
+            file: test.location.file,
+            line: test.location.line,
+            functionAttributes: test.traits.functionAttributes,
+            body_: body_,
+        );
+    }
+    return extracted;
+}
+
+/// A fresh scratch directory for the generated program.
+private string makeWorkDir(string flavor)
+{
+    import std.conv : text;
+    import std.file : mkdirRecurse, tempDir;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+
+    const dir = probeRoot.length ? buildPath(probeRoot, flavor) : buildPath(tempDir,
+        text("sparkles-test-runner-", flavor, "-", thisProcessID));
+    mkdirRecurse(dir);
+    return dir;
+}
+
+/// Runs `command`, echoing it when `verbose`, and returns (status, output).
+/// A spawn failure (compiler binary vanished between the `detectCompiler`
+/// check and here, or an unlaunchable absolute path) becomes a failed result
+/// instead of a `ProcessException` stack trace.
+private auto run(const(string)[] command, in DriverOptions options)
+{
+    import std.process : execute, ProcessException;
+
+    if (options.verbose)
+    {
+        import std.string : join;
+
+        warn(options, "$ ", command.join(" "));
+    }
+    try
+        return execute(command);
+    catch (ProcessException e)
+        return typeof(execute(command))(-1,
+            "failed to launch '" ~ command[0] ~ "': " ~ e.msg);
+}
+
+/// The extra `-i=<pattern>` flags requested with `--include-import` (e.g.
+/// `--include-import=std.ascii` to compile a std module in when an extracted
+/// test needs one of its non-template functions).
+private string[] includeFlags(in DriverOptions options) @safe pure
+{
+    import std.algorithm.iteration : map;
+    import std.array : array;
+
+    return options.includeImports.map!(p => "-i=" ~ p).array;
+}
+
+/// The `-i=<module>` flags derived from the tests being extracted: one per
+/// distinct module that owns a test, minus the ones whose tests all opted out
+/// with `selfContained`.
+///
+/// Compiling the owning module in is the useful default. Without it an
+/// extracted program links against nothing but templates, so a `@betterC`
+/// test that calls any ordinary function of the very module it lives in —
+/// the common case — fails at link time with an undefined reference, which
+/// made the marker attribute effectively decorative for such tests.
+///
+/// The opt-out is per test (`@betterC(selfContained: true)`) rather than
+/// global because it is a property of the test: a module that is not itself
+/// `-betterC`-codegen-clean can still host a template-only test, and that
+/// self-containment is exactly what such a test asserts. `--no-auto-include`
+/// disables the whole derivation for a one-off run.
+string[] autoIncludeFlags(in Test[] extracted, in DriverOptions options) @safe pure
+{
+    import std.algorithm.searching : canFind;
+
+    if (options.noAutoInclude)
+        return null;
+
+    string[] flags;
+    foreach (ref test; extracted)
+    {
+        if (test.traits.selfContained)
+            continue;
+        const flag = "-i=" ~ test.moduleName;
+        if (!flags.canFind(flag))
+            flags ~= flag;
+    }
+    return flags;
+}
+
+@("driver.autoIncludeFlags.oneFlagPerOwningModule")
+@safe pure
+unittest
+{
+    static Test at(string fullName, bool selfContained = false)
+    {
+        Test t;
+        t.fullName = fullName;
+        t.traits.selfContained = selfContained;
+        return t;
+    }
+
+    // One flag per distinct module, in first-seen order, deduplicated.
+    assert(autoIncludeFlags([
+        at("pkg.a.__unittest_L1_C1"),
+        at("pkg.b.__unittest_L2_C1"),
+        at("pkg.a.__unittest_L3_C1"),
+    ], DriverOptions.init) == ["-i=pkg.a", "-i=pkg.b"]);
+
+    // A self-contained test contributes nothing — that is what lets a module
+    // which cannot compile under -betterC still host a template-only test.
+    assert(autoIncludeFlags([
+        at("pkg.a.__unittest_L1_C1", true),
+        at("pkg.b.__unittest_L2_C1"),
+    ], DriverOptions.init) == ["-i=pkg.b"]);
+
+    // ... but only when *every* test in that module opted out.
+    assert(autoIncludeFlags([
+        at("pkg.a.__unittest_L1_C1", true),
+        at("pkg.a.__unittest_L2_C1"),
+    ], DriverOptions.init) == ["-i=pkg.a"]);
+
+    // --no-auto-include restores the strict template-only behavior.
+    assert(autoIncludeFlags(
+        [at("pkg.a.__unittest_L1_C1")],
+        DriverOptions(noAutoInclude: true)) == []);
+}
+
+/// The compile context's flags: `-I` for the derived source roots, the
+/// harness roots, `dub describe`d dependency paths unless `noDub`, and the
+/// user's extras, then the string import paths, versions and flags
+/// (process-model TRX1–TRX4).
+private string[] allImportFlags(in Test[] allTests, in DriverOptions options)
+{
+    import std.algorithm.iteration : map;
+    import std.algorithm.searching : canFind;
+    import std.array : array;
+    import std.path : baseName;
+
+    auto roots = deriveImportPaths(allTests, options.importPaths ~ options.harnessRoots);
+    if (!options.noDub)
+        foreach (path; dubDescribeImportPaths(roots, options))
+            if (!roots.canFind(path))
+                roots ~= path;
+    const ldc = detectCompiler(options.compiler, options.report).baseName.canFind("ldc");
+    return roots.map!(p => "-I" ~ p).array
+        ~ options.stringImportPaths.map!(p => "-J" ~ p).array
+        ~ options.versions.map!(v => (ldc ? "-d-version=" : "-version=") ~ v).array
+        ~ options.dflags.dup;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// @ctfe
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The outcome of evaluating `@ctfe` tests through a probe compile.
+struct CtfeOutcome
+{
+    bool skipped; /// no D compiler found — reported but not a failure
+    bool succeeded; /// the probe compiled: every selected test passed
+    string[] failedNames; /// failing tests attributed from the compiler errors
+    string output; /// full compiler output (`__ctfeWrite` text, errors, …)
+}
+
+/// The actual module containing `test`: `test.moduleName` with aggregate
+/// qualifiers stripped (a nested test's `fullName` includes its aggregate),
+/// found by peeling trailing components until the name matches the file path.
+string probeModuleName(const Test test) @safe pure nothrow
+{
+    string candidate = test.moduleName;
+    while (candidate.length)
+    {
+        if (sourceRootOf(test.location.file, candidate) !is null)
+            return candidate;
+        size_t cut = 0;
+        foreach_reverse (i, c; candidate)
+            if (c == '.')
+            {
+                cut = i;
+                break;
+            }
+        if (!cut)
+            break;
+        candidate = candidate[0 .. cut];
+    }
+    return test.moduleName;
+}
+
+@("probeModuleName.nestedAndPlain")
+@safe pure
+unittest
+{
+    import sparkles.test_runner.model : TestLocation;
+
+    const plain = Test(fullName: "pkg.mod.__unittest_L1_C1", name: "t",
+        location: TestLocation(file: "src/pkg/mod.d", line: 1, column: 1));
+    assert(probeModuleName(plain) == "pkg.mod");
+
+    const nested = Test(fullName: "pkg.mod.Host.__unittest_L9_C1", name: "t",
+        location: TestLocation(file: "src/pkg/mod.d", line: 9, column: 1));
+    assert(probeModuleName(nested) == "pkg.mod");
+
+    // Unresolvable path ↔ name pairs fall back to the raw module name.
+    const odd = Test(fullName: "pkg.mod.__unittest_L1_C1", name: "t",
+        location: TestLocation(file: "elsewhere.d", line: 1, column: 1));
+    assert(probeModuleName(odd) == "pkg.mod");
+
+    // A Windows path names the same module.
+    const windows = Test(fullName: "pkg.mod.Host.__unittest_L9_C1", name: "t",
+        location: TestLocation(file: `src\pkg\mod.d`, line: 9, column: 1));
+    assert(probeModuleName(windows) == "pkg.mod");
+    assert(deriveImportPaths([windows], null) == [`src`]);
+}
+
+/// Failing test names attributed from probe-compile output: the display-name
+/// argument of `ctfePassed!(…, "name")` on `error instantiating` lines.
+string[] parseCtfeFailures(string output) @safe pure
+{
+    import std.algorithm.searching : canFind;
+    import std.string : indexOf, lineSplitter;
+
+    string[] names;
+    foreach (line; output.lineSplitter)
+    {
+        if (!line.canFind("error instantiating"))
+            continue;
+        auto at = line.indexOf("ctfePassed!(");
+        if (at < 0)
+            continue;
+        const open = line.indexOf('"', at);
+        if (open < 0)
+            continue;
+        size_t close = open + 1;
+        while (close < line.length && !(line[close] == '"' && line[close - 1] != '\\'))
+            close++;
+        if (close >= line.length)
+            continue;
+        const name = line[open + 1 .. close];
+        if (!names.canFind(name))
+            names ~= name;
+    }
+    return names;
+}
+
+@("parseCtfeFailures.trailLines")
+@safe pure
+unittest
+{
+    enum output = "src/m.d(12,5): Error: boom\n" ~
+        "probe.d(60,27): Error: template instance " ~
+        "`sparkles_test_runner_ctfe.ctfePassed!(__unittest_L12_C1, \"a.one\")` " ~
+        "error instantiating\n" ~
+        "probe.d(60,13):        while evaluating: `static assert(ctfePassed!" ~
+        "(__unittest_L12_C1, \"a.one\"))`\n" ~
+        "probe.d(64,27): Error: template instance " ~
+        "`sparkles_test_runner_ctfe.ctfePassed!(__unittest_L30_C1, \"b.two\")` " ~
+        "error instantiating\n";
+    assert(parseCtfeFailures(output) == ["a.one", "b.two"]);
+    assert(parseCtfeFailures("all fine") == []);
+}
+
+/// Evaluates the given `@ctfe` tests: generates a probe program selecting
+/// exactly those tests, and compiles it — together with the tests' module
+/// sources — with `-o- -unittest` (semantic analysis only, so CTFE runs but
+/// nothing is codegen'd or linked). When `traceFile` is given, LDC's
+/// `-ftime-trace` flags are added and the trace is written there.
+CtfeOutcome runCtfeTests(
+    in Test[] ctfeTests, in Test[] allTests, in DriverOptions options,
+    string traceFile = null)
+{
+    import std.algorithm.searching : canFind;
+    import std.file : mkdirRecurse, write;
+    import std.path : buildPath, dirName;
+
+    CtfeOutcome outcome;
+
+    const compiler = detectCompiler(options.compiler, options.report);
+    if (!compiler.length)
+    {
+        outcome.skipped = true;
+        return outcome;
+    }
+
+    CtfeTarget[] targets;
+    string[] moduleFiles;
+    foreach (ref test; ctfeTests)
+    {
+        targets ~= CtfeTarget(
+            moduleName: probeModuleName(test),
+            file: test.location.file,
+            line: test.location.line,
+            name: test.name,
+        );
+        if (!moduleFiles.canFind(test.location.file))
+            moduleFiles ~= test.location.file;
+    }
+
+    const workDir = makeWorkDir("ctfe");
+    const sourceFile = buildPath(workDir, "ctfe_tests.d");
+    write(sourceFile, generateCtfeProgram(targets));
+
+    string[] traceFlags;
+    if (traceFile.length)
+    {
+        try
+            mkdirRecurse(traceFile.dirName);
+        catch (Exception e)
+        {
+            // An uncreatable trace directory must not escape the unittest hook
+            // as a raw FileException stack trace; fail readably (the caller
+            // prints `output` and recognizes the `--ctfe-trace:` prefix as an
+            // environment problem, not a test failure).
+            import std.conv : text;
+
+            outcome.output = text("--ctfe-trace: cannot create '",
+                traceFile.dirName, "': ", e.msg, "\n");
+            outcome.succeeded = false;
+            return outcome;
+        }
+        traceFlags = ["-ftime-trace", "-ftime-trace-file=" ~ traceFile,
+            "--ftime-trace-granularity=0"];
+    }
+
+    // -verrors=0 lifts the default 20-error limit: parseCtfeFailures attributes
+    // failures from the `error instantiating` trail lines, and a truncated
+    // trail would report the cut-off failing tests as passed.
+    const compile = run(
+        [compiler, "-o-", "-unittest", "-checkaction=context", "-verrors=0"]
+            ~ traceFlags ~ includeFlags(options)
+            ~ allImportFlags(allTests, options) ~ moduleFiles ~ [sourceFile],
+        options);
+
+    outcome.succeeded = compile.status == 0;
+    outcome.output = compile.output;
+    if (!outcome.succeeded)
+        outcome.failedNames = parseCtfeFailures(compile.output);
+    if (options.keep)
+        say(options, "generated files kept in ", workDir);
+    return outcome;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// --better-c
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Extracts the `@betterC` tests, compiles them with `-betterC` (no
+/// druntime), runs the result, and reports.
+DriverOutcome runBetterCTests(Test[] betterCTests, Test[] allTests, in DriverOptions options)
+{
+    import std.array : array;
+    import std.algorithm.iteration : map;
+    import std.file : write;
+    import std.path : buildPath;
+
+    DriverOutcome outcome;
+    outcome.testCount = betterCTests.length;
+    if (!betterCTests.length)
+    {
+        say(options, "no @betterC tests found");
+        return outcome;
+    }
+
+    const compiler = detectCompiler(options.compiler, options.report);
+    if (!compiler.length)
+    {
+        warn(options, "skipping @betterC tests: no D compiler found (set $DC or --compiler)");
+        outcome.skipped = true;
+        return outcome;
+    }
+
+    const workDir = makeWorkDir("betterc");
+    const sourceFile = buildPath(workDir, "betterc_tests.d");
+    const binary = buildPath(workDir, "betterc_tests");
+    write(sourceFile, generateBetterCProgram(extractTests(betterCTests)));
+
+    const importFlags = allImportFlags(allTests, options);
+    // Each test's own module is compiled in by default (see
+    // `autoIncludeFlags`), so a test can call its module's ordinary functions
+    // and not just its templates. Anything beyond that — a sibling module, or
+    // a std module such as `--include-import=std.ascii` — is opt-in, and every
+    // module compiled in must be betterC-codegen-clean.
+    // `-checkaction=C` states the assert action the tests are written against
+    // rather than inheriting it: a failed `assert` goes to the C library's,
+    // which prints the message and aborts. `-betterC` already implies this
+    // (verified: identical output with and without the flag), but the helpers
+    // in `sparkles.base.buffer` reach for `assert(false, msg)` precisely
+    // *because* `throw` is illegal here, so the pairing should be visible at
+    // the compile site instead of resting on another switch's default.
+    const compile = run(
+        [compiler, "-betterC", "-checkaction=C", "-of=" ~ binary]
+            ~ autoIncludeFlags(betterCTests, options) ~ includeFlags(options)
+            ~ importFlags ~ [sourceFile],
+        options);
+    if (compile.status != 0)
+    {
+        warn(options, compile.output);
+        warn(options, "failed to compile the extracted @betterC tests (see above)");
+        outcome.succeeded = false;
+        return outcome;
+    }
+
+    const result = run([binary], options);
+    sayRaw(options, result.output);
+    outcome.succeeded = result.status == 0;
+    if (options.keep)
+        say(options, "generated files kept in ", workDir);
+    return outcome;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// --wasm
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The WASI target of `--wasm` (docs/specs/test-runner/SPEC.md, `@wasm`).
+enum wasiTriple = "wasm32-unknown-wasip1";
+
+/// The variable naming an LDC that has the WASI runtime, when `$DC` does not.
+enum wasiCompilerVariable = "SPARKLES_WASI_LDC";
+
+/++
+The compiler for `--wasm`: `--compiler`, then `$SPARKLES_WASI_LDC`, then the
+usual choice (`$DC`, `ldc2`); empty when none resolves.
++/
+private string wasiCompiler(string preferred, in ModeReport report) @safe
+{
+    import std.process : environment;
+
+    if (!preferred.length)
+        if (const wasi = environment.get(wasiCompilerVariable, null))
+            return detectCompiler(wasi, report);
+    return detectCompiler(preferred, report);
+}
+
+/++
+The `-i` flags of a `--wasm` program. With the full druntime and Phobos there
+is no codegen restriction, so every module the tests import is compiled in
+(`-i`, which leaves out druntime and Phobos), except the owning modules of
+tests that are all `selfContained`. `--no-auto-include` compiles in nothing.
++/
+string[] wasiIncludeFlags(in Test[] extracted, in DriverOptions options) @safe pure
+{
+    import std.algorithm.searching : all, canFind;
+
+    if (options.noAutoInclude)
+        return null;
+    string[] flags = ["-i"];
+    foreach (ref test; extracted)
+    {
+        const name = probeModuleName(test);
+        const exclude = "-i=-" ~ name;
+        if (!flags.canFind(exclude)
+            && extracted.all!(t => probeModuleName(t) != name || t.traits.selfContained))
+            flags ~= exclude;
+    }
+    return flags;
+}
+
+@("driver.wasiIncludeFlags.everythingButSelfContainedModules")
+@safe pure
+unittest
+{
+    static Test at(string fullName, bool selfContained = false)
+    {
+        Test t;
+        t.fullName = fullName;
+        t.traits.selfContained = selfContained;
+        return t;
+    }
+
+    assert(wasiIncludeFlags([at("pkg.a.__unittest_L1_C1")], DriverOptions.init) == ["-i"]);
+    assert(wasiIncludeFlags([
+        at("pkg.a.__unittest_L1_C1", true),
+        at("pkg.b.__unittest_L2_C1", true),
+        at("pkg.b.__unittest_L3_C1"),
+    ], DriverOptions.init) == ["-i", "-i=-pkg.a"]);
+    assert(wasiIncludeFlags([at("pkg.a.__unittest_L1_C1")],
+        DriverOptions(noAutoInclude: true)) is null);
+}
+
+/// Extracts the `@wasm` tests, compiles them for `wasm32-unknown-wasip1` with
+/// the full druntime and Phobos of an LDC that has the WASI runtime (linked
+/// through that runtime's compiler driver, so no `wasm-ld` is needed), and
+/// runs the program under `wasmtime`. A missing runtime or `wasmtime` skips,
+/// naming what is missing.
+DriverOutcome runWasmTests(Test[] wasmTests, Test[] allTests, in DriverOptions options)
+{
+    import std.file : write;
+    import std.path : buildPath;
+
+    DriverOutcome outcome;
+    outcome.testCount = wasmTests.length;
+    if (!wasmTests.length)
+    {
+        say(options, "no @wasm tests found");
+        return outcome;
+    }
+
+    const compiler = wasiCompiler(options.compiler, options.report);
+    if (!compiler.length)
+    {
+        warn(options, "skipping @wasm tests: no D compiler found (set $", wasiCompilerVariable,
+            ", --compiler or $DC)");
+        outcome.skipped = true;
+        return outcome;
+    }
+    if (!inPath("wasmtime"))
+    {
+        warn(options, "skipping @wasm tests: wasmtime not found on PATH");
+        outcome.skipped = true;
+        return outcome;
+    }
+
+    const workDir = makeWorkDir("wasi");
+    // A compiler without the WASI runtime fails this, not the tests.
+    const probeSource = buildPath(workDir, "probe.d");
+    write(probeSource, "void main() {}\n");
+    const probe = run([compiler, "-mtriple=" ~ wasiTriple, "-of=" ~ buildPath(workDir, "probe.wasm"),
+        probeSource], options);
+    if (probe.status != 0)
+    {
+        warn(options, "skipping @wasm tests: ", compiler, " cannot link a ", wasiTriple,
+            " program (no WASI runtime; set $", wasiCompilerVariable, "):\n", probe.output);
+        outcome.skipped = true;
+        return outcome;
+    }
+
+    const sourceFile = buildPath(workDir, "wasm_tests.d");
+    const wasmFile = buildPath(workDir, "wasm_tests.wasm");
+    write(sourceFile, generateWasiProgram(extractTests(wasmTests)));
+    const compile = run(
+        [compiler, "-mtriple=" ~ wasiTriple, "-of=" ~ wasmFile]
+            ~ wasiIncludeFlags(wasmTests, options) ~ includeFlags(options)
+            ~ (options.noDub ? null : dubDescribeLanguageFlags(
+                deriveImportPaths(wasmTests, options.importPaths), options))
+            ~ allImportFlags(allTests, options) ~ [sourceFile],
+        options);
+    if (compile.status != 0)
+    {
+        warn(options, compile.output);
+        warn(options, "failed to compile the extracted @wasm tests for ", wasiTriple, " (see above)");
+        outcome.succeeded = false;
+        return outcome;
+    }
+
+    const result = run(["wasmtime", "run", wasmFile], options);
+    sayRaw(options, result.output);
+    outcome.succeeded = result.status == 0;
+    if (options.keep)
+        say(options, "generated files kept in ", workDir);
+    return outcome;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// --wasm-bare
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Extracts the `@wasm` tests, cross-compiles them to bare `wasm32` with
+/// `-betterC` and LDC's internal linker, and runs them with the first
+/// available WebAssembly-capable runtime (`node`, `deno`, `bun`, or
+/// `wasmtime`).
+DriverOutcome runWasmBareTests(Test[] wasmTests, Test[] allTests, in DriverOptions options)
+{
+    import std.algorithm.iteration : map;
+    import std.algorithm.searching : canFind;
+    import std.array : array;
+    import std.conv : text;
+    import std.file : write;
+    import std.path : buildPath;
+
+    DriverOutcome outcome;
+    outcome.testCount = wasmTests.length;
+    if (!wasmTests.length)
+    {
+        say(options, "no @wasm tests found");
+        return outcome;
+    }
+
+    // llvm_trap + -mtriple make this LDC-specific.
+    const compiler = detectCompiler(options.compiler, options.report);
+    if (!compiler.canFind("ldc"))
+    {
+        warn(options, "skipping @wasm tests: an LDC compiler is required (set $DC or --compiler)");
+        outcome.skipped = true;
+        return outcome;
+    }
+
+    const workDir = makeWorkDir("wasm");
+    const sourceFile = buildPath(workDir, "wasm_tests.d");
+    const wasmFile = buildPath(workDir, "wasm_tests.wasm");
+    const shimFile = buildPath(workDir, "wasm_tests.js");
+    const extracted = extractTests(wasmTests);
+    write(sourceFile, generateWasmBareProgram(extracted));
+    write(shimFile, generateWasmBareJsShim(extracted, wasmFile));
+
+    const importFlags = allImportFlags(allTests, options);
+    const compile = run(
+        [compiler, "-mtriple=wasm32-unknown-unknown-wasm", "-betterC",
+            // LDC's own LLD: bare wasm32 has no C compiler driver to link with
+            "-link-internally",
+            // reactor-style module: no _start, tests are individual exports
+            "-L--no-entry",
+            // `export` alone does not make wasm-ld export a symbol; only some
+            // LDC configurations add this switch themselves
+            "-L--export-dynamic",
+            "-of=" ~ wasmFile]
+            ~ autoIncludeFlags(wasmTests, options) ~ includeFlags(options)
+            ~ importFlags ~ [sourceFile],
+        options);
+    if (compile.status != 0)
+    {
+        warn(options, compile.output);
+        warn(options, "failed to cross-compile the extracted @wasm tests (see above)");
+        warn(options, "note: with a stock LDC, the import chain of a @wasm test's " ~
+            "module must avoid druntime headers that do not support wasm32;\n" ~
+            "point --compiler (or $DC) at a wasm-enabled LDC build for full " ~
+            "druntime/Phobos support");
+        outcome.succeeded = false;
+        return outcome;
+    }
+
+    const(string)[] runCommand;
+    if (inPath("node"))
+        runCommand = ["node", shimFile];
+    else if (inPath("deno"))
+        runCommand = ["deno", "run", "--allow-read", shimFile];
+    else if (inPath("bun"))
+        runCommand = ["bun", shimFile];
+    else if (inPath("wasmtime"))
+    {
+        // No JS runtime: invoke each exported test directly.
+        foreach (i, ref test; extracted)
+        {
+            const result = run(["wasmtime", "run",
+                "--invoke", text("run_test_", i), wasmFile], options);
+            const ok = result.status == 0;
+            say(options, ok ? " ✓ " : " ✗ ", test.name,
+                " [", test.file, ":", test.line, "]");
+            if (!ok)
+            {
+                sayRaw(options, result.output);
+                outcome.succeeded = false;
+            }
+        }
+        if (options.keep)
+            say(options, "generated files kept in ", workDir);
+        return outcome;
+    }
+    else
+    {
+        warn(options, "skipping @wasm tests: no WebAssembly runtime found " ~
+            "(looked for node, deno, bun, wasmtime)");
+        outcome.skipped = true;
+        return outcome;
+    }
+
+    const result = run(runCommand, options);
+    sayRaw(options, result.output);
+    outcome.succeeded = result.status == 0;
+    if (options.keep)
+        say(options, "generated files kept in ", workDir);
+    return outcome;
+}
