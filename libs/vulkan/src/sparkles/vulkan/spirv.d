@@ -12,6 +12,12 @@ undefined behaviour that happens to work. Building the words in CTFE puts a
 correctly aligned `uint[]` in `.rodata` instead, at no runtime cost.
 */
 immutable(uint)[] spirvWords(string bytes) @safe pure nothrow
+    // Strongly pure, so its fresh array converts to `immutable` as it is.
+    // `.idup` would copy it, which CTFE does element by element: about 1.6 s
+    // for the canvas shaders, in every compile that imports them.
+    => assembleWords(bytes);
+
+private uint[] assembleWords(string bytes) @safe pure nothrow
 {
     assert(bytes.length % 4 == 0, "SPIR-V is a stream of 32-bit words");
 
@@ -21,7 +27,7 @@ immutable(uint)[] spirvWords(string bytes) @safe pure nothrow
             | (cast(uint) cast(ubyte) bytes[i * 4 + 1]) << 8
             | (cast(uint) cast(ubyte) bytes[i * 4 + 2]) << 16
             | (cast(uint) cast(ubyte) bytes[i * 4 + 3]) << 24;
-    return words.idup;
+    return words;
 }
 
 /// SPIR-V's magic number, the first word of every module: a corrupt or
