@@ -695,19 +695,14 @@ PlanExpected!(PackagePlan, SelectionError) planPackages(string repoRoot, RecipeR
         dependencies: options.dependencies, dependents: options.dependents);
     if (options.since)
     {
-        import sparkles.build_primitives.resolve.tree : systemTree;
-
-        // One tree for every resolution: each recipe is read through it.
-        auto tree = systemTree();
         auto since = gitChangesSince(repoRoot, options.sinceRef);
         if (since.hasError)
             return planErr!PackagePlan(since.error);
         plan.since = move(since.value);
 
-        auto inputs = workspaceInputSets(repoRoot, tree, plan.graph, workspace.value, options, hostTokens);
-        claimLinks(repoRoot, inputs);
-        plan.requests = packageRequests(repoRoot, tree, plan.graph, inputs, role, options, hostTokens);
-        request.changes = seedsByClaims(inputs, plan.graph, plan.requests, plan.since.changes);
+        auto claims = claimsOf(repoRoot, workspace.value, plan.graph, role, options, hostTokens);
+        plan.requests = claims.requests;
+        request.changes = seedsByClaims(claims.inputs, plan.graph, plan.requests, plan.since.changes);
     }
 
     auto selection = selectPackages(plan.graph, request, hostTokens);
@@ -715,6 +710,76 @@ PlanExpected!(PackagePlan, SelectionError) planPackages(string repoRoot, RecipeR
         return planErr!PackagePlan(selection.error);
     plan.selection = move(selection.value);
     return planOk!SelectionError(move(plan));
+}
+
+/**
+What selecting from one change set after another needs (BGW15): the
+package graph, its input sets with their link claims, and one request per
+package. A watch derives it once, and again only when a recipe or another
+workspace input changes.
+*/
+final class ClaimPlan
+{
+    PackageGraph graph; ///
+    InputSets inputs;   ///
+    Request[] requests; /// one per package, by graph index
+}
+
+/**
+The claim plan of the workspace under `repoRoot` for `role`, as
+$(LREF planPackages) derives it for `--since`.
+*/
+PlanExpected!(ClaimPlan, SelectionError) claimPlan(string repoRoot, RecipeRole role,
+    const FocusOptions options, scope const(string)[] hostTokens) @safe
+{
+    import std.conv : text;
+    import core.lifetime : move;
+    import sparkles.build_primitives.workspace.discovery : readWorkspaceAt;
+    import sparkles.build_primitives.workspace.package_graph : buildPackageGraph;
+
+    auto workspace = readWorkspaceAt(repoRoot);
+    if (workspace.hasError)
+        return planErr!ClaimPlan(SelectionError(SelectionErrorKind.discoveryFailed, text(workspace.error)));
+    auto graph = buildPackageGraph(workspace.value.rootName, workspace.value.recipes, role, hostTokens);
+    if (graph.hasError)
+        return planErr!ClaimPlan(SelectionError(SelectionErrorKind.discoveryFailed, text(graph.error)));
+    auto plan = claimsOf(repoRoot, workspace.value, graph.value, role, options, hostTokens);
+    plan.graph = move(graph.value);
+    return planOk!SelectionError(plan);
+}
+
+/**
+The packages a change to the repository-relative `changed` paths selects
+(BGW12), with their closures as `options` asks: an empty selection when no
+request holds a changed path.
+*/
+PlanExpected!(Selection, SelectionError) selectChanged(ClaimPlan plan, scope const(string)[] changed,
+    const FocusOptions options, scope const(string)[] hostTokens) @safe
+{
+    SelectionRequest request = SelectionRequest(null, true, dependencies: options.dependencies,
+        dependents: options.dependents);
+    request.changes = seedsByClaims(plan.inputs, plan.graph, plan.requests, changed);
+    bool any;
+    foreach (reasons; request.changes.byPackage)
+        any |= reasons.length > 0;
+    if (!any)
+        return planOk!SelectionError(Selection.init);
+    return selectPackages(plan.graph, request, hostTokens);
+}
+
+// The sets, link claims and requests of `graph`, read from `workspace`.
+private ClaimPlan claimsOf(string repoRoot, const ref Workspace workspace, const ref PackageGraph graph,
+    RecipeRole role, const FocusOptions options, scope const(string)[] hostTokens) @safe
+{
+    import sparkles.build_primitives.resolve.tree : systemTree;
+
+    // One tree for every resolution: each recipe is read through it.
+    auto tree = systemTree();
+    auto plan = new ClaimPlan;
+    plan.inputs = workspaceInputSets(repoRoot, tree, graph, workspace, options, hostTokens);
+    claimLinks(repoRoot, plan.inputs);
+    plan.requests = packageRequests(repoRoot, tree, graph, plan.inputs, role, options, hostTokens);
+    return plan;
 }
 
 /**
