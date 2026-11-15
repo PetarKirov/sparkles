@@ -79,6 +79,7 @@ canonical writer stays the way to produce a document from a typed value.
 | SDS4  | Path-only selection is `@safe pure nothrow @nogc` and allocates nothing                      |
 | SDS5  | Editor operations accept a selection and apply once per target                               |
 | SDS6  | A leading `..` lets a path's first step match at any depth below the start node              |
+| SDS7  | A selector's ranges own its parsed state with it, so they outlive the selector               |
 
 ## 1. Model
 
@@ -353,6 +354,21 @@ every repository recipe again after an incremental re-parse, which shares
 its unchanged cells; a fixture nested forty deep. _Violation:_ a missing,
 extra, repeated or reordered target.
 
+**SDS7 — A selector's ranges outlive it.** A selector's parsed state (its
+path, the DQL engine and the filter) is one reference-counted block. Each
+copy of the selector and each range it returns is an owner, and the last
+owner frees the block. So a range may outlive the selector it came from, as
+in `foreach (n; SdlSelector.parse(…).value.nodes(root))`, where the
+temporary selector is gone before the loop runs. The owners' destructors
+are `pure`: dmd infers no `scope` for a parameter whose destructor is
+impure, and without that inference `map` and `filter` would refuse a range
+that starts at a node of a local document. The count is not atomic, so a
+selector and its ranges stay on one thread. _Oracle:_ a `foreach` over a
+temporary selector's node and attribute ranges, the owner count while a
+range outlives its selector, and the selector tests under AddressSanitizer.
+_Violation:_ a range that reads a freed state, or a state freed while an
+owner remains.
+
 ## 4. Requirements
 
 **SDE1 — Edits stay in their range.** For every operation, every byte
@@ -620,7 +636,7 @@ struct SdlPath
     SdlNodeSelection nodes(SdlNode start) const;                         // @nogc
     SdlAttributeSelection!SdlNodeSelection attributes(SdlNode start) const;
 }
-struct SdlSelector // copies share one reference-counted state; ranges borrow it
+struct SdlSelector // copies and ranges share one reference-counted state (SDS7)
 {
     static Expected!(SdlSelector, SdlSelectorError) parse(const(char)[] path,
         const(char)[] filter = null);

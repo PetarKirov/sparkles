@@ -446,26 +446,13 @@ struct SdlSelectorError
 the DQL engine and the filter that lives in it, is parsed once into one
 reference-counted block off the collected heap: copies of a selector are
 owners of the same block, freed with the last of them, so a selector binds
-like any value (`auto s = SdlSelector.parse(…).value;`). The count is not
-atomic, so copies are for one thread. The ranges it returns borrow the
-selector, so keep it in a variable while they are used: dip1000 rejects a
-range declared from a temporary selector, but not a `foreach` over
-`SdlSelector.parse(…).value.nodes(root)`, whose temporary dies before the
-loop runs (a range checks, as far as it can, that its selector is alive).
-(An owning range would need a destructor, and dip1000 infers no `scope`
-for a parameter of such a type, so Phobos adaptors such as `map` would
-refuse it a borrowed start node.) */
+like any value (`auto s = SdlSelector.parse(…).value;`). The ranges it
+returns are owners too, so a range outlives the selector it came from:
+`foreach (n; SdlSelector.parse(…).value.nodes(root))` iterates after the
+temporary selector is gone. The count is not atomic, so copies and ranges
+are for one thread. */
 struct SdlSelector
 {
-    private static struct State
-    {
-        size_t owners;
-        const(char)[] text; // the path's own bytes, freed with the state
-        SdlPath path;       // over `text`
-        DqlEngine engine;
-        DqlFilter filter;
-    }
-
     private State* _state;
 
     /** Validates `path` and parses `filter`, which may be empty to keep
@@ -485,54 +472,10 @@ struct SdlSelector
     }
 
     // A copy is one more owner.
-    this(this) scope @safe pure nothrow @nogc
-    {
-        if (_state !is null)
-            _state.owners++;
-    }
+    this(this) scope @safe pure nothrow @nogc { retain(_state); }
 
     // The last owner frees the state.
-    ~this() scope @safe nothrow @nogc
-    {
-        if (_state is null || --_state.owners)
-            return;
-        () @trusted { release(_state); }();
-        _state = null;
-    }
-
-    /** A state over a copy of `path`, which has validated, with the caller
-    its one owner. The collector scans it: the DQL engine keeps compiled
-    regular expressions on the collected heap. */
-    private static State* allocate(scope const(char)[] path) @trusted nothrow @nogc
-    {
-        import core.exception : onOutOfMemoryError;
-        import core.lifetime : emplace;
-        import core.memory : GC, pureMalloc;
-
-        auto state = cast(State*) pureMalloc(State.sizeof);
-        auto text = cast(char*) pureMalloc(path.length);
-        if (state is null || text is null)
-            onOutOfMemoryError();
-        emplace(state);
-        GC.addRange(state, State.sizeof, typeid(State));
-        text[0 .. path.length] = path[];
-        state.owners = 1;
-        state.text = text[0 .. path.length];
-        state.path = SdlPath.parse(state.text).value;
-        return state;
-    }
-
-    // Destroys and frees `state`, whose last owner is gone.
-    private static void release(State* state) @system nothrow @nogc
-    {
-        import core.memory : GC, pureFree;
-
-        auto text = state.text;
-        destroy!false(*state);
-        GC.removeRange(state);
-        pureFree(state);
-        pureFree(cast(void*) text.ptr);
-    }
+    ~this() scope @safe pure nothrow @nogc { drop(_state); }
 
     /// The selection path.
     SdlPath path() const @safe pure nothrow @nogc
@@ -545,38 +488,99 @@ struct SdlSelector
         => evalDql(_state.engine, _state.filter, SdlNodeResolver(node));
 
     /// The nodes the path selects below `start` that pass the filter.
-    SdlSelectedNodes nodes(return scope SdlNode start) return @safe
+    SdlSelectedNodes nodes(return scope SdlNode start) @safe
     in (_state !is null, "a selector from `parse`")
-        => SdlSelectedNodes(&this, _state.path.nodes(start));
+        => SdlSelectedNodes(_state, _state.path.nodes(start));
 
     /** The attributes the path selects below `start`, of the nodes that
     pass the filter: the filter's subject is the node holding them. */
-    SdlAttributeSelection!SdlSelectedNodes attributes(return scope SdlNode start) return
-        @safe
+    SdlAttributeSelection!SdlSelectedNodes attributes(return scope SdlNode start) @safe
     in (_state !is null, "a selector from `parse`")
     {
-        const path = _state.path;
-        const steps = stepsOf(path._text, path._anyDepth);
-        return SdlAttributeSelection!SdlSelectedNodes(SdlSelectedNodes(&this,
-            SdlNodeSelection(steps, path._steps - 1, path._anyDepth, start)),
-            stepAt(steps, path._steps - 1));
+        const steps = stepsOf(_state.path._text, _state.path._anyDepth);
+        return SdlAttributeSelection!SdlSelectedNodes(SdlSelectedNodes(_state,
+            SdlNodeSelection(steps, _state.path._steps - 1, _state.path._anyDepth, start)),
+            stepAt(steps, _state.path._steps - 1));
     }
 }
 
-/// Forward range over a selection's nodes that pass its selector's filter; it
-/// borrows the selector, which must outlive it.
+// A selector's parsed state, owned by its copies and by the ranges they
+// return; the last owner frees it.
+private struct State
+{
+    size_t owners;
+    const(char)[] text; // the path's own bytes, freed with the state
+    SdlPath path;       // over `text`
+    DqlEngine engine;
+    DqlFilter filter;
+}
+
+/* A state over a copy of `path`, which has validated, with the caller its
+one owner. The collector scans it: the DQL engine keeps compiled regular
+expressions on the collected heap. */
+private State* allocate(scope const(char)[] path) @trusted nothrow @nogc
+{
+    import core.exception : onOutOfMemoryError;
+    import core.lifetime : emplace;
+    import core.memory : GC, pureMalloc;
+
+    auto state = cast(State*) pureMalloc(State.sizeof);
+    auto text = cast(char*) pureMalloc(path.length);
+    if (state is null || text is null)
+        onOutOfMemoryError();
+    emplace(state);
+    GC.addRange(state, State.sizeof, typeid(State));
+    text[0 .. path.length] = path[];
+    state.owners = 1;
+    state.text = text[0 .. path.length];
+    state.path = SdlPath.parse(state.text).value;
+    return state;
+}
+
+// One more owner of `state`, if any.
+private void retain(scope State* state) @safe pure nothrow @nogc
+{
+    if (state !is null)
+        state.owners++;
+}
+
+// One owner fewer: the last destroys and frees `state`, and every owner
+// forgets it.
+private void drop(ref scope State* state) @trusted pure nothrow @nogc
+{
+    import core.memory : GC, pureFree;
+
+    if (state is null)
+        return;
+    if (--state.owners == 0)
+    {
+        auto text = state.text;
+        destroy!false(*state);
+        GC.removeRange(state);
+        pureFree(state);
+        pureFree(cast(void*) text.ptr);
+    }
+    state = null;
+}
+
+/// Forward range over a selection's nodes that pass its selector's filter.
+/// It owns the selector's state with the selector, so either may go first.
 struct SdlSelectedNodes
 {
-    private SdlSelector* _selector;
+    private State* _state;
     private SdlNodeSelection _nodes;
 
-    private this(return scope SdlSelector* selector, return scope SdlNodeSelection nodes)
-        @safe
+    private this(State* state, return scope SdlNodeSelection nodes) @safe
     {
-        _selector = selector;
+        retain(state);
+        _state = state;
         _nodes = nodes;
         skip();
     }
+
+    this(this) scope @safe pure nothrow @nogc { retain(_state); }
+
+    ~this() scope @safe pure nothrow @nogc { drop(_state); }
 
     /// Forward-range primitives.
     bool empty() const scope @safe pure nothrow @nogc => _nodes.empty;
@@ -586,7 +590,6 @@ struct SdlSelectedNodes
     /// ditto
     void popFront() scope @safe
     in (!empty)
-    in (_selector._state !is null, "the selector this range borrows is gone")
     {
         _nodes.popFront();
         skip();
@@ -596,7 +599,8 @@ struct SdlSelectedNodes
 
     private void skip() scope @safe
     {
-        while (!_nodes.empty && !_selector.accepts(_nodes.front))
+        while (!_nodes.empty
+            && !evalDql(_state.engine, _state.filter, SdlNodeResolver(_nodes.front)))
             _nodes.popFront();
     }
 }
@@ -907,8 +911,8 @@ unittest
         .walkLength == 4);
 }
 
-/// A selector binds like a value: copies count as owners of one parsed
-/// state, freed with the last of them; a range borrows its selector.
+/// A selector binds like a value: copies and the ranges they return count
+/// as owners of one parsed state, freed with the last of them.
 @("sdl.select.SdlSelector.binds")
 @safe unittest
 {
@@ -930,9 +934,36 @@ unittest
     auto optional = SdlSelector.parse("configuration.dependency", "optional == true").value;
     auto silly = optional.nodes(root);
     auto saved = silly.save;
+    assert(optional._state.owners == 3);
     assert(silly.front.byValue.front.stringValue == "silly");
     silly.popFront();
     assert(silly.empty && !saved.empty);
+}
+
+/// A range owns the selector's state with it, so it outlives the selector:
+/// a `foreach` over a temporary selector's range reads a live filter, and
+/// the state is freed with the last range.
+@("sdl.select.SdlSelector.rangeOutlivesSelector")
+@safe unittest
+{
+    import std.algorithm.comparison : equal;
+    import std.algorithm.iteration : map;
+
+    auto parsed = parseSdlDocument!sdlFull(recipe);
+    auto root = parsed.document.root;
+    string[] names;
+    foreach (node; SdlSelector.parse("..dependency", "version == `*`").value.nodes(root))
+        names ~= node.byValue.front.stringValue.idup;
+    assert(names == ["silly"]);
+    foreach (attribute; SdlSelector.parse("..dependency.version", "optional == true").value
+        .attributes(root))
+        assert(attribute.value.stringValue == "*");
+
+    // The temporary selector is gone once the declaration ends.
+    auto kept = SdlSelector.parse("configuration.dependency", "version != null").value
+        .nodes(root);
+    assert(kept._state.owners == 1);
+    assert(kept.map!(n => n.byValue.front.stringValue).equal(["silly"]));
 }
 
 /// Copies held in collected arrays, built from a literal and grown by
