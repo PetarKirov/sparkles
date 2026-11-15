@@ -58,17 +58,32 @@ hold copies, so the tree outlives the state.
 TextSpan[] editorLineSpans(in EditorState state, size_t line, in EditorViewOptions options)
     @safe pure nothrow
 {
+    import sparkles.base.text.seek : nextGraphemeBoundary;
+
     const text = state.text;
     const start = text.lineStart(line);
     const end = text.lineEnd(line);
     const ranges = state.selection.ranges;
     const several = ranges.length > 1;
+    const primaryIndex = state.selection.primaryIndex;
+    const composing = state.composition.active;
+
+    // With the host's cursor (`HST20`) the primary caret needs no cut and
+    // no glyph. A secondary caret marks the grapheme under it as a block, so
+    // every caret is visible and still no character moves.
+    bool secondaryBlock(size_t j, in EditRange r)
+        => options.hostCursor && options.caretVisible && several && !composing && r.empty
+            && j != primaryIndex && r.head < end;
 
     // Every place the styling can change, sorted and unique.
     size_t[] cuts = [start, end];
-    foreach (r; ranges)
-        if (!(options.hostCursor && r.empty))
+    foreach (j, r; ranges)
+    {
+        if (secondaryBlock(j, r))
+            cuts ~= [r.head, nextGraphemeBoundary(text, r.head)];
+        else if (!(options.hostCursor && r.empty))
             cuts ~= [r.start, r.end, r.head]; // the host's cursor needs no cut
+    }
     foreach (span; state.readOnly[])
         cuts ~= [span.start, span.end];
     size_t[] inLine;
@@ -78,20 +93,20 @@ TextSpan[] editorLineSpans(in EditorState state, size_t line, in EditorViewOptio
     sortUnique(inLine);
 
     // EDI3: while composing, each range shows the preedit in its place, and
-    // the caret is the preedit's cursor.
-    const composing = state.composition.active;
+    // the caret is the preedit's cursor (the host's, in host-cursor mode).
     TextSpan[] spans;
     foreach (i, at; inLine)
     {
         foreach (j, r; ranges)
             if (composing && r.start == at)
             {
-                const caret = options.caretVisible && (several || j == state.selection.primaryIndex);
+                const caret = options.caretVisible && !options.hostCursor
+                    && (several || j == primaryIndex);
                 preeditSpans(state, options, caret, spans);
                 break;
             }
             else if (!composing && options.caretVisible && !options.hostCursor && r.head == at
-                && (several || j == state.selection.primaryIndex))
+                && (several || j == primaryIndex))
             {
                 spans ~= TextSpan(text: caretGlyph, slot: Slot.caret);
                 break;
@@ -111,6 +126,12 @@ TextSpan[] editorLineSpans(in EditorState state, size_t line, in EditorViewOptio
             if (!r.empty && at >= r.start && next <= r.end)
             {
                 span.slot = Slot.selection;
+                span.paintBackground = true;
+            }
+        foreach (j, r; ranges)
+            if (secondaryBlock(j, r) && at == r.head)
+            {
+                span.slot = Slot.caret;
                 span.paintBackground = true;
             }
         spans ~= span;
@@ -184,6 +205,10 @@ struct VisualRow
     /// right: drawn cells that are not the layout's, and the layout cells of
     /// the text a preedit hides in their place.
     size_t[3][] inserted;
+    /// The primary caret's drawn column on this row, for the host's cursor
+    /// (`HST20`): after the row's inserted cells and a preedit's cursor; -1
+    /// where the caret is on another row.
+    int caretColumn = -1;
 }
 
 /**
@@ -246,6 +271,24 @@ VisualRow[] visualRows(scope const(TextSpan)[] logical, in ParagraphLayout layou
     {
         g.row = layout.rowOf(g.position, g.affinity);
         g.stop = layout.stopOf(g.row, g.position, g.affinity);
+    }
+
+    // Where the primary caret is drawn: a preedit stands at its range's start.
+    const primary = state.selection.primary;
+    const caretAt = composing ? primary.start : primary.head;
+    const caretAffinity = composing && !primary.empty ? Affinity.before : primary.affinity;
+    size_t caretRow = size_t.max, caretStop;
+    long preeditCells;
+    if (caretAt >= layout.start && caretAt <= layout.end)
+    {
+        caretRow = layout.rowOf(caretAt, caretAffinity);
+        caretStop = layout.stopOf(caretRow, caretAt, caretAffinity);
+        if (composing)
+        {
+            auto before = new char[state.composition.cursor];
+            state.composition.preedit.copyTo(0, before.length, before);
+            preeditCells = textCells(before);
+        }
     }
 
     VisualRow[] rows;
@@ -323,6 +366,15 @@ VisualRow[] visualRows(scope const(TextSpan)[] logical, in ParagraphLayout layou
             previous = cluster.rtl ? size_t.max : covering;
         }
         insertAt(count);
+        // The primary caret's drawn column: its stop's cells, the inserted
+        // cells left of it, and while composing the preedit's cursor.
+        if (r == caretRow)
+        {
+            long x = layout.stopCells(r, caretStop);
+            foreach (inserted; row.inserted)
+                if (inserted[0] < caretStop) x += cast(long) inserted[1] - cast(long) inserted[2];
+            row.caretColumn = cast(int)(x + preeditCells);
+        }
         rows ~= row;
     }
     return rows;
@@ -672,4 +724,32 @@ unittest
     }
     assert(shown == "a に#sel ▏#caret ほ d ", shown);
     assert(underlines[3] == UnderlineStyle.single);
+}
+
+/// Host-cursor rows insert nothing: the primary caret is a column, a
+/// secondary one a block on its grapheme, and the text is the same wherever
+/// the carets are (`HST20`).
+@("editor.view.visualRows.hostCursor")
+@safe pure nothrow unittest
+{
+    import sparkles.ui.editor.layout : LayoutOptions, ParagraphLayout;
+    import sparkles.ui.editor.selection : SelectionSet;
+
+    EditorViewOptions host;
+    host.hostCursor = true;
+    auto state = EditorState.create("abcd");
+    EditRange[2] carets = [EditRange.caret(1), EditRange.caret(3)];
+    state.selection = SelectionSet.of(carets[], 0);
+    const layout = ParagraphLayout.of(state.text, 0, LayoutOptions.init);
+    const rows = visualRows(editorLineSpans(state, 0, host), layout, state);
+    string drawn;
+    foreach (s; rows[0].spans)
+        drawn ~= s.text ~ (s.slot == Slot.caret ? "#" : "") ~ "|";
+    assert(drawn == "abc|d#|", drawn);
+    assert(rows[0].caretColumn == 1 && rows[0].inserted.length == 0);
+    // Moving the primary caret changes only the column.
+    carets = [EditRange.caret(2), EditRange.caret(3)];
+    state.selection = SelectionSet.of(carets[], 0);
+    const moved = visualRows(editorLineSpans(state, 0, host), layout, state);
+    assert(moved[0].caretColumn == 2);
 }
