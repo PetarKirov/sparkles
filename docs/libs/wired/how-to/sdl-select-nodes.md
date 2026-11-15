@@ -66,9 +66,9 @@ DQL query. A filter on an attribute selection tests the node that holds the
 attributes.
 
 A selector is a value: `SdlSelector.parse(…).value` binds to a variable,
-and copies share the parsed filter. Its ranges borrow it, so keep the
-selector in a variable while you iterate: a `foreach` over
-`SdlSelector.parse(…).value.nodes(root)` outlives its temporary.
+and copies share the parsed filter. Its ranges share it too, so a range may
+outlive its selector: `foreach (n; SdlSelector.parse(…).value.nodes(root))`
+is fine.
 
 ## Edit what you selected
 

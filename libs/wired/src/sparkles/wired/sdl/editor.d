@@ -286,8 +286,10 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
         in SdlScalar value)
     if (isInputRange!Attributes && is(ElementType!Attributes : const SdlAttributeView))
     {
-        foreach (attribute; attributes)
-            replaceAttribute(attribute, name, value);
+        // Not `foreach`: it slices a range that has `opSlice` (`filter`'s),
+        // and dmd infers no `scope` for that copy when the range owns state.
+        for (; !attributes.empty; attributes.popFront())
+            replaceAttribute(attributes.front, name, value);
     }
 
     /** Sets attribute `name` of `node`: replaces the one attribute of that
@@ -331,8 +333,8 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     void setAttribute(Nodes)(scope Nodes nodes, SdlQualifiedName name, in SdlScalar value)
     if (isInputRange!Nodes && is(ElementType!Nodes : const SdlNode))
     {
-        foreach (node; nodes)
-            setAttribute(node, name, value);
+        for (; !nodes.empty; nodes.popFront())
+            setAttribute(nodes.front, name, value);
     }
 
     /** Removes `attribute`, the spaces and tabs before it on its line, and a
@@ -365,8 +367,8 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     void removeAttribute(Attributes)(scope Attributes attributes)
     if (isInputRange!Attributes && is(ElementType!Attributes : const SdlAttributeView))
     {
-        foreach (attribute; attributes)
-            removeAttribute(attribute);
+        for (; !attributes.empty; attributes.popFront())
+            removeAttribute(attributes.front);
     }
 
     /// Inserts the nodes of `fragment` before `sibling` (SDE4).
@@ -454,8 +456,8 @@ struct SdlEditor(SdlParserConfig config = sdlFull, DocumentAllocator = Mallocato
     void remove(Nodes)(scope Nodes nodes, SdlAttachedComments comments = SdlAttachedComments.keep)
     if (isInputRange!Nodes && is(ElementType!Nodes : const SdlNode))
     {
-        foreach (node; nodes)
-            remove(node, comments);
+        for (; !nodes.empty; nodes.popFront())
+            remove(nodes.front, comments);
     }
 
     /// Replaces the lines strictly inside `node`'s block with `fragment`.
