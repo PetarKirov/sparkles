@@ -4,7 +4,7 @@ module sparkles.ui.components.command_palette;
 import sparkles.ui.command_palette : CommandPalette, PaletteChoice;
 import sparkles.ui.editor.state : EditorState;
 import sparkles.ui.components.editor : editorView, EditorViewOptions;
-import sparkles.ui.geometry : Insets, SizeSpec;
+import sparkles.ui.geometry : Insets, Point, SizeSpec;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind;
 import sparkles.fuzzy : TextRange;
@@ -16,6 +16,12 @@ struct PaletteViewOptions
     int rowHeight = 3;
     size_t hitBase = 0x7300_0000;
     size_t queryHit = 0x7300_ffff;
+    size_t closeHit = 0;
+    bool compact = false;
+    int maxWidth = 0;
+    bool smoothScroll = false;
+    long scrollWhole = 0;
+    float scrollFrac = 0;
     string title = "Commands";
     string placeholder = "Search commands"; /// Query prompt for the catalog being searched.
 }
@@ -42,15 +48,30 @@ PaletteView!Cmd viewCommandPalette(Cmd, size_t Capacity, size_t QueryBytes, Cont
         return result;
     }
     uint[] children;
-    children ~= b.add(Widget(kind: WidgetKind.text, text: options.title, slot: Slot.docs));
+    if (options.closeHit != 0)
+    {
+        const titleNode = b.add(Widget(kind: WidgetKind.text, text: options.title,
+            slot: Slot.docs, width: SizeSpec.grow()));
+        const closeNode = b.add(Widget(kind: WidgetKind.text, text: "✕",
+            slot: Slot.muted, hitId: options.closeHit, padding: Insets(0, 1, 0, 1)));
+        children ~= b.add(Widget(kind: WidgetKind.row, children: [titleNode, closeNode],
+            width: SizeSpec.grow(), alignY: Alignment.center));
+    }
+    else
+        children ~= b.add(Widget(kind: WidgetKind.text, text: options.title, slot: Slot.docs));
     const prompt = editorView(b, query, EditorViewOptions(placeholder: options.placeholder));
     b.nodes[prompt].hitId = options.queryHit;
+    const queryPadding = options.compact ? Insets(0, 1, 0, 1) : Insets(1, 1, 1, 1);
     children ~= b.add(Widget(kind: WidgetKind.column, children: [prompt],
-        padding: Insets(1, 1, 1, 1), slot: Slot.surfaceSunken, paintBackground: true,
+        padding: queryPadding, slot: Slot.surfaceSunken, paintBackground: true,
         width: SizeSpec.grow()));
     const count = options.visibleRows ? options.visibleRows : 1;
-    result.firstRow = state.selection >= count ? state.selection - count + 1 : 0;
-    const stop = result.firstRow + count < state.rowCount ? result.firstRow + count : state.rowCount;
+    const int rowH = options.rowHeight > 0 ? options.rowHeight : 1;
+    result.firstRow = options.smoothScroll ? 0
+        : state.selection >= count ? state.selection - count + 1 : 0;
+    const stop = options.smoothScroll ? state.rowCount
+        : (result.firstRow + count < state.rowCount ? result.firstRow + count : state.rowCount);
+    uint[] rowNodes;
     foreach (index; result.firstRow .. stop)
     {
         const entry = palette.row(index);
@@ -75,18 +96,32 @@ PaletteView!Cmd viewCommandPalette(Cmd, size_t Capacity, size_t QueryBytes, Cont
             const label = context.shortcut(entry.command, state.invocation.target);
             if (label.length) row ~= b.add(Widget(kind: WidgetKind.text, text: label, slot: Slot.muted));
         }
-        children ~= b.add(Widget(kind: WidgetKind.row, children: row, gap: 1,
+        const rowNode = b.add(Widget(kind: WidgetKind.row, children: row, gap: 1,
             padding: Insets(0, 1, 0, 1), alignY: Alignment.center,
-            height: SizeSpec.fixed(options.rowHeight > 0 ? options.rowHeight : 1), width: SizeSpec.grow(),
+            height: SizeSpec.fixed(rowH), width: SizeSpec.grow(),
             hitId: options.hitBase + result.choices.length,
             slot: index == state.selection ? Slot.selection : Slot.surface,
             paintBackground: true));
+        if (options.smoothScroll) rowNodes ~= rowNode;
+        else children ~= rowNode;
         result.choices ~= palette.choice(index);
+    }
+    if (options.smoothScroll && rowNodes.length)
+    {
+        const int contentH = cast(int)(rowNodes.length * rowH);
+        const int maxH = cast(int)(count * rowH);
+        const int viewportH = contentH < maxH ? contentH : maxH;
+        children ~= b.add(Widget(kind: WidgetKind.column, children: rowNodes, gap: 0,
+            height: SizeSpec.fixed(viewportH), width: SizeSpec.grow(),
+            clipY: true, childOffset: Point(0, cast(int) options.scrollWhole),
+            childOffsetFracY: options.scrollFrac));
     }
     if (!state.rowCount)
         children ~= b.add(Widget(kind: WidgetKind.text, text: "No commands match", slot: Slot.muted));
+    const rootPadding = options.compact ? Insets(0, 1, 0, 1) : Insets(1, 1, 1, 1);
+    const rootWidth = options.maxWidth > 0 ? SizeSpec.fixed(options.maxWidth) : SizeSpec.grow();
     result.root = b.add(Widget(kind: WidgetKind.column, children: children, gap: 0,
-        slot: Slot.surface, paintBackground: true, padding: Insets(1, 1, 1, 1), width: SizeSpec.grow()));
+        slot: Slot.surface, paintBackground: true, padding: rootPadding, width: rootWidth));
     return result;
 }
 
