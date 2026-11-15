@@ -348,7 +348,7 @@ struct TaskGraphBuilder
     read set means something only within its graph, as a task index does.
     Nothing may add to it once $(LREF build) succeeds.
     */
-    Filesets* files;
+    const(Filesets)* files;
 
     /// Adds a node.
     void add(TaskNode node) @safe pure nothrow { nodes ~= node; }
