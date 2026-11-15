@@ -2,6 +2,7 @@
 module editor_document;
 
 import sparkles.text_buffer.text : Text;
+import sparkles.ui.components.scroll_body : ScrollBody;
 import sparkles.ui.editor.field : EditorFieldOf;
 import sparkles.ui.editor.layout : LayoutContext;
 import document_text : DocumentBytes, encodeDocument;
@@ -17,6 +18,8 @@ class Document
     size_t firstLine;
     /// The first shown visual row of `firstLine`.
     size_t firstRow;
+    ScrollBody scroll;
+    long syncedVisualRow;
     bool followCaret = true;
     string language = "text";
     bool bom;

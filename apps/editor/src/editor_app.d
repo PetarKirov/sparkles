@@ -9,10 +9,11 @@ import sparkles.text_buffer.text : Text;
 import sparkles.ui.command_palette : PaletteChoice, PaletteEffect, PaletteEffectKind, PaletteInvocation, PaletteStatus;
 import sparkles.ui.command_palette_input : PaletteInput;
 import sparkles.ui.components.command_palette : PaletteViewOptions, viewCommandPalette;
+import sparkles.ui.components.scroll_body : ScrollBody, scrollSeconds;
 import sparkles.ui.components.editor : editorLineSpans, editorView, EditorViewOptions, layoutColumn, VisualRow, visualRows;
 import sparkles.ui.editor.context : CaretTarget;
 import sparkles.text_buffer.summary : Affinity;
-import sparkles.ui.editor.layout : ParagraphLayout, scrollRows, scrollToCaret;
+import sparkles.ui.editor.layout : LayoutContext, ParagraphLayout, scrollRows, scrollToCaret;
 import sparkles.ui.components.lantern_view : BoxLayout, LabelArena, viewLantern;
 import sparkles.ui.editor.field : EditorField, forwardClipboard;
 import sparkles.ui.editor.command : EditCommand, EditKind;
@@ -26,7 +27,7 @@ import sparkles.ui.style : Slot;
 import sparkles.ui.theme_catalog : canonicalThemeNames;
 import sparkles.ui.command_palette : PaletteEntry;
 import sparkles.ui.state : hitAt, hoverTargets, HoverTarget, sourceOffsetAt;
-import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
+import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.host : canReadClipboard, withPreedit;
@@ -443,6 +444,28 @@ private struct ClipboardRead
     app.shutdown(host);
     assert(!app.recoveryShutdownError.length,
         "An explicit Exit without recovery decision must not become a CLI failure afterward.");
+}
+
+private long visualRowIndex(ref LayoutContext context, in Text text,
+    size_t targetLine, size_t targetRow) @safe
+{
+    long total;
+    const count = text.lineCount;
+    foreach (line; 0 .. count)
+    {
+        if (line == targetLine) return total + cast(long) targetRow;
+        total += cast(long) context.paragraph(text, line).rows.length;
+    }
+    return total;
+}
+
+private long totalVisualRows(ref LayoutContext context, in Text text) @safe
+{
+    long total;
+    const count = text.lineCount;
+    foreach (line; 0 .. count)
+        total += cast(long) context.paragraph(text, line).rows.length;
+    return total;
 }
 
 private enum Dialog : ubyte { none, openPath, savePath, dirtyClose, recoveryClose, restoreOffer }
@@ -958,10 +981,21 @@ struct EditorApp
     private bool selecting;
     private ulong selectingDocument;
     private size_t selectionAnchor;
+    private ScrollBody paletteScroll;
+    private size_t paletteLastSelection = size_t.max, paletteLastRowCount = size_t.max;
+    private bool paletteTouching, palettePanning;
+    private PointerEvent paletteTouchPress;
+    private bool editorTouching, editorPanning;
+    private PointerEvent editorTouchPress;
     private enum size_t tabHitBase = 0x7400_0000;
     private enum size_t dialogConfirmHit = 0x7500_0000, dialogCancelHit = 0x7500_0001;
     private enum size_t dialogDiscardHit = 0x7600_0000;
     private enum size_t restoreHit = 0x7800_0000;
+    private enum size_t paletteHit = 0x7900_0000;
+    private enum size_t newTabHit = 0x7900_0001;
+    private enum size_t saveHit = 0x7900_0002;
+    private enum size_t inspectorHit = 0x7900_0003;
+    private enum size_t paletteCloseHit = 0x7900_0004;
 
     /// Retain the committed frame for event routing; no second layout/hit model.
     void paint(H)(ref H host, const WidgetTree tree, const Frame[] frames)
@@ -1005,8 +1039,97 @@ struct EditorApp
         return false;
     }
 
-    private void pointer(in PointerEvent pointer) @safe
+    private void pointer(H)(ref H host, in PointerEvent pointer) @safe
     {
+        int cw = 1, ch = 1;
+        static if (__traits(hasMember, H, "cellWidth"))
+            if (host.backend == Backend.gui) { cw = host.cellWidth; ch = host.cellHeight; }
+        if (cw < 1) cw = 1;
+        if (ch < 1) ch = 1;
+        bool touch = false;
+        static if (__traits(hasMember, H, "capabilities")) touch = !host.capabilities.hover;
+        const float fx = pointer.pos.x / cast(float) cw;
+        const float fy = pointer.pos.y / cast(float) ch;
+        const point = Point(pointer.pos.x / cw, pointer.pos.y / ch);
+        const slop = (cw > ch ? cw : ch) / 4 + 1;
+
+        if (touch && commands.palette.active && paletteTouching && pointer.pointerId == paletteTouchPress.pointerId)
+        {
+            if (pointer.action == PointerAction.leave)
+            {
+                paletteTouching = palettePanning = false;
+                paletteScroll.cancelDrag();
+                return;
+            }
+            const dx = pointer.pos.x - paletteTouchPress.pos.x;
+            const dy = pointer.pos.y - paletteTouchPress.pos.y;
+            const ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
+            if (!palettePanning && ay >= slop && ay > ax) palettePanning = true;
+            if (palettePanning)
+            {
+                paletteScroll.dragTo(pointer.pos.y / cast(double) ch, scrollSeconds());
+                if (pointer.action == PointerAction.release)
+                {
+                    paletteScroll.endDrag(scrollSeconds());
+                    paletteTouching = palettePanning = false;
+                }
+                return;
+            }
+            if (pointer.action == PointerAction.release)
+            {
+                paletteTouching = palettePanning = false;
+                paletteScroll.cancelDrag();
+                if (ax < slop && ay < slop)
+                {
+                    const hit = hits.hitAt(fx, fy);
+                    const base = PaletteViewOptions.init.hitBase;
+                    if (hit >= base && hit - base < paletteChoices.length)
+                        apply(commands.palette.activate(paletteChoices[hit - base], context));
+                    else if (hit == paletteCloseHit || hit == paletteHit || hit == 0)
+                        commands.palette.cancel(commands.palette.snapshot.ticket);
+                }
+                return;
+            }
+            return;
+        }
+        if (touch && editorTouching && pointer.pointerId == editorTouchPress.pointerId)
+        {
+            if (pointer.action == PointerAction.leave)
+            {
+                editorTouching = editorPanning = false;
+                document.scroll.cancelDrag();
+                return;
+            }
+            const dx = pointer.pos.x - editorTouchPress.pos.x;
+            const dy = pointer.pos.y - editorTouchPress.pos.y;
+            const ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
+            if (!editorPanning && ay >= slop && ay > ax)
+            {
+                editorPanning = true;
+                document.followCaret = false;
+                document.scroll.motion.instant = false;
+            }
+            if (editorPanning)
+            {
+                document.scroll.dragTo(pointer.pos.y / cast(double) ch, scrollSeconds());
+                if (pointer.action == PointerAction.release)
+                {
+                    document.scroll.endDrag(scrollSeconds());
+                    editorTouching = editorPanning = false;
+                }
+                return;
+            }
+            if (pointer.action == PointerAction.release)
+            {
+                editorTouching = editorPanning = false;
+                document.scroll.cancelDrag();
+                if (ax < slop && ay < slop)
+                    placeCaretAt(point, pointer.mods.shift, true);
+                return;
+            }
+            return;
+        }
+
         if (pointer.action == PointerAction.release || pointer.action == PointerAction.leave)
         {
             selecting = false;
@@ -1025,7 +1148,7 @@ struct EditorApp
             selecting = false;
             return;
         }
-        const hit = hits.hitAt(pointer.pos.x, pointer.pos.y);
+        const hit = hits.hitAt(fx, fy);
         if (modal)
         {
             if (pointer.action == PointerAction.press)
@@ -1035,8 +1158,7 @@ struct EditorApp
                 else if (hit == dialogDiscardHit + dialogEpoch) execute(CommandId(Command.discard));
                 else if (pathDialog && displayed.pathSource == pathInput.state.text)
                 {
-                    const offset = sourceOffsetAt(displayed.tree, displayed.frames,
-                        Point(cast(int) pointer.pos.x, cast(int) pointer.pos.y));
+                    const offset = sourceOffsetAt(displayed.tree, displayed.frames, point);
                     if (offset >= 0 && cast(size_t) offset <= pathInput.state.text.length)
                         pathInput.run(EditCommand.setRange(cast(size_t) offset, cast(size_t) offset), MonoTime.currTime);
                 }
@@ -1045,9 +1167,44 @@ struct EditorApp
         }
         if (commands.palette.active)
         {
+            if (touch && pointer.action == PointerAction.press)
+            {
+                paletteTouching = true;
+                palettePanning = false;
+                paletteTouchPress = pointer;
+                paletteScroll.touch = true;
+                paletteScroll.motion.instant = false;
+                paletteScroll.beginDrag(pointer.pos.y / cast(double) ch, scrollSeconds());
+                return;
+            }
             const base = PaletteViewOptions.init.hitBase;
-            if (pointer.action == PointerAction.press && hit >= base && hit - base < paletteChoices.length)
-                apply(commands.palette.activate(paletteChoices[hit - base], context));
+            if (pointer.action == PointerAction.press)
+            {
+                if (hit >= base && hit - base < paletteChoices.length)
+                    apply(commands.palette.activate(paletteChoices[hit - base], context));
+                else if (hit == paletteCloseHit || hit == paletteHit || hit == 0)
+                    commands.palette.cancel(commands.palette.snapshot.ticket);
+            }
+            return;
+        }
+        if (hit == paletteHit)
+        {
+            if (pointer.action == PointerAction.press) execute(CommandId(Command.palette));
+            return;
+        }
+        if (hit == newTabHit)
+        {
+            if (pointer.action == PointerAction.press) execute(CommandId(Command.newTab));
+            return;
+        }
+        if (hit == saveHit)
+        {
+            if (pointer.action == PointerAction.press) execute(CommandId(Command.save));
+            return;
+        }
+        if (hit == inspectorHit)
+        {
+            if (pointer.action == PointerAction.press) execute(CommandId(Command.inspector));
             return;
         }
         if (hit == restoreHit)
@@ -1070,7 +1227,21 @@ struct EditorApp
             selecting = false;
             return;
         }
-        const point = Point(cast(int) pointer.pos.x, cast(int) pointer.pos.y);
+        if (touch && pointer.action == PointerAction.press)
+        {
+            editorTouching = true;
+            editorPanning = false;
+            editorTouchPress = pointer;
+            document.scroll.touch = true;
+            document.scroll.motion.instant = false;
+            document.scroll.beginDrag(pointer.pos.y / cast(double) ch, scrollSeconds());
+            return;
+        }
+        placeCaretAt(point, pointer.mods.shift, pointer.action == PointerAction.press);
+    }
+
+    private void placeCaretAt(Point point, bool shift, bool press) @safe
+    {
         // A press must land on a row; a drag beyond the rows follows the nearest one.
         size_t chosen = size_t.max;
         long nearest = long.max;
@@ -1082,7 +1253,7 @@ struct EditorApp
             const distance = point.y < top ? top - point.y : point.y >= bottom ? point.y - bottom + 1 : 0;
             if (distance < nearest) { nearest = distance; chosen = i; }
         }
-        if (chosen == size_t.max || nearest && pointer.action == PointerAction.press) return;
+        if (chosen == size_t.max || nearest && press) return;
         const shown = displayed.rows[chosen];
         const rect = displayed.frames[shown.node].rect;
         const text = document.field.state.text;
@@ -1094,9 +1265,9 @@ struct EditorApp
                 : layoutColumn(VisualRow(shown.row, null, shown.inserted.dup), layout, point.x - rect.origin.x);
             at = context.caretAt(text, layout.rows[shown.row].line, column);
         }
-        if (pointer.action == PointerAction.press)
+        if (press)
         {
-            selectionAnchor = pointer.mods.shift ? document.field.state.selection.primary.anchor : at.position;
+            selectionAnchor = shift ? document.field.state.selection.primary.anchor : at.position;
             selecting = true;
             keyboardAsked = false;
             selectingDocument = document.id;
@@ -1482,7 +1653,7 @@ struct EditorApp
         if (recoveryExit)
         {
             event.match!((in KeyEvent key) { handleKey(key); },
-                (in PointerEvent pointer) { this.pointer(pointer); }, (in _) {});
+                (in PointerEvent pointer) { this.pointer(host, pointer); }, (in _) {});
             if (quitRequested) host.quit();
             return;
         }
@@ -1496,7 +1667,7 @@ struct EditorApp
         event.match!(
             (in KeyEvent key) { handleKey(key); },
             (in PasteEvent paste) { receivePaste(paste); },
-            (in PointerEvent pointer) { this.pointer(pointer); },
+            (in PointerEvent pointer) { this.pointer(host, pointer); },
             (in CompositionEvent update) {
                 withPreedit(host, update, (scope const(char)[] preedit) {
                     if (pathDialog) pathInput.compose(update, preedit, MonoTime.currTime);
@@ -1506,9 +1677,16 @@ struct EditorApp
                 });
             },
             (in WheelEvent wheel) {
-                scrollRows(document.field.context, document.field.state.text, wheel.dy,
-                    document.firstLine, document.firstRow);
+                if (commands.palette.active)
+                {
+                    paletteScroll.motion.instant = host.backend != Backend.gui;
+                    paletteScroll.scroll(wheel, scrollSeconds());
+                    return;
+                }
+                if (modal) return;
                 document.followCaret = false;
+                document.scroll.motion.instant = host.backend != Backend.gui;
+                document.scroll.scroll(wheel, scrollSeconds());
             },
             (in EndOfInput _) { closeRequested(host); },
             (in _) {});
@@ -1615,23 +1793,52 @@ struct EditorApp
         if (selectedTarget != target) configure(selectedTarget);
         const recoveryWarning = recovery !is null
             && (recovery.error.length != 0 || recovery.overdue(MonoTime.currTime));
+        version (Android) enum bool mobileUi = true;
+        else enum bool mobileUi = false;
+        const headerRows = mobileUi ? 3 : 1;
+        const tabRows = mobileUi ? 2 : 1;
         const extraRows = (inspector ? 1 : 0) + (status.length ? 1 : 0)
             + (document.durabilityWarning.length ? 1 : 0)
             + (recovery is null ? 0 : 1 + (recoveryWarning ? 1 : 0)
                 + (recovery.notice.length ? 1 : 0) + (recovery.offerCount && !modal ? 3 : 0));
         Builder b;
         uint[] children;
-        children ~= b.add(Widget(kind: WidgetKind.text,
-            text: "Sparkles Editor  •  Ctrl+Shift+P commands  •  F1 keys  •  F12 inspector",
-            slot: Slot.docs, height: SizeSpec.fixed(1), padding: Insets(0, 1, 0, 1)));
+        uint[] headerItems;
+        headerItems ~= b.add(Widget(kind: WidgetKind.text,
+            text: "Sparkles Editor", slot: Slot.docs, width: SizeSpec.grow()));
+        if (mobileUi)
+        {
+            headerItems ~= chip(b, "Commands", paletteHit, commands.palette.active, ControlSize(rows: 3));
+            headerItems ~= chip(b, "+ Tab", newTabHit, false, ControlSize(rows: 3));
+            headerItems ~= chip(b, "Save", saveHit, false, ControlSize(rows: 3));
+            headerItems ~= chip(b, "Inspect", inspectorHit, inspector, ControlSize(rows: 3));
+        }
+        else
+        {
+            headerItems ~= b.add(Widget(kind: WidgetKind.text, text: "Commands (Ctrl+Shift+P)",
+                hitId: paletteHit, slot: commands.palette.active ? Slot.selection : Slot.docs,
+                padding: Insets(0, 1, 0, 1)));
+            headerItems ~= b.add(Widget(kind: WidgetKind.text, text: "+ Tab",
+                hitId: newTabHit, slot: Slot.docs, padding: Insets(0, 1, 0, 1)));
+            headerItems ~= b.add(Widget(kind: WidgetKind.text, text: "Save",
+                hitId: saveHit, slot: Slot.docs, padding: Insets(0, 1, 0, 1)));
+            headerItems ~= b.add(Widget(kind: WidgetKind.text, text: "Inspect (F12)",
+                hitId: inspectorHit, slot: inspector ? Slot.selection : Slot.docs,
+                padding: Insets(0, 1, 0, 1)));
+        }
+        children ~= b.add(Widget(kind: WidgetKind.row, children: headerItems, gap: 1,
+            alignY: Alignment.center, height: SizeSpec.fixed(headerRows),
+            padding: Insets(0, 1, 0, 1)));
         uint[] tabNodes;
         foreach (i, tab; tabs)
             tabNodes ~= b.add(Widget(kind: WidgetKind.text,
                 text: tab.name ~ (tab.dirty ? " •" : ""),
                 hitId: tabHitBase + i,
                 slot: i == activeTab ? Slot.selection : Slot.muted,
+                height: SizeSpec.fixed(tabRows),
                 padding: Insets(0, 1, 0, 1), paintBackground: true));
-        children ~= b.add(Widget(kind: WidgetKind.row, children: tabNodes, height: SizeSpec.fixed(1)));
+        children ~= b.add(Widget(kind: WidgetKind.row, children: tabNodes, gap: mobileUi ? 1 : 0,
+            alignY: Alignment.center, height: SizeSpec.fixed(tabRows)));
         if (modal)
         {
             children ~= b.add(Widget(kind: WidgetKind.text, text: replacement !is null
@@ -1657,23 +1864,55 @@ struct EditorApp
             children ~= b.add(Widget(kind: WidgetKind.row, children: actions, height: SizeSpec.fixed(3)));
             children ~= b.add(Widget(kind: WidgetKind.text, height: SizeSpec.grow()));
         }
-        else if (commands.palette.active)
-        {
-            const reserved = 11 + extraRows;
-            const rows = host.size.height > reserved + 3
-                ? cast(size_t)(host.size.height - reserved) / 3 : 1;
-            const paletteView = viewCommandPalette(b, commands.palette, commands.query.state, context,
-                PaletteViewOptions(visibleRows: rows,
-                    placeholder: choosingTheme ? "Search themes" : choosingLanguage ? "Search languages" : "Search commands",
-                    title: choosingTheme ? "Themes • Enter accepts • Esc cancels"
-                        : choosingLanguage ? languageCatalog.busy ? "Listing languages… • Esc cancels"
-                            : "Languages • Enter accepts • Esc cancels" : "Commands"));
-            paletteChoices = paletteView.choices;
-            children ~= paletteView.root;
-        }
         else
         {
-            const reserved = 5 + extraRows;
+            int paletteHeight;
+            if (commands.palette.active)
+            {
+                const int paletteRowHeight = mobileUi ? 2 : 1;
+                const size_t maxPaletteRows = mobileUi ? 6 : 8;
+                const chromeReserved = headerRows + tabRows + 5 + extraRows;
+                const availRows = host.size.height > chromeReserved + paletteRowHeight
+                    ? cast(size_t)(host.size.height - chromeReserved) / paletteRowHeight : 1;
+                const rows = availRows < maxPaletteRows ? availRows : maxPaletteRows;
+                const int availWidth = host.size.width > 4 ? host.size.width - 2 : host.size.width;
+                const int paletteWidth = availWidth > 68 ? 68 : availWidth;
+                paletteScroll.content = cast(long) commands.palette.rowCount * paletteRowHeight;
+                paletteScroll.viewport = cast(long) rows * paletteRowHeight;
+                paletteScroll.motion.instant = host.backend != Backend.gui;
+                static if (__traits(hasMember, H, "frameSeconds"))
+                    if (paletteScroll.animate(host.frameSeconds)) host.requestFrame();
+                const sel = commands.palette.snapshot.selection;
+                const rowCount = commands.palette.rowCount;
+                if (sel != paletteLastSelection || rowCount != paletteLastRowCount)
+                {
+                    paletteLastSelection = sel;
+                    paletteLastRowCount = rowCount;
+                    const double selTop = cast(double) sel * paletteRowHeight;
+                    const double selBottom = selTop + paletteRowHeight;
+                    if (selTop < paletteScroll.motion.pos)
+                        paletteScroll.motion.jumpTo(selTop, paletteScroll.limit);
+                    else if (selBottom > paletteScroll.motion.pos + paletteScroll.viewport)
+                        paletteScroll.motion.jumpTo(selBottom - paletteScroll.viewport, paletteScroll.limit);
+                }
+                const paletteView = viewCommandPalette(b, commands.palette, commands.query.state, context,
+                    PaletteViewOptions(visibleRows: rows, rowHeight: paletteRowHeight,
+                        closeHit: paletteCloseHit, compact: true, maxWidth: paletteWidth,
+                        smoothScroll: true,
+                        scrollWhole: paletteScroll.motion.whole,
+                        scrollFrac: paletteScroll.motion.frac,
+                        placeholder: choosingTheme ? "Search themes" : choosingLanguage ? "Search languages" : "Search commands",
+                        title: choosingTheme ? "Themes"
+                            : choosingLanguage ? languageCatalog.busy ? "Listing languages…" : "Languages"
+                            : "Commands"));
+                paletteChoices = paletteView.choices;
+                children ~= b.add(Widget(kind: WidgetKind.column, children: [paletteView.root],
+                    width: SizeSpec.grow(), alignX: Alignment.center));
+                const shownRowsCount = paletteView.choices.length < rows ? paletteView.choices.length : rows;
+                const shownCount = shownRowsCount ? shownRowsCount : 1;
+                paletteHeight = 2 + cast(int) shownCount * paletteRowHeight;
+            }
+            const reserved = headerRows + tabRows + 3 + extraRows + paletteHeight;
             const visible = host.size.height > reserved ? cast(size_t) host.size.height - reserved : 1;
             const count = document.field.state.text.lineCount;
             // Rows wrap at the field's width, the window less the root's padding:
@@ -1683,25 +1922,46 @@ struct EditorApp
             context.options.wrapCells = width;
             context.viewportLines = visible;
             if (document.firstLine >= count) document.firstLine = count ? count - 1 : 0;
+            const text = document.field.state.text;
+            const totalRows = totalVisualRows(*context, text);
+            document.scroll.content = totalRows;
+            document.scroll.viewport = cast(long) visible;
+            document.scroll.motion.instant = host.backend != Backend.gui;
             if (document.followCaret)
             {
                 const primary = document.field.state.selection.primary;
-                scrollToCaret(*context, document.field.state.text, CaretTarget(primary.head, primary.affinity),
+                scrollToCaret(*context, text, CaretTarget(primary.head, primary.affinity),
                     visible, document.firstLine, document.firstRow);
+                document.syncedVisualRow = visualRowIndex(*context, text, document.firstLine, document.firstRow);
+                document.scroll.motion.jumpTo(cast(double) document.syncedVisualRow, document.scroll.limit);
+            }
+            else
+            {
+                static if (__traits(hasMember, H, "frameSeconds"))
+                    if (document.scroll.animate(host.frameSeconds)) host.requestFrame();
+                const long targetRow = cast(long) document.scroll.motion.whole;
+                const long delta = targetRow - document.syncedVisualRow;
+                if (delta != 0)
+                {
+                    scrollRows(*context, text, delta, document.firstLine, document.firstRow);
+                    document.syncedVisualRow = visualRowIndex(*context, text, document.firstLine, document.firstRow);
+                    if (document.syncedVisualRow != targetRow)
+                        document.scroll.motion.jumpTo(cast(double) document.syncedVisualRow, document.scroll.limit);
+                }
             }
             context.originLine = document.firstLine;
             context.originRow = document.firstRow;
             const options = EditorViewOptions(firstLine: document.firstLine,
                 visibleLines: visible, placeholder: "Start typing…", hostCursor: true);
-            const syntax = highlighting.snapshot(document.field.state.text, document.language, document.id);
+            const syntax = highlighting.snapshot(text, document.language, document.id);
             uint field;
             shownRows = null;
             shownWrap = width;
-            if (document.field.state.text.length || document.field.state.composition.active)
+            if (text.length || document.field.state.composition.active)
             {
                 uint[] rows;
-                const text = document.field.state.text;
-                for (size_t line = document.firstLine; line < count && rows.length < visible; ++line)
+                const size_t renderLimit = visible + 1;
+                for (size_t line = document.firstLine; line < count && rows.length < renderLimit; ++line)
                 {
                     const start = text.lineStart(line);
                     const end = text.lineEnd(line);
@@ -1713,7 +1973,7 @@ struct EditorApp
                     foreach (row; visualRows(logical, layout, document.field.state))
                     {
                         if (line == document.firstLine && row.row < document.firstRow) continue;
-                        if (rows.length == visible) break;
+                        if (rows.length == renderLimit) break;
                         const node = b.add(Widget(kind: WidgetKind.rich, width: SizeSpec.grow(),
                             height: SizeSpec.fixed(1), spans: row.spans, wrap: TextWrap.none,
                             caretColumn: row.caretColumn));
@@ -1721,7 +1981,9 @@ struct EditorApp
                         shownRows ~= RowHit(node, line, row.row, row.inserted, row.caretColumn);
                     }
                 }
-                field = b.add(Widget(kind: WidgetKind.column, children: rows, width: SizeSpec.grow()));
+                field = b.add(Widget(kind: WidgetKind.column, children: rows, width: SizeSpec.grow(),
+                    height: SizeSpec.fixed(cast(int) visible), clipY: true,
+                    childOffsetFracY: document.followCaret ? 0.0f : document.scroll.motion.frac));
             }
             else field = editorView(b, document.field.state, options);
             b.nodes[field].height = SizeSpec.grow();

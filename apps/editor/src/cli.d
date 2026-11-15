@@ -8,7 +8,7 @@ module cli;
 import sparkles.base.logger : LogLevel;
 import sparkles.core_cli.args : Argument, Command, Flatten, Option, RunExpected, failRun, runCli;
 import sparkles.ui_app.gui_options : GuiOptions, NativeOptions;
-import sparkles.ui_app.host : RunConfig;
+import sparkles.ui_app.host : PointerUnit, RunConfig;
 import sparkles.ui_app.run : asRunResult;
 import sparkles.ui_app.run_app : appThemeOf, runApp;
 import editor_app : EditorApp;
@@ -93,7 +93,8 @@ struct Editor
             }
             app.enableRecovery(selected, root);
         }
-        RunConfig config = {title: "Sparkles Editor", gui: gui, native: native, motion: true};
+        RunConfig config = {title: "Sparkles Editor", gui: gui, native: native, motion: true,
+            pointerUnit: PointerUnit.pixels};
         if (shot.length) config.gui.gui = true;
         auto outcome = runApp(app, config);
         if (app.captureError.length) return failRun(app.captureError);
