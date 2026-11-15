@@ -92,12 +92,13 @@ void keep(in ubyte[] rgba, string name)
 }
 
 /// FXU24: a code fence's frame on a pixel target is one ring, as wide on its
-/// sides as on its top and bottom, its surface filling its rounded corners,
-/// and its label and ▶ in one rounded outline on its top line.
+/// sides as on its top and bottom, its surface filling its rounded corners.
+/// Its language and its ▶ are badges centred on the ring's top line, filled
+/// with the page's colour; the ▶ is at the right, a button outlined in green.
 @("fileset_explorer.vulkan.FXU24.fenceFrame")
 @system unittest
 {
-    import std.algorithm.searching : startsWith;
+    import std.algorithm.searching : canFind;
     import std.conv : text;
     import std.math : abs;
 
@@ -129,35 +130,45 @@ void keep(in ubyte[] rgba, string name)
         FrameMetrics(cellW: cellW, cellH: cellH, density: density), RgbColor(0, 0, 0));
     keep(rgba, "fence");
 
-    // The ops: the ▶'s run, the fence ringed around it, the label's outline.
+    // The ops: the ▶'s run, the fence ringed around it, the badges on its row.
     static bool inside(in Rect a, in Rect b)
         => a.x >= b.x && a.y >= b.y && a.x + a.width <= b.x + b.width && a.y + a.height <= b.y + b.height;
     Rect play;
     bool found;
     foreach (ref op; rec.lastOps)
         op.payload.match!((in TextRun t) {
-            if (!found && t.text.startsWith("▶"))
+            if (!found && t.text.canFind("▶"))
             {
                 play = t.rect;
                 found = true;
             }
         }, (_) {});
     assert(found, "no ▶ on the frame");
-    FillRect ring, outline;
+    FillRect ring, button, label;
     foreach (ref op; rec.lastOps)
         op.payload.match!((in FillRect f) {
             if (f.chrome is null || !f.chrome.border.any)
                 return;
-            if (f.chrome.insideGlyphFrame && f.rect.y == play.y && f.rect.x <= play.x
+            if (!f.chrome.pixelsOnly && f.rect.y == play.y && f.rect.x <= play.x
                 && play.x < f.rect.x + f.rect.width)
                 ring = f;
             else if (f.chrome.pixelsOnly && inside(play, f.rect))
-                outline = f;
+                button = f;
+            else if (f.chrome.pixelsOnly && f.rect.y == play.y && label.chrome is null)
+                label = f;
         }, (_) {});
-    assert(ring.chrome !is null, "the fence draws no ring");
-    assert(outline.chrome !is null, "the ▶ is in no outline");
-    assert(outline.rect.x > ring.rect.x && outline.rect.width > play.width + 4,
-        text("the label and ▶ share the outline: ", outline.rect));
+    assert(ring.chrome !is null && ring.chrome.insideGlyphFrame, "the fence draws no ring");
+    assert(button.chrome !is null, "the ▶ is in no badge");
+    assert(label.chrome !is null && label.rect.x < button.rect.x,
+        "the language is in no badge, left of the ▶");
+    foreach (badge; [label, button])
+        assert(badge.rect.y == ring.rect.y && badge.rect.height == 1 && badge.hasBg,
+            text("a badge is the top row's, centred on the ring's line, filled: ", badge.rect));
+    assert(button.bg != ring.bg, "a badge is filled with the page's colour, not the fence's");
+    assert(button.chrome.border.color != label.chrome.border.color, "the ▶ is outlined as a button");
+    const ringRight = ring.rect.x + ring.rect.width;
+    assert(button.rect.x > ring.rect.x + ring.rect.width / 2 && button.rect.x + button.rect.width >= ringRight - 6,
+        text("the ▶ is at the right: ", button.rect, " in ", ring.rect));
 
     // The pixels: the ring is one width on all four sides.
     const box = insideGlyphFrame(Rect(ring.rect.x * cellW, ring.rect.y * cellH,
@@ -184,7 +195,7 @@ void keep(in ubyte[] rgba, string name)
         }
         return n;
     }
-    const midX = box.x + box.width * 3 / 4, midY = box.y + box.height / 2;
+    const midX = box.x + box.width / 2, midY = box.y + box.height / 2;
     const top = width(midX, box.y, 0, 1), bottom = width(midX, box.y + box.height, 0, -1);
     const left = width(box.x, midY, 1, 0), right = width(box.x + box.width, midY, -1, 0);
     assert(top > 0 && abs(top - left) <= 1 && abs(top - right) <= 1 && abs(top - bottom) <= 1,
@@ -196,4 +207,11 @@ void keep(in ubyte[] rgba, string name)
     foreach (x; [box.x + 9, box.x + box.width - 10])
         assert(dist(at(x, box.y + 9), fill) <= 6,
             text("a top corner shows the page at x ", x, ": ", at(x, box.y + 9), " vs ", fill));
+
+    // Inside a badge, on the ring's line and below it, is the page's colour:
+    // the ring stops at the badge's outline, and the fence's surface with it.
+    const page = at(box.x - cellW / 2 - 4, box.y + cellH);
+    const bx = button.rect.x * cellW + 8;
+    foreach (y; [box.y, box.y + cellH / 4])
+        assert(dist(at(bx, y), page) <= 6, text("inside the ▶'s badge at y ", y, ": ", at(bx, y), " vs ", page));
 }
