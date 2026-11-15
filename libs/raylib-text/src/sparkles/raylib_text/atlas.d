@@ -7,26 +7,31 @@
 module sparkles.raylib_text.atlas;
 
 /// Build the base codepoint set (see the module header). CTFE-evaluated once
-/// into $(LREF baseCodepoints).
+/// into $(LREF baseCodepoints), in every compile that imports this module.
 int[] buildCodepoints() @safe pure nothrow
 {
-    int[] cps;
-    for (int i = 32; i <= 0xFF; i++) cps ~= i;
-    // Latin Extended-A/B, IPA, spacing modifiers, combining diacritics.
-    for (int i = 0x100; i <= 0x36F; i++) cps ~= i;
-    // Greek and Coptic, Cyrillic, and Cyrillic Supplement.
-    for (int i = 0x370; i <= 0x52F; i++) cps ~= i;
-    // General Punctuation up to Misc Symbols and Arrows.
-    for (int i = 0x2000; i <= 0x2BFF; i++) cps ~= i;
-    for (int i = 0xE0A0; i <= 0xE0D4; i++) cps ~= i;
-    for (int i = 0xE200; i <= 0xE2A9; i++) cps ~= i;
-    for (int i = 0xE300; i <= 0xE3E3; i++) cps ~= i;
-    for (int i = 0xE5FA; i <= 0xE6B1; i++) cps ~= i;
-    for (int i = 0xE700; i <= 0xE7C5; i++) cps ~= i;
-    for (int i = 0xF000; i <= 0xF2E0; i++) cps ~= i;
-    for (int i = 0xF300; i <= 0xF372; i++) cps ~= i;
-    for (int i = 0xF400; i <= 0xF533; i++) cps ~= i;
-    for (int i = 0xF500; i <= 0xFD46; i++) cps ~= i;
+    static immutable int[2][] ranges = [
+        [32, 0xFF],
+        // Latin Extended-A/B, IPA, spacing modifiers, combining diacritics.
+        [0x100, 0x36F],
+        // Greek and Coptic, Cyrillic, and Cyrillic Supplement.
+        [0x370, 0x52F],
+        // General Punctuation up to Misc Symbols and Arrows.
+        [0x2000, 0x2BFF],
+        [0xE0A0, 0xE0D4], [0xE200, 0xE2A9], [0xE300, 0xE3E3], [0xE5FA, 0xE6B1],
+        [0xE700, 0xE7C5], [0xF000, 0xF2E0], [0xF300, 0xF372], [0xF400, 0xF533],
+        [0xF500, 0xFD46],
+    ];
+    // Sized once: appending one at a time copies the array on each append
+    // under CTFE, which made this 0.13 s of every importing compile.
+    size_t total;
+    foreach (r; ranges)
+        total += r[1] - r[0] + 1;
+    auto cps = new int[total];
+    size_t at;
+    foreach (r; ranges)
+        for (int i = r[0]; i <= r[1]; i++)
+            cps[at++] = i;
     return cps;
 }
 
