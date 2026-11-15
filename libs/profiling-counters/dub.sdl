@@ -13,28 +13,17 @@ dflags "-preview=in" "-preview=dip1000"
 // The counters of `sparkles:profiling` (`sparkles.profiling.counters`), a
 // package of their own so that profiling and the test harness, which every
 // package's tests depend on, link one copy. That is why it depends on no
-// repository package but the attributes: the harness may depend only on
-// packages that close no cycle (process-model TRP1). `frame.d`, which reads them for a frame loop and
-// uses `sparkles:base`, stays in `sparkles:profiling`.
-
-// The marker attributes (`@benchmark`), which close no cycle either (TRP1).
-dependency "sparkles:test-attributes" path="../.."
+// repository package: the harness may depend only on packages that close no
+// cycle (process-model TRP1). `frame.d`, which reads them for a frame loop
+// and uses `sparkles:base`, stays in `sparkles:profiling`.
 
 configuration "library" {
     targetType "library"
 }
 
-configuration "unittest" {
-    // The counters' tests use the harness, which depends on this package, so
-    // they self-host as the harness's own do (process-model TRP4): the
-    // harness's sources are compiled in, and its tests run here too.
-    targetType "library"
-    sourcePaths "src" "../test-harness/src"
-    importPaths "src" "../test-harness/src"
-    versions "SparklesTestHarnessSelfHost"
-
-    dflags "-checkaction=context" "-allinst"
-}
+// No unittest configuration: the counters' tests use the harness, which
+// depends on this package, so they live in the harness
+// (`sparkles.test_runner.counters_test`) and run with its tests.
 
 // BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
 dflags "--linker=lld" platform="linux-ldc"

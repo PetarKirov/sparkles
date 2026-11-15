@@ -30,17 +30,9 @@ version (linux)
     /// Deliberately unrounded — a rare-but-present event (one syscall or page
     /// fault in 10 000 iterations) must stay distinguishable from one that
     /// never fired; rendering formats to significant digits anyway.
-    package double projectPerIter(ulong raw, double ratio, uint iters)
+    double projectPerIter(ulong raw, double ratio, uint iters)
         @safe pure nothrow @nogc
         => double(raw) * ratio / iters;
-
-    @("perf_group.projectPerIter.keepsRareEvents")
-    @safe pure nothrow @nogc
-    unittest
-    {
-        assert(projectPerIter(1, 1.0, 10_000) == 1e-4); // a 3-decimal round floors this to 0
-        assert(projectPerIter(3370, 1.0, 1000) == 3.37);
-    }
 
     /// Sends a group-wide `perf_event` ioctl to the group leader `leaderFd`.
     package void groupIoctl(int leaderFd, uint request) @safe
@@ -125,7 +117,7 @@ version (linux)
     /// out for part of the pass (`running < enabled`), the raw counts cover
     /// only the running fraction and are scaled up by `enabled/running`; a
     /// fully-scheduled (or empty) pass is `1`.
-    package double scaledRatio(ulong enabledDelta, ulong runningDelta)
+    double scaledRatio(ulong enabledDelta, ulong runningDelta)
         @safe pure nothrow @nogc
     {
         return (runningDelta > 0 && enabledDelta > 0 && runningDelta < enabledDelta)
@@ -135,7 +127,7 @@ version (linux)
     /// A pass that was enabled but never got PMU time (the kernel's
     /// `<not counted>` state — vPMU limits, or pinned events hogging every
     /// counter): its zero counts are meaningless, not measurements.
-    package bool groupNeverRan(ulong enabledDelta, ulong runningDelta)
+    bool groupNeverRan(ulong enabledDelta, ulong runningDelta)
         @safe pure nothrow @nogc
     {
         return enabledDelta > 0 && runningDelta == 0;
@@ -145,44 +137,11 @@ version (linux)
     /// estimate is noise, not a measurement (a 0.58 ms slice measured a 5.7×
     /// scale error on the survey's counting probe). Rendered unavailable —
     /// never as a number.
-    package bool unreliableScale(ulong enabledDelta, ulong runningDelta)
+    bool unreliableScale(ulong enabledDelta, ulong runningDelta)
         @safe pure nothrow @nogc
     {
         return runningDelta > 0 && runningDelta < enabledDelta
             && runningDelta < 1_000_000;
-    }
-
-    @("perf_group.unreliableScale")
-    @safe pure nothrow @nogc
-    unittest
-    {
-        assert(unreliableScale(2_000_000, 580_000), "the probe's 0.58 ms case");
-        assert(!unreliableScale(580_000, 580_000), "exact short pass is fine");
-        assert(!unreliableScale(10_000_000, 5_000_000), "≥1 ms scaled is a labeled estimate");
-        assert(!unreliableScale(1_000_000, 0), "never-ran is its own state");
-        assert(!unreliableScale(0, 0));
-    }
-
-    @("perf_group.groupNeverRan")
-    @safe pure nothrow @nogc
-    unittest
-    {
-        assert(groupNeverRan(1000, 0));
-        assert(!groupNeverRan(1000, 1)); // any PMU time → scaled estimate
-        assert(!groupNeverRan(0, 0)); // nothing enabled: empty, not starved
-    }
-
-    @("perf_group.scaledRatio")
-    @safe pure nothrow @nogc
-    unittest
-    {
-        assert(scaledRatio(0, 0) == 1.0);
-        assert(scaledRatio(1000, 1000) == 1.0);
-        assert(scaledRatio(2000, 1000) == 2.0);
-        assert(scaledRatio(0, 1000) == 1.0); // degenerate: never enabled
-        // The correction depends only on the pass's deltas — identical passes
-        // yield identical ratios regardless of how much history preceded them.
-        assert(scaledRatio(2000, 1000) == scaledRatio(2_000_000, 1_000_000));
     }
 
     /// Reads a `PERF_FORMAT_GROUP` group from `leaderFd` (`nOpen` counters opened,
@@ -249,7 +208,7 @@ version (linux)
     /// `read(2)`, no ioctl, no `RESET` — so an outer window candidate and
     /// inner in-body windows can overlap freely: each computes its own deltas
     /// between its own two edges.
-    package struct GroupSnapshot
+    struct GroupSnapshot
     {
         ulong enabled;
         ulong running;
@@ -283,7 +242,7 @@ version (linux)
     /// across which the group's `enabled` time never advanced (the group was
     /// never enabled) yields `false` with `values`/`scale` untouched — zero
     /// deltas there would be fabricated counts, not measurements.
-    package bool windowDeltas(in GroupSnapshot a, in GroupSnapshot b,
+    bool windowDeltas(in GroupSnapshot a, in GroupSnapshot b,
         ref double scale, scope double[] values) @safe pure nothrow @nogc
     in (values.length >= a.n)
     {
@@ -302,55 +261,4 @@ version (linux)
             scale, values);
     }
 
-    @("perf_group.windowDeltas.gates")
-    @safe pure nothrow @nogc
-    unittest
-    {
-        static GroupSnapshot edge(ulong enabled, ulong running,
-            ulong v0, ulong v1, bool ok = true)
-        {
-            GroupSnapshot s;
-            s.enabled = enabled;
-            s.running = running;
-            s.values[0] = v0;
-            s.values[1] = v1;
-            s.n = 2;
-            s.ok = ok;
-            return s;
-        }
-
-        double scale = 123;
-        double[2] vals = [-1, -1];
-
-        // Failed edge read → no result, nothing touched.
-        assert(!windowDeltas(edge(0, 0, 0, 0, false), edge(9, 9, 9, 9), scale, vals[]));
-        assert(scale == 123 && vals[0] == -1);
-
-        // Never enabled across the window → no result (zeros would be
-        // fabricated), nothing touched.
-        assert(!windowDeltas(edge(5000, 5000, 10, 20), edge(5000, 5000, 10, 20),
-                scale, vals[]));
-        assert(scale == 123 && vals[0] == -1);
-
-        // Enabled but never scheduled → the kernel's <not counted>: scale 0.
-        assert(!windowDeltas(edge(0, 0, 0, 0), edge(5000, 0, 0, 0), scale, vals[]));
-        assert(scale == 0 && vals[0] == -1);
-
-        // Multiplexed with under 1 ms of PMU time → unreliable: the true
-        // ratio is reported, the values are rejected.
-        scale = 123;
-        assert(!windowDeltas(edge(0, 0, 0, 0), edge(2_000_000, 580_000, 100, 200),
-                scale, vals[]));
-        assert(scale == 0.29 && vals[0] == -1);
-
-        // Clean window → totals, scale 1.
-        assert(windowDeltas(edge(1000, 1000, 10, 20), edge(2_001_000, 2_001_000, 110, 220),
-                scale, vals[]));
-        assert(scale == 1 && vals[0] == 100 && vals[1] == 200);
-
-        // Multiplexed ≥ 1 ms → scaled totals, labeled scale.
-        assert(windowDeltas(edge(0, 0, 0, 0), edge(4_000_000, 2_000_000, 100, 200),
-                scale, vals[]));
-        assert(scale == 0.5 && vals[0] == 200 && vals[1] == 400);
-    }
 }

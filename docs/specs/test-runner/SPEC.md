@@ -145,7 +145,7 @@ Measurement modules, under `src/sparkles/test_runner/` of the package named,
 except the counters, which `sparkles:profiling` owns as
 `sparkles.profiling.counters.*` so a frame loop reads the same counters a
 benchmark does. They are built as `sparkles:profiling-counters`
-(`libs/profiling-counters/`), which depends only on the attributes, so the
+(`libs/profiling-counters/`), which depends on no repository package, so the
 harness and `sparkles:profiling` both depend on it (TRD13):
 
 | Module           | Package              | Role                                                                   |

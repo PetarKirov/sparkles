@@ -1700,8 +1700,8 @@ unittest
         ask("ui (test root)", "ui", true),
         ask("core-cli", "core-cli", false),
     ];
-    // For its hidden edge alone.
-    cast(void) ask("profiling-counters (test root)", "profiling-counters", true);
+    // For the counters' tests, which live in the harness.
+    cast(void) ask("test-harness (test root)", "test-harness", true);
     // Every pair a resolution chose has a set.
     foreach (ref r; requests)
         foreach (pair; r.closure)
@@ -1725,8 +1725,9 @@ unittest
     // A new top-level `sparkles/` would shadow modules for every compile.
     assert(affected("sparkles/base/buffer.d") == ["text-lab", "ui (test root)", "core-cli"]);
 
-    // The counters' tests compile the harness's sources (their recipe says
-    // why), and the font oracle's tests compile one of font's fixtures.
+    // The counters' tests run in the harness's, which depend on the counters
+    // through their recipe, not a reach. The font oracle's tests compile one
+    // of font's fixtures.
     string[] claimants(string path)
     {
         string[] names;
@@ -1736,7 +1737,7 @@ unittest
         return names;
     }
 
-    assert(claimants("libs/test-harness/src/sparkles/test_harness/package.d").canFind("profiling-counters:unittest"));
+    assert(claimants("libs/test-harness/src/sparkles/test_runner/counters_test/psi.d").canFind("test-harness:unittest"));
     assert(claimants("libs/font/test/sparkles/font/fixtures.d").canFind("font-oracle:unittest"));
 
     // BGW11: `ui-app`'s spec is a link to its catalog under `docs/`. The
@@ -1795,8 +1796,7 @@ unittest
     assert(!listed.canFind("") && !listed.canFind("docs") && !listed.canFind("apps/hue"), listed.text);
     assert(roots.length < graph.packages.length, "fewer roots than packages");
 
-    // This repository's reaches into other packages. One is a hidden edge,
-    // the counters' tests self-hosting the harness (process-model TRP4),
+    // This repository's reaches into other packages. None is a hidden edge,
     // and the lint over the sets finds what the resolver's (oracle 13) finds.
     string[] intoPackages;
     foreach (ref r; sets.reaches(graph))
@@ -1807,13 +1807,12 @@ unittest
         }
     assert(intoPackages == [
         "font-oracle:unittest libs/font/test",
-        "profiling-counters:unittest libs/test-harness/src",
     ], intoPackages.text);
     string[] hidden;
     foreach (ref h; sets.hiddenReaches(graph))
         hidden ~= text(graph.packages[sets.key(h.set).package_].shortName, ":", sets.key(h.set).configuration, " ",
             graph.packages[h.package_].shortName);
-    assert(hidden == ["profiling-counters:unittest test-harness"], hidden.text);
+    assert(hidden == [], hidden.text);
     import std.algorithm.sorting : sort;
 
     resolverHidden.sort();
