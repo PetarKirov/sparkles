@@ -71,11 +71,6 @@ configuration "gpu-effects" {
 }
 
 configuration "unittest" {
-    // `../dql/src` is a test-only reach; the build graph's E1 moves these
-    // tests where they can depend on dql (D15).
-    sourcePaths "../dql/src"
-    importPaths "src" "../dql/src"
-
     // The component tests use the diff/outdent helpers. `test-utils` depends on
     // `base` alone, so this edge closes no cycle.
     dependency "sparkles:test-utils" path="../.."

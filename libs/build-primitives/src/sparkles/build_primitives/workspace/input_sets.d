@@ -1714,10 +1714,11 @@ unittest
     alias affected = (string path) => named(requests, affectedBy(sets, requests, [path]).affected);
     // A module of `base` affects all three.
     assert(affected("libs/base/src/sparkles/base/buffer.d") == ["text-lab", "ui (test root)", "core-cli"]);
-    // `ui`'s tests compile `dql`'s sources; nothing else that builds `ui`
-    // does. text-lab's shader compiler reaches `dql` through
-    // `wired-sdl-select`, so a change there may change its shaders.
-    assert(affected("libs/dql/src/sparkles/dql/package.d") == ["text-lab", "ui (test root)"]);
+    // Nothing that builds `ui` reads `dql`, its tests included, since the
+    // property tree's DQL test lives in `dql`. text-lab's shader compiler
+    // reaches `dql` through `wired-sdl-select`, so a change there may change
+    // its shaders.
+    assert(affected("libs/dql/src/sparkles/dql/package.d") == ["text-lab"]);
     // Documentation beside a recipe is in no input set.
     const readme = affectedBy(sets, requests, ["libs/base/README.md"]);
     assert(named(requests, readme.affected) == [] && readme.unclaimed == ["libs/base/README.md"]);
@@ -1794,8 +1795,8 @@ unittest
     assert(!listed.canFind("") && !listed.canFind("docs") && !listed.canFind("apps/hue"), listed.text);
     assert(roots.length < graph.packages.length, "fewer roots than packages");
 
-    // This repository's reaches into other packages. Two are hidden edges
-    // that the recipes say are test-only and the build graph's E1 removes,
+    // This repository's reaches into other packages. One is a hidden edge,
+    // the counters' tests self-hosting the harness (process-model TRP4),
     // and the lint over the sets finds what the resolver's (oracle 13) finds.
     string[] intoPackages;
     foreach (ref r; sets.reaches(graph))
@@ -1807,13 +1808,12 @@ unittest
     assert(intoPackages == [
         "font-oracle:unittest libs/font/test",
         "profiling-counters:unittest libs/test-harness/src",
-        "ui:unittest libs/dql/src",
     ], intoPackages.text);
     string[] hidden;
     foreach (ref h; sets.hiddenReaches(graph))
         hidden ~= text(graph.packages[sets.key(h.set).package_].shortName, ":", sets.key(h.set).configuration, " ",
             graph.packages[h.package_].shortName);
-    assert(hidden == ["profiling-counters:unittest test-harness", "ui:unittest dql"], hidden.text);
+    assert(hidden == ["profiling-counters:unittest test-harness"], hidden.text);
     import std.algorithm.sorting : sort;
 
     resolverHidden.sort();
