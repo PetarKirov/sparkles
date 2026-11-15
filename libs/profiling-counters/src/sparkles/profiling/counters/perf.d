@@ -122,6 +122,24 @@ version (linux)
         private bool scaledMode;   /// full group kept multiplexing (--perf-scaled)
         private bool neverScheduled; /// calibration saw zero PMU time even reduced
 
+        /// A group in the given probe state with no counter open: what
+        /// `status`, `degraded` and `capabilities` report for that state,
+        /// without a host whose PMU produces it.
+        static PerfGroup inState(bool requested, bool opened = false,
+            bool userOnly = false, bool cacheDropped = false,
+            bool scaledMode = false, bool neverScheduled = false)
+            @safe pure nothrow @nogc
+        {
+            PerfGroup g;
+            g.requested = requested;
+            g.opened = opened;
+            g.userOnly = userOnly;
+            g.cacheDropped = cacheDropped;
+            g.scaledMode = scaledMode;
+            g.neverScheduled = neverScheduled;
+            return g;
+        }
+
         /// Whether counters are usable on this machine.
         bool available() const @safe pure nothrow @nogc => opened;
 
@@ -539,7 +557,7 @@ else version (OSX)
         "the fixed-counter fields moved — re-verify against the SDK header");
 
     /// One cumulative fixed-counter reading; `ok == false` = syscall failed.
-    package struct RusageReading
+    struct RusageReading
     {
         ulong instructions;
         ulong cycles;
@@ -556,7 +574,7 @@ else version (OSX)
     }
 
     /// Reads the process's cumulative retired-instruction/cycle counters.
-    package RusageReading readFixedCounters() @safe nothrow @nogc
+    RusageReading readFixedCounters() @safe nothrow @nogc
     {
         rusage_info_v4 info;
         if (!readRusageInfo(info))
@@ -584,6 +602,19 @@ else version (OSX)
         private double selfInstr = 0; /// calibrated per-bracket snapshot cost
         private double selfCycles = 0;
         private string peSuffix; /// P/E-core disclosure, precomputed at open
+
+        /// A group in the given probe state with nothing read: what `status`,
+        /// `degraded` and `capabilities` report for that state, without a
+        /// host that produces it.
+        static PerfGroup inState(bool requested, bool opened = false,
+            bool countersZero = false) @safe pure nothrow @nogc
+        {
+            PerfGroup g;
+            g.requested = requested;
+            g.opened = opened;
+            g.countersZero = countersZero;
+            return g;
+        }
 
         /// Whether the fixed counters tick on this host.
         bool available() const @safe pure nothrow @nogc => opened;
@@ -905,276 +936,10 @@ static assert(isCounterBackend!PerfGroup);
 static assert(hasSnapshot!PerfGroup);
 static assert(!hasNamedColumns!PerfGroup);
 
-@("perf.PerfGroup.capabilities.notRequested")
-@safe
-unittest
-{
-    auto g = PerfGroup.tryOpen(false);
-    const r = g.capabilities;
-    assert(!r.has(Capability.counting));
-    version (linux)
-        assert(r.reasonFor(Capability.counting) == "not requested");
-    else version (OSX)
-        assert(r.reasonFor(Capability.counting) == "not requested");
-    else
-        assert(r.reasonFor(Capability.counting) == "not Linux");
-}
-
 version (OSX)
 {
-    @("perf.PerfGroup.darwin.capabilities")
-    @system
-    unittest
-    {
-        import std.algorithm.searching : canFind;
-        import sparkles.test_runner.skip : skipTest;
-
-        auto g = PerfGroup.tryOpen(true);
-        scope (exit)
-            g.close();
-        // The kpc/xctrace capability ads hold whether or not the fixed
-        // counters tick (a VM guest still explains the whole domain).
-        const r = g.capabilities;
-        assert(r.reasonFor(Capability.countingRaw).canFind("RESTRICT_TO_KNOWN"));
-        assert(r.reasonFor(Capability.ipSampling).canFind("xctrace"));
-        assert(r.reasonFor(Capability.selfMonitoring) !is null);
-        assert(r.reasonFor(Capability.preciseMemory) !is null);
-        assert(r.reasonFor(Capability.countingScaled) !is null);
-        if (!g.available)
-            skipTest(g.status()); // Virtualization.framework guest
-        assert(r.has(Capability.counting));
-        assert(g.degraded, "process-wide scope is always disclosed");
-    }
-
-    @("perf.PerfGroup.darwin.statusByteIdentity")
-    @safe pure nothrow
-    unittest
-    {
-        PerfGroup g;
-        g.requested = true;
-        assert(g.status == "unavailable (proc_pid_rusage failed)");
-        g.countersZero = true;
-        assert(g.status
-            == "unavailable (fixed counters read zero — virtualized guest, or monotonic disabled)");
-        g.countersZero = false;
-        g.opened = true;
-        assert(g.status
-            == "process-wide fixed counters (proc_pid_rusage) — not per-bracket events");
-        assert(g.degraded == g.opened);
-    }
-
-    @("perf.PerfGroup.darwin.abiSanity")
-    @system
-    unittest
-    {
-        import sparkles.test_runner.skip : skipTest;
-
-        // A live layout cross-check: a ~100k-iteration spin between two raw
-        // readings must move ri_instructions by a plausible amount — a
-        // misaligned struct reads garbage (absurd deltas) or dead fields
-        // (zero deltas) instead.
-        const a = readFixedCounters();
-        if (!a.ok)
-            skipTest("proc_pid_rusage failed");
-        static ulong sink;
-        foreach (i; 0 .. 100_000)
-            sink += i * i;
-        const b = readFixedCounters();
-        assert(b.ok);
-        const instr = b.instructions - a.instructions;
-        if (instr == 0)
-            skipTest("fixed counters read zero — virtualized guest");
-        // No upper bound: the counters are process-wide and this test runs
-        // in the parallel worker pool — other threads only ADD instructions,
-        // so a busy host must never turn an alignment check red. The lower
-        // bound plus the zero-skip already distinguish a misaligned read
-        // (garbage or dead field) from a live counter.
-        assert(instr > 10_000, "the instruction delta of a 100k spin is plausible");
-        assert(b.cycles > a.cycles, "cycles advance with instructions");
-    }
 }
 
 version (linux)
 {
-    @("perf.PerfGroup.capabilities.opened")
-    @system
-    unittest
-    {
-        import sparkles.test_runner.skip : skipTest;
-
-        auto g = PerfGroup.tryOpen(true);
-        scope (exit)
-            g.close();
-        if (!g.available)
-            skipTest(g.status());
-        const r = g.capabilities;
-        assert(r.has(Capability.counting));
-        assert(r.reasonFor(Capability.counting) is null);
-        assert(r.reasonFor(Capability.preciseMemory) !is null,
-            "the perf domain always explains the precise-memory gap");
-        assert(r.reasonFor(Capability.countingScaled) !is null);
-    }
-
-    @("perf.PerfGroup.degraded")
-    @safe pure nothrow @nogc
-    unittest
-    {
-        PerfGroup g;
-        assert(!g.degraded, "clean state");
-        g.userOnly = true;
-        assert(g.degraded);
-        g.userOnly = false;
-        g.cacheDropped = true;
-        assert(g.degraded);
-        g.cacheDropped = false;
-        g.scaledMode = true;
-        assert(g.degraded);
-    }
-
-    @("perf.PerfGroup.status.byteIdentity")
-    @safe pure nothrow
-    unittest
-    {
-        // The exact pre-capability-seam strings, byte for byte.
-        PerfGroup g;
-        g.requested = true;
-        assert(g.status == "unavailable (perf_event_open failed — perf_event_paranoid?)");
-        g.neverScheduled = true;
-        assert(g.status == "unavailable (PMU busy — the group never got scheduled)");
-        g.neverScheduled = false;
-        g.opened = true;
-        assert(g.status == "kernel+user");
-        g.userOnly = true;
-        assert(g.status == "user-space only");
-        g.cacheDropped = true;
-        assert(g.status == "user-space only; LLC events dropped (would multiplex — NMI watchdog holds a counter?)");
-    }
-}
-
-@("perf.PerfStats.derivedMetrics")
-@safe pure nothrow @nogc
-unittest
-{
-    import std.math : isClose;
-
-    PerfStats p;
-    p.cycles = 1000;
-    p.instructions = 3500;
-    p.branches = 800;
-    p.branchMisses = 8;
-    p.cacheReferences = 100;
-    p.cacheMisses = 25;
-    assert(p.ipc.isClose(3.5));
-    assert(p.branchMissPercent.isClose(1.0));
-    assert(p.cacheMissPercent.isClose(25.0));
-
-    const PerfStats empty;
-    assert(empty.ipc.isNaN && empty.branchMissPercent.isNaN);
-}
-
-@("perf.PerfGroup.countSmoke")
-@system
-unittest
-{
-    // Un-gated: runs the perf_event path on Linux and the proc_pid_rusage
-    // path on macOS; skips with the group's own reason elsewhere (stub) or
-    // when the host refuses (paranoid kernels, VM guests).
-    auto g = PerfGroup.tryOpen(true);
-    scope (exit)
-        g.close();
-    import sparkles.test_runner.skip : skipTest;
-
-    if (!g.available)
-        skipTest(g.status());
-
-    static ulong sink;
-    const stats = g.count(() {
-        foreach (i; 0 .. 100_000)
-            sink += i * i;
-    }, () {}, 3);
-
-    assert(stats.iters == 3);
-    // 100k multiply-accumulates cannot run in fewer than 10k instructions.
-    assert(stats.instructions > 10_000);
-    assert(stats.cycles > 0);
-}
-
-@("perf.PerfGroup.usableAfterThrowingPass")
-@system
-unittest
-{
-    // A timed body that throws escapes the ENABLE/DISABLE bracket; the
-    // scope(failure) guard must leave the shared group disabled and the throw
-    // must propagate (the streaming runner turns it into an error row), with
-    // the group still measuring correctly on the next pass.
-    auto g = PerfGroup.tryOpen(true);
-    scope (exit)
-        g.close();
-    import sparkles.test_runner.skip : skipTest;
-
-    if (!g.available)
-        skipTest(g.status());
-
-    static ulong sink;
-    bool threw;
-    try
-        g.count(() { sink++; throw new Exception("boom"); }, () {}, 3);
-    catch (Exception)
-        threw = true;
-    assert(threw, "the throw propagates out of the counting pass");
-
-    const stats = g.count(() {
-        foreach (i; 0 .. 100_000)
-            sink += i * i;
-    }, () {}, 3);
-    import std.math : isNaN;
-
-    if (!stats.instructions.isNaN)
-        assert(stats.instructions > 10_000, "the group still measures after a throw");
-}
-
-@("perf.PerfGroup.windowStats.spinWindow")
-@system
-unittest
-{
-    // The window model: enable once, read cumulative edges, delta — no
-    // per-iteration bracket, no RESET. A spin window must retire
-    // instructions; a window across a disabled group must read nan (the
-    // never-enabled gate), never fabricated zeros.
-    auto g = PerfGroup.tryOpen(true);
-    scope (exit)
-        g.close();
-    import sparkles.test_runner.skip : skipTest;
-
-    if (!g.available)
-        skipTest(g.status());
-
-    static ulong sink;
-    static void spin()
-    {
-        foreach (i; 0 .. 200_000)
-            sink += i * i;
-    }
-
-    // Disabled group (tryOpen leaves counters disarmed): enabled time does
-    // not advance across the window, so the deltas are not measurements.
-    const d0 = g.snapshot();
-    spin();
-    const d1 = g.snapshot();
-    import std.math : isNaN;
-
-    assert(g.windowStats(d0, d1).instructions.isNaN,
-        "a never-enabled window must not fabricate zeros");
-
-    g.enable();
-    scope (exit)
-        g.disable();
-    const a = g.snapshot();
-    spin();
-    const b = g.snapshot();
-    const s = g.windowStats(a, b);
-    assert(s.iters == 1);
-    if (s.instructions.isNaN)
-        skipTest("window was multiplexed below the reliability gate");
-    assert(s.instructions > 100_000, "a spin window retires instructions (totals, not per-iter)");
 }

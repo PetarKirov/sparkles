@@ -327,7 +327,7 @@ on no package that closes a cycle (TRP1); `sparkles:profiling` depends on
 - The harness owns them again, and `sparkles:profiling` depends on it: the
   same edge, and it undoes `main`'s ownership.
 - A package of their own, `sparkles:profiling-counters`, which depends on no
-  repository package but the attributes, with the harness and `sparkles:profiling` depending on
+  repository package, with the harness and `sparkles:profiling` depending on
   it.
 
 **Choice.** The last, accepted by the owner on 2026-11-12. The counters keep
@@ -337,8 +337,10 @@ druntime and Phobos code. `counters/frame.d`, which reads them for a frame
 loop and uses `sparkles:base`, stays in `sparkles:profiling`.
 
 **Trade-offs.** The counters' tests use the harness, which depends on them,
-so their unittest configuration self-hosts with the harness's sources, and
-the harness's own tests run there a second time. The sources moved to
+so they live in the harness (`sparkles.test_runner.counters_test`), away
+from the code they test. Their package has no unittest configuration, and
+the white-box tests reach the state they check through public entry points
+(`PerfGroup.inState`, the group-scaling helpers). The sources moved to
 `libs/profiling-counters/src`, because the Nix source closure finds a
 package's sources at `libs/<name>/src`.
 

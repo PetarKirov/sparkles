@@ -159,9 +159,10 @@ row is wasteful. The fourth is the link case that decision
 [D24](./decisions.md#d24-a-test-reads-a-specification-through-a-link-accepted)
 records as open, which link claims close (BGW11).
 
-Three reaches exist in the repository's recipes, all in test configurations:
-`ui` into `libs/dql/src`, `profiling-counters` into `libs/test-harness/src`,
-and `font-oracle` into `libs/font/test`. Three recipes state a command
+One reach exists in the repository's recipes, in a test configuration:
+`font-oracle` into `libs/font/test`. Two more, `ui` into `libs/dql/src` and
+`profiling-counters` into `libs/test-harness/src`, were hidden edges and are
+gone. Three recipes state a command
 (`libs/ui`, `libs/ui-vulkan` and `libs/vulkan-wsi`, each to generate
 shaders). One path and one flag are opaque (BGW4), both in
 `sparkles:profiling`'s `tracy` and `unittest-tracy` configurations: an import
