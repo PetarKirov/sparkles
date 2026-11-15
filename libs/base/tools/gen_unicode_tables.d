@@ -879,17 +879,22 @@ private PackedProperty pack(scope const(uint)[] raw)
     }
     return result;
 }
+// A hex string, not an array literal: the compiler lexes one token instead of
+// one per element, which cuts the cost every module importing the tables pays
+// from about 0.6 s to a fraction; CTFE still reads it as an integer array.
 private string numericArray(string type, string name, scope const(uint)[] data)
 {
+    const digits = type == "ubyte" ? 2 : type == "ushort" ? 4 : type == "uint" ? 8 : 0;
+    require(digits != 0, "numeric table type must be ubyte, ushort or uint");
     auto writer = appender!string;
-    writer.put("private immutable " ~ type ~ "[] " ~ name ~ " = [\n");
+    writer.put("private immutable " ~ type ~ "[] " ~ name ~ " = x\"");
     foreach (i, value; data)
     {
-        if (i % 16 == 0) writer.put("    ");
-        writer.formattedWrite("%s,", value);
-        writer.put(i % 16 == 15 || i + 1 == data.length ? "\n" : " ");
+        require(digits == 8 || value >> (4 * digits) == 0, "numeric table value exceeds its type");
+        if (i % 32 == 0) writer.put("\n    ");
+        writer.formattedWrite("%0*X", digits, value);
     }
-    writer.put("];\n");
+    writer.put("\";\n");
     return writer.data;
 }
 private string propertySource(ref Property p)
@@ -964,51 +969,53 @@ struct UnicodeMappingSpan
     ushort length;
     bool present;
 }
-private struct UnicodeSequenceIndex { uint codepoint, offset; ushort length; }
-private struct UnicodeScalarIndex { uint codepoint, value; }
-private UnicodeMappingSpan findUnicodeSequence(scope const(UnicodeSequenceIndex)[] index,
-    dchar cp) @safe pure nothrow @nogc
+// The indexes are parallel numeric arrays, sorted by code point, so they
+// can be hex strings like every other table.
+private size_t findCodepoint(scope const(uint)[] codepoints, dchar cp) @safe pure nothrow @nogc
 {
     assert(cp <= 0x10FFFF, "not a Unicode code point");
-    size_t lo, hi = index.length;
+    size_t lo, hi = codepoints.length;
     while (lo < hi)
     {
         const mid = lo + (hi - lo) / 2;
-        if (index[mid].codepoint < cp) lo = mid + 1; else hi = mid;
+        if (codepoints[mid] < cp) lo = mid + 1; else hi = mid;
     }
-    return lo < index.length && index[lo].codepoint == cp
-        ? UnicodeMappingSpan(index[lo].offset, index[lo].length, true) : UnicodeMappingSpan.init;
+    return lo < codepoints.length && codepoints[lo] == cp ? lo : size_t.max;
 }
-private uint findUnicodeScalar(scope const(UnicodeScalarIndex)[] index,
+private UnicodeMappingSpan findUnicodeSequence(scope const(uint)[] codepoints,
+    scope const(uint)[] offsets, scope const(ushort)[] lengths, dchar cp) @safe pure nothrow @nogc
+{
+    const i = findCodepoint(codepoints, cp);
+    return i != size_t.max ? UnicodeMappingSpan(offsets[i], lengths[i], true) : UnicodeMappingSpan.init;
+}
+private uint findUnicodeScalar(scope const(uint)[] codepoints, scope const(uint)[] values,
     dchar cp, uint fallback) @safe pure nothrow @nogc
 {
-    assert(cp <= 0x10FFFF, "not a Unicode code point");
-    size_t lo, hi = index.length;
-    while (lo < hi)
-    {
-        const mid = lo + (hi - lo) / 2;
-        if (index[mid].codepoint < cp) lo = mid + 1; else hi = mid;
-    }
-    return lo < index.length && index[lo].codepoint == cp ? index[lo].value : fallback;
+    const i = findCodepoint(codepoints, cp);
+    return i != size_t.max ? values[i] : fallback;
 }
 };
 private string sequenceSource(string name, scope const(SequenceMapping)[] mappings)
 {
-    uint[] data;
+    uint[] data, codepoints, offsets, lengths;
     auto writer = appender!string;
-    writer.put("private immutable UnicodeSequenceIndex[] " ~ name ~ "Index = [\n");
     foreach (m; mappings)
     {
         require(data.length <= uint.max - m.values.length, "mapping offset overflow");
-        writer.formattedWrite("    UnicodeSequenceIndex(0x%X, %s, %s),\n", m.codepoint, data.length, m.values.length);
+        require(m.values.length <= ushort.max, "mapping length overflow");
+        codepoints ~= m.codepoint;
+        offsets ~= cast(uint) data.length;
+        lengths ~= cast(uint) m.values.length;
         data ~= m.values;
     }
-    writer.put("];\n");
+    writer.put(numericArray("uint", name ~ "Codepoints", codepoints));
+    writer.put(numericArray("uint", name ~ "Offsets", offsets));
+    writer.put(numericArray("ushort", name ~ "Lengths", lengths));
     writer.put(numericArray("uint", name ~ "Data", data));
     writer.formattedWrite(q{
 UnicodeMappingSpan %1$s(dchar cp) @safe pure nothrow @nogc
 {
-    return findUnicodeSequence(%1$sIndex, cp);
+    return findUnicodeSequence(%1$sCodepoints, %1$sOffsets, %1$sLengths, cp);
 }
 %2$s %1$sValue(size_t offset) @safe pure nothrow @nogc
 {
@@ -1021,14 +1028,15 @@ UnicodeMappingSpan %1$s(dchar cp) @safe pure nothrow @nogc
 private string scalarSource(string name, scope const(ScalarMapping)[] mappings)
 {
     auto writer = appender!string;
-    writer.put("private immutable UnicodeScalarIndex[] " ~ name ~ "Index = [\n");
-    foreach (m; mappings) writer.formattedWrite("    UnicodeScalarIndex(0x%X, %s),\n", m.codepoint, m.value);
-    writer.put("];\n");
+    uint[] codepoints, values;
+    foreach (m; mappings) { codepoints ~= m.codepoint; values ~= m.value; }
+    writer.put(numericArray("uint", name ~ "Codepoints", codepoints));
+    writer.put(numericArray("uint", name ~ "Values", values));
     const isBoolean = name == "isEmojiVsBase";
     const isNumeric = name == "canonicalCombiningClass" || name == "bidiBracketType";
-    writer.formattedWrite("%s %s(dchar cp) @safe pure nothrow @nogc\n{\n    return %sfindUnicodeScalar(%sIndex, cp, %s)%s;\n}\n",
+    writer.formattedWrite("%s %s(dchar cp) @safe pure nothrow @nogc\n{\n    return %sfindUnicodeScalar(%sCodepoints, %sValues, cp, %s)%s;\n}\n",
         isBoolean ? "bool" : isNumeric ? "ubyte" : "dchar", name,
-        isBoolean ? "" : isNumeric ? "cast(ubyte) " : "cast(dchar) ", name,
+        isBoolean ? "" : isNumeric ? "cast(ubyte) " : "cast(dchar) ", name, name,
         isBoolean || isNumeric ? "0" : "cp", isBoolean ? " != 0" : "");
     return writer.data;
 }
