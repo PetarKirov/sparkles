@@ -57,7 +57,6 @@ struct Editor
         if (shot.length && (gui.tui || gui.noGui))
             return failRun("--shot requires the native GUI host");
         EditorApp app;
-        scope (exit) app.dispose();
         if (!app.useTheme(gui.theme)) return failRun("Unknown theme: " ~ gui.theme);
         app.inspector = inspector;
         app.shotPath = shot;

@@ -104,7 +104,6 @@ private class DisplayedFrame
     import std.path : buildPath;
     auto fixture = TmpFS.create();
     EditorApp app;
-    scope (exit) app.dispose();
     app.enableRecovery(buildPath(fixture.dir, "sessions"), fixture.dir);
     assert(app.openBytes("saved", "saved contents"));
     app.execute(CommandId(Command.quit));
@@ -143,7 +142,6 @@ private struct ClipboardRead
     import sparkles.input : NoEvent, pasteChunks;
     import sparkles.ui_app.record : RecordingHost;
     EditorApp app;
-    scope (exit) app.dispose();
     RecordingHost host;
     app.handle(host, Event(NoEvent()));
     app.execute(CommandId(Command.edit, EditorAction.paste));
@@ -182,7 +180,6 @@ private struct ClipboardRead
     const destination = buildPath(fixture.dir, "right.txt");
     const wrong = buildPath(fixture.dir, "wrong.txt");
     EditorApp app;
-    scope (exit) app.dispose();
     RecordingHost host;
     host.backend = Backend.gui;
     host.size = Size(80, 28);
@@ -217,7 +214,6 @@ private struct ClipboardRead
     import sparkles.input : NoEvent, pasteChunks;
     import sparkles.ui_app.record : RecordingHost;
     EditorApp app;
-    scope (exit) app.dispose();
     RecordingHost host;
     app.handle(host, Event(NoEvent()));
     auto first = app.document;
@@ -255,7 +251,6 @@ private struct ClipboardRead
     import std.path : buildPath;
     auto fixture = TmpFS.create();
     EditorApp app;
-    scope (exit) app.dispose();
     app.enableRecovery(buildPath(fixture.dir, "outside"), buildPath(fixture.dir, "root"));
     app.document.field.insert("retained contents");
     RecordingHost host;
@@ -280,7 +275,6 @@ private struct ClipboardRead
     auto fixture = TmpFS.create();
     const base = buildPath(fixture.dir, "sessions");
     EditorApp app;
-    scope (exit) app.dispose();
     app.enableRecovery(base, fixture.dir);
     app.document.field.insert("last moment");
     RecordingHost host;
@@ -323,7 +317,6 @@ private struct ClipboardRead
     assert(appendSessionGeneration(old.value.path, record).hasValue);
     old.value.close();
     EditorApp app;
-    scope (exit) app.dispose();
     app.enableRecovery(base, fixture.dir);
     assert(app.openPath(path));
     RecordingHost host;
@@ -376,7 +369,6 @@ private struct ClipboardRead
     assert(appendSessionGeneration(old.value.path, record).hasValue);
     old.value.close();
     EditorApp app;
-    scope (exit) app.dispose();
     app.enableRecovery(base, fixture.dir);
     assert(app.openBytes("current", "current text"));
     app.document.field.run(EditCommand.setRange(0, 0), MonoTime.currTime);
@@ -421,7 +413,6 @@ private struct ClipboardRead
     import std.path : buildPath;
     auto fixture = TmpFS.create();
     EditorApp app;
-    scope (exit) app.dispose();
     // A path outside the supplied platform namespace is a genuine bootstrap failure.
     app.enableRecovery(buildPath(fixture.dir, "outside"), buildPath(fixture.dir, "root"));
     assert(app.openBytes("saved", "retained contents"));
@@ -457,6 +448,11 @@ private enum Dialog : ubyte { none, openPath, savePath, dirtyClose, recoveryClos
 /// Thin shared-widget component, instantiated by recording, TUI and Vulkan hosts.
 struct EditorApp
 {
+    // The app owns its workers (files, highlighting, language discovery,
+    // recovery): its one owner stops them when it goes out of scope.
+    @disable this(this);
+    ~this() @safe nothrow { dispose(); }
+
     AppTheme theme;
     PaletteInput!(Command, 512) commands;
     bool inspector;
@@ -860,13 +856,14 @@ struct EditorApp
         }
     }
 
-    /// Stop application-owned workers even when opening the rendering host fails.
+    /// Stop application-owned workers; the destructor does so too. Idempotent:
+    /// a worker stopped here is released, so a later call does nothing.
     void dispose() @safe nothrow
     {
-        if (files !is null) files.shutdown();
-        if (highlighting !is null) highlighting.shutdown();
-        if (languageCatalog !is null) languageCatalog.shutdown();
-        if (recovery !is null) recovery.shutdown();
+        if (files !is null) { files.shutdown(); files = null; }
+        if (highlighting !is null) { highlighting.shutdown(); highlighting = null; }
+        if (languageCatalog !is null) { languageCatalog.shutdown(); languageCatalog = null; }
+        if (recovery !is null) { recovery.shutdown(); recovery = null; }
     }
 
     /// The selected theme is a reversible preview until the palette emits acceptance.
@@ -1874,7 +1871,6 @@ struct EditorApp
     auto fixture = TmpFS.create();
     const path = buildPath(fixture.dir, "captured.txt");
     EditorApp app;
-    scope (exit) app.dispose();
     app.document.field.insert("first");
     assert(app.saveTo(path));
     app.document.field.insert(" later");
@@ -1927,7 +1923,6 @@ struct EditorApp
     import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
     import sparkles.ui.style : defaultTwoslashPalette;
     EditorApp app;
-    scope (exit) app.dispose();
     app.document.field.setText("abc");
     RecordingHost host;
     FrameSnapshot frame;
@@ -1963,7 +1958,6 @@ struct EditorApp
     import sparkles.ui.style : defaultTwoslashPalette;
     import sparkles.ui.editor.command : EditCommand;
     EditorApp app;
-    scope (exit) app.dispose();
     // At 20 columns, rows wrap at 17 cells (padding and the caret cell aside):
     // "alpha beta gamma " and "delta epsilon".
     app.document.field.setText("alpha beta gamma delta epsilon");
@@ -1991,7 +1985,6 @@ struct EditorApp
     import sparkles.ui.style : defaultTwoslashPalette;
     import sparkles.ui.editor.command : EditCommand;
     EditorApp app;
-    scope (exit) app.dispose();
     app.document.field.setText("ab אב");
     app.document.field.run(EditCommand.setRange(0, 0));
     RecordingHost host;
@@ -2022,7 +2015,6 @@ struct EditorApp
     import sparkles.ui.editor.selection : EditRange, SelectionSet;
     import sparkles.ui.style : defaultTwoslashPalette;
     EditorApp app;
-    scope (exit) app.dispose();
     app.document.field.setText("ab אב");
     app.document.field.state.selection = SelectionSet.single(EditRange(3, 3, Affinity.after));
     RecordingHost host;
@@ -2053,7 +2045,6 @@ struct EditorApp
     import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
     import sparkles.ui.style : defaultTwoslashPalette;
     EditorApp app;
-    scope (exit) app.dispose();
     assert(app.openBytes("bravo", "B"));
     const bravo = app.document.id;
     assert(app.openBytes("charlie", "C"));
@@ -2089,7 +2080,6 @@ struct EditorApp
     import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
     import sparkles.ui.style : defaultTwoslashPalette;
     EditorApp app;
-    scope (exit) app.dispose();
     app.document.field.setText("abc");
     RecordingHost host;
     FrameSnapshot frame;
@@ -2227,7 +2217,6 @@ struct EditorApp
 {
     import sparkles.input : Key;
     EditorApp app;
-    scope (exit) app.dispose();
     assert(app.openBytes("sample.d", "int value = 1;\r\n"));
     assert(app.document.language == "d");
     app.handleKey(KeyEvent(Key.f4));
@@ -2262,7 +2251,6 @@ struct EditorApp
     if (!bundle.length) skipTest("SPARKLES_TS_GRAMMAR_PATH is unset; enter the development shell.");
     foreach (root; GrammarRegistry.fromSearchPath(bundle).dirs) assert(root.exists);
     EditorApp app;
-    scope (exit) app.dispose();
     assert(app.openBytes("data.unknown", "{\"value\": 1}\n"));
     app.execute(CommandId(Command.languages));
     app.commands.insert("json", app.context);
@@ -2314,7 +2302,6 @@ struct EditorApp
     auto fixture = TmpFS.create();
     const path = fixture.writeFile("\xef\xbb\xbfdisk\r\n");
     EditorApp app;
-    scope (exit) app.dispose();
     app.document.field.insert("unsaved");
     const original = app.document.id;
     assert(app.openPath(path));
@@ -2357,7 +2344,6 @@ struct EditorApp
     auto fixture = TmpFS.create();
     const path = fixture.writeFile("opened in the background");
     EditorApp app;
-    scope (exit) app.dispose();
     const origin = app.document.id;
     assert(app.openPath(path));
     app.execute(CommandId(Command.palette));
@@ -2406,7 +2392,6 @@ struct EditorApp
     auto fixture = TmpFS.create();
     const path = buildPath(fixture.dir, "from-dialog.txt");
     EditorApp app;
-    scope (exit) app.dispose();
     app.document.field.insert("document");
     app.execute(CommandId(Command.saveAs));
     foreach (c; path) app.handleKey(KeyEvent(Key.char_, c));
@@ -2439,7 +2424,6 @@ struct EditorApp
     auto fixture = TmpFS.create();
     const path = fixture.writeFile("external");
     EditorApp app;
-    scope (exit) app.dispose();
     app.document.field.insert("captured");
     foreach (accept; [false, true])
     {
@@ -2542,7 +2526,6 @@ struct EditorApp
     foreach (saving; [false, true])
     {
         EditorApp app;
-        scope (exit) app.dispose();
         const original = app.document.id;
         if (!saving)
         {
@@ -2576,7 +2559,6 @@ struct EditorApp
     import sparkles.input : Key, Mods;
     import sparkles.ui_app.record : RecordingHost;
     EditorApp app;
-    scope (exit) app.dispose();
     RecordingHost host;
     host.backend = Backend.gui;
     cast(void) app.view(host);
@@ -2601,7 +2583,6 @@ struct EditorApp
         assert(app.quitRequested && host.quitRequested);
     }
     EditorApp app;
-    scope (exit) app.dispose();
     RecordingHost host;
     app.document.field.insert("keep A");
     app.execute(CommandId(Command.newTab));
@@ -2634,7 +2615,6 @@ struct EditorApp
     auto fixture = TmpFS.create();
     const path = fixture.writeFile("disk");
     EditorApp app;
-    scope (exit) app.dispose();
     assert(app.openPath(path));
     const until = MonoTime.currTime + 3.seconds;
     while (app.filesBusy && MonoTime.currTime < until)
@@ -2683,7 +2663,6 @@ struct EditorApp
     import sparkles.test_utils.tmpfs : TmpFS;
     auto fixture = TmpFS.create();
     EditorApp app;
-    scope (exit) app.dispose();
     app.document.field.insert("must survive");
     const id = app.document.id;
     app.execute(CommandId(Command.quit));
