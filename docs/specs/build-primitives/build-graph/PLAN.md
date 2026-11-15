@@ -74,8 +74,8 @@ Gate: oracle 1 has zero unaccepted disagreements, and oracle 13 passes: its
 fixture is reported, and the repository reports no hidden edge.
 `dub test :build-primitives` is green.
 
-Progress: strict reading, resolution, the registry and libraries are done, and
-oracle 1 covers all 621 requests in scope, single-file packages included, with
+Done: strict reading, resolution, the registry and libraries are delivered, and
+oracle 1 covers all 631 requests in scope, single-file packages included, with
 zero unaccepted disagreements. The repository's recipes now declare their
 `sparkles:math` dependencies, the DQL test moved out of `ui`, and `ui`'s
 tests no longer compile `dql`'s sources. The out-of-process runner (TRD1)
@@ -182,7 +182,7 @@ Gate:
 | --------- | ----------- |
 | E0        | in progress |
 | E1a       | superseded  |
-| E1        | in progress |
+| E1        | done        |
 | E2        | not started |
 | E3        | not started |
 | E4        | not started |
