@@ -50,6 +50,7 @@ $(LIST
     $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/base/examples/*.d`, `libs/build-primitives/examples/*.d`, `libs/core-cli/examples/*.d`, `libs/wired/examples/*.d`, `docs/research/async-io/io-uring/examples/*.d`, `docs/research/async-io/gcd/examples/*.d`, `docs/research/units-of-measure/examples/*.d`, `docs/research/cpu-pmu/examples/*.d`, `docs/research/sanitizers/examples/*.d`, `docs/research/manim/examples/*.d`, `docs/research/anchored-overlays/examples/*.d`, `docs/research/property-tree/examples/*.d`, `docs/research/algebraic-effects/durable-execution/examples/*.d`, the per-subject `examples/` directories under `docs/research/platform-ui-guidelines/`, and the per-subject `examples/` directories under `docs/research/autological-artifacts/`)
     $(ITEM `--build` — run `dub build` for each sub-package defined in the root `dub.sdl`)
     $(ITEM `--test` — run `dub test` for each sub-package defined in the root `dub.sdl`, twice per package: `-t 1` then `-t N` (`N = max(2, hwParallelism())`) so a stack-heavy test cannot hide on the main thread. `@slow` tests are left out (`--skip-slow`); `--test-slow` runs them)
+    $(ITEM `--watch` — with `--test` or `--build`: wait for a change to the packages' inputs in the work tree (sources, recipes, string imports), then test or build only the packages the change reaches, after each change until interrupted. A change to a workspace input (a lock, the toolchain, `ci`'s planner) plans again and runs every package)
     $(ITEM `--list-slow-tests` — print the `@slow` unittests found in the sub-packages' sources as the JSON array the `slow-tests` CI matrix expands (`[{"package":…,"test":…}]`), and append it to `$GITHUB_OUTPUT` as `matrix`. Fails on a `@slow` test without a `@("name")`, and when there is none at all)
     $(ITEM `--test-slow` — run the `@slow` unittests, one `dub test` per package, narrowed by `--packages` and `--tests` (test names). First checks that the package's test binary lists exactly the slow tests its sources mark (`--list --only-slow`), so a test the source scan missed fails the job instead of going unrun)
     $(ITEM `--host-system aarch64-linux|x86_64-linux` — on macOS, re-exec the same mode inside an Apple `container` Linux VM, using the matching `packages.<system>.ci` store path bind-mounted from `/nix/store`. The Linux `ci` is realized from a git revision CI has built (`HEAD`, the merge-base with `origin/main`, then `origin/main`), never from the dirty tree; the tests run against the mounted working tree. See `docs/research/linux-on-macos/`)
@@ -133,6 +134,7 @@ nor verified; removing the directive makes the example required again:
 module app;
 
 // std.* modules
+import watch_mode : runWatchMode, WatchAction;
 import std.algorithm : any, canFind, countUntil, filter, joiner, map, min, sort, startsWith;
 import std.array : array, join, split;
 import std.conv : text, to;
@@ -275,6 +277,11 @@ struct CliParams
 
     @(Option(`t|test`, description: "Run dub test for each sub-package defined in the root dub.sdl."))
     bool test;
+
+    @(Option(`watch`,
+        description: "With --test or --build: wait for a change to the packages' inputs, then "
+        ~ "test or build the packages it reaches, again after each change, until interrupted."))
+    bool watch;
 
     @(Option(`host-system`,
         description: "Re-exec this mode on aarch64-linux or x86_64-linux from macOS, "
@@ -777,13 +784,17 @@ int ciMain(string[] args)
         return runAuditFencesMode(cli);
 
     if (mode == ProgramMode.runDubBuild)
-        return runDubBuildMode(cli.failFast);
+        return cli.watch
+            ? runWatchMode(WatchAction.build, cli.failFast, coverage)
+            : runDubBuildMode(cli.failFast);
 
     if (mode == ProgramMode.buildEachCommit)
         return runBuildEachCommitMode(cli.base, cli.packages, cli.failFast);
 
     if (mode == ProgramMode.runDubTests)
-        return runDubTestsMode(cli.failFast, coverage);
+        return cli.watch
+            ? runWatchMode(WatchAction.test, cli.failFast, coverage)
+            : runDubTestsMode(cli.failFast, coverage);
 
     if (mode == ProgramMode.runSanitizeTests)
         return runDubTestsMode(cli.failFast, coverage, sanitize: true);
@@ -901,6 +912,9 @@ private string validateCliMode(
 
     if (cli.build && cli.test)
         return "--build cannot be combined with --test";
+
+    if (cli.watch && !cli.test && !cli.build)
+        return "--watch needs --test or --build";
 
     if (cli.build && cli.testSanitize)
         return "--build cannot be combined with --test-sanitize";
@@ -3612,7 +3626,7 @@ private bool findWasiCompiler(in string[] pkgPaths, out string compiler)
     return false;
 }
 
-private int runDubBuildMode(bool failFast)
+int runDubBuildMode(bool failFast, const(string)[] only = null)
 {
     import each_commit : targetBuildArgs;
 
@@ -3626,7 +3640,7 @@ private int runDubBuildMode(bool failFast)
     info(i"repository root: $(repoRoot)");
 
     info(i"parsing dub.sdl sub-packages");
-    auto subPackages = subPackageDirectories(repoRoot);
+    auto subPackages = onlyThese(subPackageDirectories(repoRoot), only);
     if (subPackages.length == 0)
     {
         error(i"No sub-packages found in dub.sdl");
@@ -3837,7 +3851,7 @@ private int runBuildEachCommitMode(string base, string[] requested, bool failFas
     return 0;
 }
 
-private int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false)
+int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false, const(string)[] only = null)
 {
     if (sanitize)
     {
@@ -3863,7 +3877,7 @@ private int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false)
     info(i"repository root: $(repoRoot)");
 
     info(i"parsing dub.sdl sub-packages");
-    auto subPackages = subPackageDirectories(repoRoot);
+    auto subPackages = onlyThese(subPackageDirectories(repoRoot), only);
     if (subPackages.length == 0)
     {
         error(i"No sub-packages found in dub.sdl");
@@ -5202,7 +5216,7 @@ private string extractExampleName(const(char[])[] codeLines)
     return manifest.hasValue && manifest.value.name.length ? manifest.value.name : "unnamed";
 }
 
-private string detectRepoRoot()
+string detectRepoRoot()
 {
     const result = execute(["git", "rev-parse", "--show-toplevel"]);
     return result.status == 0
@@ -6666,4 +6680,19 @@ private int runGcR2Mode(in CliParams cli)
     }
     info(i"R2: collected $(gib(p.freedBytes)).");
     return 0;
+}
+
+/// `all` restricted to the package directories in `only`, in `all`'s
+/// order; `all` itself when `only` is null (the `--watch` loop's subsets).
+private string[] onlyThese(string[] all, const(string)[] only) @safe pure nothrow
+{
+    import std.algorithm.searching : canFind;
+
+    if (only is null)
+        return all;
+    string[] kept;
+    foreach (dir; all)
+        if (only.canFind(dir))
+            kept ~= dir;
+    return kept;
 }

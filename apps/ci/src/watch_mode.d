@@ -273,8 +273,8 @@ string[] hostArchitecture() @safe pure nothrow
 }
 
 // The registry the locks pin, from `$SPARKLES_DUB_SOURCES` (the dev shell
-// sets it): without it, a registry dependency's files are no package's
-// inputs, so editing one selects nothing.
+// sets it): without it, the requests resolve no registry dependency, and
+// their import paths are no package's inputs.
 private RegistrySources registrySources(string repoRoot)
 {
     import std.path : buildPath;
@@ -285,7 +285,7 @@ private RegistrySources registrySources(string repoRoot)
     const sources = environment.get("SPARKLES_DUB_SOURCES");
     if (sources is null)
     {
-        warning(i"--watch: SPARKLES_DUB_SOURCES is not set; registry packages are not watched");
+        warning(i"--watch: SPARKLES_DUB_SOURCES is not set; registry dependencies are left unresolved");
         return RegistrySources.init;
     }
     auto tree = systemTree();
@@ -294,14 +294,14 @@ private RegistrySources registrySources(string repoRoot)
     if (locked.hasError)
     {
         const why = locked.error;
-        warning(i"--watch: cannot read the dub locks ($(why)); registry packages are not watched");
+        warning(i"--watch: cannot read the dub locks ($(why)); registry dependencies are left unresolved");
         return RegistrySources.init;
     }
     auto registry = nixRegistrySources(locked.value, sources, tree);
     if (registry.hasError)
     {
         const why = registry.error;
-        warning(i"--watch: $(why); registry packages are not watched");
+        warning(i"--watch: $(why); registry dependencies are left unresolved");
         return RegistrySources.init;
     }
     return registry.value;
