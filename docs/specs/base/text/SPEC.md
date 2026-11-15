@@ -364,6 +364,14 @@ Failure **must** leave checked-in generated output unchanged.
 Runtime and consumer compilation **must** read checked-in tables and **must not**
 contact the network or regenerate properties.
 
+Every module that imports the tables parses them, so the generator writes
+each numeric table as one hex-string literal, and each lookup index as
+parallel numeric arrays rather than an array of structs. An array literal
+costs the compiler a token and a type check per element; over the roughly
+two million elements, that was about 0.6 s of every importing compile.
+CTFE still reads the hex strings as integer arrays, so compile-time
+casing keeps working.
+
 **TXT-DATA4: Defaults and bounds.** Property queries for every scalar, assigned or
 unassigned, **must** return the release's property defaults and values. Table-index
 arithmetic **must** be checked or construction-proven within bounds; non-scalars
