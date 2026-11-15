@@ -78,9 +78,11 @@ green.
 Progress: strict reading, resolution, the registry and libraries are done, and
 oracle 1 covers all 621 requests in scope, single-file packages included, with
 zero unaccepted disagreements. The repository's recipes now declare their
-`sparkles:math` dependencies, and the DQL test moved out of `ui`. What BGR8
-still reports is the test runner's source includes, which the out-of-process
-runner (TRD1) removes.
+`sparkles:math` dependencies, the DQL test moved out of `ui`, and `ui`'s
+tests no longer compile `dql`'s sources. The out-of-process runner (TRD1)
+removed the test runner's source includes. What BGR8 still reports is
+`profiling-counters`' unittest configuration, whose tests compile the harness
+in because the harness depends on the counters (process-model TRP4).
 `ui-app` reads its specification through a link in the package (D24), and the
 migration comparison snippets are out of scope (D25).
 
