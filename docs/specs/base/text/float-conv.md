@@ -251,7 +251,7 @@ OCP's E8M0 scale type (no sign, no zero, NaN only) is not a
 - **Entries.** The fine table covers `q ∈ [−343, 324]` with `width = 1`.
   The wide formats need `[−5005, 4933]` — every `q` a 38-digit significand
   can carry without the verdict being saturation alone. Twenty-nine
-  CTFE-generated anchors, `10^(324·j)` for `j = 1..15` and `10^(−343·j)`
+  generated anchors, `10^(324·j)` for `j = 1..15` and `10^(−343·j)`
   for `j = 1..14`, each stored with the exact exponent of its big integer,
   compose with a fine entry into a normalized 128-bit entry of `width = 5`
   for the rest of the range. The fixed-point exponent formula the fine table
@@ -430,13 +430,24 @@ it, over exact big integers sized by the format:
 
 ## 5. Tables and CTFE (`CTF`)
 
-One CTFE-generated fine table serves both directions: for each `q` in
+One generated fine table serves both directions: for each `q` in
 `[-343, 324]`, the top 128 bits of `10^q` normalized to `[2^127, 2^128)`
 and **truncated** (the yyjson convention; the Schubfach writer applies its
 own ceiling adjustment). The 29 anchors of the wide tier are the same
 routines over `5^(324j)` and `5^(−343j)`, with a limb capacity sized for
-`5^4860`. Generation is exact big-integer arithmetic at compile time — there
-is no external generator step to keep in sync.
+`5^4860`. Generation is exact big-integer arithmetic in `float_conv`'s own
+routines, which `libs/base/tools/gen_float_conv_tables.d` runs once into the
+checked-in `sparkles.base.text.float_conv_tables`; the
+`float_conv.tables.matchGenerators` test recomputes every table at run time
+and requires equality, so the data cannot drift from the routines.
+
+The tables were once evaluated at compile time, with no generated source to
+keep in sync. That cost every compile importing `float_conv` — every user of
+`sparkles:wired`, through its adapters — 1.6 s on DMD and 2.5–3 s on LDC:
+`generatePow10Table` and the anchors' `bigReciprocal128` calls were the
+largest events in `-ftime-trace` profiles of the `build-primitives` test
+root, ahead of any schema work. Checked-in data parses in about a
+millisecond.
 
 `readDigits`, `tryFastDouble`, `slowDouble`, `slowDecode`, `slowFloat`,
 `readDecimalFloat`, `decompose`, `compose`, `roundTo`, `encode`, `decode`,
@@ -447,10 +458,8 @@ through the wide tier and a binary64 shortest rendering settled entirely at
 compile time. `formatShortestDouble` is runtime-only (pointer-based digit
 rendering).
 
-The anchors cost a forced debug rebuild of `sparkles:base` about half a
-second, measured with `dub build :base --force` on LDC 1.42: 1.48 s → 1.83 s
-on an Apple M4 Max, 3.43 s → 3.99 s on an AMD Ryzen 9 7940HX (inside
-`nix develop -c`, three runs each).
+In a DMD 2.112 `-ftime-trace` of that test root, the evaluation was
+`generatePow10Table` 1.1 s, `bigReciprocal128` 0.4 s and the anchors 0.15 s.
 
 ### Requirements
 
@@ -458,7 +467,7 @@ on an Apple M4 Max, 3.43 s → 3.99 s on an AMD Ryzen 9 7940HX (inside
 | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | `CTF1` | Every power-of-ten entry — fine or anchor — **must** bracket the true power: `E·2^e ≤ 10^q < (E + width)·2^e`, by exact big-integer arithmetic.                        | full    |
 | `CTF2` | The functions listed above **must** be CTFE-callable, with results bit-identical to runtime.                                                                           | full    |
-| `CTF3` | The tables are generated at compile time from exact arithmetic; no generated source is checked in.                                                                     | decided |
+| `CTF3` | The checked-in tables **must** equal what the generators compute by exact arithmetic; no compile evaluates them.                                                       | full    |
 | `CTF4` | The module **must** stay importable without druntime (`-betterC` consumers of the digit writers).                                                                      | full    |
 | `CTF5` | `encode`, `decode` and `roundTo` **must** run at CTFE with results bit-identical to runtime, and `compose`, `encode` and `roundTo` take their `DecodedFloat` by value. | decided |
 
@@ -568,6 +577,7 @@ Each requirement is pinned by named tests in `float_conv.d`:
   `pow10Anchors.bracketTruePowers`.
 - `CTF2`: `tryFastDouble.ctfeMatchesRuntime`, `tryFastWide.ctfeMatchesRuntime`,
   `slowDecode.fields`, `shortestDigits.pins` (the `static assert`s).
+- `CTF3`: `float_conv.tables.matchGenerators`.
 - `CTF5`: the `static assert`s of `BinaryFloatFormat.reducedDerivations`,
   `roundTo.pins`, `CustomFloat.properties` and `CustomFloat.conversionPins`.
 

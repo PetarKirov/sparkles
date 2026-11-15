@@ -50,9 +50,12 @@ interchange bits of any format whose layout fits 64 bits.
 The primitives are building blocks for fused grammar loops (the JSON
 reader accumulates digits inside its own scanner and calls
 $(LREF tryFastDouble) directly); $(LREF readDecimalFloat) is the plain
-cursor-style reader for everything else. Every power-of-ten table is
-generated at CTFE from exact big-integer arithmetic — there is no external
-generator step to keep in sync.
+cursor-style reader for everything else. The power-of-ten tables come from
+exact big-integer arithmetic in this module, run once by
+`libs/base/tools/gen_float_conv_tables.d` into
+$(MREF sparkles,base,text,float_conv_tables): evaluated at CTFE they cost
+every importing compile 1.6 s (DMD) to 3 s (LDC). A test recomputes them and
+compares.
 */
 module sparkles.base.text.float_conv;
 
@@ -62,6 +65,8 @@ import sparkles.test_runner.attributes : benchmark;
 
 import sparkles.base.text.errors : ParseErrorCode, ParseExpected, parseErr,
     parseOk;
+import sparkles.base.text.float_conv_tables : Pow10Entry, Pow10Wide, pow10AnchorsNeg,
+    pow10AnchorsPos, pow10Sig128;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The target format as data
@@ -693,30 +698,13 @@ in (sig10 != 0 && minExp10 <= exp10 && exp10 <= maxExp10)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The 128-bit power-of-ten significand table (CTFE-generated)
+// The 128-bit power-of-ten significand table (generated)
 // ─────────────────────────────────────────────────────────────────────────────
 
-private struct Pow10Entry
-{
-    ulong hi;
-    ulong lo;
-}
+static assert(pow10Sig128.length == tableMaxExp10 - tableMinExp10 + 1,
+    "regenerate float_conv_tables after changing the table bounds");
 
-/**
-For each `q` in `[tableMinExp10, tableMaxExp10]`: the top 128 bits of the
-binary expansion of `10^q`, normalized to `[2^127, 2^128)` and truncated
-(never rounded up) — the yyjson convention, which both the Eisel–Lemire
-reader and the Schubfach writer build on (the writer applies its own +1
-ceiling adjustment). The power-of-two factor lives in the exponent
-formulas.
-
-Generated at CTFE by exact big-integer arithmetic (`5^|q|` grows to ~800
-bits).
-*/
-private static immutable Pow10Entry[tableMaxExp10 - tableMinExp10 + 1] pow10Sig128 =
-    generatePow10Table();
-
-// --- CTFE big-integer scratch: little-endian base-2^32 limbs -----------------
+// --- Big-integer scratch for the generators: little-endian base-2^32 limbs ---
 
 /*
 Limb capacity for the generator's scratch values.
@@ -990,7 +978,7 @@ private Pow10Entry bigReciprocal128(size_t cap = maxScratchLimbs)(const uint[] d
     return Pow10Entry(hi, lo);
 }
 
-private Pow10Entry[tableMaxExp10 - tableMinExp10 + 1] generatePow10Table()
+package(sparkles.base) Pow10Entry[tableMaxExp10 - tableMinExp10 + 1] generatePow10Table()
     @safe pure nothrow @nogc
 {
     Pow10Entry[tableMaxExp10 - tableMinExp10 + 1] table;
@@ -1115,22 +1103,6 @@ private int mul128Normalized(U128 a, U128 b, out U128 top, out U128 bottom)
     return 1;
 }
 
-/**
-A power of ten as the wide tier sees it: `10^q ∈ [E, E + width) × 2^exp2`
-with `E = hi:lo` in `[2^127, 2^128)`. A fine entry ($(LREF pow10Sig128)) and
-an anchor are truncated once and have width 1; a composed entry — the top 128
-bits of an anchor times a fine entry — has width 5: each factor's truncation
-scaled by the other factor, which is below `2^128`, plus the product's own
-truncation, all over a normalizing shift of at least 127.
-*/
-private struct Pow10Wide
-{
-    ulong hi;
-    ulong lo;
-    int exp2;
-    int width;
-}
-
 /// `floor(q·log2 10) − 127`: the exponent of a fine entry's last bit. The
 /// fixed point is exact on the fine range and no further — it first fails at
 /// `|q| = 643` — which is why composed entries carry their own exponent.
@@ -1174,7 +1146,7 @@ private void bigMulPow5(B)(ref B a, int k) @safe pure nothrow @nogc
 
 /// The anchors `10^(324·j)`, `j = 1 ..`: the top 128 bits of `5^(324j)`, as
 /// the fine table's positive entries are made, with the exact exponent.
-private Pow10Wide[anchorCountPos] generateAnchorsPos() @safe pure nothrow @nogc
+package(sparkles.base) Pow10Wide[anchorCountPos] generateAnchorsPos() @safe pure nothrow @nogc
 {
     Pow10Wide[anchorCountPos] table;
     auto pow5 = BigUintOf!anchorLimbs.from(1);
@@ -1190,7 +1162,7 @@ private Pow10Wide[anchorCountPos] generateAnchorsPos() @safe pure nothrow @nogc
 
 /// The anchors `10^(−343·j)`: the truncated 128-bit reciprocal of `5^(343j)`,
 /// as the fine table's negative entries are made, with the exact exponent.
-private Pow10Wide[anchorCountNeg] generateAnchorsNeg() @safe pure nothrow @nogc
+package(sparkles.base) Pow10Wide[anchorCountNeg] generateAnchorsNeg() @safe pure nothrow @nogc
 {
     Pow10Wide[anchorCountNeg] table;
     auto pow5 = BigUintOf!anchorLimbs.from(1);
@@ -1204,10 +1176,17 @@ private Pow10Wide[anchorCountNeg] generateAnchorsNeg() @safe pure nothrow @nogc
     return table;
 }
 
-/// ditto
-private static immutable Pow10Wide[anchorCountPos] pow10AnchorsPos = generateAnchorsPos();
-/// ditto
-private static immutable Pow10Wide[anchorCountNeg] pow10AnchorsNeg = generateAnchorsNeg();
+static assert(pow10AnchorsPos.length == anchorCountPos && pow10AnchorsNeg.length == anchorCountNeg,
+    "regenerate float_conv_tables after changing the anchor counts");
+
+/// The checked-in tables are what the generators compute.
+@("float_conv.tables.matchGenerators")
+@safe pure nothrow @nogc unittest
+{
+    assert(generatePow10Table() == pow10Sig128);
+    assert(generateAnchorsPos() == pow10AnchorsPos);
+    assert(generateAnchorsNeg() == pow10AnchorsNeg);
+}
 
 /// The entry for `q`: a fine entry when the table has one, otherwise the
 /// anchor of `q`'s span times the fine entry of the remainder, truncated to
