@@ -58,6 +58,8 @@ private struct RowHit
     size_t line;
     size_t row;
     const(size_t[3])[] inserted;
+    /// The primary caret's drawn column on this row, or -1.
+    int caretColumn = -1;
 }
 
 private class DisplayedFrame
@@ -983,45 +985,23 @@ struct EditorApp
     /**
     The primary caret's drawn cell, `[column, row, 1, 1]` in the window's
     cells, from the rows just painted (`EDI6`, `EAP20`): the layout's column,
-    the inserted cells before it, and a preedit's cursor within it. `false`
+    the inserted cells before it, and a preedit's cursor within it, as
+    `visualRows` reported it for the host's cursor. `false`
     when the caret's row is not on screen.
     */
     private bool drawnCaretArea(out int[4] area) @safe
     {
-        import sparkles.base.text.seek : nextGraphemeBoundary;
-        import sparkles.ui.editor.context : clusterCells;
-        if (displayed is null || !document.field.state.text.length && !document.field.state.composition.active)
+        if (displayed is null)
             return false;
-        const state = document.field.state;
-        const primary = state.selection.primary;
-        const composing = state.composition.active;
-        const at = CaretTarget(composing ? primary.start : primary.head,
-            composing && !primary.empty ? Affinity.before : primary.affinity);
-        const text = state.text;
-        const line = text.lineOf(at.position);
-        ref layout = document.field.context.paragraph(text, line);
-        const r = layout.rowOf(at.position, at.affinity);
-        const k = layout.stopOf(r, at.position, at.affinity);
+        // The painted row that carries the host's cursor (`HST20`): the same
+        // column the cursor is drawn at, so candidates sit beside it.
         foreach (shown; displayed.rows)
-        {
-            if (shown.line != line || shown.row != r || shown.node >= displayed.frames.length) continue;
-            long x = layout.stopCells(r, k);
-            foreach (inserted; shown.inserted)
-                if (inserted[0] < k) x += cast(long) inserted[1] - cast(long) inserted[2];
-            if (composing)
+            if (shown.caretColumn >= 0 && shown.node < displayed.frames.length)
             {
-                const preedit = state.composition.preedit;
-                for (size_t i; i < state.composition.cursor;)
-                {
-                    const next = nextGraphemeBoundary(preedit, i);
-                    x += clusterCells(preedit, i, next);
-                    i = next;
-                }
+                const origin = displayed.frames[shown.node].rect.origin;
+                area = [origin.x + shown.caretColumn, origin.y, 1, 1];
+                return true;
             }
-            const origin = displayed.frames[shown.node].rect.origin;
-            area = [origin.x + cast(int) x, origin.y, 1, 1];
-            return true;
-        }
         return false;
     }
 
@@ -1696,9 +1676,9 @@ struct EditorApp
             const reserved = 5 + extraRows;
             const visible = host.size.height > reserved ? cast(size_t) host.size.height - reserved : 1;
             const count = document.field.state.text.lineCount;
-            // Rows wrap at the field's width: the window less the root's padding
-            // and one cell for the inline caret.
-            const width = host.size.width > 11 ? cast(size_t) host.size.width - 3 : 8;
+            // Rows wrap at the field's width, the window less the root's padding:
+            // the caret is the host's cursor (HST20) and takes no cell of its own.
+            const width = host.size.width > 10 ? cast(size_t) host.size.width - 2 : 8;
             auto context = &document.field.context;
             context.options.wrapCells = width;
             context.viewportLines = visible;
@@ -1712,7 +1692,7 @@ struct EditorApp
             context.originLine = document.firstLine;
             context.originRow = document.firstRow;
             const options = EditorViewOptions(firstLine: document.firstLine,
-                visibleLines: visible, placeholder: "Start typing…");
+                visibleLines: visible, placeholder: "Start typing…", hostCursor: true);
             const syntax = highlighting.snapshot(document.field.state.text, document.language, document.id);
             uint field;
             shownRows = null;
@@ -1735,9 +1715,10 @@ struct EditorApp
                         if (line == document.firstLine && row.row < document.firstRow) continue;
                         if (rows.length == visible) break;
                         const node = b.add(Widget(kind: WidgetKind.rich, width: SizeSpec.grow(),
-                            height: SizeSpec.fixed(1), spans: row.spans, wrap: TextWrap.none));
+                            height: SizeSpec.fixed(1), spans: row.spans, wrap: TextWrap.none,
+                            caretColumn: row.caretColumn));
                         rows ~= node;
-                        shownRows ~= RowHit(node, line, row.row, row.inserted);
+                        shownRows ~= RowHit(node, line, row.row, row.inserted, row.caretColumn);
                     }
                 }
                 field = b.add(Widget(kind: WidgetKind.column, children: rows, width: SizeSpec.grow()));
@@ -1958,7 +1939,7 @@ struct EditorApp
     import sparkles.ui.style : defaultTwoslashPalette;
     import sparkles.ui.editor.command : EditCommand;
     EditorApp app;
-    // At 20 columns, rows wrap at 17 cells (padding and the caret cell aside):
+    // At 20 columns, rows wrap at 18 cells (the padding aside; the caret is the host's):
     // "alpha beta gamma " and "delta epsilon".
     app.document.field.setText("alpha beta gamma delta epsilon");
     app.document.field.run(EditCommand.setRange(0, 0));
@@ -1967,7 +1948,7 @@ struct EditorApp
     FrameSnapshot frame;
     presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
     app.paint(host, frame.tree, frame.frames);
-    assert(app.displayed.rows.length == 2 && app.displayed.wrapCells == 17);
+    assert(app.displayed.rows.length == 2 && app.displayed.wrapCells == 18);
     const second = frame.frames[app.displayed.rows[1].node].rect.origin;
     app.handle(host, Event(PointerEvent(PointerAction.press, PointerButton.left, Point(second.x + 2, second.y))));
     assert(app.document.field.state.selection.primary.head == 19, "column 2 of the second row");
@@ -1995,10 +1976,10 @@ struct EditorApp
     const node = app.displayed.rows[0].node;
     string drawn;
     foreach (span; frame.tree.nodes[node].spans) drawn ~= span.text;
-    assert(drawn == "▏ab בא", drawn);
-    // Drawn cell 5 is Alef's left edge, layout column 4 past the caret cell: between Bet and Alef.
+    assert(drawn == "ab בא", drawn);
+    // Drawn cell 4 is Alef: its left edge, between Bet and Alef. The caret takes no cell.
     const origin = frame.frames[node].rect.origin;
-    app.handle(host, Event(PointerEvent(PointerAction.press, PointerButton.left, Point(origin.x + 5, origin.y))));
+    app.handle(host, Event(PointerEvent(PointerAction.press, PointerButton.left, Point(origin.x + 4, origin.y))));
     assert(app.document.field.state.selection.primary.head == 5);
     // Visual Right from there crosses Alef, logically backwards to byte 3.
     app.document.field.run(EditCommand.grapheme(1));
@@ -2023,7 +2004,7 @@ struct EditorApp
     app.paint(host, frame.tree, frame.frames);
     const node = app.displayed.rows[0].node;
     const origin = frame.frames[node].rect.origin;
-    // Drawn `ab בא▏`: the caret glyph is cell 5 of the row.
+    // Drawn `ab בא`: the host's cursor at cell 5, right of Alef.
     assert(host.textInputAreas.length && host.textInputAreas[$ - 1] == [origin.x + 5, origin.y, 1, 1]);
 
     // A preedit `にほ` at byte 0 with its cursor after `に`: two cells in.
@@ -2034,6 +2015,42 @@ struct EditorApp
     app.paint(host, frame.tree, frame.frames);
     const row = frame.frames[app.displayed.rows[0].node].rect.origin;
     assert(host.textInputAreas[$ - 1] == [row.x + 2, row.y, 1, 1], "after に");
+}
+
+/// Moving the caret moves no character: every frame draws the same text, and
+/// only the host's cursor (HST20) changes column (EAP17).
+@("editor.app.caretMovesNoCharacter")
+@safe unittest
+{
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
+    import sparkles.ui.editor.command : EditCommand;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    EditorApp app;
+    app.document.field.setText("abc אב\nxyz");
+    app.document.field.run(EditCommand.setRange(0, 0));
+    RecordingHost host;
+    FrameSnapshot frame;
+    string first;
+    int[] columns;
+    foreach (step; 0 .. 7)
+    {
+        presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
+        app.paint(host, frame.tree, frame.frames);
+        string drawn;
+        foreach (shown; app.displayed.rows)
+        {
+            foreach (span; frame.tree.nodes[shown.node].spans) drawn ~= span.text;
+            drawn ~= "\n";
+            if (shown.caretColumn >= 0) columns ~= shown.caretColumn;
+        }
+        if (step == 0) first = drawn;
+        assert(drawn == first, "the caret moved a character: " ~ drawn);
+        app.document.field.run(EditCommand.grapheme(1));
+    }
+    // Visual Right through `abc אב`: a b c, the space, then the RTL pair
+    // from its left, then on to the next line.
+    assert(columns == [0, 1, 2, 3, 4, 5, 6], "the cursor walks the cells");
 }
 
 /// A displayed tab names its document even if an earlier tab closes before repaint.

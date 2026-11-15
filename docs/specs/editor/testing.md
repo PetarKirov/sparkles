@@ -994,3 +994,22 @@ denies Shell screenshots to this client, so no screen image was captured.
 Candidate-window placement needs a candidate-producing engine; this session
 has US and Bulgarian layouts only. Pinyin/Anthy candidates, X11 (no XIM
 client exists) and Android's live IME remain open under EAP20.
+
+### The caret as the host's cursor — 2026-11-15
+
+Moving the caret moved text: the inline `▏` glyph took a cell, so every
+character after the caret shifted by one as it moved. The document field
+now uses the host's text cursor (ui-app `HST20`, adopted from `feat/fsx`):
+no glyph is inserted and spans are not cut at the caret, and the caret's
+row carries the drawn column in `caretColumn`. The terminal places its own
+cursor there with the user's shape and blink, and the native arm paints a
+bar in the theme's caret colour. A secondary caret marks its grapheme as a
+block, and wrapping no longer reserves a column for the caret.
+
+`editor.app.caretMovesNoCharacter` steps visual Right through `abc אב`
+and the next line. Every frame draws byte-identical text, and the cursor
+column walks 0 to 6 through the right-to-left pair.
+`editor.view.visualRows.hostCursor` checks the projection: no glyph, the
+primary column, a secondary block. A native Vulkan capture of `hello world`
+shows the bar over the first cell, with the text starting at the row's
+left edge. The IME rectangle now reads the same column as the drawn cursor.
