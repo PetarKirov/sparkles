@@ -886,37 +886,40 @@ private bool slotConsumesValue(scope const SdlFieldRole r, size_t pos)
 /// of times.
 debug package size_t sdlNameComparisons;
 
-/// The local names, aliases included, that `U`'s non-map `kind` fields claim.
-private enum string[] claimLocals(U, SdlRoleKind kind) = () {
+/// A local name and the fields that claim it, in field order.
+private struct LocalClaim
+{
+    string local;
+    size_t[] fields;
+}
+
+/// The local names, aliases included, that `U`'s non-map `kind` fields claim,
+/// in first-claim order: one pass over the roles, so the `switch` below
+/// unrolls each field once per name it claims, not once per name of `U`.
+private enum LocalClaim[] localClaims(U, SdlRoleKind kind) = () {
     alias roles = sdlAggregateRoles!(U).sdlFieldRoles;
-    string[] locals;
-    void add(string local)
+    LocalClaim[] claims;
+    size_t[string] at;
+    void add(string local, size_t field)
     {
-        foreach (existing; locals)
-            if (existing == local)
-                return;
-        locals ~= local;
+        if (const i = local in at)
+        {
+            if (claims[*i].fields[$ - 1] != field)
+                claims[*i].fields ~= field;
+            return;
+        }
+        at[local] = claims.length;
+        claims ~= LocalClaim(local, [field]);
     }
-    foreach (role; roles.roles)
+    foreach (j, role; roles.roles)
         if (role.role == kind && role.childShape != SdlChildShape.map)
         {
-            add(role.localName);
+            add(role.localName, j);
             foreach (alias_; role.aliases)
-                add(alias_.localName.idup);
+                add(alias_.localName.idup, j);
         }
-    return locals;
+    return claims;
 }();
-
-/// Whether `role` claims local name `local` (its own or an alias's).
-private bool claimsLocal(in SdlFieldRole role, string local) @safe pure nothrow
-{
-    if (role.localName == local)
-        return true;
-    foreach (alias_; role.aliases)
-        if (alias_.localName == local)
-            return true;
-    return false;
-}
 
 /** The field of `U` whose `kind` channel claims `name`, or `size_t.max`.
 
@@ -929,15 +932,12 @@ package size_t claimantOf(U, SdlRoleKind kind)(scope const SdlQualifiedName name
     alias roles = sdlAggregateRoles!(U).sdlFieldRoles;
     switch (name.localName)
     {
-        static foreach (local; claimLocals!(U, kind))
+        static foreach (claim; localClaims!(U, kind))
         {
-        case local:
-            static foreach (j; 0 .. roles.roles.length)
-                static if (roles.roles[j].role == kind
-                    && roles.roles[j].childShape != SdlChildShape.map
-                    && claimsLocal(roles.roles[j], local))
-                    if (roleMatches(roles.roles[j], name))
-                        return j;
+        case claim.local:
+            static foreach (j; claim.fields)
+                if (roleMatches(roles.roles[j], name))
+                    return j;
             return size_t.max;
         }
         default:

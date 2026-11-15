@@ -129,10 +129,12 @@ template WireWalk(Format, Root, alias schemaData = wireSchemaOf!(Format, Root))
         static assert(current.kind == NodeKind.aggregate,
             "wired: childPolicies requires an aggregate node");
         static immutable FieldPolicy[] childPolicies = () {
+            // Each mention of an `enum` array rebuilds it, so the loop reads
+            // the schema through one copy rather than one per field.
+            const nodes = schema.nodes, edges = schema.edges;
             FieldPolicy[] result;
             foreach (ordinal; 0 .. current.edgeCount)
-                result ~= schema.nodes[
-                    schema.edges[current.firstEdge + ordinal]].policy.field;
+                result ~= nodes[edges[current.firstEdge + ordinal]].policy.field;
             return result;
         }();
     }
