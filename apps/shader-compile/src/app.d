@@ -50,7 +50,7 @@ import std.json : JSONValue, parseJSON;
 import std.path : absolutePath, baseName, buildNormalizedPath, buildPath, relativePath;
 import std.process : environment, execute;
 import std.range : empty, front, popFront;
-import std.regex : ctRegex, matchAll, replaceAll;
+import std.regex : regex, matchAll, replaceAll;
 import std.stdio : stderr, writefln, writeln;
 import std.string : chompPrefix, indexOf, lastIndexOf, lineSplitter, strip, stripRight;
 
@@ -1153,7 +1153,7 @@ string renameCombinedSamplers(string glsl, in string[] samplers)
     // sampler name it ends with.
     string[2][string] parts;
     size_t[string] samplersOf;
-    foreach (m; glsl.matchAll(ctRegex!`\bSPIRV_Cross_Combined(\w+)\b`))
+    foreach (m; glsl.matchAll(regex(`\bSPIRV_Cross_Combined(\w+)\b`)))
     {
         const combined = m[1];
         if (combined in parts)

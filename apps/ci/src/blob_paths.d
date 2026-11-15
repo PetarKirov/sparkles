@@ -26,7 +26,7 @@ module blob_paths;
 
 import std.algorithm : startsWith;
 import std.array : array;
-import std.regex : ctRegex, matchAll;
+import std.regex : regex, matchAll;
 import std.string : indexOf, lastIndexOf;
 
 /// One SHA-pinned blob citation found in a documentation file.
@@ -165,7 +165,7 @@ URL is left to $(D --check-vcs-urls), which is the check that exists to reject i
 @safe
 BlobRef[] parseBlobRefs(string content, string file = "")
 {
-    static blobRe = ctRegex!(
+    const blobRe = regex(
         `https?://(?:(?:www\.)?github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/blob/([0-9a-fA-F]{40})/`
         ~ `|raw\.githubusercontent\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/([0-9a-fA-F]{40})/)`
         ~ `([^\s"'<>()\[\]]+)`);

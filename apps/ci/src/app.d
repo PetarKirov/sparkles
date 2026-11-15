@@ -144,7 +144,7 @@ import std.path : baseName, buildPath, globMatch;
 import std.process : environment, execute;
 import std.range : iota;
 import std.range.primitives : put;
-import std.regex : ctRegex, matchFirst;
+import std.regex : regex, matchFirst;
 import std.stdio : stderr, stdout, writeln;
 import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight;
 import sparkles.base.text.case_text : asciiLower, unicodeLower;
@@ -651,7 +651,7 @@ struct DuplicateGroup
     ReferenceDef[] defs;
 }
 
-private __gshared immutable refDefRegex = ctRegex!(r"^\[([^\]]+)\]:\s+(https?://\S+)");
+private auto refDefRegex() => regex(r"^\[([^\]]+)\]:\s+(https?://\S+)");
 
 // === Main Entry Point ===
 
@@ -1157,7 +1157,7 @@ private int runCheckCommitScope(string msgSource)
 {
     import std.file : readText;
     import std.process : execute;
-    import std.regex : ctRegex, matchFirst;
+    import std.regex : regex, matchFirst;
     import std.stdio : stderr;
     import std.string : lineSplitter, strip;
 
@@ -1209,7 +1209,7 @@ private int runCheckCommitScope(string msgSource)
         return 0; // nothing to check
 
     // Match conventional type(scope)?: or type:
-    static subjectRe = ctRegex!(`^([a-zA-Z0-9_-]+)(?:\(([^)]*)\))?:\s*`);
+    const subjectRe = regex(`^([a-zA-Z0-9_-]+)(?:\(([^)]*)\))?:\s*`);
     auto m = subject.matchFirst(subjectRe);
     if (m.empty)
         return 0; // not a conventional subject we care about
@@ -1276,14 +1276,14 @@ private int runCheckCommitScope(string msgSource)
 /// "docs(research/foo)") or empty if no good suggestion.
 private string computeDetailedScopeSuggestion(string[] changed)
 {
-    import std.regex : ctRegex, matchFirst;
+    import std.regex : regex, matchFirst;
     import std.string : replace;
 
-    static reResearch   = ctRegex!(`^docs/research/([^/]+)`);
-    static reGuidelines = ctRegex!(`^docs/guidelines/([^/]+)`);
-    static rePkgDeep    = ctRegex!(`^(libs|apps)/([^/]+)/.*/([^/.]+)\.(d|md)$`);
-    static rePkgSrc     = ctRegex!(`^(libs|apps)/([^/]+)/src/.*/([^/.]+)\.d$`);
-    static rePkgRoot    = ctRegex!(`^(libs|apps)/([^/]+)/([^/.]+)\.(d|md)$`);
+    const reResearch   = regex(`^docs/research/([^/]+)`);
+    const reGuidelines = regex(`^docs/guidelines/([^/]+)`);
+    const rePkgDeep    = regex(`^(libs|apps)/([^/]+)/.*/([^/.]+)\.(d|md)$`);
+    const rePkgSrc     = regex(`^(libs|apps)/([^/]+)/src/.*/([^/.]+)\.d$`);
+    const rePkgRoot    = regex(`^(libs|apps)/([^/]+)/([^/.]+)\.(d|md)$`);
 
     foreach (path; changed)
     {
@@ -2008,7 +2008,7 @@ private int runReferenceLinkMode(string[] mdFiles, bool fix)
 private int runCheckVcsUrls(string[] files)
 {
     import std.file : readText;
-    import std.regex : ctRegex, matchAll, matchFirst;
+    import std.regex : regex, matchAll, matchFirst;
     import std.string : lineSplitter;
     import std.algorithm : canFind;
 
@@ -2016,8 +2016,8 @@ private int runCheckVcsUrls(string[] files)
     // `github.com/o/r/tree/main` (a moving branch ref, no trailing file path)
     // must still be caught, so the ref group stands alone and `(?:/…)?` wraps
     // the path. Capture indices are unchanged (the wrapper is non-capturing).
-    static urlRe = ctRegex!(`https?://(?:raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)/([^#\s"'()\]]*)|(?:www\.)?github\.com/([^/]+)/([^/]+)/(blob|tree)/([^/#\s"'()\]]+)(?:/([^#\s"'()\]]*))?)`);
-    static shaRe = ctRegex!(`^[0-9a-fA-F]{40}$`);
+    const urlRe = regex(`https?://(?:raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)/([^#\s"'()\]]*)|(?:www\.)?github\.com/([^/]+)/([^/]+)/(blob|tree)/([^/#\s"'()\]]+)(?:/([^#\s"'()\]]*))?)`);
+    const shaRe = regex(`^[0-9a-fA-F]{40}$`);
 
     int totalErrors = 0;
 

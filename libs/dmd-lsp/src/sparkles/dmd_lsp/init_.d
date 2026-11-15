@@ -112,7 +112,7 @@ string ldcLlvmVersionIdent(scope const string[] importPaths) @safe
     import std.conv : to;
     import std.file : exists, readText;
     import std.path : buildPath;
-    import std.regex : ctRegex, matchAll;
+    import std.regex : regex, matchAll;
 
     foreach (dir; importPaths)
         foreach (name; ["intrinsics.di", "intrinsics.d"])
@@ -121,7 +121,7 @@ string ldcLlvmVersionIdent(scope const string[] importPaths) @safe
             if (!path.exists)
                 continue;
             auto majors = path.readText
-                .matchAll(ctRegex!`version\s*\(\s*LDC_LLVM_(\d+)\s*\)`)
+                .matchAll(regex(`version\s*\(\s*LDC_LLVM_(\d+)\s*\)`))
                 .map!(m => m[1].to!uint);
             return majors.empty ? null : "LDC_LLVM_" ~ majors.maxElement.to!string;
         }

@@ -12,7 +12,7 @@ module sparkles.font.corrections_test;
 import std.algorithm : canFind;
 import std.conv : to;
 import std.process : environment;
-import std.regex : ctRegex, matchAll;
+import std.regex : regex, matchAll;
 
 import sparkles.font.cmap : charMap, CmapLookup;
 import sparkles.font.correction_data : arabicPuaSimplified, gdefBlocklist;
@@ -154,7 +154,7 @@ private auto GdefClassOf(ushort v) @safe pure nothrow @nogc
 
     const source = readText(hb ~ "/src/hb-ot-layout.cc");
     size_t n;
-    foreach (m; source.matchAll(ctRegex!`case HB_CODEPOINT_ENCODE3 \((\d+), (\d+), (\d+)\):`))
+    foreach (m; source.matchAll(regex(`case HB_CODEPOINT_ENCODE3 \((\d+), (\d+), (\d+)\):`)))
     {
         const t = [m[1].to!uint, m[2].to!uint, m[3].to!uint];
         assert(gdefBlocklist.canFind!(g => g.gdef == t[0] && g.gsub == t[1] && g.gpos == t[2]), m[0]);
@@ -167,7 +167,7 @@ private auto GdefClassOf(ushort v) @safe pure nothrow @nogc
             Correction.arabicTraditionalPage: "ArabicPUATraditional.txt"])
     {
         uint[uint] expected;
-        foreach (m; readText(hb ~ "/src/" ~ file).matchAll(ctRegex!(`(?m)^0x([0-9A-F]+)\t0x([0-9A-F]+)`)))
+        foreach (m; readText(hb ~ "/src/" ~ file).matchAll(regex(`(?m)^0x([0-9A-F]+)\t0x([0-9A-F]+)`)))
             expected[m[2].to!uint(16)] = m[1].to!uint(16);
         assert(expected.length == arabicPuaPairs(page).length);
         foreach (scalar, pua; expected)

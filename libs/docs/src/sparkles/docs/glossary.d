@@ -23,7 +23,7 @@ module sparkles.docs.glossary;
 import std.algorithm.searching : canFind, startsWith;
 import std.array : Appender, appender;
 import std.conv : text;
-import std.regex : ctRegex, matchAll;
+import std.regex : regex, matchAll;
 
 import sparkles.base.text.case_text : unicodeLower;
 import sparkles.wired.json : readJSONFile;
@@ -204,8 +204,8 @@ GlossaryReference[] glossaryReferences(string file, string markdown)
     import std.path : buildNormalizedPath, dirName;
     import std.string : lineSplitter;
 
-    static immutable targetRe =
-        ctRegex!(`(?:\]\(|^\s*\[[^\]]+\]:\s+)<?([^\s()<>#]*glossary(?:\.md|\.html)?)#([^\s()<>]+)`);
+    const targetRe =
+        regex(`(?:\]\(|^\s*\[[^\]]+\]:\s+)<?([^\s()<>#]*glossary(?:\.md|\.html)?)#([^\s()<>]+)`);
 
     auto result = appender!(GlossaryReference[]);
     size_t lineNo;
@@ -357,7 +357,7 @@ GlossaryReport checkGlossary(
 
 private string[] inlineLinkTargets(string markdown) @safe
 {
-    static immutable linkRe = ctRegex!(`\]\(<?([^\s()<>]+)`);
+    const linkRe = regex(`\]\(<?([^\s()<>]+)`);
     auto r = appender!(string[]);
     foreach (m; markdown.matchAll(linkRe))
         r.put(m[1]);
