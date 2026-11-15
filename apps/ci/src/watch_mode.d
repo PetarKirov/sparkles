@@ -1,7 +1,7 @@
 /**
 `ci --test --watch` and `ci --build --watch` (design BGW13–BGW15): after
 each change, the packages whose input sets the change reaches are tested
-or built again, and nothing else.
+or built again, as a run of the task executor, and nothing else.
 
 The loop derives a claim plan (`claimPlan`), materializes the union of
 every package's inputs and the workspace inputs through a `WatchSession`,
@@ -10,9 +10,12 @@ notes. A batch is never trusted on its own: the union is materialized
 again, through the digest cache, and the difference of the two states is
 the change, so a write that leaves a file's bytes as they were selects
 nothing, and a lossy batch costs a rescan rather than a missed change. The
-changed paths select packages by their claims (`selectChanged`); a change
-to a workspace input — a recipe, a lock, the toolchain, the planner's
-own sources — derives the plan again and runs every package.
+changed paths select packages by their claims (`selectChanged`), and the
+selection becomes a round: a task graph that runs on the executor
+(`watch_round`), each task fresh when it last succeeded with the same
+inputs. A change to a workspace input — a recipe, a lock, the toolchain,
+the planner's own sources — derives the plan again; every task's inputs
+then changed, and the round runs every selected package.
 */
 module watch_mode;
 
@@ -21,16 +24,15 @@ import core.time : Duration, msecs, seconds;
 import sparkles.base.logger : error, info, warning;
 import sparkles.build_primitives.resolve.platform : BuildPlatform, readCompilerIdentity;
 import sparkles.build_primitives.resolve.project : RegistrySources;
+import sparkles.build_primitives.task.model : Digest;
 import sparkles.build_primitives.workspace.input_state : ChangeSet, InputState, difference;
 import sparkles.build_primitives.workspace.package_graph : RecipeRole;
 import sparkles.build_primitives.workspace.select : ClaimPlan, FocusOptions, Selection;
 
+import watch_round : RoundAction;
+
 /// What each round runs over the packages a change selected.
-enum WatchAction : ubyte
-{
-    test,  /// `--test`
-    build, /// `--build`
-}
+alias WatchAction = RoundAction;
 
 /// How long a batch keeps gathering notes after the last one arrived.
 enum Duration quietPeriod = 200.msecs;
@@ -41,12 +43,12 @@ enum Duration degradedRescan = 2.seconds;
 
 /**
 Watches the repository and runs `action` over what each change selects,
-until interrupted. `failFast` and `coverage` are passed to each round as
-`--test` and `--build` take them.
+until interrupted; with `failFast`, a round stops at its first failure and
+the watch ends with it.
 */
-int runWatchMode(WatchAction action, bool failFast, bool coverage)
+int runWatchMode(WatchAction action, bool failFast)
 {
-    import app : detectRepoRoot;
+    import app : defaultTestThreads, detectRepoRoot;
     import sparkles.build_primitives.dub_manifest : hostPlatformTokens;
     import sparkles.build_primitives.resolve.configure : processEnvironment;
     import repository_inputs : repositoryFocus;
@@ -64,17 +66,23 @@ int runWatchMode(WatchAction action, bool failFast, bool coverage)
     const host = hostPlatformTokens();
     const role = action == WatchAction.test ? RecipeRole.test : RecipeRole.build;
 
+    // Every input identity each task succeeded with, across rounds and plans.
+    bool[Digest][string] passed;
+    // Fixed for the watch: a test command that changed with the host's load
+    // would never be fresh.
+    const threads = defaultTestThreads();
+    string[] pending;
     for (;;)
     {
         auto planned = planWatch(repoRoot, role, options, host);
         if (planned is null)
             return 1;
-        const status = watchPlan(repoRoot, planned, action, failFast, coverage, options, host);
+        auto watch = Watch(repoRoot, planned, action, failFast, options, host, &passed, threads);
+        const status = watch.run(pending);
         if (status != replanStatus)
             return status;
-        info(i"a workspace input changed: planning again, then running every package");
-        if (run(action, failFast, coverage, null) != 0 && failFast)
-            return 1;
+        pending = watch.replanWith;
+        info(i"a workspace input changed: planning again");
     }
 }
 
@@ -97,104 +105,130 @@ private ClaimPlan planWatch(string repoRoot, RecipeRole role, const FocusOptions
     return planned.value;
 }
 
-// One plan's rounds: `replanStatus` when a workspace input changed,
-// otherwise the exit status the watch ends with.
-private int watchPlan(string repoRoot, ClaimPlan plan, WatchAction action, bool failFast, bool coverage,
-    const FocusOptions options, scope const(string)[] host)
+// The rounds of one plan.
+private struct Watch
 {
-    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
-    import sparkles.base.vfs.types : Rights;
-    import sparkles.build_primitives.fileset.driver : InlineExecutor;
-    import sparkles.build_primitives.workspace.input_state : DigestCache;
-    import sparkles.build_primitives.workspace.watch : WatchSession;
-    import sparkles.build_primitives.workspace.select : selectChanged;
-    import sparkles.event_horizon.sys : BlockingVfs;
+    string repoRoot;
+    ClaimPlan plan;
+    WatchAction action;
+    bool failFast;
+    const(FocusOptions) options;
+    const(string)[] host;
+    bool[Digest][string]* passed;
+    uint threads;
+    string[] replanWith; /// the workspace inputs that changed, when `run` returns `replanStatus`
 
-    auto vfs = new BlockingVfs;
-    auto root = openRoot!(Rights.readOnly)(vfs, repoRoot, ambientAuthority());
-    if (root.hasError)
+    // Watches until a workspace input changes (`replanStatus`) or a round
+    // fails under fail-fast (1). `pending` are paths a previous plan saw
+    // change: their round runs as soon as this plan's inputs are read.
+    int run(const(string)[] pending)
     {
-        error(i"--watch: cannot open $(repoRoot)");
-        return 1;
-    }
-    auto watched = plan.inputs.unionInArena(plan.inputs.allInputs, plan.inputs.workspace);
-    auto session = WatchSession.open(repoRoot);
-    scope (exit)
-        session.close();
-    DigestCache!() cache;
-    InlineExecutor exec;
+        import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+        import sparkles.base.vfs.types : Rights;
+        import sparkles.build_primitives.fileset.driver : InlineExecutor;
+        import sparkles.build_primitives.workspace.input_state : DigestCache;
+        import sparkles.build_primitives.workspace.watch : WatchSession;
+        import sparkles.event_horizon.sys : BlockingVfs;
 
-    // The state the next change is measured against.
-    auto first = session.materialize(root.value.borrow, plan.inputs.sets, watched, cache, exec);
-    if (first.hasError)
-    {
-        error(i"--watch: cannot read the inputs");
-        return 1;
-    }
-    InputState before = first.value;
-    const dirs = session.watchedDirectories.length;
-    if (session.degraded)
-        warning(i"--watch: no file watcher on this host; rescanning every $(degradedRescan)");
-    info(i"watching $(dirs) directories, $(before.members.length) files; waiting for a change");
-
-    for (;;)
-    {
-        const timeout = session.degraded ? degradedRescan : Duration.zero;
-        const notes = session.nextBatch(quietPeriod, timeout);
-        const heard = session.changes(notes);
-        if (!heard.lossy && heard.paths.length == 0 && !session.degraded)
-            continue; // nothing the inputs may hold
-
-        auto now = session.materialize(root.value.borrow, plan.inputs.sets, watched, cache, exec);
-        if (now.hasError)
+        auto vfs = new BlockingVfs;
+        auto root = openRoot!(Rights.readOnly)(vfs, repoRoot, ambientAuthority());
+        if (root.hasError)
         {
-            // A file vanished mid-listing, or became unreadable: the next
-            // batch reads it again.
-            warning(i"--watch: the inputs could not be read; waiting for the next change");
-            continue;
+            error(i"--watch: cannot open $(repoRoot)");
+            return 1;
         }
-        const changed = changedPaths(difference(before, now.value));
-        before = now.value;
-        if (changed.length == 0)
-            continue; // the bytes are as they were
+        auto watched = plan.inputs.unionInArena(plan.inputs.allInputs, plan.inputs.workspace);
+        auto session = WatchSession.open(repoRoot);
+        scope (exit)
+            session.close();
+        DigestCache!() cache;
+        InlineExecutor exec;
 
-        foreach (path; changed)
-            if (plan.inputs.inWorkspace(path))
-                return replanStatus;
+        // The state the next change is measured against.
+        auto first = session.materialize(root.value.borrow, plan.inputs.sets, watched, cache, exec);
+        if (first.hasError)
+        {
+            error(i"--watch: cannot read the inputs");
+            return 1;
+        }
+        InputState before = first.value;
+        const dirs = session.watchedDirectories.length;
+        if (session.degraded)
+            warning(i"--watch: no file watcher on this host; rescanning every $(degradedRescan)");
+        info(i"watching $(dirs) directories, $(before.members.length) files");
+        if (pending.length && !round(pending, before))
+            return 1;
+        info(i"waiting for a change");
+
+        for (;;)
+        {
+            const timeout = session.degraded ? degradedRescan : Duration.zero;
+            const notes = session.nextBatch(quietPeriod, timeout);
+            const heard = session.changes(notes);
+            if (!heard.lossy && heard.paths.length == 0 && !session.degraded)
+                continue; // nothing the inputs may hold
+
+            auto now = session.materialize(root.value.borrow, plan.inputs.sets, watched, cache, exec);
+            if (now.hasError)
+            {
+                // A file vanished mid-listing, or became unreadable: the next
+                // batch reads it again.
+                warning(i"--watch: the inputs could not be read; waiting for the next change");
+                continue;
+            }
+            const changed = changedPaths(difference(before, now.value));
+            before = now.value;
+            if (changed.length == 0)
+                continue; // the bytes are as they were
+
+            foreach (path; changed)
+                if (plan.inputs.inWorkspace(path))
+                {
+                    replanWith = changed.dup;
+                    return replanStatus;
+                }
+            if (!round(changed, before))
+                return 1;
+            info(i"waiting for a change");
+        }
+    }
+
+    // Selects what `changed` reaches and runs it as one executor run over
+    // `state`; false when the round failed under fail-fast.
+    bool round(const(string)[] changed, const ref InputState state)
+    {
+        import std.conv : text;
+        import app : findWasiCompiler;
+        import sparkles.build_primitives.workspace.select : selectChanged;
+        import watch_round : planRound, runRound;
 
         auto selected = selectChanged(plan, changed, options, host);
         if (selected.hasError)
         {
-            import std.conv : text;
-
             const why = text(selected.error);
             error(i"--watch: selection failed: $(why)");
-            continue;
+            return true;
         }
         const packages = packageDirectories(plan, selected.value);
         const n = changed.length;
         if (packages.length == 0)
         {
-            info(i"$(n) changed path(s) reach no package; waiting");
-            continue;
+            info(i"$(n) changed path(s) reach no package");
+            return true;
         }
+        string wasiCompiler;
+        if (action == WatchAction.build && !findWasiCompiler(packages, wasiCompiler))
+            return !failFast;
         const listed = joinNames(packages);
         info(i"$(n) changed path(s) select $(packages.length) package(s): $(listed)");
-        if (run(action, failFast, coverage, packages) != 0 && failFast)
-            return 1;
-        info(i"waiting for a change");
+        auto r = planRound(plan, selected.value, action, state, repoRoot, wasiCompiler, threads);
+        if (r is null)
+            return !failFast;
+        const result = runRound(r, *passed, repoRoot, failFast);
+        return result.exitCode == 0 || !failFast;
     }
 }
 
-// Runs `action` over `packages` (every package when null).
-private int run(WatchAction action, bool failFast, bool coverage, const(string)[] packages)
-{
-    import app : runDubBuildMode, runDubTestsMode;
-
-    return action == WatchAction.test
-        ? runDubTestsMode(failFast, coverage, only: packages)
-        : runDubBuildMode(failFast, only: packages);
-}
 
 /// The repository-relative paths of a change set, in its order.
 string[] changedPaths(const ChangeSet changes) @safe pure nothrow

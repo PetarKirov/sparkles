@@ -15,10 +15,11 @@ once (TDM15), which is what keeps two dub processes off the same library.
 Freshness (TDM16, BGW18) is the watch's to supply. A node's input identity
 digests its command and the members of the watched input state that its
 read sets and the workspace inputs hold. $(LREF RoundDriver) calls a node
-fresh when that identity is the one it last succeeded with, in this watch,
-and stale otherwise, naming a changed path its package claims: a node is
-skipped when an edit is undone, and runs again until it passes. The record
-is in memory and ends with the watch.
+fresh when it has succeeded with that identity before, in this watch, and
+stale otherwise, naming a changed path its package claims: undoing an edit
+returns to inputs that passed, and the node is skipped; a node that never
+passed with its inputs runs every round. The record is in memory and ends
+with the watch.
 */
 module watch_round;
 
@@ -62,11 +63,12 @@ final class Round
 /**
 The round that runs `action` over the packages `selection` holds, from
 `plan` and the watched input `state`, for the repository at `repoRoot`.
-`wasiCompiler` is $(REF findWasiCompiler, app)'s, for `--build`. Creates
-each package's `build` directory, as `--test` and `--build` do.
+`wasiCompiler` is $(REF findWasiCompiler, app)'s, for `--build`, and
+`threads` the parallel test leg's. Creates each package's `build`
+directory, as `--test` and `--build` do.
 */
 Round planRound(ClaimPlan plan, const ref Selection selection, RoundAction action,
-    const ref InputState state, string repoRoot, string wasiCompiler)
+    const ref InputState state, string repoRoot, string wasiCompiler, uint threads)
 {
     import std.file : mkdirRecurse;
     import std.path : buildPath;
@@ -119,7 +121,7 @@ Round planRound(ClaimPlan plan, const ref Selection selection, RoundAction actio
 
         mkdirRecurse(buildPath(repoRoot, pkg.path, "build"));
         const commands = action == RoundAction.test
-            ? packageTestCommands(repoRoot, pkg.path)
+            ? packageTestCommands(repoRoot, pkg.path, threads)
             : [packageBuildCommand(repoRoot, pkg.path, wasiCompiler)];
         foreach (ci, ref cmd; commands)
         {
@@ -172,24 +174,24 @@ Round planRound(ClaimPlan plan, const ref Selection selection, RoundAction actio
 
 /**
 The action driver of a round: the process driver's actions, and the
-watch's freshness (TDM16). `passed` maps a task id to the input identity it
-last succeeded with.
+watch's freshness (TDM16). `passed` maps a task id to every input identity
+it succeeded with.
 */
 struct RoundDriver
 {
     ProcessDriver* process;           ///
     Round round;                      ///
-    const(Digest[string])* passed;    ///
+    const(bool[Digest][string])* passed; ///
 
     /// Runs the task's process.
     TaskOutcome run(ref TaskContext!Sched ctx) => process.run(ctx);
 
-    /// Fresh when the task last succeeded with these inputs.
+    /// Fresh when the task has succeeded with these inputs before.
     Freshness freshness(ref TaskContext!Sched ctx)
     {
         const t = ctx.task.value;
-        if (auto last = ctx.node.id.text in *passed)
-            return *last == round.inputs[t]
+        if (auto succeeded = ctx.node.id.text in *passed)
+            return round.inputs[t] in *succeeded
                 ? Freshness(Freshness.Kind.fresh, round.inputs[t])
                 : Freshness(Freshness.Kind.stale, reason: StaleReason.inputChanged, path: round.changed[t]);
         return Freshness(Freshness.Kind.stale, reason: StaleReason.noRecord);
@@ -198,10 +200,10 @@ struct RoundDriver
 
 /**
 Runs `round` on a scheduler of its own, reporting through the TTY reporter
-(plain lines without a terminal), and records in `passed` each task that
-succeeded and forgets each that did not.
+(plain lines without a terminal), and adds to `passed` the inputs of each
+task that succeeded.
 */
-RunResult runRound(Round round, ref Digest[string] passed, string repoRoot, bool failFast)
+RunResult runRound(Round round, ref bool[Digest][string] passed, string repoRoot, bool failFast)
 {
     import sparkles.base.term_caps : detectTermCaps;
     import sparkles.build_primitives.task.reporter : consumeEvents;
@@ -243,13 +245,8 @@ RunResult runRound(Round round, ref Digest[string] passed, string repoRoot, bool
         return RunResult(exitCode: 1);
     }
     foreach (i, outcome; result.outcomes)
-    {
-        const id = round.graph.nodes[i].id.text;
         if (kindOf(outcome) == OutcomeKind.succeeded)
-            passed[id] = round.inputs[i];
-        else
-            passed.remove(id);
-    }
+            passed[round.graph.nodes[i].id.text][round.inputs[i]] = true;
     return result;
 }
 
