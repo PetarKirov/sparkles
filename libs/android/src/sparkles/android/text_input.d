@@ -89,8 +89,6 @@ private __gshared void function() nothrow @nogc typedListener;
 /// JNI handles resolved on first use; global refs, held for the process.
 private __gshared jclass kcmClass;
 private __gshared jmethodID kcmLoad, kcmGet;
-private __gshared int cachedDevice = int.min;
-private __gshared jobject cachedMap;
 
 /**
 Install the hook in front of raylib's input callback. Call once, after the
@@ -254,21 +252,17 @@ private int unicodeCharOnWorker(ref JniFrame f, int deviceId, int keyCode, int m
             return 0;
         }
     }
-    if (cachedDevice != deviceId || cachedMap is null)
-    {
-        jvalue[1] id;
-        id[0].i = deviceId;
-        auto map = (*env).CallStaticObjectMethodA(env, kcmClass, kcmLoad, id.ptr);
-        if (f.failed || map is null)
-            return 0;
-        if (cachedMap !is null)
-            (*env).DeleteGlobalRef(env, cachedMap);
-        cachedMap = (*env).NewGlobalRef(env, map);
-        cachedDevice = deviceId;
-    }
+    // Load the device's current KeyCharacterMap on every lookup rather than
+    // caching it by deviceId: switching keyboard layouts keeps the same
+    // deviceId while InputManagerGlobal invalidates its own cache.
+    jvalue[1] id;
+    id[0].i = deviceId;
+    auto map = (*env).CallStaticObjectMethodA(env, kcmClass, kcmLoad, id.ptr);
+    if (f.failed || map is null)
+        return 0;
     jvalue[2] args;
     args[0].i = keyCode;
     args[1].i = meta;
-    const c = (*env).CallIntMethodA(env, cachedMap, kcmGet, args.ptr);
+    const c = (*env).CallIntMethodA(env, map, kcmGet, args.ptr);
     return f.failed ? 0 : c;
 }
