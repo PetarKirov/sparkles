@@ -409,8 +409,19 @@ pins, so its bound is a budget for pins rather than a race against CI.
 The pin set is mostly substituted rather than built, so `with-cache.sh`
 never sees it; the `pin-cache` job first mirrors every `toolchain-*` output R2
 lacks (`push-pin-set-r2.sh`), and then its gate (TC23) accepts an output
-that either cache serves. The toolchain thus lives in both caches: losing one
-never means compiling LLVM.
+that R2 serves. R2 is the cache of record; Cachix is best effort, a cheaper
+source to copy from while it still holds an output.
+
+When R2 lacks a toolchain output — a pull request moved the lock and no one
+built it yet — `pin-plan` plans it before the gate runs
+(`toolchain-pin-check --plan`, TCD13). One Cachix serves is copied by the
+mirror step. Each other missing output whose recorded
+cost in `nix/pin-build-costs.json` fits the budget, or has no recorded cost,
+is built by `pin-build` on a runner of its system, through `with-cache.sh`,
+so it reaches R2 as it finishes. One over the budget, and one that needs it,
+is reported with the `toolchain-pin.d` command that builds it on a developer
+host. Each `pin-build` step summary gives the build's wall clock; record it
+in the cost file, with its source.
 
 `nix-cache-info` in the bucket was written once by hand, not by Nix (which
 writes `StoreDir` alone, leaving priority 50):
