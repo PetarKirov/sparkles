@@ -53,7 +53,7 @@ import std.conv : text;
 import std.json : JSONType, parseJSON;
 import std.range : chain;
 import std.path : baseName, buildNormalizedPath, dirName, globMatch, stripExtension;
-import std.regex : ctRegex, matchAll, matchFirst;
+import std.regex : regex, matchAll, matchFirst;
 import std.string : indexOf, lineSplitter, strip;
 import sparkles.base.text.case_text : asciiLower;
 import sparkles.base.text.readers : tryConsume;
@@ -122,18 +122,18 @@ struct CreditPart
 /// The package named by a `` dub package `name` `` version source, or `null`.
 string dubPackageOf(string versionSource) @safe
 {
-    const m = versionSource.matchFirst(ctRegex!"^dub package `([^`]+)`");
+    const m = versionSource.matchFirst(regex("^dub package `([^`]+)`"));
     return m.empty ? null : m[1];
 }
 
 /// The backticked spans of a table cell.
 string[] backticked(string cell) @safe
-    => cell.matchAll(ctRegex!"`([^`]+)`").map!(m => m[1]).array;
+    => cell.matchAll(regex("`([^`]+)`")).map!(m => m[1]).array;
 
 /// The targets of every VitePress include directive in `text`, as written
 /// (region and line-range suffixes are kept; the check never uses them).
 string[] includeTargets(string text) @safe
-    => text.matchAll(ctRegex!`<!--\s*@include:\s*(.*?)\s*-->`).map!(m => m[1]).array;
+    => text.matchAll(regex(`<!--\s*@include:\s*(.*?)\s*-->`)).map!(m => m[1]).array;
 
 @("credits.includeTargets.readsEveryDirective")
 @safe unittest
@@ -185,7 +185,7 @@ CreditPart parsePart(string id, string text) @safe
     if (!part.versionSource.length)
         part.errors ~= "no `Version source` field";
     else if (part.versionSource.matchFirst(
-            ctRegex!"^(flake input|nixpkgs|dub package|grammar bundle|operating system) `[^`]+`").empty)
+            regex("^(flake input|nixpkgs|dub package|grammar bundle|operating system) `[^`]+`")).empty)
         part.errors ~= "`Version source` is not one of: flake input `…`, nixpkgs `…`, "
             ~ "dub package `…`, grammar bundle `…`, operating system `…`";
     if (!backticked(part.licence).length)
@@ -453,12 +453,12 @@ configuration "unittest" {
 
 /// The static archives an APK builder links (`lib/${abi}/libX.a`).
 string[] staticArchives(string nix) @safe
-    => nix.matchAll(ctRegex!`/lib/\$\{abi\}/(lib[A-Za-z0-9_.+-]+\.a)`).map!(m => m[1]).array;
+    => nix.matchAll(regex(`/lib/\$\{abi\}/(lib[A-Za-z0-9_.+-]+\.a)`)).map!(m => m[1]).array;
 
 /// The dub packages an APK builder compiles in (`dubDeps`), transitive ones
 /// included — the manifests name only direct dependencies.
 string[] apkDubPackages(string nix) @safe
-    => nix.matchAll(ctRegex!`name = "([a-z0-9][a-z0-9_-]*)";\s*src = inputs\.dub-`)
+    => nix.matchAll(regex(`name = "([a-z0-9][a-z0-9_-]*)";\s*src = inputs\.dub-`))
         .map!(m => "dub:" ~ m[1]).array;
 
 /// The font files an APK builder bundles by name, and the globs it copies
@@ -466,25 +466,25 @@ string[] apkDubPackages(string nix) @safe
 string[] namedFonts(string nix) @safe
 {
     string[] fonts;
-    foreach (m; nix.matchAll(ctRegex!`"([A-Za-z0-9_-]+\.(?:ttf|otf))"`))
+    foreach (m; nix.matchAll(regex(`"([A-Za-z0-9_-]+\.(?:ttf|otf))"`)))
         fonts ~= m[1];
-    foreach (m; nix.matchAll(ctRegex!`fontBundle\}/fonts/([A-Za-z0-9_-]*\*)`))
+    foreach (m; nix.matchAll(regex(`fontBundle\}/fonts/([A-Za-z0-9_-]*\*)`)))
         fonts ~= m[1];
     return fonts;
 }
 
 /// Whether an APK builder copies the whole shared font bundle.
 bool copiesWholeFontBundle(string nix) @safe
-    => !nix.matchFirst(ctRegex!`fontBundle\}/fonts\s`).empty;
+    => !nix.matchFirst(regex(`fontBundle\}/fonts\s`)).empty;
 
 /// The font packages the shared bundle (`fonts.nix`) copies faces from.
 string[] fontBundlePackages(string nix) @safe
-    => nix.matchAll(ctRegex!`\$\{(pkgs\.[A-Za-z0-9_.-]+|maple-mono)\}/share/fonts`)
+    => nix.matchAll(regex(`\$\{(pkgs\.[A-Za-z0-9_.-]+|maple-mono)\}/share/fonts`))
         .map!(m => m[1]).array.sort.uniq.array;
 
 /// Whether a builder ships the tree-sitter grammar bundle.
 bool shipsGrammars(string nix) @safe
-    => !nix.matchFirst(ctRegex!`config\.packages\.ts-grammars(?:-android)?\b`).empty;
+    => !nix.matchFirst(regex(`config\.packages\.ts-grammars(?:-android)?\b`)).empty;
 
 @("credits.builderReaders.readWhatTheBuildersName")
 @safe unittest
