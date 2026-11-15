@@ -110,9 +110,19 @@ system, so each host pins its own with `--system`.
 CI's `pin-cache` job runs the gate on every trigger:
 `nix run .#ci-minimal -- --check-pin-cache` checks the set's `toolchain-*`
 entries for all three hosts, the outputs TC23 names. A pull request that
-leaves the toolchain alone passes it; one that moves the lock stays red until
-the new outputs are pinned. The other entries change with ordinary pull
+leaves the toolchain alone passes it. One that moves the lock is planned
+first ([TCD13](./decisions.md#tcd13-ci-builds-the-toolchain-outputs-that-fit-a-job)):
+`pin-plan` (`toolchain-pin-check --plan`) lists the missing outputs,
+`pin-build` builds those within the budget of `nix/pin-build-costs.json` on a
+runner of their system and pushes them to R2, and the gate then runs. An output
+over the budget stays red, reported with the `ci/toolchain-pin.d` command that
+builds it on a developer host. The other entries change with ordinary pull
 requests and are pinned after they merge, so the job leaves them to `--check`.
+
+Acceptance for the plan: a lock move whose outputs no cache serves turns green
+through `pin-build` alone; an output given a cost over the budget, and an
+output whose closure needs it, is reported and not built. Costs are recorded
+from the step summaries of the `pin-build` runs.
 
 Acceptance: a dry run on each host lists exactly the set and no deletion; a
 real run leaves the cache's pin list equal to the set for all three hosts.

@@ -296,15 +296,34 @@ of TC11–TC12. A skipped test is not a pass.
 
 **TC23: Cached before use.** Before Sparkles' lock file moves to a new
 toolchain revision, the toolchain's outputs for every host of TC21 **must** be
-available from one of Sparkles' binary caches (its Cachix cache, or the R2
-cache at `cache.sparkles.petar-kirov.dev`), checked by querying the caches for
-each output's store path. Experimental outputs (the preview 3 sysroot of
-[TCW2](./wasi.md#_2-sysroots)) are excluded.
+available from the R2 cache at `cache.sparkles.petar-kirov.dev`, Sparkles'
+cache of record, checked by querying it for each output's store path.
+Experimental outputs (the preview 3 sysroot of [TCW2](./wasi.md#_2-sysroots))
+are excluded. Sparkles' Cachix cache is best effort: an output it serves and
+R2 lacks **must** be copied to R2 rather than rebuilt, and its absence from
+Cachix fails nothing.
 
-_Rationale:_ A cold toolchain build exceeds Sparkles' CI job limits, and a
-cancelled build publishes nothing, so every retry starts cold. Either cache
-serves CI, and the R2 one does not evict: the gate's job mirrors the
-toolchain there, so an output Cachix evicts still passes.
+CI **must** build each missing output itself, on a runner of the output's
+system, unless its recorded build cost exceeds CI's budget, or its derivation
+closure needs a missing output whose cost does. An output with no recorded
+cost **must** be attempted. CI **must** push every derivation it finishes as
+the build proceeds, so a build that reaches its job's limit keeps what it
+completed. An output CI does not build **must** be reported with the command
+that builds and pushes it from a developer host. The costs and the budget are
+data in the repository (`nix/pin-build-costs.json`), each cost with its
+source.
+
+_Rationale:_ The aim is that no pull request waits on a person for what CI
+can build within a job. The cost of an output decides where it is built, not
+its kind: the fork's LLVM measured 17 to 35 minutes on the reference hosts
+([closure measurements](./testing.md#closure-measurements)), which fits a
+job, while an output that does not fit would only time out on every retry.
+A build on a developer host in the Nix sandbox remains the faster path when
+it exists: CI asks the caches first and builds nothing they serve. R2 is the
+cache of record because it does not evict: CI pushes everything it builds
+there, and the gate's job copies the rest of the toolchain there from Cachix,
+which holds 10 GiB and evicts what is not pinned (TC24). See
+[TCD13](./decisions.md#tcd13-ci-builds-the-toolchain-outputs-that-fit-a-job).
 
 **TC24: Pinned outputs.** The pin set **must** be the flake output
 `legacyPackages.<system>.pinTargets` (`nix/pin-targets.nix`), an attribute

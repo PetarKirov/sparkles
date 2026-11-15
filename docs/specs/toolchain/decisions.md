@@ -238,6 +238,55 @@ font parsing, outline decoding, rasterization, and PNG strike decoding in pure D
 3. Package `harfbuzz` with GLib, Graphite2, ICU, FreeType, and PNG disabled to prevent leaking
    transitive dependencies (`libglib-2.0`, `libpcre2-8`, `libfreetype`, `libpng16`, `libbrotli`, `libbz2`) into text-rendering consumers.
 
+## TCD13: CI builds the toolchain outputs that fit a job
+
+_State: accepted (the owner's direction, November 15, 2026)._
+
+**Question.** When a pull request moves the lock to a toolchain revision whose
+outputs no cache serves, who builds them?
+
+**Alternatives.**
+
+1. **A developer host, always** (TC23 as first written). The gate only checks,
+   and whoever moves the lock builds and pins the outputs with
+   `ci/toolchain-pin.d` first.
+2. **CI, always.** Every missing output is built on a hosted runner.
+3. **CI, for the outputs whose build fits a job; a developer host for the
+   rest.** The deciding figure is the output's recorded build cost.
+
+**Evidence.** Pull request #731 moved the lock, and its gate stayed red
+because `ldc-android`'s new store path was in no cache: nothing in CI builds a
+pinned output, and the only copy of the R2 signing key is in CI, so a
+developer host can push to Cachix alone. That output needed two derivations
+that compile nothing. The fork's LLVM, the costliest output, measured 17
+minutes on x86_64-linux, 10 on aarch64-darwin and 35 on aarch64-linux on the
+reference hosts ([closure measurements](./testing.md#closure-measurements)),
+well inside a hosted job's 6 hours on a runner with a third of the cores.
+`ci/with-cache.sh` pushes each derivation as it finishes, so a timed-out build
+keeps its progress; a single derivation longer than the job never does.
+
+**Choice.** Alternative 3, with R2 as the cache of record and Cachix best
+effort (the owner's direction: everything is pushed to R2). A `pin-plan` job
+evaluates the toolchain's outputs for every host, asks R2, and plans the ones
+it lacks (`apps/ci/src/derivation_pin_build.d`). One Cachix still serves is
+copied to R2 by the mirror step, not rebuilt. Of the rest, an output is built by a `pin-build`
+job on a runner of its system when its cost in `nix/pin-build-costs.json` is
+within the budget there, or is not recorded. One over the budget is deferred
+to a developer host, and so is every missing output whose derivation closure
+holds it, with the command that builds it. The gate runs after the builds.
+The cost file starts empty: costs are recorded from `pin-build`'s step
+summaries, each with its source, so an estimate is never mistaken for a
+measurement.
+
+Alternative 1 blocks a pull request on a person for work CI can do.
+Alternative 2 spends six runner hours on every retry of an output that cannot
+finish in one job.
+
+**Revisit when** a recorded cost exceeds the budget, which leaves that output
+to a developer host until the R2 cache accepts a second signing key held by
+one; or when the measurements show a hosted build costing more than the time
+a person takes to start one.
+
 ## Open questions
 
 - **Q2: musl.** Whether the static builds of TC20 also target musl, which

@@ -1185,21 +1185,99 @@ jobs:
         run: nix run .#ci-minimal -- --check-credits
 
   # TC23 (docs/specs/toolchain/SPEC.md): a lock update merges only once the
-  # toolchain it names is in Sparkles' caches for every host, because a cold
-  # toolchain build exceeds CI's job limits. The check evaluates the pin set's
-  # `toolchain-*` entries for x86_64-linux, aarch64-darwin and aarch64-linux
-  # and asks Cachix, then the R2 cache, for each out path's narinfo; it builds
-  # nothing and needs no token. It runs on every trigger like every job here: a
-  # pull request that leaves the toolchain alone passes it, and one that moves
-  # the lock stays red until the new outputs are cached.
+  # toolchain it names is in the R2 cache, the cache of record, for every
+  # host; Cachix is best effort. Three jobs keep a lock move from waiting on a
+  # person for what CI can build itself.
+  #
+  # `pin-plan` evaluates the pin set's `toolchain-*` entries for x86_64-linux,
+  # aarch64-darwin and aarch64-linux, asks R2 for each out path's narinfo, and
+  # plans each one R2 lacks (`toolchain-pin-check --plan`,
+  # apps/ci/src/derivation_pin_build.d). One Cachix serves is left to the
+  # gate's mirror step, which copies it. Of the rest, each one whose recorded
+  # build cost (nix/pin-build-costs.json) fits a job's budget, or that has no
+  # recorded cost, is built by `pin-build` on a runner of its system; one over
+  # budget, and one whose closure needs it, is reported with the command that
+  # builds it on a developer host. A pull request that leaves the toolchain
+  # alone plans nothing, at one HEAD request per output.
+  pin-plan:
+    name: Toolchain build plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      any: ${{ steps.plan.outputs.any }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          use-nix-cache: false
+
+      - name: Plan the builds of missing toolchain outputs
+        id: plan
+        run: nix run .#toolchain-pin-check -- --plan --github-output "$GITHUB_OUTPUT"
+
+  # Builds what `pin-plan` found missing, one job per system, and pushes each
+  # finished derivation to R2 as it completes (ci/with-cache.sh), so a job
+  # that hits its limit keeps its progress and a re-run resumes. Without the
+  # R2 secrets (a fork's pull request) it builds and pushes nothing, and the
+  # gate stays red. The step summary records the build's wall clock, the
+  # figure nix/pin-build-costs.json takes.
+  pin-build:
+    name: Toolchain build (${{ matrix.system }})
+    needs: pin-plan
+    if: needs.pin-plan.outputs.any == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.pin-plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          use-nix-cache: false
+
+      - name: Build & push ${{ matrix.pins }}
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          NIX_R2_SIGNING_KEY: ${{ secrets.NIX_R2_SIGNING_KEY }}
+          INSTALLABLES: ${{ matrix.installables }}
+          PINS: ${{ matrix.pins }}
+        run: |
+          start=$SECONDS
+          # shellcheck disable=SC2086 # INSTALLABLES is a space-separated list.
+          ci/with-cache.sh nix build --no-link --print-build-logs $INSTALLABLES
+          printf '%s on %s: built in %d min\n' "$PINS" "$RUNNER_OS/$RUNNER_ARCH" \
+            $(((SECONDS - start + 59) / 60)) >> "$GITHUB_STEP_SUMMARY"
+
+  # The gate. It runs after the builds, whether they built, failed or were
+  # skipped, and asks R2 again; it builds nothing and needs no token.
   #
   # Before it, when the R2 secrets are present, the job mirrors into R2 every
-  # toolchain output R2 lacks (ci/push-pin-set-r2.sh). Cachix holds the pins
-  # but evicts what is not pinned — the LLVM fork's 2.3 GiB source was, and
-  # failed this gate on main — and R2 does not evict. The first mirror moves
-  # gigabytes; after that each output costs one HEAD request.
+  # toolchain output R2 lacks (ci/push-pin-set-r2.sh): a flake input's source,
+  # which is fetched rather than built, and a pinned output Cachix holds.
+  # Cachix holds the pins but evicts what is not pinned — the LLVM fork's
+  # 2.3 GiB source was, and failed this gate on main — and R2 does not evict.
+  # The first mirror moves gigabytes; after that each output costs one HEAD
+  # request.
   pin-cache:
     name: Toolchain cached
+    needs: [pin-plan, pin-build]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -1240,6 +1318,8 @@ jobs:
       - docs
       - cloud-env
       - spec-evidence
+      - pin-plan
+      - pin-build
       - pin-cache
       - text-conformance
       - sync

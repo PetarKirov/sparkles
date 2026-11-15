@@ -270,6 +270,7 @@
         src = config.legacyPackages.sparklesSources.sourceFor (
           [
             "apps/ci/tools/check-pin-cache.d"
+            "apps/ci/src/derivation_pin_build.d"
             "apps/ci/src/derivation_pin_set.d"
             "apps/ci/src/derivation_pin_cachix.d"
             "libs/core-cli/src"
