@@ -785,7 +785,7 @@ int ciMain(string[] args)
 
     if (mode == ProgramMode.runDubBuild)
         return cli.watch
-            ? runWatchMode(WatchAction.build, cli.failFast, coverage)
+            ? runWatchMode(WatchAction.build, cli.failFast)
             : runDubBuildMode(cli.failFast);
 
     if (mode == ProgramMode.buildEachCommit)
@@ -793,7 +793,7 @@ int ciMain(string[] args)
 
     if (mode == ProgramMode.runDubTests)
         return cli.watch
-            ? runWatchMode(WatchAction.test, cli.failFast, coverage)
+            ? runWatchMode(WatchAction.test, cli.failFast)
             : runDubTestsMode(cli.failFast, coverage);
 
     if (mode == ProgramMode.runSanitizeTests)
@@ -3614,7 +3614,7 @@ The WASI-enabled `ldc2` that $(MREF each_commit)'s WebAssembly packages build
 with, from `$SPARKLES_WASI_LDC`; `false`, reported, when one of `pkgPaths`
 needs it and it is unset.
 +/
-private bool findWasiCompiler(in string[] pkgPaths, out string compiler)
+bool findWasiCompiler(in string[] pkgPaths, out string compiler)
 {
     import std.algorithm.searching : any, canFind;
     import each_commit : wasiCompilerVariable, wasiPackages;
@@ -3626,7 +3626,7 @@ private bool findWasiCompiler(in string[] pkgPaths, out string compiler)
     return false;
 }
 
-int runDubBuildMode(bool failFast, const(string)[] only = null)
+private int runDubBuildMode(bool failFast)
 {
     import each_commit : targetBuildArgs;
 
@@ -3640,7 +3640,7 @@ int runDubBuildMode(bool failFast, const(string)[] only = null)
     info(i"repository root: $(repoRoot)");
 
     info(i"parsing dub.sdl sub-packages");
-    auto subPackages = onlyThese(subPackageDirectories(repoRoot), only);
+    auto subPackages = subPackageDirectories(repoRoot);
     if (subPackages.length == 0)
     {
         error(i"No sub-packages found in dub.sdl");
@@ -3851,7 +3851,7 @@ private int runBuildEachCommitMode(string base, string[] requested, bool failFas
     return 0;
 }
 
-int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false, const(string)[] only = null)
+private int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false)
 {
     if (sanitize)
     {
@@ -3877,7 +3877,7 @@ int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false, const(s
     info(i"repository root: $(repoRoot)");
 
     info(i"parsing dub.sdl sub-packages");
-    auto subPackages = onlyThese(subPackageDirectories(repoRoot), only);
+    auto subPackages = subPackageDirectories(repoRoot);
     if (subPackages.length == 0)
     {
         error(i"No sub-packages found in dub.sdl");
@@ -6682,17 +6682,46 @@ private int runGcR2Mode(in CliParams cli)
     return 0;
 }
 
-/// `all` restricted to the package directories in `only`, in `all`'s
-/// order; `all` itself when `only` is null (the `--watch` loop's subsets).
-private string[] onlyThese(string[] all, const(string)[] only) @safe pure nothrow
+/**
+One command `--test` or `--build` runs for a package, as a planner outside
+this module needs it to run the package the same way: the `--watch` rounds,
+which run it as a task.
+*/
+struct PackageCommand
 {
-    import std.algorithm.searching : canFind;
+    string label;       /// `-t 1`, `build`
+    string[] argv;      ///
+    string[string] env; /// added to the inherited environment
+}
 
-    if (only is null)
-        return all;
-    string[] kept;
-    foreach (dir; all)
-        if (only.canFind(dir))
-            kept ~= dir;
-    return kept;
+/// The legs `--test` runs for the package in the repository-relative
+/// `pkgDir`, in order, without coverage: `-t 1`, then the parallel leg on
+/// `threads` threads ($(LREF defaultTestThreads)).
+PackageCommand[] packageTestCommands(string repoRoot, string pkgDir, uint threads)
+{
+    const pkgName = pkgDir.baseName;
+    const parallelN = threads.to!string;
+    PackageCommand leg(string label, string[] runnerArgs)
+        => PackageCommand(label, dubTestCommand(repoRoot, pkgName, testBuildType(false), runnerArgs),
+            withLdcDflags(null));
+    return [
+        leg("-t 1", ["-t", "1", "--skip-slow"]),
+        leg("-t " ~ parallelN, ["-t", parallelN, "--skip-slow"]),
+    ];
+}
+
+/// The parallel leg's thread count `--test` uses now. It follows the host's
+/// load, so a planner that compares commands across runs reads it once.
+uint defaultTestThreads() => parallelTestThreads(hwParallelism());
+
+/// The command `--build` runs for the package in the repository-relative
+/// `pkgDir`, with `wasiCompiler` as $(LREF findWasiCompiler) found it.
+PackageCommand packageBuildCommand(string repoRoot, string pkgDir, string wasiCompiler)
+{
+    import each_commit : targetBuildArgs;
+
+    const pkgName = pkgDir.baseName;
+    return PackageCommand("build",
+        dubBuildCommand(repoRoot, pkgDir, pkgName, targetBuildArgs(pkgName, wasiCompiler)),
+        withLdcDflags(null));
 }
