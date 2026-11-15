@@ -22,10 +22,18 @@ compare instructions and CPU time, not wall time.
 `--trace` adds one `-ftime-trace` run at a coarse granularity and prints the
 top events by self and by inclusive time (an event nested inside an event of
 the same name counts once); `--vtemplates` adds one `-vtemplates -o-` run and
-prints the most-instantiated templates.
+prints the most-instantiated templates. When more than one target is traced,
+a summary adds each event's self time across them and counts the targets it
+appears in: the costs that every package pays, such as a dependency's CTFE,
+rise to the top. `--trace-json` writes every target's totals.
+
+`--all-tests` targets the test root of every `subPackage` the root recipe
+lists; a target that cannot be captured or compiled is reported and skipped.
 
 Targets:
 $(LIST
+    * `test:<package>`, `build:<package>` — that sub-package's test root, or
+        its library as a dependent rebuilds it
     * `bp-test` — `dub test :build-primitives`'s test root
     * `bp-lib` — the build-primitives library, as a dependent rebuilds it
     * `manifest-call` — a program whose `main` calls `parseDubManifest`
@@ -38,6 +46,7 @@ Usage:
 apps/ci/tools/compile-cost.d [--compilers=dmd,ldc2] [--targets=bp-test,…]
     [--runs=3] [--frontend-only] [--trace] [--granularity=20000]
     [--vtemplates] [--top=15] [--work=DIR] [--json=FILE]
+    [--all-tests] [--trace-json=FILE]
 ---
 Run from the repository root, inside the dev shell.
 */
@@ -62,7 +71,8 @@ import std.string : indexOf, lineSplitter, strip;
 import std.datetime.systime : Clock;
 
 import sparkles.base.buffer : UniqueBuffer;
-import sparkles.build_primitives.dub_manifest : DubDependency, DubManifest, DubPlatformValues;
+import sparkles.build_primitives.dub_manifest : DubDependency, DubManifest, DubPlatformValues,
+    parseDubManifest;
 import sparkles.wired.sdl : toSDL, writeEmbeddedRecipe;
 
 extern (C) int wait4(int pid, int* status, int options, rusage* usage) nothrow @nogc;
@@ -94,39 +104,72 @@ int main(string[] args)
     string compilers = "dmd,ldc2";
     string targets = "bp-test,bp-lib,manifest-call,manifest-decode,ci-test,dmd-lsp-test";
     uint runs = 3, top = 15, granularity = 20_000;
-    bool frontendOnly, trace, vtemplates;
-    string work = "build/compile-cost", jsonPath;
+    bool frontendOnly, trace, vtemplates, allTests;
+    string work = "build/compile-cost", jsonPath, traceJsonPath;
     getopt(args,
         "compilers", &compilers, "targets", &targets, "runs", &runs,
         "frontend-only", &frontendOnly, "trace", &trace,
         "granularity", &granularity, "vtemplates", &vtemplates, "top", &top,
-        "work", &work, "json", &jsonPath);
+        "work", &work, "json", &jsonPath, "all-tests", &allTests,
+        "trace-json", &traceJsonPath);
 
     const root = absolutePath(".").buildNormalizedPath;
     enforce(exists(buildPath(root, "dub.sdl")) && exists(buildPath(root, "libs/wired")),
         "run from the sparkles repository root");
     work = absolutePath(work);
     mkdirRecurse(work);
+    auto names = allTests ? subPackages(root).map!(p => "test:" ~ p).array : targets.split(",");
 
     Measurement[] all;
+    Totals[string][string] traces; // by `target compiler`
+    string[] skipped;
     foreach (compiler; compilers.split(","))
-        foreach (name; targets.split(","))
+        foreach (name; names)
         {
-            const target = targetNamed(name, root, work);
-            auto command = capture(target, compiler, root, work);
-            if (frontendOnly)
-                command ~= "-o-";
-            Measurement m = {target: name, compiler: compiler, frontendOnly: frontendOnly};
-            foreach (run; 0 .. runs)
-                m.samples ~= measure(command, root, work);
-            report(m);
-            all ~= m;
-            if (trace)
-                reportTrace(command, compiler, root,
-                    buildPath(work, name ~ "-" ~ compiler ~ ".trace.json"), granularity, top);
-            if (vtemplates)
-                reportTemplates(command, root, top);
+            try
+            {
+                const target = targetNamed(name, root, work);
+                auto command = capture(target, compiler, root, work);
+                if (frontendOnly)
+                    command ~= "-o-";
+                Measurement m = {target: name, compiler: compiler, frontendOnly: frontendOnly};
+                foreach (run; 0 .. runs)
+                    m.samples ~= measure(command, root, work);
+                report(m);
+                all ~= m;
+                if (trace)
+                    traces[name ~ " " ~ compiler] = reportTrace(command, compiler, root,
+                        buildPath(work, name.replace(":", "-") ~ "-" ~ compiler ~ ".trace.json"),
+                        granularity, top);
+                if (vtemplates)
+                    reportTemplates(command, root, top);
+            }
+            catch (Exception e)
+            {
+                // One package that will not build must not end a sweep.
+                if (names.length == 1)
+                    throw e;
+                skipped ~= name ~ " " ~ compiler;
+                stderr.writefln!"%s %s: skipped: %s"(name, compiler, e.msg.lineSplitter.front);
+            }
         }
+    if (traces.length > 1)
+        reportAcross(traces, top);
+    if (skipped.length)
+        writefln!"skipped (%s): %-(%s, %)"(skipped.length, skipped);
+    if (traceJsonPath.length)
+    {
+        JSONValue byTarget = JSONValue(string[string].init);
+        foreach (key, totals; traces)
+        {
+            JSONValue events = JSONValue(string[string].init);
+            foreach (event, t; totals)
+                events[event] = JSONValue(["self": t.self, "inclusive": t.inclusive,
+                    "count": t.count]);
+            byTarget[key] = events;
+        }
+        File(traceJsonPath, "w").writeln(byTarget.toString);
+    }
 
     if (jsonPath.length)
     {
@@ -147,6 +190,13 @@ int main(string[] args)
 
 private Target targetNamed(string name, string root, string work)
 {
+    if (name.startsWith("test:") || name.startsWith("build:"))
+    {
+        const test = name.startsWith("test:");
+        const package_ = name[name.indexOf(':') + 1 .. $];
+        return Target(name, [test ? "test" : "build", ":" ~ package_],
+            recipeOf(root, package_), !test);
+    }
     switch (name)
     {
     case "bp-test":
@@ -295,7 +345,7 @@ private struct Totals
     long self, inclusive, count;
 }
 
-private void reportTrace(string[] command, string compiler, string root, string file,
+private Totals[string] reportTrace(string[] command, string compiler, string root, string file,
     uint granularity, uint top)
 {
     const ldc = compiler.canFind("ldc");
@@ -371,6 +421,69 @@ private void reportTrace(string[] command, string compiler, string root, string 
 
     table("self time", t => t.self);
     table("inclusive time", t => t.inclusive);
+    return totals;
+}
+
+/// Each event's self time summed over the traced targets, with the number of
+/// targets it appears in: what every package pays rises to the top.
+private void reportAcross(Totals[string][string] traces, uint top)
+{
+    struct Row
+    {
+        long self, count;
+        size_t targets;
+    }
+    Row[string] rows;
+    long total;
+    foreach (totals; traces.byValue)
+        foreach (key, t; totals)
+        {
+            auto row = &rows.require(key, Row.init);
+            row.self += t.self;
+            row.count += t.count;
+            row.targets++;
+            total += t.self;
+        }
+    auto keys = rows.keys;
+    keys.sort!((a, b) => rows[a].self > rows[b].self);
+    writefln!"across %s traced targets (%.1f s self time in all), top %s by summed self time:"(
+        traces.length, total / 1e6, top);
+    foreach (k; keys[0 .. min(top, $)])
+        writefln!"    %8.2f s  %3s targets  %6s×  %s"(rows[k].self / 1e6, rows[k].targets,
+            rows[k].count, k.length > 150 ? k[0 .. 147] ~ "..." : k);
+}
+
+/// The name of every sub-package the root recipe lists.
+private string[] subPackages(string root)
+{
+    const recipe = parseDubManifest(readText(buildPath(root, "dub.sdl")), "dub.sdl");
+    enforce(recipe.hasValue, "cannot read the root recipe");
+    string[] names;
+    foreach (sub; recipe.value.subPackages)
+        if (!sub.isInline)
+        {
+            const path = buildPath(root, sub.path, "dub.sdl");
+            const manifest = parseDubManifest(readText(path), path);
+            enforce(manifest.hasValue, "cannot read " ~ path);
+            names ~= manifest.value.name;
+        }
+    return names;
+}
+
+/// The recipe of the sub-package named `package_`, relative to the root.
+private string recipeOf(string root, string package_)
+{
+    const recipe = parseDubManifest(readText(buildPath(root, "dub.sdl")), "dub.sdl");
+    enforce(recipe.hasValue, "cannot read the root recipe");
+    foreach (sub; recipe.value.subPackages)
+        if (!sub.isInline)
+        {
+            const path = buildPath(sub.path, "dub.sdl");
+            const manifest = parseDubManifest(readText(buildPath(root, path)), path);
+            if (manifest.hasValue && manifest.value.name == package_)
+                return path;
+        }
+    throw new Exception("no sub-package named " ~ package_);
 }
 
 private void reportTemplates(string[] command, string root, uint top)
