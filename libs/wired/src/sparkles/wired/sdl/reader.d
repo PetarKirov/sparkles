@@ -2338,54 +2338,6 @@ unittest
 
 version (unittest)
 {
-    /// Applies `edits` to `old`'s source and re-parses the result both ways,
-    /// the incremental way through `Mallocator` and through a stateful
-    /// allocator; `null` when all three agree (SDE14, and SDE15's equal
-    /// errors) and the stateful one freed every block. Counts the runs the
-    /// region path took.
-    private string reparseBothWays(SdlParserConfig config)(scope const(SdlCore)* old,
-        scope const(char)[] sourceName, scope const TextEdit[] edits, ref size_t localized) @system
-    {
-        import sparkles.base.text.edits : writeEdited;
-        import sparkles.wired.sdl.test_corpus : AllocationCounts, CountingAllocator,
-            documentDifference;
-
-        UniqueBuffer!char text;
-        writeEdited(text, old.source, edits);
-        auto full = parseSdlDocument!config(text[], sourceName);
-        string compare(R)(ref R incremental)
-        {
-            if (full.hasError != incremental.hasError)
-                return "one path failed: " ~ (full.hasError ? full.error.reason[].idup
-                    : incremental.error.reason[].idup);
-            if (full.hasError)
-                return full.error.code == incremental.error.code
-                    && full.error.span == incremental.error.span
-                    && full.error.startPosition == incremental.error.startPosition
-                    && full.error.reason[] == incremental.error.reason[] ? null : "different errors";
-            return documentDifference(incremental.document, full.document);
-        }
-
-        bool local;
-        auto incremental = reparseEdited!config(old, text[], sourceName, SdlSpan.init, edits,
-            local);
-        if (local)
-            localized++;
-        if (auto difference = compare(incremental))
-            return difference;
-
-        AllocationCounts counts;
-        {
-            bool statefulLocal;
-            auto stateful = reparseEdited!config(old, text[], sourceName, SdlSpan.init, edits,
-                statefulLocal, CountingAllocator!()(&counts));
-            if (statefulLocal != local)
-                return "the stateful allocator took the other path";
-            if (auto difference = compare(stateful))
-                return "stateful: " ~ difference;
-        }
-        return counts.live ? "the stateful allocator leaked a block" : null;
-    }
 
     private TextEdit replacing(size_t start, size_t end, string text) @safe pure nothrow @nogc
     {
@@ -2393,6 +2345,55 @@ version (unittest)
 
         return TextEdit(TextSpan(cast(uint) start, cast(uint) end), text);
     }
+}
+
+/// Applies `edits` to `old`'s source and re-parses the result both ways,
+/// the incremental way through `Mallocator` and through a stateful
+/// allocator; `null` when all three agree (SDE14, and SDE15's equal
+/// errors) and the stateful one freed every block. Counts the runs the
+/// region path took.
+private string reparseBothWays(SdlParserConfig config)(scope const(SdlCore)* old,
+    scope const(char)[] sourceName, scope const TextEdit[] edits, ref size_t localized) @system
+{
+    import sparkles.base.text.edits : writeEdited;
+    import sparkles.wired.sdl.test_corpus : AllocationCounts, CountingAllocator,
+        documentDifference;
+
+    UniqueBuffer!char text;
+    writeEdited(text, old.source, edits);
+    auto full = parseSdlDocument!config(text[], sourceName);
+    string compare(R)(ref R incremental)
+    {
+        if (full.hasError != incremental.hasError)
+            return "one path failed: " ~ (full.hasError ? full.error.reason[].idup
+                : incremental.error.reason[].idup);
+        if (full.hasError)
+            return full.error.code == incremental.error.code
+                && full.error.span == incremental.error.span
+                && full.error.startPosition == incremental.error.startPosition
+                && full.error.reason[] == incremental.error.reason[] ? null : "different errors";
+        return documentDifference(incremental.document, full.document);
+    }
+
+    bool local;
+    auto incremental = reparseEdited!config(old, text[], sourceName, SdlSpan.init, edits,
+        local);
+    if (local)
+        localized++;
+    if (auto difference = compare(incremental))
+        return difference;
+
+    AllocationCounts counts;
+    {
+        bool statefulLocal;
+        auto stateful = reparseEdited!config(old, text[], sourceName, SdlSpan.init, edits,
+            statefulLocal, CountingAllocator!()(&counts));
+        if (statefulLocal != local)
+            return "the stateful allocator took the other path";
+        if (auto difference = compare(stateful))
+            return "stateful: " ~ difference;
+    }
+    return counts.live ? "the stateful allocator leaked a block" : null;
 }
 
 @("sdl.reader.reparseEdited.localizesAndFallsBack")

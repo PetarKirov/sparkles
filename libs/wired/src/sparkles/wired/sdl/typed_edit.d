@@ -641,28 +641,6 @@ version (unittest)
         @WireName!Sdl("configuration") Config[] configurations;
     }
 
-    /// `source` after writing back what `change` makes of its decoded value.
-    private string writtenBack(alias change, T = Recipe)(string source)
-    {
-        auto parsed = parseSdlDocument!sdlFull(source);
-        assert(parsed.hasValue, parsed.error.toString);
-        auto decoded = fromSDL!T(parsed.document.root);
-        assert(decoded.hasValue, decoded.error.toString);
-        T value = decoded.value;
-        change(value);
-        auto editor = sdlEditor(parsed.document, source);
-        updateSDL(editor, parsed.document.root, value);
-        UniqueBuffer!char output;
-        Mallocator allocator;
-        const written = editor.write(output, allocator);
-        assert(!written.hasError, written.error.toString);
-        // The output means the changed value.
-        auto reparsed = parseSdlDocument!sdlFull(output[]);
-        assert(reparsed.hasValue);
-        assert(fromSDL!T(reparsed.document.root).value == value);
-        return output[].idup;
-    }
-
     // Three commented dependencies and two configurations, by part.
     private enum keyedName = "name \"demo\"\n";
     private enum keyedA = "// a: the first\ndependency \"a\" version=\"1\"\n";
@@ -672,6 +650,28 @@ version (unittest)
     private enum keyedApp = "// the app\nconfiguration \"app\" {\n    targetType \"executable\"\n"
         ~ "    dependency \"x\" # x\n}\n";
     private enum keyedSource = keyedName ~ keyedA ~ keyedB ~ keyedC ~ keyedLib ~ keyedApp;
+}
+
+/// `source` after writing back what `change` makes of its decoded value.
+private string writtenBack(alias change, T = Recipe)(string source)
+{
+    auto parsed = parseSdlDocument!sdlFull(source);
+    assert(parsed.hasValue, parsed.error.toString);
+    auto decoded = fromSDL!T(parsed.document.root);
+    assert(decoded.hasValue, decoded.error.toString);
+    T value = decoded.value;
+    change(value);
+    auto editor = sdlEditor(parsed.document, source);
+    updateSDL(editor, parsed.document.root, value);
+    UniqueBuffer!char output;
+    Mallocator allocator;
+    const written = editor.write(output, allocator);
+    assert(!written.hasError, written.error.toString);
+    // The output means the changed value.
+    auto reparsed = parseSdlDocument!sdlFull(output[]);
+    assert(reparsed.hasValue);
+    assert(fromSDL!T(reparsed.document.root).value == value);
+    return output[].idup;
 }
 
 @("sdl.typedEdit.unchangedIsByteIdentical")

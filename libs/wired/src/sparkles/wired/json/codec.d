@@ -1721,15 +1721,12 @@ private EncRes writeStdJson(JsonWriteOptions opts, alias keyLess, Writer)(
     }
 }
 
-version (unittest)
+/// `toJSON` text for assertions (asserts the encode succeeded).
+private string jsonText(T)(const T value)
 {
-    /// `toJSON` text for assertions (asserts the encode succeeded).
-    private string jsonText(T)(const T value)
-    {
-        auto r = toJSON(value);
-        assert(!r.hasError);
-        return r.value[].idup;
-    }
+    auto r = toJSON(value);
+    assert(!r.hasError);
+    return r.value[].idup;
 }
 
 @("wired.json.scalars")
@@ -2050,23 +2047,24 @@ version (unittest)
 
 version (unittest)
 {
-    /// `writeJSON` text under an explicit layout (asserts the encode succeeded).
-    private string layoutText(JsonWriteOptions opts, alias less = lexicalLess, T)(
-        const T value)
-    {
-        import std.array : appender;
-
-        auto buf = appender!string;
-        auto r = writeJSON!(opts, less)(value, buf);
-        assert(!r.hasError);
-        return buf[];
-    }
 
     /// By length, then lexically — distinguishable from both lexical order
     /// and its reverse.
     private bool byLengthThenLexical(scope const(char)[] a, scope const(char)[] b)
         @safe pure nothrow @nogc
         => a.length == b.length ? a < b : a.length < b.length;
+}
+
+/// `writeJSON` text under an explicit layout (asserts the encode succeeded).
+private string layoutText(JsonWriteOptions opts, alias less = lexicalLess, T)(
+    const T value)
+{
+    import std.array : appender;
+
+    auto buf = appender!string;
+    auto r = writeJSON!(opts, less)(value, buf);
+    assert(!r.hasError);
+    return buf[];
 }
 
 @("wired.json.keyOrder.structFields")

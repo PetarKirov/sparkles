@@ -2108,21 +2108,6 @@ private size_t countOpeners(scope const(char)[] text) @safe pure nothrow @nogc
 
 version (unittest)
 {
-    private string edited(alias operations)(string source)
-    {
-        import sparkles.wired.sdl.reader : parseSdlDocument;
-
-        auto parsed = parseSdlDocument!sdlFull(source, "edit.sdl");
-        assert(parsed.hasValue, parsed.error.toString);
-        auto editor = sdlEditor(parsed.document, source);
-        operations(editor, parsed.document.root);
-        UniqueBuffer!char output;
-        Mallocator allocator;
-        const written = editor.write(output, allocator);
-        if (written.hasError)
-            return "error: " ~ written.error.toString;
-        return output[].idup;
-    }
 
     private SdlNode child(SdlNode node, size_t index) @safe
     {
@@ -2131,6 +2116,22 @@ version (unittest)
             range.popFront();
         return range.front;
     }
+}
+
+private string edited(alias operations)(string source)
+{
+    import sparkles.wired.sdl.reader : parseSdlDocument;
+
+    auto parsed = parseSdlDocument!sdlFull(source, "edit.sdl");
+    assert(parsed.hasValue, parsed.error.toString);
+    auto editor = sdlEditor(parsed.document, source);
+    operations(editor, parsed.document.root);
+    UniqueBuffer!char output;
+    Mallocator allocator;
+    const written = editor.write(output, allocator);
+    if (written.hasError)
+        return "error: " ~ written.error.toString;
+    return output[].idup;
 }
 
 @("sdl.editor.replaceValue.keepsEverythingElse")
@@ -2753,87 +2754,84 @@ version (unittest)
     assert(checked > 150);
 }
 
-version (unittest)
+/** A copy of `host`, whose document's root is `root`, with nodes put on
+shared lines, so that moves meet them: every other pair of neighbouring
+plain one-line root children joined by `; `, and the first block whose
+children are all plain lines folded onto its node's line as
+`x {; a; b; }`. A plain line is one node ending in its newline, without
+a block, a comment, a raw string or a `;` that a join would break. */
+package string joinSomeLines()(scope const(char)[] host, SdlNode root)
 {
-    /** A copy of `host`, whose document's root is `root`, with nodes put on
-    shared lines, so that moves meet them: every other pair of neighbouring
-    plain one-line root children joined by `; `, and the first block whose
-    children are all plain lines folded onto its node's line as
-    `x {; a; b; }`. A plain line is one node ending in its newline, without
-    a block, a comment, a raw string or a `;` that a join would break. */
-    package string joinSomeLines(scope const(char)[] host, SdlNode root)
+    import std.algorithm.searching : canFind, endsWith;
+    import std.string : stripRight;
+
+    static bool plain(scope const(char)[] line)
     {
-        import std.algorithm.searching : canFind, endsWith;
-        import std.string : stripRight;
-
-        static bool plain(scope const(char)[] line)
-        {
-            if (!line.endsWith("\n"))
-                return false;
-            const text = line.stripRight;
-            return text.length && !text.canFind('\n') && !text.canFind('\r') && !text.canFind('#')
-                && !text.canFind("//") && !text.canFind("--") && !text.canFind("/*")
-                && !text.canFind('`') && !text.canFind('\\') && !text.endsWith(";");
-        }
-
-        static bool plainNode(scope const(char)[] host, SdlNode node)
-            => node.aloneOnLines && !node.hasBlock && plain(node.extent.sliceOf(host));
-
-        string joined;
-        size_t at, pairs;
-        bool folded;
-        SdlNode[] kids;
-        foreach (kid; root.byChild)
-            kids ~= kid;
-        for (size_t k = 0; k < kids.length; k++)
-        {
-            const a = kids[k];
-            if (k + 1 < kids.length && plainNode(host, a) && plainNode(host, kids[k + 1])
-                && a.extent.endOffset == kids[k + 1].extent.startOffset && pairs++ % 2 == 0)
-            {
-                joined ~= host[at .. a.extent.startOffset];
-                joined ~= a.extent.sliceOf(host).stripRight;
-                joined ~= "; ";
-                at = kids[k + 1].span.startOffset;
-                k++;
-                continue;
-            }
-            if (folded || !a.aloneOnLines || !a.childCount)
-                continue;
-            // The block's children, back to back, all plain, nothing else
-            // between its braces.
-            SdlNode[] inner;
-            foreach (c; a.byChild)
-                inner ~= c;
-            bool ok = true;
-            foreach (i, c; inner)
-                ok = ok && plainNode(host, c)
-                    && (i == 0 || inner[i - 1].extent.endOffset == c.extent.startOffset);
-            if (!ok)
-                continue;
-            const head = host[a.span.startOffset .. inner[0].extent.startOffset].stripRight;
-            const tail = host[inner[$ - 1].extent.endOffset .. a.extent.endOffset];
-            size_t close;
-            while (close < tail.length && (tail[close] == ' ' || tail[close] == '\t'))
-                close++;
-            if (!head.endsWith("{") || close == tail.length || tail[close] != '}')
-                continue;
-            joined ~= host[at .. a.span.startOffset];
-            joined ~= head;
-            joined ~= ";";
-            foreach (c; inner)
-            {
-                joined ~= " ";
-                joined ~= c.extent.sliceOf(host).stripRight[c.span.startOffset - c.extent.startOffset .. $];
-                joined ~= ";";
-            }
-            joined ~= " ";
-            at = inner[$ - 1].extent.endOffset + close;
-            folded = true;
-        }
-        joined ~= host[at .. $];
-        return joined;
+        if (!line.endsWith("\n"))
+            return false;
+        const text = line.stripRight;
+        return text.length && !text.canFind('\n') && !text.canFind('\r') && !text.canFind('#')
+            && !text.canFind("//") && !text.canFind("--") && !text.canFind("/*")
+            && !text.canFind('`') && !text.canFind('\\') && !text.endsWith(";");
     }
+
+    static bool plainNode(scope const(char)[] host, SdlNode node)
+        => node.aloneOnLines && !node.hasBlock && plain(node.extent.sliceOf(host));
+
+    string joined;
+    size_t at, pairs;
+    bool folded;
+    SdlNode[] kids;
+    foreach (kid; root.byChild)
+        kids ~= kid;
+    for (size_t k = 0; k < kids.length; k++)
+    {
+        const a = kids[k];
+        if (k + 1 < kids.length && plainNode(host, a) && plainNode(host, kids[k + 1])
+            && a.extent.endOffset == kids[k + 1].extent.startOffset && pairs++ % 2 == 0)
+        {
+            joined ~= host[at .. a.extent.startOffset];
+            joined ~= a.extent.sliceOf(host).stripRight;
+            joined ~= "; ";
+            at = kids[k + 1].span.startOffset;
+            k++;
+            continue;
+        }
+        if (folded || !a.aloneOnLines || !a.childCount)
+            continue;
+        // The block's children, back to back, all plain, nothing else
+        // between its braces.
+        SdlNode[] inner;
+        foreach (c; a.byChild)
+            inner ~= c;
+        bool ok = true;
+        foreach (i, c; inner)
+            ok = ok && plainNode(host, c)
+                && (i == 0 || inner[i - 1].extent.endOffset == c.extent.startOffset);
+        if (!ok)
+            continue;
+        const head = host[a.span.startOffset .. inner[0].extent.startOffset].stripRight;
+        const tail = host[inner[$ - 1].extent.endOffset .. a.extent.endOffset];
+        size_t close;
+        while (close < tail.length && (tail[close] == ' ' || tail[close] == '\t'))
+            close++;
+        if (!head.endsWith("{") || close == tail.length || tail[close] != '}')
+            continue;
+        joined ~= host[at .. a.span.startOffset];
+        joined ~= head;
+        joined ~= ";";
+        foreach (c; inner)
+        {
+            joined ~= " ";
+            joined ~= c.extent.sliceOf(host).stripRight[c.span.startOffset - c.extent.startOffset .. $];
+            joined ~= ";";
+        }
+        joined ~= " ";
+        at = inner[$ - 1].extent.endOffset + close;
+        folded = true;
+    }
+    joined ~= host[at .. $];
+    return joined;
 }
 
 @("sdl.editor.properties.movesOnSharedLines")

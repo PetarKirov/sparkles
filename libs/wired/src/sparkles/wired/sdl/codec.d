@@ -4872,6 +4872,9 @@ version (unittest)
 
 version (unittest)
 {
+    // Test fixtures, for this module's tests alone (build-graph BGV4).
+    private:
+
     private import std.string : indexOf;
 
     /// One tag exercising all three unknown channels at once; the spelling is
