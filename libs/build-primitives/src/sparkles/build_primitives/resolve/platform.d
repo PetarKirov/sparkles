@@ -26,6 +26,11 @@ struct BuildPlatform
     /// The compiler's own version, such as `1.41.0`.
     string compilerVersion;
 
+    /// A copy that shares no array with this one.
+    BuildPlatform dup() const @safe pure nothrow
+        => BuildPlatform(platform.dup, architecture.dup, compiler, compilerBinary, frontendVersion,
+            compilerVersion);
+
     /// Whether the platform is Windows.
     bool isWindows() const scope @safe pure nothrow @nogc
     {

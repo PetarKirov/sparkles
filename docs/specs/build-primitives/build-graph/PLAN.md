@@ -103,6 +103,12 @@ Gate: a test-only planner prints a deterministic action graph for the
 repository's test selection, with one compile per variant. Oracle 8's planning
 scenarios, oracle 14, oracle 20 and oracle 24's planning steps pass.
 
+Progress: variant keys, roles, pruning and dedup across requests are
+delivered (`build_graph/variants.d`), with the `isVersion` and divergent-mode lints,
+on `sparkles:d-source` (D56). Over this repository's 74 test roots, 1,044
+targets plan to 166 variants, against 393 without pruning; the scan follows
+imports (D57).
+
 ## E3: Local execution and the shared store
 
 - Compile, archive, link and test actions on the task-DAG executor, with the

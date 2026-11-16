@@ -14,7 +14,8 @@ D18–D21, the E0 spike results, on 2026-11-02; and D22–D25, from E1, on
 [build-systems catalog](../../../research/build-systems/index.md), and those
 marked accepted were accepted on 2026-11-06. D44, routing the graph's file
 access through the capability VFS, was accepted on 2026-11-07, and D56,
-planning's source scans on DMD's lexer and parser, on 2026-11-16. Records marked
+planning's source scans on DMD's lexer and parser, and D57, pruning's scan
+scope, on 2026-11-16. Records marked
 **proposed** await the owner's decision.
 
 ## D1: Own the build instead of isolating dub (accepted)
@@ -1527,17 +1528,65 @@ planning, or use DMD's, and from which package?
 2026-11-16:
 
 - A package of its own, `sparkles:d-source`, depends on `dmd:lexer` and on no
-  repository package, so `build-primitives` and the DMD-based packages can all
+  repository package, so the build graph and the DMD-based packages can all
   depend on it. It holds the token scans and the one lock and
   `Id.initialize` for DMD's process-wide state.
 - The layout lint is a package of its own on `dmd:frontend`, parsing
   without semantics as `sparkles:dmd-fmt` does. Planning calls it through an
-  interface, so `build-primitives` does not link the frontend. Written against
+  interface, so the build graph does not link the frontend. Written against
   DMD's parse-time visitor, which is generic over the AST family, it moves to
   `ASTBase` unchanged once the fork's `dmd:parser` carries `astbase.d`.
+- Planning is a package of its own, `sparkles:build-graph`, which depends on
+  `sparkles:d-source`; `build-primitives` does not, decided by the owner on
+  2026-11-18. A consumer of `build-primitives` alone, such as
+  `sparkles:doc-view` for `runGit`, would otherwise link part of DMD:
+  `dmd.root.rmem` defines druntime's allocation hooks (`_d_newclass`,
+  `_d_allocmemory` and the rest), so a binary that links druntime as a shared
+  library pulls it in to define them, and DMD's versions replace druntime's.
 
-**Consequence.** Every build of `build-primitives` builds `dmd:lexer`,
-whose pre-generate step runs `git describe`, so the Nix builds of its
-consumers carry git.
+**Consequence.** Every build of `build-graph` builds `dmd:lexer`, whose
+pre-generate step runs `git describe`, so the Nix builds of its consumers
+carry git.
 
 **Revisit when** the fork's `dmd:parser` carries `astbase.d`.
+
+## D57: Pruning scans what a compile can reach (accepted)
+
+**Question.** BGV1 kept an inherited identifier that any file under a
+variant's roots mentions, and kept every one when any file there built a
+condition from strings. DMD's `dmd/backend/cdef.d` builds one, and
+`dmd:lexer`'s import root is the whole of DMD's `compiler/src`, so every
+variant that can import DMD's lexer kept everything: `build-primitives` and
+all that depends on it. A string-built constant inside a `unittest` block did
+the same to `sparkles:dmd-fmt`. How far should the scan reach?
+
+**Alternatives.**
+
+- **Every file under the roots,** as BGV1 said: simple, and blind to what is
+  imported.
+- **The modules the compile can reach:** the variant's sources, then the
+  modules they import, transitively.
+- **Narrow DMD's import root in the fork:** fixes one case only.
+
+**Choice.** The reachable modules, and conditions inside `unittest` blocks
+exempt, decided by the owner on 2026-11-16 (BGV1):
+
+- The reachable D files are the variant's own sources and, transitively,
+  each module one of them imports, found under its import roots in the
+  compiler's search order. An import counts under any `version` branch and
+  in any function body, since the scan evaluates no condition.
+- A reachable `mixin` whose joined literals contain the word `import` may
+  import what no declaration names, and makes every file under the import
+  roots reachable.
+- A string-built condition inside a `unittest` block keeps nothing: the
+  block compiles only in its own package's test root, which inherits
+  nothing. Planning still reports it.
+
+**Consequence.** Over this repository, 166 variants instead of 169, and 16 of
+them keep every inherited identifier instead of 23. The rest of those 16 are
+real: `dmd.globals` imports `dmd.targetcompiler`, whose `version (MARS)`
+branch imports DMD's backend, so a variant that may set `MARS` reaches
+`cdef.d`; and `sparkles:ui` runs a generator (BGV1's generated roots).
+
+**Revisit when** a scan that evaluates `version` conditions against the
+variant's own identifiers is worth its cost.
