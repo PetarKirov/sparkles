@@ -1013,3 +1013,26 @@ column walks 0 to 6 through the right-to-left pair.
 primary column, a secondary block. A native Vulkan capture of `hello world`
 shows the bar over the first cell, with the text starting at the row's
 left edge. The IME rectangle now reads the same column as the drawn cursor.
+
+### Code-editor presentation — 2026-11-16
+
+The document pane now draws the `EAP5` presentation, each part behind its
+own `View` command in the palette (`PresentationSettings`): a line-number
+gutter (the shared `withGutterCells` strip, the caret's number in the
+primary text slot), the caret's line on the raised surface, indentation
+guides at each stop of a line's leading spaces, the bracket at the caret
+and its partner (an unmatched one in the error slot), and trailing
+whitespace other than the run the caret is typing. The status bar names the
+caret's line and grapheme column, the selection count and the language.
+
+The library carries the reusable parts: `markSpans` paints source ranges
+over plain or highlighted spans and keeps syntax ink and selections
+(`editor.view.markSpans`); `drawIndentGuides` replaces only leading spaces
+with a one-cell glyph, so no text moves and hits are unchanged
+(`editor.view.indentGuides`); `matchingBracket` matches by nesting within a
+byte budget and reports a scan that ran out as undecided
+(`editor.presentation.matchingBracket`); `trailingWhitespace` excludes a
+CRLF's carriage return (`editor.presentation.trailingWhitespace`).
+`editor.app.codePresentation` draws all five parts, then turns each off and
+checks the text is unchanged and the gutter's cells are gone. Brackets are
+matched by bytes, not syntax: one inside a string or comment counts.

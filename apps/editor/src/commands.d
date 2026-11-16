@@ -7,11 +7,12 @@ import sparkles.ui.command_palette : PaletteCommand, PaletteEntry;
 import sparkles.ui.editor.keys : EditorAction, EditorTarget, editorBindings;
 import sparkles.ui.keymap : Binding, bind, terminalScope;
 import examples : Example;
+import settings : label, PresentationToggle;
 
 /// App operations; shared editing operations carry an EditorAction argument.
 enum Command : ubyte { none, palette, guide, newTab, nextTab, previousTab, inspector,
     example, themes, selectTheme, toggleTheme, edit, quit, open, save, saveAs, confirm, cancel,
-    closeTab, discard, restoreSession, languages, selectLanguage }
+    closeTab, discard, restoreSession, languages, selectLanguage, presentation }
 enum Scope : ubyte { @terminalScope modalModifiers, application, document, dialog, closing, recovery }
 alias CommandId = PaletteCommand!Command;
 alias CommandBinding = Binding!(Command, Scope);
@@ -82,6 +83,11 @@ PaletteEntry!Command[] commandCatalog(scope const(CommandBinding)[] bindings) @s
     result ~= PaletteEntry!Command(CommandId(Command.example, Example.code), "Open code example", "Examples");
     result ~= PaletteEntry!Command(CommandId(Command.example, Example.unicode), "Open Unicode example", "Examples");
     result ~= PaletteEntry!Command(CommandId(Command.example, Example.protectedText), "Open protected text example", "Examples");
+    foreach (i; 0 .. PresentationToggle.max + 1)
+    {
+        const which = cast(PresentationToggle) i;
+        result ~= PaletteEntry!Command(CommandId(Command.presentation, which), label(which), "View");
+    }
     return result;
 }
 

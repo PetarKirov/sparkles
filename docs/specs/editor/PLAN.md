@@ -37,7 +37,7 @@ accepted. Each implementation commit must build and pass its relevant tests.
 | --------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | S0 — Contract and feasibility     | EAP1–EAP3, EAP9, EAP17, EAP20, EAP23–EAP24, EAP29 | Agreed ownership, palette test interfaces and risk experiments below; cold read, semantic review and publication validation recorded separately                                                     | partial: contract accepted; implementation feasibility gates remain open                                                                                                                    |
 | P — Shared command palette        | EAP8–EAP11                                        | Display-independent state and catalog, shared widget view, invocation-target/context/identity/lifecycle scenarios, recording and TUI/Vulkan adapters; one public-behavior red→green slice at a time | partial: shared view/input and effective-shortcut tests pass; backend parity pending                                                                                                        |
-| A — Thin editor shell             | EAP1–EAP7, EAP27–EAP28                            | Standard CLI/build identity, editable examples, tabs, command guide/palette and basic inspector; app recording-flow and native smoke evidence                                                       | partial: shell, tabs, editable examples, commands, clipboard, pointer and native/TUI smoke; full tools pending                                                                              |
+| A — Thin editor shell             | EAP1–EAP7, EAP27–EAP28                            | Standard CLI/build identity, editable examples, tabs, command guide/palette and basic inspector; app recording-flow and native smoke evidence                                                       | partial: shell, tabs, editable examples, commands, clipboard, pointer, native/TUI smoke and code presentation; full tools pending                                                           |
 | H — Highlighting and presentation | EAP12–EAP16                                       | Shared per-line highlighted presentation with editor decorations, revision-safe background work, themes and generated settings; active-line and preview/cancel scenarios                            | partial: syntax/editor overlay, background revisions, theme preview and language picker verified; font/settings pending                                                                     |
 | U — Layout and input              | EAP17–EAP20                                       | Shared layout-backed navigation/hit-testing, Unicode corpus, terminal touch extraction and live IME on required native targets                                                                      | partial: bidi/wrap layout drives drawing, hits and motion on desktop and Android; live GNOME preedit/commit/cancel and caret rectangles verified; candidates, Android IME and touch pending |
 | F — Real documents                | EAP21–EAP25                                       | UTF-8 fidelity, safe desktop saves, system document access on Android, conflict and dirty-close decisions; fault/provider tests and real-device evidence                                            | partial: native open/save/conflict and dirty-close tests pass; live close/provider acceptance pending                                                                                       |
@@ -78,8 +78,8 @@ a library preparation commit does not close an app or device acceptance gate.
 1. **Shared layout and input geometry (U, S0).** `LayoutContext` now supplies
    one byte-keyed cell-grid result for drawing, visual caret movement, row
    edges, wrapped vertical motion and pointer hits in the app, and computes
-   the IME caret area with affinity. Remaining: delivering that area to the
-   host (it is not yet sent), the Unicode corpus replay through the app, the
+   the IME caret area with affinity; the drawn caret area reaches the host
+   (Wayland `set_cursor_rectangle`). Remaining: the Unicode corpus replay through the app, the
    real-font GPU comparison of rendered hits, and bounded long-paragraph work
    (each query lays out its whole paragraph; scrolling and the IME area lay
    out at most a viewport of lines; measure under V before claiming the
@@ -93,9 +93,9 @@ a library preparation commit does not close an app or device acceptance gate.
    pane from one settings subject with shared numeric editors/runtime bounds;
    integrate accepted theme/presentation choices rather than adding a second
    settings renderer.
-3. **Editor presentation and tools (A, H).** Finish shared source-view
-   presentation: line numbers, current-line treatment, indentation guides,
-   bracket matching and whitespace diagnostics. Complete the undo-branch
+3. **Editor presentation and tools (A, H).** Line numbers, current-line
+   treatment, indentation guides, bracket matching and trailing-whitespace
+   marks are drawn, each switchable (testing §6, 2026-11-16). Complete the undo-branch
    inspector, indentation/autoindent, language-aware commenting and the
    accepted editing actions through the common command policy.
 4. **Find and replace (A, V).** Add literal and regex search/replace over

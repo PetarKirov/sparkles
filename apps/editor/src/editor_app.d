@@ -10,7 +10,10 @@ import sparkles.ui.command_palette : PaletteChoice, PaletteEffect, PaletteEffect
 import sparkles.ui.command_palette_input : PaletteInput;
 import sparkles.ui.components.command_palette : PaletteViewOptions, viewCommandPalette;
 import sparkles.ui.components.scroll_body : ScrollBody, scrollSeconds;
-import sparkles.ui.components.editor : editorLineSpans, editorView, EditorViewOptions, layoutColumn, VisualRow, visualRows;
+import sparkles.ui.components.editor : drawIndentGuides, editorLineSpans, editorView, EditorViewOptions, layoutColumn, markSpans, TextMark, VisualRow, visualRows;
+import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell, GutterChannel, withGutterCells;
+import sparkles.ui.editor.presentation : matchingBracket, trailingWhitespace;
+import settings : PresentationSettings, PresentationToggle, toggle;
 import sparkles.ui.editor.context : CaretTarget;
 import sparkles.text_buffer.summary : Affinity;
 import sparkles.ui.editor.layout : LayoutContext, ParagraphLayout, scrollRows, scrollToCaret;
@@ -470,6 +473,17 @@ private long totalVisualRows(ref LayoutContext context, in Text text) @safe
 
 private enum Dialog : ubyte { none, openPath, savePath, dirtyClose, recoveryClose, restoreOffer }
 
+/// The decimal digits of `value`, at least one: a line-number gutter's width.
+private size_t decimalDigits(size_t value) @safe pure nothrow @nogc
+{
+    size_t digits = 1;
+    for (; value >= 10; value /= 10) ++digits;
+    return digits;
+}
+
+/// A line number's text.
+private string lineLabel(size_t number) @safe pure nothrow => text(number);
+
 /// Thin shared-widget component, instantiated by recording, TUI and Vulkan hosts.
 struct EditorApp
 {
@@ -481,6 +495,7 @@ struct EditorApp
     AppTheme theme;
     PaletteInput!(Command, 512) commands;
     bool inspector;
+    PresentationSettings presentation;
     bool quitRequested;
     string status;
     string shotPath;
@@ -1017,6 +1032,46 @@ struct EditorApp
     }
 
     /**
+    The status bar's position (`EAP5`): the primary caret's 1-based line and
+    grapheme column, the selection count when several, and the language.
+    */
+    private string statusPosition() @safe
+    {
+        import sparkles.base.text.seek : nextGraphemeBoundary;
+        const state = &document.field.state;
+        const head = state.selection.primary.head;
+        const line = state.text.lineOf(head);
+        size_t column = 1;
+        for (size_t at = state.text.lineStart(line); at < head; at = nextGraphemeBoundary(state.text, at))
+            ++column;
+        const ranges = state.selection.ranges.length;
+        return text("Ln ", line + 1, ", Col ", column,
+            ranges > 1 ? text("  •  ", ranges, " selections") : "",
+            "  •  ", document.language.length && document.language != "text" ? document.language : "Plain text");
+    }
+
+    /**
+    The marks every visible line shares (`EAP5`): the bracket at the primary
+    caret and its partner, or an unmatched one in the error slot.
+    */
+    private TextMark[] documentMarks() @safe
+    {
+        TextMark[] marks;
+        const state = &document.field.state;
+        if (presentation.bracketMatching && !state.composition.active && state.selection.primary.empty)
+        {
+            const match = matchingBracket(state.text, state.selection.primary.head);
+            if (match.found)
+            {
+                const slot = match.matched || match.undecided ? Slot.highlight : Slot.error;
+                marks ~= TextMark(match.bracket, match.bracket + 1, slot);
+                if (match.matched) marks ~= TextMark(match.partner, match.partner + 1, slot);
+            }
+        }
+        return marks;
+    }
+
+    /**
     The primary caret's drawn cell, `[column, row, 1, 1]` in the window's
     cells, from the rows just painted (`EDI6`, `EAP20`): the layout's column,
     the inserted cells before it, and a preedit's cursor within it, as
@@ -1522,6 +1577,9 @@ struct EditorApp
         case Command.nextTab: activeTab = (activeTab + 1) % tabs.length; break;
         case Command.previousTab: activeTab = (activeTab + tabs.length - 1) % tabs.length; break;
         case Command.inspector: inspector = !inspector; break;
+        case Command.presentation:
+            if (id.argument <= PresentationToggle.max) presentation.toggle(cast(PresentationToggle) id.argument);
+            break;
         case Command.languages:
             endPicker(false);
             choosingLanguage = true;
@@ -1915,9 +1973,12 @@ struct EditorApp
             const reserved = headerRows + tabRows + 3 + extraRows + paletteHeight;
             const visible = host.size.height > reserved ? cast(size_t) host.size.height - reserved : 1;
             const count = document.field.state.text.lineCount;
-            // Rows wrap at the field's width, the window less the root's padding:
-            // the caret is the host's cursor (HST20) and takes no cell of its own.
-            const width = host.size.width > 10 ? cast(size_t) host.size.width - 2 : 8;
+            // Rows wrap at the field's width: the window less the root's padding
+            // and the line-number gutter (EAP5). The caret is the host's cursor
+            // (HST20) and takes no cell of its own.
+            const digits = decimalDigits(count);
+            const gutterCells = presentation.lineNumbers ? digits + 1 : 0;
+            const width = host.size.width > 10 + gutterCells ? cast(size_t) host.size.width - 2 - gutterCells : 8;
             auto context = &document.field.context;
             context.options.wrapCells = width;
             context.viewportLines = visible;
@@ -1961,24 +2022,51 @@ struct EditorApp
             {
                 uint[] rows;
                 const size_t renderLimit = visible + 1;
+                const selection = document.field.state.selection;
+                const caretLine = text.lineOf(selection.primary.head);
+                const composing = document.field.state.composition.active;
+                const globalMarks = documentMarks();
+                auto channels = [GutterChannel(id: "lines", width: cast(int) digits)];
                 for (size_t line = document.firstLine; line < count && rows.length < renderLimit; ++line)
                 {
                     const start = text.lineStart(line);
                     const end = text.lineEnd(line);
-                    const logical = syntax !is null && syntax.spans.length
+                    const plain = syntax !is null && syntax.spans.length
                         ? highlightedEditorLine(document.field.state, line,
                             syntaxWindow(syntax.source, syntax.spans, start, end, syntaxTheme, theme.pageFg), options)
                         : editorLineSpans(document.field.state, line, options);
+                    auto marks = globalMarks.dup;
+                    if (presentation.trailingWhitespace)
+                    {
+                        const blank = trailingWhitespace(text, line);
+                        // Whitespace being typed at the caret is not yet a mistake.
+                        if (blank[0] < blank[1] && !(line == caretLine && selection.primary.head == blank[1]))
+                            marks ~= TextMark(blank[0], blank[1], Slot.diffRemoved);
+                    }
+                    const logical = marks.length ? markSpans(plain, marks) : plain;
                     const layout = ParagraphLayout.of(text, line, context.options);
+                    const current = presentation.currentLine && line == caretLine && !composing
+                        && selection.ranges.length == 1 && selection.primary.empty;
                     foreach (row; visualRows(logical, layout, document.field.state))
                     {
                         if (line == document.firstLine && row.row < document.firstRow) continue;
                         if (rows.length == renderLimit) break;
+                        if (presentation.indentGuides) drawIndentGuides(row, layout, 4);
                         const node = b.add(Widget(kind: WidgetKind.rich, width: SizeSpec.grow(),
                             height: SizeSpec.fixed(1), spans: row.spans, wrap: TextWrap.none,
-                            caretColumn: row.caretColumn));
-                        rows ~= node;
+                            caretColumn: row.caretColumn, slot: current ? Slot.surfaceRaised : Slot.inherit,
+                            paintBackground: current));
                         shownRows ~= RowHit(node, line, row.row, row.inserted, row.caretColumn);
+                        if (presentation.lineNumbers)
+                        {
+                            auto cell = new GutterCell[1];
+                            cell[0] = row.row == 0
+                                ? cellOf(lineLabel(line + 1), cast(int) digits,
+                                    line == caretLine ? Slot.textPrimary : Slot.gutter)
+                                : blankCell(cast(int) digits);
+                            rows ~= withGutterCells(b, channels, cell, node);
+                        }
+                        else rows ~= node;
                     }
                 }
                 field = b.add(Widget(kind: WidgetKind.column, children: rows, width: SizeSpec.grow(),
@@ -2023,7 +2111,7 @@ struct EditorApp
                 children ~= chip(b, text("Previous session available (", recovery.offerCount,
                     ") • F4 R: restore"), restoreHit, false, ControlSize(rows: 3));
         }
-        children ~= b.add(Widget(kind: WidgetKind.text, text: "UTF-8  •  "
+        children ~= b.add(Widget(kind: WidgetKind.text, text: statusPosition() ~ "  •  UTF-8  •  "
             ~ (document.dirty ? "Modified" : document.durabilityWarning.length ? "Written" : "Saved")
             ~ (document.durabilityWarning.length ? " • durability unconfirmed" : ""),
             slot: Slot.muted, height: SizeSpec.fixed(1)));
@@ -2201,12 +2289,12 @@ struct EditorApp
     import sparkles.ui.style : defaultTwoslashPalette;
     import sparkles.ui.editor.command : EditCommand;
     EditorApp app;
-    // At 20 columns, rows wrap at 18 cells (the padding aside; the caret is the host's):
-    // "alpha beta gamma " and "delta epsilon".
+    // At 22 columns, rows wrap at 18 cells (the padding and the two-cell line-number
+    // gutter aside; the caret is the host's): "alpha beta gamma " and "delta epsilon".
     app.document.field.setText("alpha beta gamma delta epsilon");
     app.document.field.run(EditCommand.setRange(0, 0));
     RecordingHost host;
-    host.size = Size(20, 24);
+    host.size = Size(22, 24);
     FrameSnapshot frame;
     presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
     app.paint(host, frame.tree, frame.frames);
@@ -2313,6 +2401,68 @@ struct EditorApp
     // Visual Right through `abc אב`: a b c, the space, then the RTL pair
     // from its left, then on to the next line.
     assert(columns == [0, 1, 2, 3, 4, 5, 6], "the cursor walks the cells");
+}
+
+/// The pane draws line numbers, the current line, guides, brackets and trailing
+/// whitespace; each switch hides its part and moves no text (EAP5).
+@("editor.app.codePresentation")
+@safe unittest
+{
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
+    import sparkles.ui.editor.command : EditCommand;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    import std.algorithm : canFind;
+    EditorApp app;
+    app.document.field.setText("f(a) \n    g();\nh");
+    app.document.field.run(EditCommand.setRange(1, 1)); // at `(`
+    RecordingHost host;
+    FrameSnapshot frame;
+    string[] drawn;
+    Slot[][] slots;
+    void present()
+    {
+        presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
+        app.paint(host, frame.tree, frame.frames);
+        drawn = null;
+        slots = null;
+        foreach (shown; app.displayed.rows)
+        {
+            string row;
+            Slot[] rowSlots;
+            foreach (span; frame.tree.nodes[shown.node].spans)
+            {
+                row ~= span.text;
+                rowSlots ~= span.slot;
+            }
+            drawn ~= row;
+            slots ~= rowSlots;
+        }
+    }
+    present();
+    assert(drawn == ["f(a) ", "│   g();", "h"], drawn[0]);
+    assert(slots[0].canFind(Slot.highlight) && slots[0].canFind(Slot.diffRemoved));
+    const current = app.displayed.rows[0].node;
+    assert(frame.tree.nodes[current].paintBackground && frame.tree.nodes[current].slot == Slot.surfaceRaised);
+    bool numbered(string label)
+    {
+        foreach (node; frame.tree.nodes)
+            if (node.kind == WidgetKind.text && node.text == label) return true;
+        return false;
+    }
+    assert(numbered("1") && numbered("2") && numbered("3"));
+    assert(app.statusPosition() == "Ln 1, Col 2  •  Plain text");
+    const x = frame.frames[current].rect.origin.x;
+    foreach (which; [PresentationToggle.lineNumbers, PresentationToggle.currentLine,
+        PresentationToggle.indentGuides, PresentationToggle.bracketMatching,
+        PresentationToggle.trailingWhitespace])
+        app.execute(CommandId(Command.presentation, which));
+    present();
+    assert(drawn == ["f(a) ", "    g();", "h"]);
+    foreach (row; slots)
+        assert(!row.canFind(Slot.highlight) && !row.canFind(Slot.diffRemoved));
+    assert(!numbered("1") && !frame.tree.nodes[app.displayed.rows[0].node].paintBackground);
+    assert(frame.frames[app.displayed.rows[0].node].rect.origin.x == x - 2, "the gutter's two cells are gone");
 }
 
 /// A displayed tab names its document even if an earlier tab closes before repaint.
