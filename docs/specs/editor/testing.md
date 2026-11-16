@@ -1036,3 +1036,16 @@ CRLF's carriage return (`editor.presentation.trailingWhitespace`).
 `editor.app.codePresentation` draws all five parts, then turns each off and
 checks the text is unchanged and the gutter's cells are gone. Brackets are
 matched by bytes, not syntax: one inside a string or comment counts.
+
+### Undo-history inspector — 2026-11-16
+
+The inspector (F12, or the Inspect chip) lists the active document's undo
+tree beside its counters: up to six revisions in creation order around the
+current one, each naming the revision it was made from, its text length and
+whether it is a branch point, indented by depth. A press on a row travels
+there with the shared editor's `earlier`/`later`, so the move is an
+ordinary history step; a row drawn for another document is ignored. The
+tree comes from text-buffer's `History.revision` (`TXB-HIS7`).
+`editor.app.undoInspector` types, undoes and types again, checks the
+listed rows name the branch point, then presses the abandoned revision and
+gets its text back.

@@ -1011,6 +1011,8 @@ struct EditorApp
     private enum size_t saveHit = 0x7900_0002;
     private enum size_t inspectorHit = 0x7900_0003;
     private enum size_t paletteCloseHit = 0x7900_0004;
+    // One hit per undo revision the inspector lists, by creation index (EAP6).
+    private enum size_t undoHitBase = 0x7A00_0000, undoHitLimit = 0x7B00_0000;
 
     /// Retain the committed frame for event routing; no second layout/hit model.
     void paint(H)(ref H host, const WidgetTree tree, const Frame[] frames)
@@ -1029,6 +1031,50 @@ struct EditorApp
             if (!modal && !commands.palette.active && drawnCaretArea(area))
                 host.textInputArea(area[0], area[1], area[2], area[3]);
         }
+    }
+
+    /**
+    Travel the active document's history to revision `index` in creation
+    order (`EAP6`), through the shared editor's `earlier`/`later`, so the
+    move is one ordinary history step. An index past the history is ignored.
+    */
+    void travelTo(size_t index) @safe
+    {
+        const history = &document.field.state.history;
+        if (index >= history.length) return;
+        const current = history.currentIndex;
+        if (index < current) document.field.run(EditCommand.earlier(current - index), MonoTime.currTime);
+        else if (index > current) document.field.run(EditCommand.later(index - current), MonoTime.currTime);
+    }
+
+    /**
+    The inspector's undo tree (`EAP6`): up to `limit` revisions in creation
+    order ending past the current one, each naming its parent, its text
+    length and whether it is a branch point; a press travels there.
+    */
+    private uint[] undoRows(ref Builder b, size_t limit) @safe
+    {
+        const history = &document.field.state.history;
+        const current = history.currentIndex;
+        const total = history.length;
+        size_t last = current + limit / 2 < total ? current + limit / 2 : total - 1;
+        const first = last + 1 > limit ? last + 1 - limit : 0;
+        if (last - first + 1 < limit && total > limit) last = first + limit - 1 < total ? first + limit - 1 : total - 1;
+        uint[] rows;
+        rows ~= b.add(Widget(kind: WidgetKind.text, slot: Slot.info,
+            text: text("Undo history: revision ", current, " of ", total - 1,
+                "  (Alt+U earlier, Alt+Shift+U later; select one to travel)")));
+        foreach (i; first .. last + 1)
+        {
+            const info = history.revision(i);
+            const label = text(i == current ? "● " : "○ ", i == 0 ? "root" : text("#", i),
+                i == 0 ? "" : text(" from ", info.parent == 0 ? "root" : text("#", info.parent)),
+                "  ", info.length, " B", info.children > 1 ? text("  ⑂ ", info.children, " branches") : "");
+            rows ~= b.add(Widget(kind: WidgetKind.text, text: label, hitId: undoHitBase + i,
+                slot: i == current ? Slot.selection : Slot.docs, paintBackground: i == current,
+                padding: Insets(0, 0, 0, 2 * (info.depth < 8 ? cast(int) info.depth : 8))));
+        }
+        return rows;
     }
 
     /**
@@ -1260,6 +1306,13 @@ struct EditorApp
         if (hit == inspectorHit)
         {
             if (pointer.action == PointerAction.press) execute(CommandId(Command.inspector));
+            return;
+        }
+        if (hit >= undoHitBase && hit < undoHitLimit)
+        {
+            // The listed revisions belong to the document they were drawn for.
+            if (pointer.action == PointerAction.press && displayed !is null && displayed.document == document.id)
+                travelTo(hit - undoHitBase);
             return;
         }
         if (hit == restoreHit)
@@ -1855,7 +1908,10 @@ struct EditorApp
         else enum bool mobileUi = false;
         const headerRows = mobileUi ? 3 : 1;
         const tabRows = mobileUi ? 2 : 1;
-        const extraRows = (inspector ? 1 : 0) + (status.length ? 1 : 0)
+        enum size_t undoLimit = 6;
+        const historyLength = document.field.state.history.length;
+        const undoListed = inspector ? (historyLength < undoLimit ? historyLength : undoLimit) : 0;
+        const extraRows = (inspector ? 2 + cast(int) undoListed : 0) + (status.length ? 1 : 0)
             + (document.durabilityWarning.length ? 1 : 0)
             + (recovery is null ? 0 : 1 + (recoveryWarning ? 1 : 0)
                 + (recovery.notice.length ? 1 : 0) + (recovery.offerCount && !modal ? 3 : 0));
@@ -2092,6 +2148,7 @@ struct EditorApp
                     document.field.state.selection.ranges.length, "  composition ",
                     document.field.state.composition.active, "  language ", document.language, "  highlighting ",
                     highlighting.busy ? "pending" : highlighting.error.length ? highlighting.error : "ready")));
+        if (inspector) children ~= undoRows(b, undoLimit);
         if (status.length) children ~= b.add(Widget(kind: WidgetKind.text, text: status, slot: Slot.warn));
         if (document.durabilityWarning.length)
             children ~= b.add(Widget(kind: WidgetKind.text, text: "Durability warning: " ~ document.durabilityWarning, slot: Slot.warn));
@@ -2463,6 +2520,43 @@ struct EditorApp
         assert(!row.canFind(Slot.highlight) && !row.canFind(Slot.diffRemoved));
     assert(!numbered("1") && !frame.tree.nodes[app.displayed.rows[0].node].paintBackground);
     assert(frame.frames[app.displayed.rows[0].node].rect.origin.x == x - 2, "the gutter's two cells are gone");
+}
+
+/// The inspector lists the undo tree, a branch point included, and a press on
+/// an abandoned revision brings its text back (EAP6).
+@("editor.app.undoInspector")
+@safe unittest
+{
+    import core.time : seconds;
+    import sparkles.input : Point, PointerAction, PointerButton, PointerEvent;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
+    import sparkles.ui.editor.command : EditCommand;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    EditorApp app;
+    auto at = MonoTime.currTime;
+    app.document.field.insert("abc", false, at);
+    app.document.field.run(EditCommand.of(EditKind.undo), at + 2.seconds);
+    app.document.field.insert("xy", false, at + 4.seconds);
+    assert(app.document.field.text == "xy");
+    app.execute(CommandId(Command.inspector));
+    RecordingHost host;
+    FrameSnapshot frame;
+    presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
+    app.paint(host, frame.tree, frame.frames);
+    string[] listed;
+    size_t abandoned = size_t.max;
+    foreach (i, node; frame.tree.nodes)
+        if (node.hitId >= EditorApp.undoHitBase && node.hitId < EditorApp.undoHitLimit)
+        {
+            listed ~= node.text.idup;
+            if (node.hitId == EditorApp.undoHitBase + 1) abandoned = i;
+        }
+    assert(listed == ["○ root  0 B  ⑂ 2 branches", "○ #1 from root  3 B", "● #2 from root  2 B"], listed[0]);
+    const origin = frame.frames[abandoned].rect.origin;
+    app.handle(host, Event(PointerEvent(PointerAction.press, PointerButton.left, Point(origin.x, origin.y))));
+    assert(app.document.field.text == "abc", "the abandoned branch is back");
+    assert(app.document.field.state.history.currentIndex == 1);
 }
 
 /// A displayed tab names its document even if an earlier tab closes before repaint.
