@@ -265,14 +265,18 @@ struct Catalog
     /// The family names in ASCII-folded order, each once, through `sink(name, firstRecord)`.
     void eachFamily(scope void delegate(scope const(char)[], uint) @safe nothrow @nogc sink) const scope
     {
-        foreach (r; records_[])
-            if (r.family.length)
-            {
-                // A family is listed under its first record's family name only.
-                uint[1] first;
-                if (family(text(r.family), first[]) && &records_[][first[0]] is &r)
-                    sink(text(r.family), first[0]);
-            }
+        // The index's groups are in folded order and each group in catalog
+        // order; a group is listed when its first record names itself by it.
+        const f = families_[];
+        for (size_t lo = 0, hi; lo < f.length; lo = hi)
+        {
+            hi = lo + 1;
+            while (hi < f.length && compareFolded(text(f[hi].alias_), text(f[lo].alias_)) == 0)
+                ++hi;
+            const name = text(records_[][f[lo].record].family);
+            if (name.length && compareFolded(name, text(f[lo].alias_)) == 0)
+                sink(name, f[lo].record);
+        }
     }
 }
 
