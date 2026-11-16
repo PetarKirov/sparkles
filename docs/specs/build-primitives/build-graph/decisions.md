@@ -13,7 +13,8 @@ D18–D21, the E0 spike results, on 2026-11-02; and D22–D25, from E1, on
 2026-11-06. The records from D30 on answer a review of the
 [build-systems catalog](../../../research/build-systems/index.md), and those
 marked accepted were accepted on 2026-11-06. D44, routing the graph's file
-access through the capability VFS, was accepted on 2026-11-07. Records marked
+access through the capability VFS, was accepted on 2026-11-07, and D56,
+planning's source scans on DMD's lexer and parser, on 2026-11-16. Records marked
 **proposed** await the owner's decision.
 
 ## D1: Own the build instead of isolating dub (accepted)
@@ -1486,3 +1487,57 @@ later edit can leave stale, because none outlives the read set it came from.
 
 **Revisit when** resolving again costs a watch more than it saves, or a
 consumer needs a list between two resolutions.
+
+## D56: Planning reads D source with DMD's lexer and parser (accepted)
+
+**Question.** Pruning (BGV1), the `isVersion` lint and D13's divergent-mode
+lint read D source as tokens. The layout lint (BGV5) reads it as declarations,
+before conditional compilation. Write a lexer and a tolerant parser for
+planning, or use DMD's, and from which package?
+
+**Evidence.**
+
+- The repository already pins a DMD fork for `sparkles:dmd-lsp` and
+  `sparkles:dmd-fmt`. Its `dmd:lexer` is some 15 frontend files and links on
+  its own, including under `-checkaction=context`, which dub passes down to
+  every dependency.
+- A scan of every tracked D file on `dmd:lexer` finds the same 1,976 mentions,
+  four string-built conditions and four `isVersion` uses as a hand-written
+  lexer did. All three string-built constants outside `sparkles.base.meta`
+  are inside `unittest` blocks.
+- The fork's `dmd:parser` leaves out `astbase.d`, the parse-only AST family,
+  because its LanguageServer patches do not cover it. With about eight
+  changed lines (the `Identifier` to `IdentifierAtLoc` signatures of four
+  classes), `Parser!ASTBase` compiles and parses this repository in under a
+  second, apart from a gap in `templateArgToExp` on nested template
+  arguments.
+- DMD's lexer keeps process-wide state: its identifier table, and the
+  `dmd.id.Id` globals `__EOF__` needs. `sparkles:dmd-fmt` serializes on a lock.
+
+**Alternatives.**
+
+- **Own lexer and parser in `build-primitives`:** no dependency, and a
+  parser of D declarations to maintain against the language.
+- **DMD's lexer, and `astbase.d` fixed in the fork:** `dmd:parser` alone, no
+  frontend; a fork change first.
+- **DMD's lexer, and the frontend's AST for the layout lint:** no fork
+  change; whatever runs the lint links the frontend.
+
+**Choice.** The third now, moving to the second, decided by the owner on
+2026-11-16:
+
+- A package of its own, `sparkles:d-source`, depends on `dmd:lexer` and on no
+  repository package, so `build-primitives` and the DMD-based packages can all
+  depend on it. It holds the token scans and the one lock and
+  `Id.initialize` for DMD's process-wide state.
+- The layout lint is a package of its own on `dmd:frontend`, parsing
+  without semantics as `sparkles:dmd-fmt` does. Planning calls it through an
+  interface, so `build-primitives` does not link the frontend. Written against
+  DMD's parse-time visitor, which is generic over the AST family, it moves to
+  `ASTBase` unchanged once the fork's `dmd:parser` carries `astbase.d`.
+
+**Consequence.** Every build of `build-primitives` builds `dmd:lexer`,
+whose pre-generate step runs `git describe`, so the Nix builds of its
+consumers carry git.
+
+**Revisit when** the fork's `dmd:parser` carries `astbase.d`.

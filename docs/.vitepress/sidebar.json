@@ -473,6 +473,10 @@
         ]
       },
       {
+        "text": "d-source",
+        "link": "/libs/d-source/"
+      },
+      {
         "text": "dmd-fmt",
         "link": "/libs/dmd-fmt/",
         "collapsed": true,
