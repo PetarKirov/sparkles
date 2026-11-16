@@ -950,13 +950,15 @@ version (unittest)
 
 // -- fallback tests ----------------------------------------------------------
 
+// Declared in every build, so the library and a consumer's `-unittest`
+// compile agree on it (build-graph BGV4); only tests set it up and use it.
+/// Concurrent `dub` child processes contend on dub's own lock files and
+/// fail transiently under the parallel test runner — every dub-invoking
+/// test serializes on this.
+package __gshared Object dubTestSync;
+
 version (unittest)
 {
-    /// Concurrent `dub` child processes contend on dub's own lock files and
-    /// fail transiently under the parallel test runner — every dub-invoking
-    /// test serializes on this.
-    package __gshared Object dubTestSync;
-
     shared static this()
     {
         dubTestSync = new Object;
