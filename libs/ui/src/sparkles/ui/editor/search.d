@@ -679,7 +679,7 @@ ReplaceResult replaceAll(ref EditorState state, const SearchPattern pattern,
     size_t skipped;
     result.effects = replaceSpansInPlace(state, sink.edits, now, skipped);
     result.skippedProtected = skipped;
-    result.replaced = sink.edits.length - skipped;
+    result.replaced = changedText(result.effects) ? sink.edits.length - skipped : 0;
     return result;
 }
 
@@ -782,7 +782,7 @@ ReplaceResult replaceCurrent(ref EditorState state, const SearchPattern pattern,
         size_t skipped;
         result.effects = replaceSpansInPlace(state, sink.edits[0 .. 1], now, skipped);
         result.skippedProtected = skipped;
-        result.replaced = 1 - skipped;
+        result.replaced = changedText(result.effects) ? 1 - skipped : 0;
         resumeFrom = skipped ? primary.end : primary.start + sink.edits[0].inserted.length;
     }
     result.next = nextMatch(state.text, pattern, resumeFrom);
@@ -1015,6 +1015,17 @@ Scan scanRegex(Sink)(in Text text, ref const SearchPattern pattern, size_t from,
     auto window = new char[windowEnd - windowStart];
     text.copyTo(windowStart, windowEnd, window);
     s.scanned = window.length;
+    // `std.regex` throws on malformed UTF-8: each invalid byte becomes SUB
+    // (0x1A) in this copy, one byte for one, so offsets and later matches hold.
+    for (size_t i = 0; i < window.length;)
+    {
+        const token = tokenAt(window[i .. $]);
+        if (token.scalar == 0xFFFD && !(token.length == 3 && window[i] == 0xEF)) // not a real U+FFFD
+        {
+            foreach (ref b; window[i .. i + token.length]) b = 0x1A;
+        }
+        i += token.length;
+    }
     const last = windowEnd == length;
     try
     {
@@ -1167,4 +1178,45 @@ string unboundedConstruct(scope const(char)[] pattern) @safe pure nothrow @nogc
         }
     }
     return null;
+}
+
+/// Whether `effects` report a text change: a refused or empty replacement
+/// replaced nothing, whatever it was asked to replace.
+private bool changedText(ref const EditEffects effects) @safe pure nothrow @nogc
+{
+    import sparkles.ui.editor.effect : EffectKind;
+    const items = effects[];
+    foreach (i; 0 .. items.length)
+        if (items[i].kind == EffectKind.changed) return true;
+    return false;
+}
+
+/// A replacement refused by the field's options or changing nothing counts
+/// none: single-line fields flatten breaks, `maxLength` refuses overflow.
+@("editor.search.replacementRespectsTheField")
+@safe unittest
+{
+    import sparkles.ui.editor.state : EditorState;
+    import sparkles.text_buffer.text : Text;
+    auto p = SearchPattern.compile(SearchQuery("b"));
+    auto state = EditorState.create("abab");
+    state.options.singleLine = true;
+    assert(replaceAll(state, p, "x\ny").replaced == 2);
+    assert(state.text == "ax yax y", "a single-line field flattens the break");
+    auto bounded = EditorState.create("abab");
+    bounded.options.maxLength = 5;
+    const refused = replaceAll(bounded, p, "long");
+    assert(refused.replaced == 0 && bounded.text == "abab", "past maxLength: refused whole");
+    auto empty = EditorState.create("ab");
+    const none = replaceCurrent(empty, SearchPattern.compile(SearchQuery("x*", regex: true)), "");
+    assert(none.replaced == 0 && empty.text == "ab");
+}
+
+/// Malformed UTF-8 neither stops a regex search nor shifts its offsets.
+@("editor.search.regexOverInvalidUtf8")
+@safe unittest
+{
+    import sparkles.text_buffer.text : Text;
+    const r = findMatches(Text("a\xffb \xef\xbf\xbd b"), SearchQuery("b", regex: true));
+    assert(r.ok && r.matches.length == 2 && r.matches[0].start == 2 && r.matches[1].start == 8);
 }

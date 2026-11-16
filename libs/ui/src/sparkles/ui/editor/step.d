@@ -1427,13 +1427,32 @@ struct Stepper(Texts, Context)
                 ++skipped;
                 continue;
             }
+            // Like any insertion: the options' scalar filter, and single-line
+            // fields flatten line breaks (`EDT8`).
+            if (inserted.length && !admit(inserted))
+            {
+                effects.put(noop(NoopReason.nothingToDo));
+                return 0;
+            }
             kept.put(Edit(e.from, e.to, inserted));
-            changes = changes || e.from != e.to || e.inserted.length;
+            changes = changes || e.from != e.to || inserted.length;
         }
         if (skipped)
             effects.put(EditEffect(EffectKind.rejectedReadOnly));
         if (!changes)
             return skipped;
+        // A replacement past `maxLength` is refused whole, as any edit is.
+        if (state.options.maxLength)
+        {
+            size_t length = text.length;
+            foreach (ref e; kept[])
+                length = length - (e.to - e.from) + e.inserted.length;
+            if (length > state.options.maxLength)
+            {
+                effects.put(noop(NoopReason.nothingToDo));
+                return skipped;
+            }
+        }
         ChangeSet set;
         if (ChangeSet.of(text.length, kept[], set) != ChangeSetStatus.ok)
         {
