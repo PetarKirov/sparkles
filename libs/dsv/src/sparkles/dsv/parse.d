@@ -238,15 +238,16 @@ version (unittest)
 {
     import sparkles.dsv.model : decodeCell;
 
-    /// Test helper: the decoded text of cell `(row, col)`. (A template so
-    /// dip1000 attributes infer; `doc` is a plain ref — the result borrows
-    /// from it or from `buf`.)
-    private const(char)[] cellAt()(ref SharedBuffer!(char, 256) buf,
-        ref const DsvDoc doc, size_t row, size_t col)
-    {
-        const rec = doc.records[row];
-        return decodeCell(doc, doc.cells[rec.cellsStart + col], buf);
-    }
+}
+
+/// Test helper: the decoded text of cell `(row, col)`. (A template so
+/// dip1000 attributes infer; `doc` is a plain ref — the result borrows
+/// from it or from `buf`.)
+private const(char)[] cellAt()(ref SharedBuffer!(char, 256) buf,
+    ref const DsvDoc doc, size_t row, size_t col)
+{
+    const rec = doc.records[row];
+    return decodeCell(doc, doc.cells[rec.cellsStart + col], buf);
 }
 
 @("parse.basic.commaGrid")
