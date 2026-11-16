@@ -23,7 +23,7 @@ import sparkles.text_buffer.history : HistoryStatus, HistoryStep;
 import sparkles.text_buffer.summary : Affinity, tokenAt;
 import sparkles.text_buffer.text : Text;
 import sparkles.ui.editor.command : Boundary, EditCommand, EditKind;
-import sparkles.ui.editor.context : CaretTarget, clusterCells, VisualLine, isEditContext;
+import sparkles.ui.editor.context : CaretTarget, clusterCells, LogicalContext, VisualLine, isEditContext;
 import sparkles.ui.editor.effect : EditEffect, EditEffects, EffectKind, NoopReason;
 import sparkles.ui.editor.kill_ring : KillEntry, KillRing;
 import sparkles.ui.editor.line_edit : autoIndentAt, columnOf, indentAt, planIndent, planOutdent,
@@ -86,7 +86,56 @@ if (isTextSource!Texts && isEditContext!Context)
     return move(result.effects);
 }
 
+/**
+Replace each of `spans` in `state` as one undoable revision, through the
+same commit path as every command (`EDT5`, `EDT6`): the entry point of
+`sparkles.ui.editor.search`'s replacements. Spans that would change
+protected bytes are dropped and their count is stored in `skipped`.
+*/
+package(sparkles.ui.editor) EditEffects replaceSpansInPlace(ref EditorState state,
+    scope const(Edit)[] spans, MonoTime now, out size_t skipped) @safe pure nothrow @nogc
+{
+    size_t dropped;
+    auto effects = withStepper!((ref s) { dropped = s.replaceSpans(spans); })(state, now);
+    skipped = dropped;
+    return effects;
+}
+
+/// Set `state`'s ranges to `ranges`, snapped and normalized, `primary`
+/// naming the primary one; the history is untouched, as for `setRange`.
+package(sparkles.ui.editor) EditEffects selectRangesInPlace(ref EditorState state,
+    scope const(EditRange)[] ranges, size_t primary, MonoTime now) @safe pure nothrow @nogc
+    => withStepper!((ref s) { s.selectRanges(ranges, primary); })(state, now);
+
 private:
+
+/// Run `fn` on a stepper over `state`, then end the command as `run` does:
+/// no kill run or yank carries past it, and coalescing stops.
+EditEffects withStepper(alias fn)(ref EditorState state, MonoTime now)
+{
+    import core.lifetime : move;
+
+    static struct NoTexts
+    {
+        void withText(F)(in TextId, scope F f) const => f("");
+    }
+
+    NoTexts texts;
+    LogicalContext context;
+    context.now = now;
+    // As in `step`: the addresses do not outlive this call.
+    auto textsAt = () @trusted { return &texts; }();
+    auto contextAt = () @trusted { return &context; }();
+    auto s = Stepper!(NoTexts, LogicalContext)(move(state), KillRing.init, textsAt, contextAt);
+    fn(s);
+    state = move(s.state);
+    state.record.last = EditKind.none;
+    state.record.killRun = 0;
+    state.record.yanked = typeof(state.record.yanked).init;
+    state.record.yankAge = 0;
+    state.record.coalescible = false;
+    return move(s.effects);
+}
 
 enum Coalesce : ubyte
 {
@@ -1325,23 +1374,88 @@ struct Stepper(Texts, Context)
                 }
             }
             else
-            {
-                EditRange m = r;
-                m.anchor = set.mapPos(r.anchor, r.forward ? Affinity.before : Affinity.after);
-                m.head = set.mapPos(r.head, r.affinity);
-                m.goal = EditRange.noGoal;
-                mapped.put(m);
-            }
+                mapped.put(mapThrough(set, r));
         }
-        state.text = set.apply(text);
-        state.selection = normalized(mapped[], before.primaryIndex);
-        mapReadOnly(set);
         if (placement == Placement.selectInserted)
             state.record.yanked = inserted;
+        commitChange(set, inverse, before, mapped[], coalesce, last);
+    }
 
+    /// `r` carried through `set` by its endpoints; its goal column is dropped.
+    static EditRange mapThrough(in ChangeSet set, in EditRange r)
+    {
+        EditRange m = r;
+        m.anchor = set.mapPos(r.anchor, r.forward ? Affinity.before : Affinity.after);
+        m.head = set.mapPos(r.head, r.affinity);
+        m.goal = EditRange.noGoal;
+        return m;
+    }
+
+    /// Apply `set`, take `mapped` as the new ranges, carry the read-only
+    /// spans along, and record one revision with its effects.
+    void commitChange(ref ChangeSet set, in ChangeSet inverse, SelectionSet before,
+        scope const(EditRange)[] mapped, Coalesce coalesce, EditKind last)
+    {
+        state.text = set.apply(text);
+        state.selection = normalized(mapped, before.primaryIndex);
+        mapReadOnly(set);
         record(set, inverse, before, coalesce, last);
         effects.put(EditEffect(EffectKind.changed, changes: set));
         effects.put(EditEffect(EffectKind.scrollToPrimary));
+    }
+
+    /**
+    Replace each of `spans` (in source coordinates, in any order) as one
+    revision: the search's replacements (`EDS4`). A span that would change
+    protected bytes is dropped, and counted in the result (`EDT10`); every
+    range is carried through by its endpoints. A composition in progress is
+    committed first, as any other edit commits it.
+    */
+    size_t replaceSpans(scope const(Edit)[] spans)
+    {
+        const last = state.record.last;
+        if (state.composition.active)
+            commitComposition(state.composition.preedit, last);
+        UniqueBuffer!(Edit, 4) kept;
+        size_t skipped;
+        bool changes;
+        foreach (ref e; spans)
+        {
+            Text inserted = e.inserted;
+            if (protectedEdit(RangeEdit(e.from, e.to, inserted)))
+            {
+                ++skipped;
+                continue;
+            }
+            kept.put(Edit(e.from, e.to, inserted));
+            changes = changes || e.from != e.to || e.inserted.length;
+        }
+        if (skipped)
+            effects.put(EditEffect(EffectKind.rejectedReadOnly));
+        if (!changes)
+            return skipped;
+        ChangeSet set;
+        if (ChangeSet.of(text.length, kept[], set) != ChangeSetStatus.ok)
+        {
+            effects.put(noop(NoopReason.nothingToDo));
+            return skipped;
+        }
+        SelectionSet before = state.selection;
+        const inverse = set.invert(text);
+        SharedBuffer!(EditRange, 4) mapped;
+        foreach (r; before.ranges)
+            mapped.put(mapThrough(set, r));
+        commitChange(set, inverse, before, mapped[], Coalesce.none, last);
+        return skipped;
+    }
+
+    /// Set the ranges outright, snapped and normalized: the search's
+    /// selections (`EDS3`). A composition in progress is committed first.
+    void selectRanges(scope const(EditRange)[] ranges, size_t primary)
+    {
+        if (state.composition.active)
+            commitComposition(state.composition.preedit, state.record.last);
+        state.selection = normalized(ranges, primary);
     }
 
     /// Commit or amend the history (`EDT6`).

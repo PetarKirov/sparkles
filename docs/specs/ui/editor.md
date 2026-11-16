@@ -66,7 +66,7 @@ editing is out of scope ([text-buffer TXD-6](../text-buffer/decisions.md#txd-6))
 
 Section 1 defines vocabulary; §2 the state and step; §3 the command
 vocabulary; §4 the default keys; §5 the kill ring and clipboard; §6 input
-and composition; §7 the view; §8 consumers and migration; §9 decisions.
+and composition; §7 the view; §8 consumers and migration; §9 search and replace; §10 decisions.
 [Milestones](#milestones) are at the end of this page. The
 [keyboard specification's `KBD5`](../design-system/keyboard.md) requires
 the Readline keys this editor provides.
@@ -559,7 +559,55 @@ A field that accepted only digits (go-to-line) **must** filter
 `insertText` through a caller-supplied predicate rather than keep its own
 editor.
 
-## 9. Decisions {#decisions}
+## 9. Search and replace
+
+Search belongs to the editor rather than to each host, so every surface
+that edits text finds and replaces the same way. It reads the state's
+persistent text and changes it only through the step's own commit path.
+
+**EDS1: Queries.** A query **must** offer literal and regular-expression
+modes, case sensitivity, and whole-word matching. Folded comparison
+**must** use Unicode simple case folding, scalar by scalar, so a match's
+bytes are the text's own (`ẞ` finds `ß`; `ss` does not). A whole-word match
+**must** start and end on default UAX #29 word boundaries. No match
+**may** split a grapheme cluster at either end. Matches are leftmost and
+never overlap; an empty pattern matches nothing, and a regular expression
+that matches the empty string **must** still advance.
+
+**EDS2: Invalid patterns are values.** Compiling a query **must** report a
+pattern it cannot run as an error and **must not** throw. Searching or
+replacing with it **must** change neither the text nor the history.
+
+**EDS3: Selections and navigation.** Next and previous match from a
+position, wrapping and saying so, **must** exist, as must selecting one
+match and selecting every match as a range each (the primary being the
+match at or after the old primary). Selecting **must not** add a revision.
+
+**EDS4: Replacement is one revision.** Replacing every match, or the
+current one, **must** be one revision of the history made through the
+step's commit path (EDT5), so one `undo` restores the exact text and the
+ranges from before it. A regular expression's replacement **must** expand
+`$&`/`$0`, `$1`–`$9`, `${n}` and `$$`; a literal's is taken as is. A match
+that would change a protected span (EDT10) **must** be skipped, and the
+number skipped reported.
+
+**EDS5: Work is bounded.** A search call **must** take a budget — the most
+matches it reports and the most bytes it scans — and, when the budget
+runs out, return where to resume; a run of bounded calls **must** find
+what one unbounded call finds. A regular-expression call scans whole
+lines, so a match spanning a line break where one call's lines end is
+cut there.
+
+**EDS6: Patterns cannot run away.** Every accepted pattern **must** run in
+time linear in the bytes scanned. Regular expressions use `std.regex`'s
+Thompson engine, which simulates the automaton without backtracking;
+backreferences, the one construct that selects its backtracking engine,
+**must** be refused, as must patterns over 4096 bytes and counted
+repetitions whose bounds multiply past 100 000 copies. `std.regex`'s
+multi-line `^` tests the character at a position instead of the one before
+it, so the engine spells `^` as look-behind.
+
+## 10. Decisions {#decisions}
 
 **ED-D1: Two definitions of a word.** Readline kills with `Ctrl-W` back to
 whitespace
@@ -646,6 +694,12 @@ reach abandoned branches.
 | EDR3                   | highlighting off the key path                          | full    | `DiffEdit.styled`, `DiffEdit.tick`: the edited diff draws plain while typing and re-highlights once the edit settles (`DiffEdit.settle`); test `diff_edit.DiffEdit.rediffsAsItIsEdited`                                                                                                                                                                                                                                                          |
 | EDU1–EDU3              | write-wave consumers                                   | full    | `DiffEdit` (`DST5`), the comment composer and suggestion editor (`DCM2`, `DCM3`), `ConflictSession` with read-only markers (`CFV4`); tests `tui.diff.editTheWorktreeSideAndSave`, `tui.diff.suggestionAppliesToTheWorktree`, `conflict_view.ConflictSession.handEditsKeepTheMarkers`                                                                                                                                                             |
 | EDU4                   | every existing field migrates                          | full    | `EditorField`; `TreeViewState.filterKey`, `InputState.key`, `PickerPrompt.key`, `SettingsPane.handlePaste`, `QueryField`, `editKey`; the line-edit state it replaced is removed                                                                                                                                                                                                                                                                  |
+| EDS1                   | queries                                                | full    | `SearchQuery`, `SearchPattern`, `findMatches`; tests `editor.search.literal`, `editor.search.caseInsensitiveUnicode`, `editor.search.wholeWord`, `editor.search.regex`, `editor.search.emptyMatches`                                                                                                                                                                                                                                             |
+| EDS2                   | invalid patterns are values                            | full    | `SearchPattern.compile`, `SearchResult.error`; tests `editor.search.compile`, `editor.search.invalidPattern`, `editor.search.invalidPatternChangesNothing`                                                                                                                                                                                                                                                                                       |
+| EDS3                   | selections and navigation                              | full    | `nextMatch`, `previousMatch`, `selectMatch`, `selectNextMatch`, `selectAllMatches`; tests `editor.search.nextAndPrevious`, `editor.search.selectMatch`, `editor.search.selectNextMatch`, `editor.search.selectAllMatches`                                                                                                                                                                                                                        |
+| EDS4                   | replacement is one revision                            | full    | `replaceAll`, `replaceCurrent`, `ReplaceResult`; tests `editor.search.replaceAllIsOneUndo`, `editor.search.replaceWithGroups`, `editor.search.replaceCurrent`, `editor.search.protectedSpansSkipped`                                                                                                                                                                                                                                             |
+| EDS5                   | work is bounded                                        | full    | `SearchBudget`, `SearchResult.resumeAt`; test `editor.search.budgetResume`                                                                                                                                                                                                                                                                                                                                                                       |
+| EDS6                   | patterns cannot run away                               | full    | `maxPatternLength`, `maxRepetitionWork`; tests `editor.search.pathologicalRegex`, `editor.search.lineStartAnchor`                                                                                                                                                                                                                                                                                                                                |
 
 ### Oracles
 
@@ -676,6 +730,7 @@ pattern of `libs/diff/src/sparkles/diff/myers.d`.
 | E2        | Composition, the SDL3 IME, the wsi conversion, input-method placement                                                      | partial   | EDI3, EDI6, EDI7, EDI8, `INP24`, composition in EDR1                                                                                     |
 | E3        | Write-wave consumers                                                                                                       | delivered | EDU1–EDU3, EDR3                                                                                                                          |
 | E4        | Android soft keyboard                                                                                                      | delivered | EDI9                                                                                                                                     |
+| E5        | Search and replace                                                                                                         | delivered | EDS1–EDS6                                                                                                                                |
 
 E0 to E2 are delivered as one stack of pull requests after this
 specification is accepted. Live composition on native wsi windows arrives
