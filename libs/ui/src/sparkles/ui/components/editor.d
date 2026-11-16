@@ -401,6 +401,163 @@ size_t layoutColumn(in VisualRow row, in ParagraphLayout layout, size_t column) 
     return result < 0 ? 0 : cast(size_t) result;
 }
 
+/**
+A source range painted over a line's text (`EAP5`): a search match, a
+matched bracket, trailing whitespace. Producers give grapheme-aligned bytes.
+*/
+struct TextMark
+{
+    /// The marked bytes, `[start, end)`.
+    size_t start, end;
+    /// The slot whose background fills the marked text.
+    Slot slot = Slot.highlight;
+}
+
+/**
+`logical` with `marks` painted: text spans are cut at mark edges and the
+marked part fills its mark's background, keeping its syntax ink. Selected
+text and carets keep their own slot, so a selection stays legible over a
+match; where marks overlap, the later one wins. Inserted spans pass through.
+*/
+TextSpan[] markSpans(scope const(TextSpan)[] logical, scope const(TextMark)[] marks)
+    @safe pure nothrow
+{
+    TextSpan[] result;
+    foreach (ref span; logical)
+    {
+        const isText = span.srcStart != size_t.max && span.srcEnd - span.srcStart == span.text.length;
+        bool touched;
+        foreach (m; marks)
+            touched |= m.start < m.end && m.start < span.srcEnd && m.end > span.srcStart;
+        if (!isText || !touched || span.slot == Slot.selection || span.slot == Slot.caret)
+        {
+            result ~= span;
+            continue;
+        }
+        size_t[] cuts = [span.srcStart, span.srcEnd];
+        foreach (m; marks)
+        {
+            if (m.start > span.srcStart && m.start < span.srcEnd) cuts ~= m.start;
+            if (m.end > span.srcStart && m.end < span.srcEnd) cuts ~= m.end;
+        }
+        sortUnique(cuts);
+        foreach (i; 0 .. cuts.length - 1)
+        {
+            TextSpan piece = span;
+            piece.text = span.text[cuts[i] - span.srcStart .. cuts[i + 1] - span.srcStart];
+            piece.srcStart = cuts[i];
+            piece.srcEnd = cuts[i + 1];
+            foreach (m; marks)
+                if (m.start < m.end && m.start <= cuts[i] && cuts[i + 1] <= m.end)
+                {
+                    piece.slot = m.slot;
+                    piece.paintBackground = true;
+                    piece.hasBg = false;
+                }
+            result ~= piece;
+        }
+    }
+    return result;
+}
+
+/// A match paints its bytes and keeps syntax ink; a selection stays on top.
+@("editor.view.markSpans")
+@safe pure nothrow unittest
+{
+    import sparkles.ui.editor.testing : parse;
+    auto state = parse("[ab]cdef|");
+    TextMark[2] marks = [TextMark(1, 3), TextMark(4, 5, Slot.error)];
+    auto logical = editorLineSpans(state, 0, EditorViewOptions(hostCursor: true));
+    logical[$ - 1].hasFg = true;
+    const spans = markSpans(logical, marks[]);
+    string drawn;
+    foreach (s; spans)
+        drawn ~= s.slot == Slot.selection ? "[" ~ s.text ~ "]"
+            : s.slot == Slot.highlight ? "{" ~ s.text ~ "}"
+            : s.slot == Slot.error ? "<" ~ s.text ~ ">" : s.text;
+    assert(drawn == "[ab]{c}d<e>f", drawn);
+    foreach (s; spans)
+        if (s.slot == Slot.error) assert(s.hasFg && s.paintBackground);
+}
+
+/**
+Indentation guides on the first row of a left-to-right line (`EAP5`): each
+leading space at an indentation stop (`0`, `width`, `2 * width`, …) before the
+line's first other character draws `glyph` in `slot`. The glyph is one cell
+and keeps its source bytes, so no text moves and hits are unchanged. A tab, a
+preedit or any other character ends the leading run.
+*/
+void drawIndentGuides(ref VisualRow row, in ParagraphLayout layout, size_t width,
+    Slot slot = Slot.textDisabled, string glyph = "│") @safe pure nothrow
+{
+    if (row.row != 0 || layout.rtl || width == 0)
+        return;
+    TextSpan[] spans;
+    size_t column;
+    bool leading = true;
+    foreach (ref span; row.spans)
+    {
+        if (!leading || span.srcStart == size_t.max || span.srcEnd - span.srcStart != span.text.length)
+        {
+            leading = false;
+            spans ~= span;
+            continue;
+        }
+        size_t blanks;
+        while (blanks < span.text.length && span.text[blanks] == ' ') ++blanks;
+        size_t from;
+        foreach (i; 0 .. blanks)
+        {
+            if ((column + i) % width != 0)
+                continue;
+            if (i > from)
+                spans ~= piece(span, from, i);
+            auto guide = piece(span, i, i + 1);
+            guide.text = glyph;
+            guide.slot = slot;
+            guide.hasFg = false;
+            guide.srcEnd = guide.srcStart + 1;
+            spans ~= guide;
+            from = i + 1;
+        }
+        if (from < span.text.length)
+            spans ~= piece(span, from, span.text.length);
+        column += blanks;
+        leading = blanks == span.text.length;
+    }
+    row.spans = spans;
+}
+
+private TextSpan piece(return scope const TextSpan span, size_t from, size_t to) @safe pure nothrow @nogc
+{
+    TextSpan result = span;
+    result.text = span.text[from .. to];
+    result.srcStart = span.srcStart + from;
+    result.srcEnd = span.srcStart + to;
+    return result;
+}
+
+/// Guides stand at each stop of the leading spaces; text keeps its columns.
+@("editor.view.indentGuides")
+@safe pure nothrow unittest
+{
+    import sparkles.ui.editor.layout : LayoutOptions, ParagraphLayout;
+    import sparkles.ui.editor.testing : parse;
+    auto state = parse("|      x  y");
+    const layout = ParagraphLayout.of(state.text, 0, LayoutOptions.init);
+    auto rows = visualRows(editorLineSpans(state, 0, EditorViewOptions(hostCursor: true)), layout, state);
+    drawIndentGuides(rows[0], layout, 4);
+    string drawn;
+    size_t cells;
+    foreach (s; rows[0].spans)
+    {
+        drawn ~= s.text;
+        cells += s.srcEnd - s.srcStart;
+    }
+    assert(drawn == "│   │ x  y", drawn);
+    assert(cells == 10);
+}
+
 /// A preedit replacing selected text: hits past it land on the text after
 /// the hidden selection.
 @("editor.view.visualRows.compositionHidesSelection")
