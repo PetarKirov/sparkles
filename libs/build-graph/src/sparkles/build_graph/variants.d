@@ -134,6 +134,9 @@ struct VariantPlan
     size_t[][] requests;
     /// Every string-built condition in a scanned file, sorted.
     ConditionReport[] conditions;
+    /// Every layout finding, sorted; those in registry packages are all
+    /// that a plan that succeeded can hold.
+    LayoutFinding[] layout;
 }
 
 /// Why planning failed: a lint's finding, at a place in a file.
@@ -154,9 +157,47 @@ struct PlanError
 }
 
 /// What planning takes besides the resolutions.
+/// One finding of the layout lint (BGV5).
+struct LayoutFinding
+{
+    string package_; /// the package whose library compiles the file
+    string file;     ///
+    uint line;       ///
+    string what;     /// what the `version (unittest)` changes, as a phrase
+    /// Whether the package comes from the registry: reported, and it does
+    /// not fail the plan, since this repository cannot fix it.
+    bool registry;
+}
+
+/**
+The layout lint, as planning calls it: `sparkles:unittest-layout`'s
+`checkLayout`, which parses with DMD's frontend, so it reaches planning as a
+callback and this package links no frontend (D56).
+
+Params:
+    path = the file's path, for its findings
+    source = its text
+    dependedOn = whether the library configuration depends on a module's
+        package, by the module's dotted name
+    versionSet = whether the variant sets a version identifier
+    finding = called with each finding's line and what it changes
+
+Returns: whether the file parsed.
+*/
+alias LayoutCheck = bool delegate(string path, const(char)[] source,
+    scope bool delegate(const(char)[] module_) @safe dependedOn,
+    scope bool delegate(const(char)[] identifier) @safe versionSet,
+    scope void delegate(uint line, string what) @safe finding) @safe;
+
+/// What planning takes besides the resolutions.
 struct PlanOptions
 {
     ToolchainIdentity toolchain; ///
+    /// The layout lint (BGV5); null plans without it.
+    LayoutCheck layoutCheck;
+    /// The root names of the registry packages, whose findings are
+    /// reported without failing the plan.
+    const(string)[] registry;
 }
 
 /**
@@ -206,12 +247,93 @@ PlanExpected!(VariantPlan, PlanError) planVariants(const Resolution[] resolution
 
     if (auto e = scans.firstLintError)
         return planErr!VariantPlan(*e);
+    if (options.layoutCheck !is null)
+    {
+        plan.layout = layoutFindings(plan, options, scans);
+        if (auto e = layoutError(plan.layout))
+            return planErr!VariantPlan(PlanError(e.message, e.file, e.line));
+    }
     plan.conditions = scans.conditionReports
         .sort!((a, b) => a.file != b.file ? a.file < b.file : a.line < b.line).release;
     return planOk!PlanError(plan);
 }
 
 private:
+
+// The layout lint over every dependency library's own files (BGV5), once per
+// file and set of versions: the lint skips the imports of branches a variant
+// does not compile.
+LayoutFinding[] layoutFindings(ref const VariantPlan plan, const PlanOptions options, ref SourceScans scans) @safe
+{
+    bool[string] done;
+    LayoutFinding[] found;
+    foreach (ref v; plan.variants)
+    {
+        if (v.role != Role.dependencyLibrary)
+            continue;
+        const versions = v.settings.versions.dup.sort.release;
+        const registry = options.registry.canFind(rootName(v.package_));
+        foreach (file; v.settings.sourceFiles)
+        {
+            import std.algorithm.searching : endsWith;
+
+            const key = file ~ "\0" ~ versions.join(",");
+            if (!file.endsWith(".d") || key in done)
+                continue;
+            done[key] = true;
+            string text_;
+            if (!scans.tree.readText(file, text_))
+                continue;
+            const importPaths = v.settings.importPaths;
+            bool dependedOn(const(char)[] module_) @safe
+                => isToolchainModule(module_) || scans.moduleFile(module_.idup, importPaths).length > 0;
+            bool versionSet(const(char)[] id) @safe => versions.canFind(id);
+            const pkg = v.package_;
+            const parsed = options.layoutCheck(file, text_, &dependedOn, &versionSet,
+                (uint line, string what) @safe { found ~= LayoutFinding(pkg, file, line, what, registry); });
+            if (!parsed)
+                found ~= LayoutFinding(pkg, file, 0, "a module the layout lint could not parse", registry);
+        }
+    }
+    // One finding per place, whichever variants met it.
+    found.sort!((a, b) => a.file != b.file ? a.file < b.file : a.line != b.line ? a.line < b.line : a.what < b.what);
+    LayoutFinding[] unique;
+    foreach (f; found)
+        if (!unique.length || unique[$ - 1].file != f.file || unique[$ - 1].line != f.line || unique[$ - 1].what != f.what)
+            unique ~= f;
+    return unique;
+}
+
+// The plan fails on the in-tree findings, all of them in one message.
+const(PlanError)* layoutError(const LayoutFinding[] findings) @safe
+{
+    string message;
+    const(LayoutFinding)* first;
+    foreach (ref f; findings)
+        if (!f.registry)
+        {
+            if (first is null)
+                first = &f;
+            message ~= text("\n  ", f.file, ":", f.line, ": ", f.what);
+        }
+    if (first is null)
+        return null;
+    return new PlanError("`version (unittest)` changes what a dependent sees (BGV4):" ~ message,
+        first.file, first.line);
+}
+
+// Modules of the toolchain's own import directories, which no recipe names.
+bool isToolchainModule(scope const(char)[] m) @safe pure nothrow @nogc
+    => m == "object" || m.startsWith("std.") || m.startsWith("core.") || m.startsWith("etc.")
+        || m.startsWith("ldc.") || m.startsWith("gcc.");
+
+string rootName(string package_) @safe pure nothrow @nogc
+{
+    foreach (i, c; package_)
+        if (c == ':')
+            return package_[0 .. i];
+    return package_;
+}
 
 PlanExpected!(Variant, PlanError) variantOf(ref const Resolution r, ref const ResolvedTarget t, bool isRoot,
     const PlanOptions options, ref SourceScans scans) @safe
@@ -763,4 +885,53 @@ version (unittest)
     const plan = planned(files, ":t1");
     assert(variantIn(plan, 0, "r:leaf").prunedVersions == ["T1Only"]);
     assert(plan.conditions.length == 1 && plan.conditions[0].insideUnittest);
+}
+
+@("build_graph.variants.planVariants.layoutLint")
+@safe unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // A stand-in for `sparkles:unittest-layout`: a finding on every line
+    // that says `version (unittest) int`, and the predicates it is given.
+    bool sawPredicates;
+    bool check(string path, const(char)[] source,
+        scope bool delegate(const(char)[]) @safe dependedOn,
+        scope bool delegate(const(char)[]) @safe versionSet,
+        scope void delegate(uint, string) @safe finding) @safe
+    {
+        import std.string : lineSplitter;
+
+        if (path.canFind("/leaf/"))
+            sawPredicates = dependedOn("std.stdio") && dependedOn("leaf") && !dependedOn("absent.module")
+                && !versionSet("T1Only");
+        uint n;
+        foreach (l; source.lineSplitter)
+        {
+            ++n;
+            if (l.canFind("version (unittest) int"))
+                finding(n, "a field");
+        }
+        return true;
+    }
+
+    auto files = fixtureFiles;
+    files["/r/leaf/source/leaf.d"] = "module leaf;\nstruct S {\nversion (unittest) int x;\n}\n";
+    auto tree = memoryTree(files);
+    const r = resolve(ResolveRequest(directory: "/r", subPackage: ":t1", buildType: "unittest",
+        platform: linuxLdc, testRoot: true), tree);
+
+    // In-tree: the plan fails, naming the place.
+    auto options = PlanOptions(ToolchainIdentity("ldc", "test-toolchain"), &check);
+    const failed = planVariants([r.value], options, tree);
+    assert(failed.hasError && failed.error.file == "/r/leaf/source/leaf.d" && failed.error.line == 3,
+        text(failed.error));
+    assert(sawPredicates);
+    // The test root's own files are not a library's: `t1` is not linted.
+
+    // From the registry: reported, and the plan stands.
+    options.registry = ["r"];
+    const reported = planVariants([r.value], options, tree);
+    assert(reported.hasValue);
+    assert(reported.value.layout.length == 1 && reported.value.layout[0].registry);
 }

@@ -344,8 +344,12 @@ compile or link can observe, outside `unittest` blocks. That covers:
   depend on.
 
 A `private`, non-template, module-level declaration that only the module's own
-`unittest` blocks use is exempt. The rule also applies to a `sourceLibrary`
-compiled into both a test root and a dependency library of one binary.
+`unittest` blocks use is exempt. Without `-unittest` such a declaration does
+not exist, so code outside the tests that used it would not compile as a
+library: a `version (unittest)` with no `else` branch is how the lint tells
+it. The rule also applies to a `sourceLibrary` compiled into both a test root
+and a dependency library of one binary. A module that is `version (unittest)`
+throughout belongs in the test root alone, outside the library configuration.
 
 _Rationale:_ `-unittest` turns on `version (unittest)` in every module a test
 root imports, including its dependencies' modules. A test root then sees a
@@ -355,10 +359,14 @@ merges template instances across the two, so a template's test-only branch
 also leaks into library code.
 
 **BGV5: The layout lint.** Planning **must** report every violation of BGV4 in
-the packages it plans, naming the file and line, and **must** fail the plan.
-The lint works on the parsed module before conditional compilation is
-resolved, so it sees both branches of every `version (unittest)` and every
-uninstantiated template body.
+the packages it plans, naming the file and line, and **must** fail the plan on
+one in an in-tree package. A violation in a registry package is reported and
+does not fail it: this repository cannot fix it. The lint works on the parsed
+module before conditional compilation is resolved, so it sees both branches of
+every `version (unittest)` and every uninstantiated template body. Only the
+import rule reads the variant's own versions: an import in a branch of a
+user-defined `version` the variant does not compile is not the library's.
+See [D58](./decisions.md#d58-the-layout-lint-gates-in-tree-packages-accepted).
 
 ## 4. The action graph
 
