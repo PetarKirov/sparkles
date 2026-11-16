@@ -1116,3 +1116,15 @@ stored form converts exactly and the shipped defaults agree;
 upgrade and the width bound (the existing every-byte corruption test now
 also covers the header); `editor.app.generatedSettings` opens the pane,
 toggles line numbers from it, closes it and types into the document.
+
+### One host cursor, in the focused field — 2026-11-16
+
+The palette's query, the Open/Save path field and the find bar's fields now
+use the host's cursor too (`PaletteViewOptions.hostCursor`; an empty field's
+placeholder puts it at column 0 with no glyph), so no text moves with the
+caret anywhere in the app. Each frame carries one cursor: the document's
+rows carry their caret column only while the document has the keyboard,
+and the input-method caret area follows the same rule.
+`editor.app.fieldsUseTheHostCursor` opens the palette and the path dialog,
+types into each, and checks the tree holds no `▏` glyph and exactly one
+cursor, at the focused field's column.

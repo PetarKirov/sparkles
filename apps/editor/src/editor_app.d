@@ -1044,7 +1044,7 @@ struct EditorApp
         static if (__traits(hasMember, H, "textInputArea"))
         {
             int[4] area;
-            if (!modal && !commands.palette.active && drawnCaretArea(area))
+            if (!modal && !commands.palette.active && !finding && drawnCaretArea(area))
                 host.textInputArea(area[0], area[1], area[2], area[3]);
         }
     }
@@ -2194,7 +2194,8 @@ struct EditorApp
                 children ~= b.add(Widget(kind: WidgetKind.text, text: replacementWarning,
                     wrap: TextWrap.greedy, slot: Slot.warn));
             if (pathDialog)
-                children ~= editorView(b, pathInput.state, EditorViewOptions(visibleLines: 1, placeholder: "Path…"));
+                children ~= editorView(b, pathInput.state, EditorViewOptions(visibleLines: 1, placeholder: "Path…",
+                    hostCursor: true));
             uint[] actions;
             actions ~= chip(b, replacement !is null ? "Replace this time"
                 : dialog == Dialog.restoreOffer ? "Restore tabs"
@@ -2240,7 +2241,7 @@ struct EditorApp
                 const paletteView = viewCommandPalette(b, commands.palette, commands.query.state, context,
                     PaletteViewOptions(visibleRows: rows, rowHeight: paletteRowHeight,
                         closeHit: paletteCloseHit, compact: true, maxWidth: paletteWidth,
-                        smoothScroll: true,
+                        smoothScroll: true, hostCursor: true,
                         scrollWhole: paletteScroll.motion.whole,
                         scrollFrac: paletteScroll.motion.frac,
                         placeholder: choosingTheme ? "Search themes" : choosingLanguage ? "Search languages" : "Search commands",
@@ -2303,8 +2304,11 @@ struct EditorApp
             }
             context.originLine = document.firstLine;
             context.originRow = document.firstRow;
+            // One host cursor per frame: the document's only while it has the keyboard.
+            const documentFocused = !finding && !commands.palette.active;
             const options = EditorViewOptions(firstLine: document.firstLine,
-                visibleLines: visible, placeholder: "Start typing…", hostCursor: true);
+                visibleLines: visible, placeholder: "Start typing…", hostCursor: true,
+                caretVisible: documentFocused);
             const syntax = highlighting.snapshot(text, document.language, document.id);
             uint field;
             shownRows = null;
@@ -2346,7 +2350,8 @@ struct EditorApp
                         if (settings.view.indentGuides) drawIndentGuides(row, layout, settings.editing.indentWidth);
                         const node = b.add(Widget(kind: WidgetKind.rich, width: SizeSpec.grow(),
                             height: SizeSpec.fixed(1), spans: row.spans, wrap: TextWrap.none,
-                            caretColumn: row.caretColumn, slot: current ? Slot.surfaceRaised : Slot.inherit,
+                            caretColumn: documentFocused ? row.caretColumn : -1,
+                            slot: current ? Slot.surfaceRaised : Slot.inherit,
                             paintBackground: current));
                         shownRows ~= RowHit(node, line, row.row, row.inserted, row.caretColumn);
                         if (settings.view.lineNumbers)
@@ -2886,6 +2891,40 @@ struct EditorApp
     assert(!app.finder.open);
     type("!");
     assert(app.document.field.text.canFind("!"), "the document has the keyboard again");
+}
+
+/// The palette's query and the path field draw no caret glyph: the host's
+/// cursor stands in the focused field alone, so no text moves (HST20).
+@("editor.app.fieldsUseTheHostCursor")
+@safe unittest
+{
+    import sparkles.input : charEvent, Key, keyEvent;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    import std.algorithm : canFind;
+    EditorApp app;
+    RecordingHost host;
+    FrameSnapshot frame;
+    int[] cursors()
+    {
+        presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
+        int[] result;
+        foreach (node; frame.tree.nodes)
+        {
+            foreach (span; node.spans) assert(!span.text.canFind("▏"), "a caret glyph moved text");
+            if (node.caretColumn >= 0) result ~= node.caretColumn;
+        }
+        return result;
+    }
+    app.execute(CommandId(Command.palette));
+    assert(cursors() == [0], "the empty query's cursor, and not the document's");
+    foreach (dchar c; "sav") app.handle(host, charEvent(c));
+    assert(cursors() == [3]);
+    app.handle(host, keyEvent(Key.escape));
+    app.execute(CommandId(Command.open));
+    foreach (dchar c; "/tmp/x") app.handle(host, charEvent(c));
+    assert(cursors() == [6], "the path field has the only cursor");
 }
 
 /// The settings pane is generated from the settings subject, edits them live
