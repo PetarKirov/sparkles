@@ -617,14 +617,15 @@ version (unittest)
     import sparkles.base.buffer : SharedBuffer, checkWriter;
     import sparkles.wired.json.reader : parseJsonDocument;
 
-    /// parse → minify; asserts the parse succeeded.
-    private void minifyInto(Buf)(scope const(char)[] text, ref Buf buf)
-        @safe pure nothrow @nogc
-    {
-        auto r = parseJsonDocument(text);
-        assert(r.hasValue);
-        writeJson(r.document.root, buf);
-    }
+}
+
+/// parse → minify; asserts the parse succeeded.
+private void minifyInto(Buf)(scope const(char)[] text, ref Buf buf)
+    @safe pure nothrow @nogc
+{
+    auto r = parseJsonDocument(text);
+    assert(r.hasValue);
+    writeJson(r.document.root, buf);
 }
 
 @("writer.minify.tokens")

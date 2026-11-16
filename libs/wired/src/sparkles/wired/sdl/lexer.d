@@ -2022,39 +2022,40 @@ version (unittest)
         size_t width;
     }
 
-    private SdlToken oneToken(SdlParserConfig config)(scope const(char)[] source)
+}
+
+private SdlToken oneToken(SdlParserConfig config)(scope const(char)[] source)
+{
+    auto lexer = lexSDL!config(source, "fixture.sdl");
+    assert(!lexer.empty);
+    auto item = lexer.front;
+    if (item.hasError)
+        throw new AssertError(item.error.toString);
+    return item.value;
+}
+
+private SdlError oneError(SdlParserConfig config)(scope const(char)[] source)
+{
+    auto lexer = lexSDL!config(source, "fixture.sdl");
+    assert(!lexer.empty);
+    auto item = lexer.front;
+    assert(item.hasError);
+    return item.error;
+}
+
+private void consumeArbitrary(SdlParserConfig config)(scope const(char)[] source)
+{
+    auto lexer = lexSDL!config(source);
+    size_t remaining = source.length * 2 + 8;
+    while (!lexer.empty && remaining--)
     {
-        auto lexer = lexSDL!config(source, "fixture.sdl");
-        assert(!lexer.empty);
         auto item = lexer.front;
+        lexer.popFront();
         if (item.hasError)
-            throw new AssertError(item.error.toString);
-        return item.value;
+            break;
     }
-
-    private SdlError oneError(SdlParserConfig config)(scope const(char)[] source)
-    {
-        auto lexer = lexSDL!config(source, "fixture.sdl");
-        assert(!lexer.empty);
-        auto item = lexer.front;
-        assert(item.hasError);
-        return item.error;
-    }
-
-    private void consumeArbitrary(SdlParserConfig config)(scope const(char)[] source)
-    {
-        auto lexer = lexSDL!config(source);
-        size_t remaining = source.length * 2 + 8;
-        while (!lexer.empty && remaining--)
-        {
-            auto item = lexer.front;
-            lexer.popFront();
-            if (item.hasError)
-                break;
-        }
-        assert(remaining > 0);
-        assert(lexer.empty);
-    }
+    assert(remaining > 0);
+    assert(lexer.empty);
 }
 
 @("sdl.lexer.completeTokenVocabulary")

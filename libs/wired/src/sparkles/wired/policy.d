@@ -687,35 +687,32 @@ template ConvertedWire(alias Conv, V)
         alias ConvertedWire = Payload;
 }
 
-version (unittest)
+// A wire-text fixture for the backends' tests: a packed `major << 16 |
+// minor` written as `major.minor`, and read back.
+package void writeTestVersion(W)(ref W w, uint packed)
 {
-    // A wire-text fixture for the backends' tests: a packed `major << 16 |
-    // minor` written as `major.minor`, and read back.
-    package void writeTestVersion(W)(ref W w, uint packed)
-    {
-        import std.range.primitives : put;
-        import sparkles.base.text.writers : writeInteger;
+    import std.range.primitives : put;
+    import sparkles.base.text.writers : writeInteger;
 
-        writeInteger(w, packed >> 16);
-        put(w, '.');
-        writeInteger(w, packed & 0xFFFF);
-    }
+    writeInteger(w, packed >> 16);
+    put(w, '.');
+    writeInteger(w, packed & 0xFFFF);
+}
 
-    package uint readTestVersion(string s) @safe pure nothrow @nogc
+package uint readTestVersion()(string s) @safe pure nothrow @nogc
+{
+    uint major, minor;
+    bool dot;
+    foreach (c; s)
     {
-        uint major, minor;
-        bool dot;
-        foreach (c; s)
-        {
-            if (c == '.')
-                dot = true;
-            else if (dot)
-                minor = minor * 10 + (c - '0');
-            else
-                major = major * 10 + (c - '0');
-        }
-        return major << 16 | minor;
+        if (c == '.')
+            dot = true;
+        else if (dot)
+            minor = minor * 10 + (c - '0');
+        else
+            major = major * 10 + (c - '0');
     }
+    return major << 16 | minor;
 }
 
 @("wired.policy.convert.wireText")

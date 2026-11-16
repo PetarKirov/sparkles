@@ -478,37 +478,34 @@ private void skipString(scope const(char)[] text, ref size_t cursor)
     }
 }
 
-version (unittest)
+private ConfigSnapshot!T snapshotFor(T)(ref OwnedConfigInput!T capsule)
 {
-    private ConfigSnapshot!T snapshotFor(T)(ref OwnedConfigInput!T capsule)
-    {
-        auto created = ConfigBuilder!T.create();
-        assert(created.hasValue);
-        auto builder = created.takeValue();
-        auto source = builder.registerSource(SourceId("u"), ConfigSourceKind.userFile, "");
-        assert(source.hasValue);
-        assert(builder.submitOwned(source.value, capsule).kind == ConfigErrorKind.none);
-        auto resolved = builder.resolve();
-        assert(resolved.hasValue);
-        return resolved.takeValue();
-    }
+    auto created = ConfigBuilder!T.create();
+    assert(created.hasValue);
+    auto builder = created.takeValue();
+    auto source = builder.registerSource(SourceId("u"), ConfigSourceKind.userFile, "");
+    assert(source.hasValue);
+    assert(builder.submitOwned(source.value, capsule).kind == ConfigErrorKind.none);
+    auto resolved = builder.resolve();
+    assert(resolved.hasValue);
+    return resolved.takeValue();
+}
 
-    private void expectDefinitions(V, T)(ref ConfigSnapshot!T snapshot,
-        string path, size_t count)
-    {
-        bool visited;
-        const error = snapshot.visitOption!((scope ref const view) {
-            static if (is(typeof(view) == const(OptionView!V)))
-            {
-                visited = true;
-                assert(view.path == path);
-                assert(view.definitions.length == count);
-            }
-            else
-                assert(false, "unexpected value type for requested option");
-        })(path);
-        assert(error.kind == ConfigErrorKind.none && visited);
-    }
+private void expectDefinitions(V, T)(ref ConfigSnapshot!T snapshot,
+    string path, size_t count)
+{
+    bool visited;
+    const error = snapshot.visitOption!((scope ref const view) {
+        static if (is(typeof(view) == const(OptionView!V)))
+        {
+            visited = true;
+            assert(view.path == path);
+            assert(view.definitions.length == count);
+        }
+        else
+            assert(false, "unexpected value type for requested option");
+    })(path);
+    assert(error.kind == ConfigErrorKind.none && visited);
 }
 
 @("wired.config.json.presenceDefaultEqualAndNull")

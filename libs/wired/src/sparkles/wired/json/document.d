@@ -347,36 +347,33 @@ struct JsonObjectRange
 // Tests — the reader lands next milestone; these hand-assemble documents.
 // ─────────────────────────────────────────────────────────────────────────────
 
-version (unittest)
+/// Builds `{"a": 1, "b": [true, null, 2.5]}` by hand into `doc`.
+/// Pool: "a\0b\0"; 9 cells.
+private void assembleSample(A)(ref JsonDocument!A doc) @trusted
 {
-    /// Builds `{"a": 1, "b": [true, null, 2.5]}` by hand into `doc`.
-    /// Pool: "a\0b\0"; 9 cells.
-    private void assembleSample(A)(ref JsonDocument!A doc) @trusted
-    {
-        assert(doc.acquire(16, 8));
-        doc.pool[0 .. 4] = "a\0b\0";
-        auto c = doc.cells;
+    assert(doc.acquire(16, 8));
+    doc.pool[0 .. 4] = "a\0b\0";
+    auto c = doc.cells;
 
-        import sparkles.base.text.float_conv : doubleToBits;
+    import sparkles.base.text.float_conv : doubleToBits;
 
-        c[0] = JsonCell(JsonKind.object, 2);
-        c[0].bits = 9; // extent
-        c[1] = JsonCell(JsonKind.string_, 1); // "a"
-        c[1].bits = cast(ulong) doc.pool.ptr;
-        c[2] = JsonCell(JsonKind.integer);
-        c[2].bits = 1;
-        c[3] = JsonCell(JsonKind.string_, 1); // "b"
-        c[3].bits = cast(ulong)(doc.pool.ptr + 2);
-        c[4] = JsonCell(JsonKind.array, 3);
-        c[4].bits = 4; // extent
-        c[5] = JsonCell(JsonKind.bool_);
-        c[5].bits = 1;
-        c[6] = JsonCell(JsonKind.null_);
-        c[7] = JsonCell(JsonKind.floating);
-        c[7].bits = doubleToBits(2.5);
-        c[8] = JsonCell(JsonKind.none);
-        doc.cellCount = 9;
-    }
+    c[0] = JsonCell(JsonKind.object, 2);
+    c[0].bits = 9; // extent
+    c[1] = JsonCell(JsonKind.string_, 1); // "a"
+    c[1].bits = cast(ulong) doc.pool.ptr;
+    c[2] = JsonCell(JsonKind.integer);
+    c[2].bits = 1;
+    c[3] = JsonCell(JsonKind.string_, 1); // "b"
+    c[3].bits = cast(ulong)(doc.pool.ptr + 2);
+    c[4] = JsonCell(JsonKind.array, 3);
+    c[4].bits = 4; // extent
+    c[5] = JsonCell(JsonKind.bool_);
+    c[5].bits = 1;
+    c[6] = JsonCell(JsonKind.null_);
+    c[7] = JsonCell(JsonKind.floating);
+    c[7].bits = doubleToBits(2.5);
+    c[8] = JsonCell(JsonKind.none);
+    doc.cellCount = 9;
 }
 
 @("document.JsonCell.layout")
@@ -544,19 +541,16 @@ unittest
     // Region memory reclaims when `region` goes out of scope.
 }
 
-version (unittest)
+/// `[false]` — minimal two-cell document for the Region test (the
+/// main sample needs `acquire` to have succeeded with 16 cells).
+private void assembleSample2(A)(ref JsonDocument!A doc) @trusted
 {
-    /// `[false]` — minimal two-cell document for the Region test (the
-    /// main sample needs `acquire` to have succeeded with 16 cells).
-    private void assembleSample2(A)(ref JsonDocument!A doc) @trusted
-    {
-        auto c = doc.cells;
-        c[0] = JsonCell(JsonKind.array, 1);
-        c[0].bits = 2; // extent
-        c[1] = JsonCell(JsonKind.bool_);
-        c[1].bits = 0;
-        doc.cellCount = 2;
-    }
+    auto c = doc.cells;
+    c[0] = JsonCell(JsonKind.array, 1);
+    c[0].bits = 2; // extent
+    c[1] = JsonCell(JsonKind.bool_);
+    c[1].bits = 0;
+    doc.cellCount = 2;
 }
 
 @("document.move.ownershipTransfers")

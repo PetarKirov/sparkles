@@ -880,60 +880,6 @@ version (unittest)
         return result;
     }
 
-    private T parseFixedHarness(T)(scope const(char)[] token)
-    if (is(T == float) || is(T == real))
-    {
-        import std.conv : to;
-
-        const start = token.length && token[0] == '-' ? 1 : 0;
-        size_t dotAt = token.length;
-        size_t first = token.length;
-        size_t last = start;
-        size_t leadingZeros;
-        foreach (i; start .. token.length)
-        {
-            if (token[i] == '.')
-            {
-                dotAt = i;
-                continue;
-            }
-            if (first == token.length)
-            {
-                if (token[i] == '0')
-                    leadingZeros++;
-                else
-                    first = i;
-            }
-            if (token[i] != '0')
-                last = i;
-        }
-        if (first == token.length)
-            return token.to!T;
-
-        const digitsBeforeDot = dotAt == token.length
-            ? token.length - start : dotAt - start;
-        SdlString scientific;
-        if (start)
-            put(scientific, '-');
-        put(scientific, token[first]);
-        bool wroteDot;
-        foreach (i; first + 1 .. last + 1)
-        {
-            if (token[i] == '.')
-                continue;
-            if (!wroteDot)
-            {
-                put(scientific, '.');
-                wroteDot = true;
-            }
-            put(scientific, token[i]);
-        }
-        put(scientific, 'e');
-        writeJsonLong(scientific,
-            cast(long) digitsBeforeDot - cast(long) leadingZeros - 1);
-        return scientific[].to!T;
-    }
-
     private void checkScalarHarness(scope const ref SdlScalar original,
         scope const(char)[] token)
     {
@@ -1056,49 +1002,104 @@ version (unittest)
         checkScalarHarness(scalar, expected);
     }
 
-    private void checkFloatingRoundTrip(T)(T value)
-    if (is(T == float) || is(T == double) || is(T == real))
+}
+
+private T parseFixedHarness(T)(scope const(char)[] token)
+if (is(T == float) || is(T == real))
+{
+    import std.conv : to;
+
+    const start = token.length && token[0] == '-' ? 1 : 0;
+    size_t dotAt = token.length;
+    size_t first = token.length;
+    size_t last = start;
+    size_t leadingZeros;
+    foreach (i; start .. token.length)
     {
-        static if (is(T == float))
+        if (token[i] == '.')
         {
-            auto rendered = renderScalar(SdlScalar(value));
-            enum suffixLength = 1;
+            dotAt = i;
+            continue;
         }
-        else static if (is(T == double))
+        if (first == token.length)
         {
-            auto rendered = renderScalar(SdlScalar(value));
-            enum suffixLength = 1;
+            if (token[i] == '0')
+                leadingZeros++;
+            else
+                first = i;
         }
-        else
-        {
-            auto rendered = renderScalar(SdlScalar.decimal(value));
-            enum suffixLength = 2;
-        }
-        const token = rendered[][0 .. $ - suffixLength];
+        if (token[i] != '0')
+            last = i;
+    }
+    if (first == token.length)
+        return token.to!T;
 
-        // Each kind is checked against the kernel the SDL *reader* uses, not
-        // against `std.conv`: `to!real` is not correctly rounded for x87
-        // 80-bit, so validating `real` through it asserts a round trip this
-        // backend never performs (and rejects spellings that do round-trip).
-        static if (is(T == double))
+    const digitsBeforeDot = dotAt == token.length
+        ? token.length - start : dotAt - start;
+    SdlString scientific;
+    if (start)
+        put(scientific, '-');
+    put(scientific, token[first]);
+    bool wroteDot;
+    foreach (i; first + 1 .. last + 1)
+    {
+        if (token[i] == '.')
+            continue;
+        if (!wroteDot)
         {
-            import sparkles.base.text.float_conv : readDecimalFloat;
+            put(scientific, '.');
+            wroteDot = true;
+        }
+        put(scientific, token[i]);
+    }
+    put(scientific, 'e');
+    writeJsonLong(scientific,
+        cast(long) digitsBeforeDot - cast(long) leadingZeros - 1);
+    return scientific[].to!T;
+}
 
-            scope const(char)[] input = token;
-            auto parsed = readDecimalFloat(input);
-            assert(parsed.hasValue && input.length == 0);
-            assert(parsed.value is value);
-        }
-        else static if (is(T == real))
-        {
-            import sparkles.wired.sdl.decimal : parseDecimalReal;
+private void checkFloatingRoundTrip(T)(T value)
+if (is(T == float) || is(T == double) || is(T == real))
+{
+    static if (is(T == float))
+    {
+        auto rendered = renderScalar(SdlScalar(value));
+        enum suffixLength = 1;
+    }
+    else static if (is(T == double))
+    {
+        auto rendered = renderScalar(SdlScalar(value));
+        enum suffixLength = 1;
+    }
+    else
+    {
+        auto rendered = renderScalar(SdlScalar.decimal(value));
+        enum suffixLength = 2;
+    }
+    const token = rendered[][0 .. $ - suffixLength];
 
-            assert(parseDecimalReal(token) is value);
-        }
-        else
-        {
-            assert(parseFixedHarness!T(token) is value);
-        }
+    // Each kind is checked against the kernel the SDL *reader* uses, not
+    // against `std.conv`: `to!real` is not correctly rounded for x87
+    // 80-bit, so validating `real` through it asserts a round trip this
+    // backend never performs (and rejects spellings that do round-trip).
+    static if (is(T == double))
+    {
+        import sparkles.base.text.float_conv : readDecimalFloat;
+
+        scope const(char)[] input = token;
+        auto parsed = readDecimalFloat(input);
+        assert(parsed.hasValue && input.length == 0);
+        assert(parsed.value is value);
+    }
+    else static if (is(T == real))
+    {
+        import sparkles.wired.sdl.decimal : parseDecimalReal;
+
+        assert(parseDecimalReal(token) is value);
+    }
+    else
+    {
+        assert(parseFixedHarness!T(token) is value);
     }
 }
 
@@ -1305,13 +1306,6 @@ version (unittest)
 
 version (unittest)
 {
-    private string renderDocument(A)(scope const ref A document)
-    {
-        SharedBuffer!(char, 1024) bytes;
-        auto written = writeSdlDocument(document, bytes);
-        assert(!written.hasError, written.error.toString);
-        return bytes[].idup;
-    }
 
     private struct LawRandom
     {
@@ -1418,6 +1412,14 @@ version (unittest)
         }
         return source;
     }
+}
+
+private string renderDocument(A)(scope const ref A document)
+{
+    SharedBuffer!(char, 1024) bytes;
+    auto written = writeSdlDocument(document, bytes);
+    assert(!written.hasError, written.error.toString);
+    return bytes[].idup;
 }
 
 @("sdl.writer.canonicalGolden")
