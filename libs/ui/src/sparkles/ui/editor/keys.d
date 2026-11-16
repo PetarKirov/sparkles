@@ -29,6 +29,7 @@ enum EditorAction : ubyte
     newline, tab, escape,
     selectAll, copy, cut, paste, undo, redo, earlier, later,
     addNextOccurrence, cursorAbove, cursorBelow, splitIntoLines,
+    outdent, toggleLineComment,
 }
 
 /// The editor's one keymap scope.
@@ -106,6 +107,8 @@ EditCommand commandOf(EditorAction action) @safe pure nothrow @nogc
     case A.cursorAbove: return C.cursorVertical(-1);
     case A.cursorBelow: return C.cursorVertical(1);
     case A.splitIntoLines: return C.of(EditKind.splitIntoLines);
+    case A.outdent: return C.of(EditKind.outdent);
+    case A.toggleLineComment: return C.of(EditKind.toggleLineComment);
     }
 }
 
@@ -244,6 +247,7 @@ EditorBinding[] build(EditorTarget target) @safe pure nothrow
         letter(rows, 'x', false, false, true, A.cut, "cut");
         letter(rows, 'v', false, false, true, A.paste, "paste");
         letter(rows, 'd', false, false, true, A.addNextOccurrence, "add next occurrence");
+        letter(rows, '/', false, false, true, A.toggleLineComment, "toggle line comment");
         named(rows, Key.up, false, true, true, A.cursorAbove, "add cursor above");
         named(rows, Key.down, false, true, true, A.cursorBelow, "add cursor below");
         motion(rows, Key.left, false, false, true, A.lineStart, A.selectLineStart, "line start");
@@ -265,6 +269,7 @@ EditorBinding[] build(EditorTarget target) @safe pure nothrow
         letter(rows, 'x', true, false, false, A.cut, "cut");
         letter(rows, 'v', true, false, false, A.paste, "paste");
         letter(rows, 'd', true, false, false, A.addNextOccurrence, "add next occurrence");
+        letter(rows, '/', true, false, false, A.toggleLineComment, "toggle line comment");
         named(rows, Key.backspace, true, false, false, A.killWordBack, "kill word back");
     }
     if (!mac)
@@ -325,6 +330,7 @@ EditorBinding[] build(EditorTarget target) @safe pure nothrow
     named(rows, Key.backspace, false, false, false, A.deleteBack, "delete back");
     named(rows, Key.delete_, false, false, false, A.deleteForward, "delete forward");
     named(rows, Key.enter, false, false, false, A.newline, "newline");
+    named(rows, Key.tab, false, false, false, A.outdent, "outdent", ShiftReq.yes);
     named(rows, Key.tab, false, false, false, A.tab, "tab");
     named(rows, Key.escape, false, false, false, A.escape, "escape");
     return rows;
@@ -432,6 +438,24 @@ unittest
         assert(actionOf(target, alt('u')) == A.earlier);
         assert(actionOf(target, alt('U')) == A.later);
     }
+}
+
+/// EDC12 and EDC13: Shift-Tab outdents everywhere; a window comments lines
+/// with `Ctrl-/` (`Cmd-/` on macOS), which a terminal reads as `Ctrl-_`, undo.
+@("editor.keys.indentAndComment")
+@safe pure nothrow
+unittest
+{
+    foreach (target; [EditorTarget.terminal, EditorTarget.macWindow, EditorTarget.window])
+    {
+        assert(actionOf(target, key(Key.tab, Mods(shift: true))) == A.outdent);
+        assert(actionOf(target, key(Key.tab)) == A.tab);
+    }
+    assert(actionOf(EditorTarget.window, ctrl('/')) == A.toggleLineComment);
+    assert(actionOf(EditorTarget.macWindow, cmd('/')) == A.toggleLineComment);
+    assert(actionOf(EditorTarget.terminal, ctrl('/')) == A.undo);
+    assert(commandOf(A.outdent).kind == EditKind.outdent);
+    assert(commandOf(A.toggleLineComment).kind == EditKind.toggleLineComment);
 }
 
 /// EDK4 and KBD3: the terminal table binds no reserved key; a window's may.

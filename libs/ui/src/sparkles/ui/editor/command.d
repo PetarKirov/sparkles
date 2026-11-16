@@ -20,6 +20,12 @@ enum EditKind : ubyte
     insertText,
     insertNewline,
     insertTab,
+    // EDC12
+    /// Remove up to one indent level from every touched line.
+    outdent,
+    // EDC13
+    /// Comment or uncomment every touched line with the line-comment token.
+    toggleLineComment,
     // EDC2
     moveGrapheme,
     deleteGrapheme,

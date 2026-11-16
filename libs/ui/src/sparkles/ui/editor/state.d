@@ -12,6 +12,7 @@ import sparkles.input.events : CompositionRun, maxCompositionRuns;
 import sparkles.text_buffer.history : History;
 import sparkles.text_buffer.text : Text;
 import sparkles.ui.editor.command : EditKind;
+import sparkles.ui.editor.line_edit : IndentOptions;
 import sparkles.ui.editor.selection : EditRange, SelectionSet;
 
 /// How an editor behaves.
@@ -19,9 +20,14 @@ struct EditorOptions
 {
     /// The state never holds a line break; Enter submits (`EDT8`).
     bool singleLine;
-    /// `insertTab` inserts a tab; otherwise it does nothing and the key
+    /// `insertTab` and `outdent` edit; otherwise they do nothing and the key
     /// falls through to the application, which moves focus.
     bool tabInserts = true;
+    /// Tabs or spaces, the indent width and auto-indent (`EDC12`).
+    IndentOptions indent;
+    /// The language's line-comment token, such as `//`, or `null` when it
+    /// has none: then `toggleLineComment` is a no-op (`EDC13`).
+    string lineComment;
     /// Typed insertions and one-grapheme deletions closer than this coalesce
     /// into one undo step (`EDT6`).
     Duration coalesceInterval = 500.msecs;

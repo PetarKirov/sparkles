@@ -13,6 +13,7 @@ public import sparkles.ui.editor.effect;
 public import sparkles.ui.editor.field;
 public import sparkles.ui.editor.keys;
 public import sparkles.ui.editor.kill_ring;
+public import sparkles.ui.editor.line_edit;
 public import sparkles.ui.editor.selection;
 public import sparkles.ui.editor.soft_keyboard;
 public import sparkles.ui.editor.state;

@@ -52,6 +52,8 @@ enum NoopReason : ubyte
     staleAnswer,
     /// `yankPop` without a preceding yank, or an empty kill ring.
     nothingToYank,
+    /// `toggleLineComment` without a line-comment token (`EDC13`).
+    noLineComment,
 }
 
 /// One request to the host.

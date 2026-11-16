@@ -14,6 +14,7 @@ module sparkles.ui.editor.field;
 
 import core.time : MonoTime;
 
+import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.pool.text_pool : TextPool;
 import sparkles.input.events : CompositionEvent, InputTextTag, KeyEvent, TextId;
 import sparkles.text_buffer.text : Text;
@@ -22,6 +23,7 @@ import sparkles.ui.editor.context : LogicalContext, isEditContext;
 import sparkles.ui.editor.effect : EditEffects, EffectKind, NoopReason;
 import sparkles.ui.editor.keys : EditorTarget, editorCommand;
 import sparkles.ui.editor.kill_ring : KillRing;
+import sparkles.ui.editor.line_edit : autoIndentAt;
 import sparkles.ui.editor.state : EditorOptions, EditorState;
 import sparkles.ui.editor.step : stepInPlace;
 
@@ -135,6 +137,21 @@ if (isEditContext!Context)
         return runWith(EditCommand.insert(TextId.init, true), source, now);
     }
 
+    /**
+    Enter with per-selection line-break bytes (`EDC1`): `ending(text, position)`
+    gives each range's break, such as a document's CRLF convention, and with
+    `options.indent.autoIndent` the leading blanks of the line holding the
+    range's head, up to the head, follow it (`EDC12`). All breaks are one undo
+    transaction, as `insertEach`; a single-line field submits instead.
+    */
+    FieldResult newlineEach(Ending)(Ending ending, MonoTime now = MonoTime.init)
+    {
+        if (state.options.singleLine)
+            return run(EditCommand.of(EditKind.insertNewline), now);
+        auto source = NewlineEach!Ending(ending, state.options.indent.autoIndent);
+        return runWith(EditCommand.insert(TextId.init, true), source, now);
+    }
+
     /// A paste (`EDI4`), or, when `request` is not 0, the answer to the
     /// field's clipboard read (`EDY5`): what a host's paste event carries.
     FieldResult paste(scope const(char)[] text, uint request = 0, MonoTime now = MonoTime.init)
@@ -226,6 +243,44 @@ private struct PerSelection(Insertion)
 
     void withTextAt(Fn)(in TextId, in Text text, size_t position, scope Fn accept)
         => accept(insertion(text, position));
+}
+
+private struct NewlineEach(Ending)
+{
+    Ending ending;
+    bool indent;
+
+    void withText(Fn)(in TextId, scope Fn accept) => accept("");
+
+    void withTextAt(Fn)(in TextId, in Text text, size_t position, scope Fn accept)
+    {
+        SharedBuffer!(char, 64) bytes;
+        bytes.put(ending(text, position));
+        if (indent)
+            foreach (chunk; autoIndentAt(text, position).chunks)
+                bytes.put(chunk.bytes);
+        accept(bytes[]);
+    }
+}
+
+/// A document's line-break convention and auto-indent combine, every caret
+/// taking its own line's blanks, as one undo step.
+@("editor.indent.newlineEachKeepsTheConvention")
+@safe pure nothrow unittest
+{
+    import sparkles.ui.editor.selection : EditRange, SelectionSet;
+    auto field = EditorField.make("  a\r\n\tb");
+    field.state.options.indent.autoIndent = true;
+    EditRange[2] ranges = [EditRange.caret(3), EditRange.caret(field.state.text.length)];
+    field.state.selection = SelectionSet.of(ranges[], 1);
+    const result = field.newlineEach((in Text source, size_t at) @safe pure nothrow @nogc
+        => at < 5 ? "\r\n" : "\n");
+    assert(result.changed && field.text == "  a\r\n  \r\n\tb\n\t");
+    field.run(EditCommand.of(EditKind.undo));
+    assert(field.text == "  a\r\n\tb");
+    field.state.options.indent.autoIndent = false;
+    field.newlineEach((in Text source, size_t at) => "\r\n");
+    assert(field.text == "  a\r\n\r\n\tb\r\n");
 }
 
 /// Position-dependent insertions remain one shared edit and one undo transaction.

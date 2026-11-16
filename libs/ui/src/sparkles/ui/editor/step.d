@@ -26,6 +26,8 @@ import sparkles.ui.editor.command : Boundary, EditCommand, EditKind;
 import sparkles.ui.editor.context : CaretTarget, clusterCells, VisualLine, isEditContext;
 import sparkles.ui.editor.effect : EditEffect, EditEffects, EffectKind, NoopReason;
 import sparkles.ui.editor.kill_ring : KillEntry, KillRing;
+import sparkles.ui.editor.line_edit : autoIndentAt, columnOf, indentAt, planIndent, planOutdent,
+    planToggleComment, spansLines, touchedLines;
 import sparkles.ui.editor.selection : EditRange, SelectionSet;
 import sparkles.ui.editor.state : Composition, EditorState, ReadOnlySpan;
 import sparkles.ui.geometry : Rect;
@@ -135,6 +137,14 @@ enum Placement : ubyte
     selectInserted,
 }
 
+/// A line-wise edit (`EDC12`, `EDC13`).
+enum LineEdit : ubyte
+{
+    indent,
+    outdent,
+    toggleComment,
+}
+
 bool isKill(EditKind kind) @safe pure nothrow @nogc
     => kind == EditKind.killWord || kind == EditKind.killBlankWord
         || kind == EditKind.killToLineBoundary;
@@ -207,12 +217,28 @@ struct Stepper(Texts, Context)
         case EditKind.insertNewline:
             if (state.options.singleLine)
                 effects.put(EditEffect(EffectKind.submit));
+            else if (state.options.indent.autoIndent)
+                insertNewlineIndented(last);
             else
                 insertText(Text("\n"), false, Coalesce.none, last);
             break;
         case EditKind.insertTab:
+            if (!state.options.tabInserts)
+                break;
+            if (!state.options.singleLine && spansLines(text, state.selection))
+                editLines(LineEdit.indent, last);
+            else
+                insertIndent(last);
+            break;
+        case EditKind.outdent:
             if (state.options.tabInserts)
-                insertText(Text("\t"), false, Coalesce.none, last);
+                editLines(LineEdit.outdent, last);
+            break;
+        case EditKind.toggleLineComment:
+            if (state.options.lineComment.length == 0)
+                effects.put(noop(NoopReason.noLineComment));
+            else
+                editLines(LineEdit.toggleComment, last);
             break;
         case EditKind.moveGrapheme:
             if (state.composition.active)
@@ -1095,6 +1121,139 @@ struct Stepper(Texts, Context)
         applyEdits(edits[], Placement.atStart, coalesce, last);
     }
 
+    /// EDC12: a line break and the leading blanks of each range's line, up
+    /// to the range's start.
+    void insertNewlineIndented(EditKind last)
+    {
+        UniqueBuffer!(RangeEdit, 4) edits;
+        foreach (r; state.selection.ranges)
+        {
+            Text inserted = Text("\n").append(autoIndentAt(text, r.start));
+            if (!admit(inserted))
+            {
+                effects.put(noop(NoopReason.nothingToDo));
+                return;
+            }
+            edits.put(RangeEdit(r.start, r.end, inserted));
+        }
+        if (fits(edits[]))
+            applyEdits(edits[], Placement.afterInserted, Coalesce.none, last);
+    }
+
+    /// EDC12: each range replaced by one indent level at its column.
+    void insertIndent(EditKind last)
+    {
+        const options = state.options.indent;
+        UniqueBuffer!(RangeEdit, 4) edits;
+        foreach (r; state.selection.ranges)
+        {
+            const lineStart = text.lineStart(text.lineOf(r.start));
+            Text inserted = indentAt(columnOf(text, lineStart, r.start, options.stop), options);
+            if (!admit(inserted))
+            {
+                effects.put(noop(NoopReason.nothingToDo));
+                return;
+            }
+            edits.put(RangeEdit(r.start, r.end, inserted));
+        }
+        if (fits(edits[]))
+            applyEdits(edits[], Placement.afterInserted, Coalesce.none, last);
+    }
+
+    /// Whether `line` shares a byte with a protected span.
+    bool protectedLine(size_t line) const
+    {
+        const start = text.lineStart(line);
+        const end = text.lineEnd(line);
+        foreach (span; state.readOnly[])
+        {
+            if (span.start >= span.end)
+                continue;
+            if (start < end ? start < span.end && span.start < end
+                : span.start <= start && start < span.end)
+                return true;
+        }
+        return false;
+    }
+
+    /**
+    EDC12, EDC13: edit every line the selection touches as one change set
+    and one revision. A plan that would edit a line sharing a byte with a
+    protected span is refused whole, with `rejectedReadOnly`. A caret, and a
+    range's end, stay after text inserted where they are; a range's start
+    stays before it, so a selection of whole lines keeps covering them.
+    */
+    void editLines(LineEdit which, EditKind last)
+    {
+        SharedBuffer!(size_t, 8) lines;
+        touchedLines(text, state.selection, lines);
+        UniqueBuffer!(Edit, 4) edits;
+        final switch (which)
+        {
+        case LineEdit.indent:
+            planIndent(text, lines[], state.options.indent, edits);
+            break;
+        case LineEdit.outdent:
+            planOutdent(text, lines[], state.options.indent, edits);
+            break;
+        case LineEdit.toggleComment:
+            planToggleComment(text, lines[], state.options.lineComment, state.options.indent,
+                edits);
+            break;
+        }
+        if (edits.length == 0)
+            return;
+        size_t length = text.length;
+        foreach (ref e; edits[])
+        {
+            if (protectedLine(text.lineOf(e.from)))
+            {
+                effects.put(EditEffect(EffectKind.rejectedReadOnly));
+                return;
+            }
+            if (e.inserted.length && !admit(e.inserted))
+            {
+                effects.put(noop(NoopReason.nothingToDo));
+                return;
+            }
+            length = length - (e.to - e.from) + e.inserted.length;
+        }
+        if (state.options.maxLength && length > state.options.maxLength)
+        {
+            effects.put(noop(NoopReason.nothingToDo));
+            return;
+        }
+        ChangeSet set;
+        const status = ChangeSet.of(text.length, edits[], set);
+        assert(status == ChangeSetStatus.ok);
+        SelectionSet before = state.selection;
+        const inverse = set.invert(text);
+        SharedBuffer!(EditRange, 4) mapped;
+        foreach (r; before.ranges)
+        {
+            EditRange m = r;
+            m.anchor = set.mapPos(r.anchor, r.empty || !r.forward ? Affinity.after : Affinity.before);
+            m.head = set.mapPos(r.head, r.empty || r.forward ? Affinity.after : Affinity.before);
+            m.goal = EditRange.noGoal;
+            mapped.put(m);
+        }
+        state.text = set.apply(text);
+        state.selection = normalized(mapped[], before.primaryIndex);
+        mapReadOnly(set);
+        record(set, inverse, before, Coalesce.none, last);
+        effects.put(EditEffect(EffectKind.changed, changes: set));
+        effects.put(EditEffect(EffectKind.scrollToPrimary));
+    }
+
+    /// Read-only spans follow the text; their edges let edits in.
+    void mapReadOnly(in ChangeSet set)
+    {
+        if (state.readOnly.length)
+            foreach (ref span; state.readOnly[])
+                span = ReadOnlySpan(set.mapPos(span.start, Affinity.after),
+                    set.mapPos(span.end, Affinity.before));
+    }
+
     /// `true` when an edit at `[from, to)` would change protected bytes.
     bool protectedEdit(in RangeEdit e) const
     {
@@ -1176,11 +1335,7 @@ struct Stepper(Texts, Context)
         }
         state.text = set.apply(text);
         state.selection = normalized(mapped[], before.primaryIndex);
-        // Read-only spans follow the text; their edges let edits in.
-        if (state.readOnly.length)
-            foreach (ref span; state.readOnly[])
-                span = ReadOnlySpan(set.mapPos(span.start, Affinity.after),
-                    set.mapPos(span.end, Affinity.before));
+        mapReadOnly(set);
         if (placement == Placement.selectInserted)
             state.record.yanked = inserted;
 

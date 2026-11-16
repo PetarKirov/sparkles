@@ -199,6 +199,7 @@ struct Reference
             }
             break;
         case EditKind.none: case EditKind.insertNewline: case EditKind.insertTab:
+        case EditKind.outdent: case EditKind.toggleLineComment:
         case EditKind.moveLine: case EditKind.movePage: case EditKind.selectAll:
         case EditKind.selectWord: case EditKind.selectLine: case EditKind.collapseToPrimary:
         case EditKind.setRange: case EditKind.addNextOccurrence: case EditKind.skipOccurrence:
