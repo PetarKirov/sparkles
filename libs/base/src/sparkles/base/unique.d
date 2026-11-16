@@ -567,7 +567,6 @@ extern (C) private pure nothrow @nogc @system
     assert(slab.get.bytes[0] == 9);
 }
 
-version (unittest)
 private void copyBorrowedOwner(T)(ref T owner)
 {
     T copy = owner;

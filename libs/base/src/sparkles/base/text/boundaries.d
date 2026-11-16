@@ -294,35 +294,32 @@ UnicodeResult sentenceBoundaries(scope const(UtfToken)[] input,
     return result;
 }
 
-version (unittest)
+private void checkBoundaries(bool sentence)(scope const(dchar)[] scalars,
+    scope const(size_t)[] allowed)
 {
-    private void checkBoundaries(bool sentence)(scope const(dchar)[] scalars,
-        scope const(size_t)[] allowed)
+    UtfToken[64] tokens;
+    UnicodeBoundary[65] output;
+    WordBoundaryWorkspace[64] words;
+    SentenceBoundaryWorkspace[64] sentences;
+    assert(scalars.length <= tokens.length);
+    foreach (i, scalar; scalars)
+        tokens[i] = UtfToken(scalar: scalar, start: 100 + i * 2, end: 102 + i * 2);
+    static if (sentence)
+        const result = sentenceBoundaries(tokens[0 .. scalars.length], output[], sentences[]);
+    else
+        const result = wordBoundaries(tokens[0 .. scalars.length], output[], words[]);
+    assert(result.succeeded() && result.written == scalars.length + 1);
+    size_t cursor;
+    foreach (i; 0 .. result.written)
     {
-        UtfToken[64] tokens;
-        UnicodeBoundary[65] output;
-        WordBoundaryWorkspace[64] words;
-        SentenceBoundaryWorkspace[64] sentences;
-        assert(scalars.length <= tokens.length);
-        foreach (i, scalar; scalars)
-            tokens[i] = UtfToken(scalar: scalar, start: 100 + i * 2, end: 102 + i * 2);
-        static if (sentence)
-            const result = sentenceBoundaries(tokens[0 .. scalars.length], output[], sentences[]);
-        else
-            const result = wordBoundaries(tokens[0 .. scalars.length], output[], words[]);
-        assert(result.succeeded() && result.written == scalars.length + 1);
-        size_t cursor;
-        foreach (i; 0 .. result.written)
-        {
-            const expected = cursor < allowed.length && allowed[cursor] == i;
-            assert(output[i].kind == (expected
-                ? UnicodeBoundaryKind.allowed : UnicodeBoundaryKind.prohibited));
-            assert(output[i].index == i);
-            assert(output[i].offset == (scalars.length ? 100 + i * 2 : 0));
-            if (expected) ++cursor;
-        }
-        assert(cursor == allowed.length);
+        const expected = cursor < allowed.length && allowed[cursor] == i;
+        assert(output[i].kind == (expected
+            ? UnicodeBoundaryKind.allowed : UnicodeBoundaryKind.prohibited));
+        assert(output[i].index == i);
+        assert(output[i].offset == (scalars.length ? 100 + i * 2 : 0));
+        if (expected) ++cursor;
     }
+    assert(cursor == allowed.length);
 }
 
 @("text.boundaries.wordRuleInteractions")

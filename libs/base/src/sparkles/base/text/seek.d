@@ -850,52 +850,6 @@ version (unittest)
         }
     }
 
-    void checkAgainstOracle(S)(ref S source, scope ref const Oracle o)
-    {
-        UnicodeSourceSpan[maxSource] runs;
-        const runCount = o.runs(runs);
-        foreach (at; 0 .. o.length + 1)
-        {
-            const a = o.tokenStartOf(at);
-            assert(nextGraphemeBoundary(source, at) == (a == o.length ? a : o.next(o.grapheme[], a)));
-            assert(previousGraphemeBoundary(source, at) == o.previous(o.grapheme[], a));
-            assert(isGraphemeBoundary(source, at) == (o.tokenStart[at] && o.grapheme[at]));
-
-            const forward = nextWordSegment(source, at);
-            if (a == o.length)
-                assert(forward == WordSegment(a, a, WordSegmentKind.space));
-            else
-            {
-                const start = o.segment[a] ? a : o.previous(o.segment[], a);
-                const end = o.next(o.segment[], start);
-                assert(forward == WordSegment(start, end, o.kind(start, end)));
-            }
-            const backward = previousWordSegment(source, at);
-            if (a == 0)
-                assert(backward == WordSegment(0, 0, WordSegmentKind.space));
-            else
-            {
-                const start = o.previous(o.segment[], a);
-                const end = o.next(o.segment[], start);
-                assert(backward == WordSegment(start, end, o.kind(start, end)));
-            }
-
-            auto nextRun = UnicodeSourceSpan(o.length, o.length);
-            foreach (run; runs[0 .. runCount])
-                if (run.end > a)
-                {
-                    nextRun = run;
-                    break;
-                }
-            assert(nextBlankDelimited(source, at) == nextRun);
-            auto previousRun = UnicodeSourceSpan(0, 0);
-            foreach (run; runs[0 .. runCount])
-                if (run.start < a)
-                    previousRun = run;
-            assert(previousBlankDelimited(source, at) == previousRun);
-        }
-    }
-
     void checkPartitions(scope const(char)[] text, ref Xorshift random, size_t randomCuts)
         @safe pure nothrow @nogc
     {
@@ -931,6 +885,52 @@ version (unittest)
         "؀", "א", "ב", "ア", "ᄀ", "ᅡ", "ᆨ",
         "\xC0", "\x80", "\xE0\xA0", "\xF0\x9F", "\xED\xA0\x80", "ก",
     ];
+}
+
+void checkAgainstOracle(S)(ref S source, scope ref const Oracle o)
+{
+    UnicodeSourceSpan[maxSource] runs;
+    const runCount = o.runs(runs);
+    foreach (at; 0 .. o.length + 1)
+    {
+        const a = o.tokenStartOf(at);
+        assert(nextGraphemeBoundary(source, at) == (a == o.length ? a : o.next(o.grapheme[], a)));
+        assert(previousGraphemeBoundary(source, at) == o.previous(o.grapheme[], a));
+        assert(isGraphemeBoundary(source, at) == (o.tokenStart[at] && o.grapheme[at]));
+
+        const forward = nextWordSegment(source, at);
+        if (a == o.length)
+            assert(forward == WordSegment(a, a, WordSegmentKind.space));
+        else
+        {
+            const start = o.segment[a] ? a : o.previous(o.segment[], a);
+            const end = o.next(o.segment[], start);
+            assert(forward == WordSegment(start, end, o.kind(start, end)));
+        }
+        const backward = previousWordSegment(source, at);
+        if (a == 0)
+            assert(backward == WordSegment(0, 0, WordSegmentKind.space));
+        else
+        {
+            const start = o.previous(o.segment[], a);
+            const end = o.next(o.segment[], start);
+            assert(backward == WordSegment(start, end, o.kind(start, end)));
+        }
+
+        auto nextRun = UnicodeSourceSpan(o.length, o.length);
+        foreach (run; runs[0 .. runCount])
+            if (run.end > a)
+            {
+                nextRun = run;
+                break;
+            }
+        assert(nextBlankDelimited(source, at) == nextRun);
+        auto previousRun = UnicodeSourceSpan(0, 0);
+        foreach (run; runs[0 .. runCount])
+            if (run.start < a)
+                previousRun = run;
+        assert(previousBlankDelimited(source, at) == previousRun);
+    }
 }
 
 /// Fixed sources reach the hard cases in every 1–4 byte chunking.
