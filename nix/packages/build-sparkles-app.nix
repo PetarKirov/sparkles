@@ -192,7 +192,12 @@
                     pkgs.llvm-binutils-sparkles
                     pkgs.lld-sparkles
                   ]
-                  ++ lib.optional (shapingInputs != [ ]) pkgs.pkg-config;
+                  ++ lib.optional (shapingInputs != [ ]) pkgs.pkg-config
+                  # `dmd:lexer`'s pre-generate step (the fork's `config.d`) runs `git
+                  # describe`: it falls back to the VERSION file when git fails, but
+                  # throws when git is missing. Every consumer of `sparkles:d-source`
+                  # builds it (twoslash-extract.nix says the same for the frontend).
+                  ++ lib.optional (builtins.elem "libs/d-source/src" srcDirs) pkgs.gitMinimal;
                 inherit buildInputs;
 
                 # dub writes into the unpacked (read-only) source tree.
@@ -334,7 +339,9 @@
             pkgs.pkg-config-unwrapped
             pkgs.llvm-binutils-sparkles
             pkgs.lld-sparkles
-          ];
+          ]
+          # `dmd:lexer`'s pre-generate step needs git (see buildSparklesApp).
+          ++ lib.optional (builtins.elem "libs/d-source/src" srcDirs) pkgs.gitMinimal;
           preBuild = ''
             chmod -R u+w "$NIX_BUILD_TOP"
           ''

@@ -254,13 +254,20 @@ Two requests that resolve to equal variant keys **must** share one set of
 actions.
 
 **Pruning.** A downward-inherited version or debug identifier **must** be kept
-only if it is **mentioned** under one of the variant's source, import or string
-import roots. Mentioned means it appears in a `version (…)` or `debug (…)`
-condition, or in a `version = …` or `debug = …` assignment:
+only if a file the variant's compile can **reach** **mentions** it. Mentioned
+means it appears in a `version (…)` or `debug (…)` condition, or in a
+`version = …` or `debug = …` assignment:
 
-- in a D source file under any of those roots, read as D tokens;
+- in a reachable D source file, read as D tokens;
 - in any file under a string import root, whatever its extension, read as
   text.
+
+The reachable D files are the variant's own source files and, transitively,
+each module one of them imports, found under its import roots in the order
+the compiler searches them. An import counts wherever it appears, under any
+`version` branch and inside any function body. A reachable file with a
+`mixin` whose string literals, joined, contain the word `import` makes every
+D file under the import roots reachable.
 
 The scan has these further rules:
 
@@ -271,7 +278,8 @@ The scan has these further rules:
 - **Generated roots:** a root filled by a generator (§7) is not scanned. A
   variant with such a root keeps every inherited identifier.
 - **Conditions built as strings:** a variant **must** keep every inherited
-  identifier if, in a scanned D file, the string literals of one `mixin`'s
+  identifier if, in a reachable D file and outside a `unittest` block, the
+  string literals of one `mixin`'s
   arguments, joined in order, or the string literals that initialize one
   manifest constant (`enum`), contain `version` or `debug` followed by `(`,
   with optional whitespace between them. Planning reports each such `mixin`

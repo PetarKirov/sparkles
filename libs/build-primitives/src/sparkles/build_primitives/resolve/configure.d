@@ -108,6 +108,21 @@ struct ResolvedTarget
     string[] dependencies;     /// its direct binary dependencies
     string[] linkDependencies; /// every binary it links, in link order
     BuildSettings settings;    /// the resolved settings
+    /**
+    The versions and debug versions in `settings` only because a dependent
+    passed them down: neither this target, nor anything folded into it, nor
+    any of its dependencies states them. They are what pruning (BGV1) may
+    drop; each is also in `settings`.
+    */
+    string[] inheritedVersions;
+    string[] inheritedDebugVersions; /// ditto
+    /**
+    In the divergent mode, the versions and debug versions this target's
+    configuration block adds, which it withholds from its dependencies
+    (D13); empty in the faithful mode.
+    */
+    string[] withheldVersions;
+    string[] withheldDebugVersions; /// ditto
 }
 
 /// What a request resolves to.
@@ -116,6 +131,8 @@ struct Resolution
     string rootPackage;     ///
     string configuration;   /// the root's configuration
     string buildType;       ///
+    BuildPlatform platform; /// the platform resolved for
+    VersionInheritance inheritance; /// how versions passed down
     /// The configuration of every package reached, source libraries included.
     string[string] configurations;
     /// The binary targets, the root first, then in dependency order.
@@ -197,6 +214,10 @@ private struct TargetInfo
     // selected configuration's block states, on this platform.
     string[] configurationVersions;
     string[] configurationDebugVersions;
+    // What only a dependent passed down: no dependency of this target and
+    // nothing folded into it states it (BGV1's pruning candidates).
+    string[] inheritedVersions;
+    string[] inheritedDebugVersions;
 }
 
 // The versions and debug versions `configuration`'s block of `p` adds to
@@ -232,6 +253,8 @@ private Resolution resolveOrThrow(ref const ResolveRequest request, ResolveTree 
     Resolution resolution;
     resolution.rootPackage = project.root.name;
     resolution.buildType = request.buildType;
+    resolution.platform = request.platform.dup;
+    resolution.inheritance = request.inheritance;
 
     string configuration = request.configuration;
     if (request.testRoot)
@@ -278,7 +301,8 @@ private Resolution resolveOrThrow(ref const ResolveRequest request, ResolveTree 
         if (auto ti = p.name in targets)
             resolution.targets ~= ResolvedTarget(p.name, ti.configuration, p.directory,
                 ti.packages.map!(q => q.name).array, ti.dependencies, ti.linkDependencies,
-                ti.settings);
+                ti.settings, ti.inheritedVersions, ti.inheritedDebugVersions,
+                ti.configurationVersions, ti.configurationDebugVersions);
     resolution.environmentInputs = variables.environmentInputs.sort.release;
 
     // Every package directory the request's tree declares, and the
@@ -419,6 +443,14 @@ private void configurePackages(Project project, ref TargetInfo[string] targets,
     collectDependencies(root, *rootTarget);
     visited = null;
 
+    // Each target's own versions, before any pass moves one.
+    string[][string] ownVersions, ownDebugVersions;
+    foreach (name, ref ti; targets)
+    {
+        ownVersions[name] = ti.settings.versions.dup;
+        ownDebugVersions[name] = ti.settings.debugVersions.dup;
+    }
+
     // 1. Down: versions, debug versions, inherited options, ABI-critical dflags.
     void configureDependencies(ref const TargetInfo ti) @safe
     {
@@ -457,6 +489,38 @@ private void configurePackages(Project project, ref TargetInfo[string] targets,
 
     configureDependents(*rootTarget);
     visited = null;
+
+    // What came down and nothing below stated: a dependency's own version
+    // reaches a dependent's settings by the up pass, so it is no candidate.
+    foreach (name, ref ti; targets)
+    {
+        bool[string] below;
+        void collect(string n) @safe
+        {
+            if (n in below)
+                return;
+            below[n] = true;
+            foreach (folded; targets[n].packages[1 .. $])
+                if (folded.name in targets)
+                    collect(folded.name);
+            foreach (d; targets[n].dependencies)
+                collect(d);
+        }
+        collect(name);
+        bool statedBelow(string v, string[][string] own) @safe
+        {
+            foreach (n; below.byKey)
+                if (auto vs = n in own)
+                    if ((*vs).canFind(v))
+                        return true;
+            return false;
+        }
+        // `Have_` versions are added across, after the down pass: never inherited.
+        ti.inheritedVersions = ti.settings.versions
+            .filter!(v => !v.startsWith("Have_") && !statedBelow(v, ownVersions)).array;
+        ti.inheritedDebugVersions = ti.settings.debugVersions
+            .filter!(v => !statedBelow(v, ownDebugVersions)).array;
+    }
 
     // 4. Injected source files reach the final binaries.
     void injectInto(ref TargetInfo ti, ref TargetInfo binary) @safe
@@ -1020,6 +1084,25 @@ importPaths "include"
     const leaf = r.target("r:leaf").settings;
     assert(!leaf.versions.canFind("AppOnly"));
     assert(leaf.dflags.canFind("-mcpu=native"));
+}
+
+@("build_primitives.resolve.configure.resolve.inheritedVersions")
+@safe unittest
+{
+    // `app`'s configuration version reaches `lib` and `leaf` only from above;
+    // `UtilVersion` is folded in and `Special` comes up from `leaf`, so
+    // neither is a candidate where it appears.
+    const r = resolved(ResolveRequest(directory: "/r", subPackage: ":app", platform: linuxLdc));
+    assert(r.target("r:app").inheritedVersions == []);
+    const lib = r.target("r:lib");
+    assert(lib.settings.versions.canFind("UtilVersion") && lib.settings.versions.canFind("Special"));
+    assert(lib.inheritedVersions == ["AppOnly"], lib.inheritedVersions[0]);
+    assert(r.target("r:leaf").inheritedVersions == ["AppOnly"]);
+
+    // In the divergent mode the configuration version never comes down.
+    const d = resolved(ResolveRequest(directory: "/r", subPackage: ":app", platform: linuxLdc,
+        inheritance: VersionInheritance.divergent));
+    assert(d.target("r:lib").inheritedVersions == []);
 }
 
 @("build_primitives.resolve.configure.resolve.testRoot")
