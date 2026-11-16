@@ -114,6 +114,15 @@ in registry packages are reported (D58).
 The action graph (`build_graph/actions.d`) lowers the variants to compile, archive,
 link, generate and test actions, exposed as task nodes in OBD2's id form.
 
+The test-only planner is `apps/ci/tools/plan-graph.d`; `--check` runs the
+gate over this repository's 75 test roots (167 variants, 167 compiles, 500
+actions). It passes oracle 8's planning scenarios with the real lint, oracle
+14's determinism scenario, oracle 20 step 3 (CIC5) over 1,865 reads, and
+oracle 24 steps 1 and 3. Open: oracle 14's coverage-fallback scenario, which
+needs coverage attempts planned; oracle 20 steps 1 and 2 (the system-call
+trace and the edit sample); and oracle 24 steps 2 and 4 (the trace, and
+links: the read set does not record a link a lookup crossed yet, BGF3).
+
 ## E3: Local execution and the shared store
 
 - Compile, archive, link and test actions on the task-DAG executor, with the
