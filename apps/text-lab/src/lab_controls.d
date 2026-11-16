@@ -27,7 +27,7 @@ import sparkles.ui.state : hitAt, hoverTargets;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui_app.specimen_font : sameSpecimenRequest, SpecimenFallbackFace, SpecimenFontRequest;
 
-import sparkles.ui_app.font_library : FontEntry, FontFinder, FontLibrary, FontLoad;
+import sparkles.ui_app.font_library : FontEntry, FontFinder, FontLibrary, FontLoad, StyleLoads;
 import font_settings : applyVariations, axisSettings, LabSettings;
 import unicode_samples : Showcase, showcaseFonts, unicodeSamples;
 
@@ -522,23 +522,9 @@ final class LabControls
                 family = entry.family;
         if (!family.length) return;
         stylesFor = prepared;
-        currentStyles[] = null;
-        foreach (slot; 0 .. 3)
-        {
-            size_t best = size_t.max;
-            int bestDistance = int.max;
-            foreach (i, entry; library.entries)
-            {
-                const italic = slot != 0;
-                const weight = slot == 1 ? 400 : 700;
-                if (entry.family != family || entry.italic != italic
-                    || (weight == 700 && entry.weight < 600)) continue;
-                const d = entry.weight > weight ? entry.weight - weight : weight - entry.weight;
-                if (d < bestDistance) { best = i; bestDistance = d; }
-            }
-            if (best != size_t.max)
-                currentStyles[slot] = library.request(library.entries[best].path, library.entries[best].index);
-        }
+        // The family's real bold, italic and bold-italic files, as the editor's document font takes them.
+        const index = library.familyIndex(family);
+        currentStyles = index == size_t.max ? StyleLoads.init : library.requestStyles(index);
     }
 
     private void acceptModel() @system

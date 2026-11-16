@@ -92,7 +92,15 @@ a library preparation commit does not close an app or device acceptance gate.
    Keep document typography independent of interface typography. Generate the
    pane from one settings subject with shared numeric editors/runtime bounds;
    integrate accepted theme/presentation choices rather than adding a second
-   settings renderer.
+   settings renderer. The library part is delivered (2026-11-16): font
+   discovery, preparation and the fuzzy finder moved from text-lab into
+   [`sparkles.ui_app.font_library`](../../libs/ui-app/reference/font-library.md),
+   with the monospace filter and show-all, real family members, and the
+   document font's controls and capability report from `sparkles.font.families`
+   ([`FTD47`–`FTD51`](../font/discovery.md#_9-families-and-the-document-font)).
+   Remaining: the app's picker and generated pane, applying the document font
+   to the native cell font, line height, letter spacing and ligatures in the
+   editor's layout, and per-style coordinates for a variable family's bold.
 3. **Editor presentation and tools (A, H).** Line numbers, current-line
    treatment, indentation guides, bracket matching and trailing-whitespace
    marks are drawn, each switchable (testing §6, 2026-11-16). Complete the undo-branch

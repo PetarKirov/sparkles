@@ -15,12 +15,15 @@ import sparkles.event_horizon.raw_pool : RawCompletion, RawCpuPool, RawJob, RawP
 import sparkles.event_horizon.sys.vfs : BlockingVfs;
 import sparkles.font.catalog : BuildOptions, BuildReport, buildCatalog, Catalog, FontSource, SourceKind;
 import sparkles.font.corrections : CorrectionPolicy;
-import sparkles.font : openFace, Tag;
+import sparkles.font : openFace, Tag, UserCoordinate;
+import sparkles.font.families : collectFamilies, DocumentFont, FamilyStyle, FontControls, fontControls,
+    FontFamily, instanceCoordinates, LigatureSupport, ligatureSupport, writeRecordPath;
 import sparkles.base.unique : makeUnique, Unique;
 import sparkles.fuzzy : CandidateSnapshot, CandidateView, ConstraintWorkspace, DefaultFuzzyCaps,
-    FuzzyLimits, MatchConfig, MatcherWorkspace, parseQuery, positions, QueryStorage,
+    FuzzyError, FuzzyLimits, MatchConfig, MatcherWorkspace, parseQuery, positions, QueryStorage,
     RankedResult, Scoring, SearchAccumulator, searchChunk, SearchLimits, SearchStop, TextRange;
 import sparkles.ui.components.picker : PickerState;
+import sparkles.ui_app.specimen_font : SpecimenFontRequest;
 
 /// A picker entry names an exact member of a font file.
 struct FontEntry
@@ -123,6 +126,9 @@ final class FontLibrary
     private ulong access;
     private FontLoad*[] retained;
     FontEntry[] entries;
+    /// The catalog's families (font `FTD47`) and their names, once `ready`.
+    FontFamily[] families;
+    string[] familyNames;
     bool ready;
     string error;
 
@@ -212,9 +218,96 @@ final class FontLibrary
                     entries ~= FontEntry(path, label, r.index, c.text(r.family).idup,
                         weight, italic, r.axes.count != 0);
                 }
+                UniqueBuffer!FontFamily grouped;
+                collectFamilies(catalogJob.catalog, grouped);
+                families = grouped[].dup;
+                foreach (family; families)
+                    familyNames ~= catalogJob.catalog.text(family.name).idup;
             }
         }
         return changed;
+    }
+
+    /// Where `style`'s member of `families[family]` is; absent when the family has none (font `FTD47`).
+    FontMember member(size_t family, FamilyStyle style) @system
+    {
+        FontMember m;
+        if (catalogJob is null || family >= families.length) return m;
+        const s = families[family][style];
+        if (!s.present) return m;
+        UniqueBuffer!char path;
+        if (!writeRecordPath(catalogJob.catalog, s.record, path)) return m;
+        m.path = path[].idup;
+        m.index = catalogJob.catalog.records[s.record].index;
+        m.coordinates = s.userCoordinates.dup;
+        m.present = true;
+        return m;
+    }
+
+    /// The index in `families` of the family named `name`, ignoring ASCII case, or `size_t.max`.
+    size_t familyIndex(scope const(char)[] name) const @safe
+    {
+        import std.uni : sicmp;
+
+        foreach (i, n; familyNames)
+            if (sicmp(n, name) == 0) return i;
+        return size_t.max;
+    }
+
+    /**
+    Queues the regular member of `families[family]` and its real bold, italic
+    and bold-italic files. A style slot carries a file, not coordinates: a
+    member that is an instance of the regular face itself (a variable bold)
+    is not queued, so the renderer draws that style with the regular face
+    and $(LREF controls) reports it unsupported, and a separate variable
+    file (a variable italic) draws at its default instance.
+    */
+    DocumentFontLoads requestDocumentFont(size_t family) @system
+    {
+        DocumentFontLoads loads;
+        loads.family = family;
+        const regular = member(family, FamilyStyle.regular);
+        if (!regular.present) return loads;
+        loads.regular = request(regular.path, regular.index);
+        loads.styles = requestStyles(family);
+        return loads;
+    }
+
+    /// The bold, italic and bold-italic slots of $(LREF requestDocumentFont) alone.
+    StyleLoads requestStyles(size_t family) @system
+    {
+        StyleLoads styles;
+        const regular = member(family, FamilyStyle.regular);
+        if (!regular.present) return styles;
+        static immutable FamilyStyle[3] slots = [FamilyStyle.bold, FamilyStyle.italic, FamilyStyle.boldItalic];
+        foreach (slot, style; slots)
+        {
+            const m = member(family, style);
+            if (m.present && (m.path != regular.path || m.index != regular.index))
+                styles[slot] = request(m.path, m.index);
+        }
+        return styles;
+    }
+
+    /**
+    What `families[family]` supports of the document font's controls (font
+    `FTD51`), as `loads` can draw them: ligatures are read from the regular
+    member once its bytes are prepared (`unknown` before), and a style is
+    available only when its own file was queued.
+    */
+    FontControls controls(size_t family, in DocumentFontLoads loads) @system
+    {
+        if (family >= families.length) return FontControls.init;
+        auto ligatures = LigatureSupport.unknown;
+        if (loads.regular !is null && loads.regular.done && loads.regular.ok)
+        {
+            const face = openFace(loads.regular.bytes[], loads.regular.index);
+            if (face.hasValue) ligatures = ligatureSupport(face.value);
+        }
+        auto c = fontControls(families[family], ligatures);
+        foreach (slot; 0 .. 3)
+            c.styles[slot + 1] = loads.styles[slot] !is null && (!loads.styles[slot].done || loads.styles[slot].ok);
+        return c;
     }
 
     /// Queues a file read; prepared files are reused without another read.
@@ -285,6 +378,60 @@ final class FontLibrary
     }
 }
 
+/// A family member's file: its path, its index in a collection, and the coordinates that realize the style.
+struct FontMember
+{
+    string path;
+    uint index;
+    const(UserCoordinate)[] coordinates;
+    bool present;
+}
+
+/// The files a document font over one family draws from: the regular member and the bold, italic and bold-italic slots.
+struct DocumentFontLoads
+{
+    size_t family = size_t.max;
+    FontLoad* regular;
+    StyleLoads styles;
+}
+
+/**
+The specimen request that draws `font` over `loads` (font `FTD51`): the
+regular member at `font.size` (rounded to whole pixels) with
+`instanceCoordinates`' `wght` and `opsz`, and each prepared style file.
+False while a load is pending or when the regular member failed; `request`
+is left alone then. The request borrows the loads' bytes, so `retain` them
+with `FontLibrary.retain`. Line height, letter spacing and ligatures are not
+part of a specimen request; the caller applies them to its own layout.
+*/
+bool documentFontRequest(in FontFamily family, in DocumentFontLoads loads, in DocumentFont font,
+    ref SpecimenFontRequest request) @system
+{
+    if (loads.regular is null || !loads.regular.done || !loads.regular.ok) return false;
+    foreach (s; loads.styles)
+        if (s !is null && !s.done) return false;
+    const d = font.clamped();
+    SpecimenFontRequest r;
+    r.path = loads.regular.path;
+    r.faceIndex = loads.regular.index;
+    r.px = cast(int)(d.size + 0.5f);
+    UserCoordinate[6] coordinates;
+    const n = instanceCoordinates(family, FamilyStyle.regular, d, coordinates);
+    r.coordinates = coordinates[0 .. n].dup;
+    r.bytes = loads.regular.bytes[];
+    r.contentHash = loads.regular.contentHash;
+    r.familyStyles = true;
+    foreach (slot, s; loads.styles)
+        if (s !is null && s.ok)
+        {
+            r.styleBytes[slot] = s.bytes[];
+            r.styleIndices[slot] = s.index;
+            r.styleContentHashes[slot] = s.contentHash;
+        }
+    request = r;
+    return true;
+}
+
 /// Synchronous bounded fuzzy search; candidates contain catalog metadata only.
 struct FontFinder
 {
@@ -297,13 +444,31 @@ struct FontFinder
     /// Installs the completed immutable catalog snapshot.
     void corpus(in FontEntry[] entries) @safe
     {
+        install(mainFontEntries(entries), (size_t i) => entries[i].label);
+    }
+
+    /**
+    Installs the families as the corpus (EAP16): the monospace ones only, or
+    every family when `showAll`. `entryIndex` then maps a row to its index in
+    `families`.
+    */
+    void families(in FontFamily[] families, in string[] names, bool showAll) @safe
+    {
+        size_t[] chosen;
+        foreach (i, family; families)
+            if (showAll || family.monospace) chosen ~= i;
+        install(chosen, (size_t i) => names[i]);
+    }
+
+    private void install(size_t[] chosen, scope string delegate(size_t) @safe label) @safe
+    {
         candidates = null;
-        indices = mainFontEntries(entries);
+        indices = chosen;
         foreach (i; indices)
         {
             CandidateView candidate;
             candidate.id.low = i + 1;
-            candidate.path = entries[i].label;
+            candidate.path = label(i);
             candidates ~= candidate;
         }
         if (matcher.empty) matcher = makeUnique!(MatcherWorkspace!DefaultFuzzyCaps)();
@@ -316,13 +481,34 @@ struct FontFinder
     /// Publishes the global best matches and preserves selection identity.
     void search(ref PickerState!128 state) @safe
     {
-        if (matcher.empty) return;
-        const source = state.prompt.text.idup;
+        RankedResult[128] rows;
+        const count = rank(state.prompt.text.idup, rows, state.error);
+        if (count == size_t.max) return;
+        state.publish(rows[0 .. count], generation, false);
+        state.corpusTotal = candidates.length;
+    }
+
+    /// The best matches of `source` as `entryIndex` values, best first, at most 128.
+    size_t[] matching(string source) @safe
+    {
+        RankedResult[128] rows;
+        FuzzyError error;
+        const count = rank(source, rows, error);
+        size_t[] result;
+        if (count != size_t.max)
+            foreach (row; rows[0 .. count]) result ~= entryIndex(row.corpusIndex);
+        return result;
+    }
+
+    /// Ranks every candidate against `source` into `rows`; `size_t.max` on an error.
+    private size_t rank(string source, ref RankedResult[128] rows, ref FuzzyError error) @safe
+    {
+        if (matcher.empty) return size_t.max;
         const parsed = parseQuery(source, matcher.get.textWorkspace);
         if (parsed.hasError)
         {
-            state.error = parsed.error;
-            return;
+            error = parsed.error;
+            return size_t.max;
         }
         query = parsed.value;
         CandidateSnapshot snapshot;
@@ -330,7 +516,7 @@ struct FontFinder
         snapshot.candidates = candidates;
         SearchAccumulator!128 accumulator;
         auto cursor = accumulator.begin(snapshot.id, ++generation, generation, 0, 128);
-        if (cursor.hasError) return;
+        if (cursor.hasError) return size_t.max;
         ConstraintWorkspace!DefaultFuzzyCaps constraints;
         while (true)
         {
@@ -338,16 +524,14 @@ struct FontFinder
                 MatchConfig.init, Scoring.init, FuzzyLimits.init, accumulator, matcher.get, constraints);
             if (progress.hasError)
             {
-                state.error = progress.error;
-                return;
+                error = progress.error;
+                return size_t.max;
             }
             cursor.value = progress.value.cursor;
             if (progress.value.stop == SearchStop.exhausted) break;
         }
-        RankedResult[128] rows;
         const count = accumulator.page(rows);
-        if (count.hasValue) state.publish(rows[0 .. count.value], generation, false);
-        state.corpusTotal = candidates.length;
+        return count.hasValue ? count.value : size_t.max;
     }
 
     /// Authoritative merged UTF-8 byte ranges for witness highlighting.
@@ -522,4 +706,92 @@ size_t[] mainFontEntries(in FontEntry[] entries) @safe
     }
     assert(complete && library.loads.length == owners.length);
     foreach (i, job; owners) foreach (other; owners[i + 1 .. $]) assert(job !is other);
+}
+
+/// The family picker lists monospace families unless asked for all of them.
+@("ui_app.fontLibrary.finder.familiesMonospaceAndShowAll")
+@safe unittest
+{
+    auto families = new FontFamily[3];
+    families[0].monospace = true;
+    families[2].monospace = true;
+    const names = ["Fira Code", "Roboto", "Iosevka"];
+    FontFinder finder;
+    finder.families(families, names, false);
+    assert(finder.matching("") == [0, 2]);
+    foreach (i; finder.matching("roboto")) assert(i != 1, "a proportional family is filtered out");
+    assert(finder.matching("iosevka")[0] == 2);
+    finder.families(families, names, true);
+    assert(finder.matching("") == [0, 1, 2]);
+    assert(finder.matching("roboto")[0] == 1, "show all reaches it");
+    PickerState!128 state;
+    state.open();
+    foreach (c; "fira") assert(state.prompt.type(c));
+    finder.search(state);
+    assert(state.rowCount == 1 && finder.entryIndex(state.selectedCorpusIndex) == 0);
+}
+
+/// A document font over real files: its members load in the background and
+/// become a specimen request; a family without italics reports them unsupported.
+@("ui_app.fontLibrary.documentFontRequest")
+@system unittest
+{
+    import core.thread : Thread;
+    import core.time : MonoTime, msecs, seconds;
+    import std.conv : text;
+    import std.file : copy, mkdir, rmdirRecurse, tempDir;
+    import std.process : environment;
+    import sparkles.font.families : ControlState, FontControl;
+
+    const root = environment.get("SPARKLES_FONTS_PATH");
+    assert(root.length, "SPARKLES_FONTS_PATH is required");
+    const directory = buildPath(tempDir(), text("sparkles-font-families-", MonoTime.currTime.ticks));
+    mkdir(directory);
+    scope (exit) rmdirRecurse(directory);
+    foreach (name; ["DejaVuSansMono.ttf", "DejaVuSansMono-Bold.ttf", "DejaVuSansMono-Oblique.ttf",
+        "DejaVuSansMono-BoldOblique.ttf", "Roboto-Regular.ttf", "Roboto-Bold.ttf"])
+        copy(buildPath(root, name), buildPath(directory, name));
+    auto library = new FontLibrary;
+    library.start([directory], "");
+    scope (exit) library.stop();
+    const deadline = MonoTime.currTime + 10.seconds;
+    while (!library.ready && MonoTime.currTime < deadline)
+    {
+        library.poll();
+        Thread.sleep(1.msecs);
+    }
+    assert(library.ready && library.familyNames == ["DejaVu Sans Mono", "Roboto"], library.familyNames.text);
+    const dejavu = library.familyIndex("dejavu sans mono");
+    const roboto = library.familyIndex("Roboto");
+    assert(dejavu == 0 && roboto == 1 && library.familyIndex("Missing") == size_t.max);
+    assert(library.member(dejavu, FamilyStyle.italic).path == buildPath(directory, "DejaVuSansMono-Oblique.ttf"));
+
+    auto loads = library.requestDocumentFont(dejavu);
+    auto robotoLoads = library.requestDocumentFont(roboto);
+    SpecimenFontRequest request;
+    DocumentFont font;
+    font.size = 15.6;
+    while (!documentFontRequest(library.families[dejavu], loads, font, request) && MonoTime.currTime < deadline)
+    {
+        library.poll();
+        Thread.sleep(1.msecs);
+    }
+    assert(request.path == buildPath(directory, "DejaVuSansMono.ttf") && request.px == 16);
+    assert(request.familyStyles && request.bytes.length && request.coordinates.length == 0);
+    foreach (bytes; request.styleBytes) assert(bytes.length, "every style is a real file");
+    const controls = library.controls(dejavu, loads);
+    assert(controls.supports(FontControl.bold) && controls.supports(FontControl.boldItalic));
+    assert(controls.state(FontControl.ligatures) != ControlState.unknown, "read from the prepared bytes");
+    assert(controls.state(FontControl.weight) == ControlState.unsupported);
+
+    while (!documentFontRequest(library.families[roboto], robotoLoads, font, request) && MonoTime.currTime < deadline)
+    {
+        library.poll();
+        Thread.sleep(1.msecs);
+    }
+    assert(request.styleBytes[0].length && !request.styleBytes[1].length && !request.styleBytes[2].length);
+    const robotoControls = library.controls(roboto, robotoLoads);
+    assert(robotoControls.supports(FontControl.bold));
+    assert(robotoControls.state(FontControl.italic) == ControlState.unsupported
+        && robotoControls.state(FontControl.boldItalic) == ControlState.unsupported);
 }

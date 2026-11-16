@@ -2333,6 +2333,10 @@
             "link": "/libs/ui-app/reference/specimen-fonts"
           },
           {
+            "text": "Font library and document fonts",
+            "link": "/libs/ui-app/reference/font-library"
+          },
+          {
             "text": "Unicode showcase",
             "link": "/libs/ui-app/reference/unicode-showcase"
           },
