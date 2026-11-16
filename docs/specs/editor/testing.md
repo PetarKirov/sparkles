@@ -1227,3 +1227,28 @@ move. Switching to the default or an unknown font mid-load left the font
 service busy forever. The review found no defect in the row-count cache and
 fast paths, the presentation helpers, line editing, the regex work bounds,
 the session record or the undo inspector.
+
+### Android devices — 2026-11-16
+
+`.#editor-apk-debug` from this series ran on the Xiaomi Pad (15006456,
+Android 16, 3200×2136) and the test phone (bd123586, Android 14, 2400×1080).
+On both, the code example drew with its line-number gutter, indentation
+guides, current line, every corpus script, the inspector's undo tree and
+the status bar. On the tablet the Commands chip opened the palette, "find"
+filtered it, Find opened the bar, and a query painted three matches, counted
+"1 of 3" and wrapped. On the phone the settings pane opened from the
+palette; Gboard's on-screen keys typed "да" into the document above the
+keyboard in portrait, and the recovery revision advanced.
+
+The run found and fixed two defects: the settings pane read a window's
+pixel pointer positions as cells, so taps never reached its rows (after the
+fix a tap expanded View and a second toggled line numbers off, which the
+document then showed); and a view that grew when the keyboard or palette
+left kept empty rows below the end (`editor.app.growingViewFillsFromAbove`).
+Open findings: Android highlighting reports "Grammar unavailable" (the APK
+ships no grammars); in landscape on the phone the header and tabs fill the
+space above the soft keyboard; the settings pane ignores the keyboard inset;
+in portrait the header chips truncate ("C…"); one tap right after launch
+was lost on the tablet and did not reproduce; and Gboard committed text
+directly, so live Android preedit remains unverified. Launch arguments in
+`files/next-launch.args` are one per line.
