@@ -12,6 +12,10 @@ dflags "-preview=in" "-preview=dip1000"
 
 
 configuration "library" {
+    // Test-support modules: only the test root compiles them, so a
+    // `version (unittest)` in them changes nothing a dependent sees
+    // (build-graph BGV4).
+    excludedSourceFiles "src/sparkles/versions/testing.d" "src/sparkles/versions/vers_roundtrip_test.d"
     targetType "library"
     dependency "sparkles:base" path="../.."
 }

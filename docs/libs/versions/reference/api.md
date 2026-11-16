@@ -20,8 +20,9 @@ There are three import patterns:
 ## `sparkles.versions`
 
 The package module (`package.d`). Publicly re-exports `traits`,
-`parsing`, `ranges`, `operations`, `vers`, `purl`, `any`, and `schemes`;
-under `version(unittest)` it also re-exports `testing`.
+`parsing`, `ranges`, `operations`, `vers`, `purl`, `any`, and `schemes`.
+A test imports `sparkles.versions.testing` itself: only the package's test
+root compiles it.
 
 ## `sparkles.versions.traits`
 

@@ -26,6 +26,3 @@ public import sparkles.versions.vers;
 public import sparkles.versions.purl;
 public import sparkles.versions.any;
 public import sparkles.versions.schemes;
-
-version (unittest)
-    public import sparkles.versions.testing;
