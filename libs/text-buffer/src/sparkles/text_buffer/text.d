@@ -502,11 +502,10 @@ private:
     }
 }
 
-version (unittest)
-{
-    /// Bytes `==` has read on this thread, for tests of TXB-TEXT7.
-    package size_t bytesCompared;
-}
+// Declared in every build, so the library and a consumer's `-unittest`
+// compile agree on it (build-graph BGV4); only tests use it.
+/// Bytes `==` has read on this thread, for tests of TXB-TEXT7.
+package size_t bytesCompared;
 
 static assert(Text.sizeof <= 2 * (void*).sizeof, "TXB-OWN4: a Text is at most two pointers");
 static assert(isChunkedSource!Text);
