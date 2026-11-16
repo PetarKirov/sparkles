@@ -6,6 +6,7 @@ import editor_document : Document;
 import session_archive : ArchiveCleanup, pruneSessionArchive;
 import session_checkpoint : CheckpointWriter;
 import session_directory : SessionDirectory;
+import session_record : SessionSettings;
 import session_snapshot : SessionSnapshot;
 import session_discovery : discoverSessions, RecoveryCatalog, RecoveryOffer;
 import sparkles.event_horizon.raw_pool : CpuJob, RawCompletion, RawCpuPool, RawPoolResult;
@@ -214,15 +215,15 @@ final class RecoverySession
 
     /// Capture only changed state, retaining text roots without flattening bytes on this thread.
     void observe(scope Document[] documents, ulong active, string acceptedTheme,
-        MonoTime now = MonoTime.currTime) @safe nothrow
+        MonoTime now = MonoTime.currTime, SessionSettings settings = SessionSettings.init) @safe nothrow
     {
-        if (stopped || (latest !is null && latest.matches(documents, active, acceptedTheme))) return;
+        if (stopped || (latest !is null && latest.matches(documents, active, acceptedTheme, settings))) return;
         if (revision == ulong.max)
         {
             initializationError = "Recovery observation identities are exhausted.";
             return;
         }
-        latest = SessionSnapshot.capture(documents, active, acceptedTheme, ++revision);
+        latest = SessionSnapshot.capture(documents, active, acceptedTheme, ++revision, settings);
         if (!haveFirstObserved) { firstObserved = now; haveFirstObserved = true; }
         if (writer !is null)
         {

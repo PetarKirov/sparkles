@@ -1,19 +1,22 @@
 /** The editor's presentation settings (`EAP5`): what the document pane draws. */
 module settings;
 
+import sparkles.ui.property_tree : Doc, Label, Range;
+import session_record : SessionSettings;
+
 /// Each part of the code-editor presentation, every one of which can be hidden.
 struct PresentationSettings
 {
     /// A line-number gutter beside the text.
-    bool lineNumbers = true;
+    @Label("Line numbers") bool lineNumbers = true;
     /// The caret's line on a raised background.
-    bool currentLine = true;
+    @Label("Current line") bool currentLine = true;
     /// Guides at each indentation stop of a line's leading spaces.
-    bool indentGuides = true;
+    @Label("Indentation guides") bool indentGuides = true;
     /// The bracket at the caret and its partner, or an unmatched one.
-    bool bracketMatching = true;
+    @Label("Bracket matching") bool bracketMatching = true;
     /// Trailing spaces and tabs, except where the caret is typing them.
-    bool trailingWhitespace = true;
+    @Label("Trailing whitespace") bool trailingWhitespace = true;
 }
 
 /// One presentation switch, as a command argument.
@@ -60,11 +63,11 @@ void toggle(ref PresentationSettings settings, PresentationToggle which) @safe p
 struct EditingSettings
 {
     /// Indent with tab characters rather than spaces.
-    bool useTabs;
+    @Label("Indent with tabs") bool useTabs;
     /// Columns per indentation level, 1–16.
-    ubyte indentWidth = 4;
+    @Label("Indentation width") @Range(1, 16, 1) ubyte indentWidth = 4;
     /// Enter copies the line's leading blanks.
-    bool autoIndent = true;
+    @Label("Auto-indent") bool autoIndent = true;
 }
 
 /// One indentation choice, as a command argument.
@@ -109,4 +112,68 @@ void choose(ref EditingSettings settings, IndentChoice choice) @safe pure nothro
     settings.choose(IndentChoice.autoIndent);
     settings.choose(IndentChoice.spaces);
     assert(!settings.useTabs && !settings.autoIndent && settings.indentWidth == 2);
+}
+
+/**
+The settings pane's subject (`EAP15`): every setting the editor offers, as
+one value, so the pane is generated from it through `PropertyTree` rather
+than drawn by hand. `.init` is the shipped configuration.
+*/
+struct EditorSettings
+{
+    @Label("View") @Doc("What the document pane draws (EAP5).")
+    PresentationSettings view;
+    @Label("Editing") @Doc("Indentation and Enter (EAP7).")
+    EditingSettings editing;
+}
+
+/// The pane's tree is generated from the subject, with its bounds.
+@("editor.settings.generatedTree")
+@safe unittest
+{
+    import sparkles.ui.components.tree_view : TreeViewState;
+    import sparkles.ui.property_tree : Edit, editProperty, EditValue, PropertyEditState, PropertyTree;
+    EditorSettings settings;
+    PropertyTree!EditorSettings tree;
+    TreeViewState!string state;
+    tree.rebuild(settings, state);
+    assert(tree.data.nodes.length >= 2, "the View and Editing sections");
+    PropertyEditState edits;
+    assert(!editProperty(settings, Edit("editing.indentWidth", EditValue.of(40.0)), edits).ok);
+    assert(editProperty(settings, Edit("view.lineNumbers", EditValue.of(false)), edits).ok);
+    assert(!settings.view.lineNumbers && settings.editing.indentWidth == 4);
+}
+
+/// The settings as the session record stores them (`EAP26`).
+SessionSettings toSession(in EditorSettings settings) @safe pure nothrow @nogc
+{
+    SessionSettings result;
+    static foreach (field; __traits(allMembers, PresentationSettings))
+        __traits(getMember, result, field) = __traits(getMember, settings.view, field);
+    static foreach (field; __traits(allMembers, EditingSettings))
+        __traits(getMember, result, field) = __traits(getMember, settings.editing, field);
+    return result;
+}
+
+/// The settings a session record restores; its width is already validated.
+EditorSettings fromSession(in SessionSettings stored) @safe pure nothrow @nogc
+{
+    EditorSettings result;
+    static foreach (field; __traits(allMembers, PresentationSettings))
+        __traits(getMember, result.view, field) = __traits(getMember, stored, field);
+    static foreach (field; __traits(allMembers, EditingSettings))
+        __traits(getMember, result.editing, field) = __traits(getMember, stored, field);
+    return result;
+}
+
+/// Every setting has a stored form, and the two convert exactly.
+@("editor.settings.sessionRoundTrip")
+@safe pure nothrow @nogc unittest
+{
+    EditorSettings settings;
+    settings.view.indentGuides = false;
+    settings.editing.indentWidth = 8;
+    settings.editing.useTabs = true;
+    assert(fromSession(toSession(settings)) == settings);
+    assert(fromSession(SessionSettings.init) == EditorSettings.init, "the shipped defaults agree");
 }

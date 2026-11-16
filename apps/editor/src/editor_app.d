@@ -14,9 +14,10 @@ import sparkles.ui.components.editor : drawIndentGuides, editorLineSpans, editor
 import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell, GutterChannel, withGutterCells;
 import sparkles.ui.editor.presentation : matchingBracket, trailingWhitespace;
 import find_bar : FindBar;
+import sparkles.ui.components.settings_pane : SettingsGeometry, settingsGeometryFor, SettingsPane;
 import sparkles.ui.editor.search : MatchRange, SearchBudget, replaceAll, replaceCurrent, selectAllMatches, selectNextMatch;
 import commands : FindOption;
-import settings : choose, EditingSettings, IndentChoice, PresentationSettings, PresentationToggle, toggle;
+import settings : choose, EditorSettings, fromSession, IndentChoice, PresentationToggle, toggle, toSession;
 import sparkles.ui.editor.line_edit : IndentOptions, lineCommentToken;
 import sparkles.ui.editor.context : CaretTarget;
 import sparkles.text_buffer.summary : Affinity;
@@ -501,8 +502,11 @@ struct EditorApp
     AppTheme theme;
     PaletteInput!(Command, 512) commands;
     bool inspector;
-    PresentationSettings presentation;
-    EditingSettings editing;
+    /// Every setting the pane edits (EAP15): presentation and indentation.
+    EditorSettings settings;
+    /// The settings pane, generated from `settings` (EAP15); it holds the keyboard while open.
+    SettingsPane!EditorSettings settingsPane;
+    private int[2] lastSize = [80, 24];
     /// The find and replace bar (EAP5, EAP7).
     FindBar finder;
     bool quitRequested;
@@ -667,6 +671,7 @@ struct EditorApp
         auto offered = recovery.offer(0);
         const restoredActive = offered.record.active;
         const restoredTheme = offered.record.theme;
+        settings = fromSession(offered.record.settings);
         if (replaceableUntitled) removeDocument(tabs[0].id);
         foreach (i; 0 .. offered.documentCount)
         {
@@ -1086,6 +1091,10 @@ struct EditorApp
         return b.add(Widget(kind: WidgetKind.column, children: rows, width: SizeSpec.grow()));
     }
 
+    /// The settings pane's size for the last frame's window.
+    private SettingsGeometry settingsGeometry() const @safe pure nothrow @nogc
+        => settingsGeometryFor(lastSize[0], lastSize[1]);
+
     /// The find bar's seed: the primary selection when it is one short line.
     private string findSeed() @safe
     {
@@ -1121,8 +1130,8 @@ struct EditorApp
     private void applyEditing() @safe
     {
         auto options = &document.field.state.options;
-        options.indent = IndentOptions(useTabs: editing.useTabs, width: editing.indentWidth,
-            autoIndent: editing.autoIndent);
+        options.indent = IndentOptions(useTabs: settings.editing.useTabs, width: settings.editing.indentWidth,
+            autoIndent: settings.editing.autoIndent);
         options.lineComment = lineCommentToken(document.language);
     }
 
@@ -1197,7 +1206,7 @@ struct EditorApp
     {
         TextMark[] marks;
         const state = &document.field.state;
-        if (presentation.bracketMatching && !state.composition.active && state.selection.primary.empty)
+        if (settings.view.bracketMatching && !state.composition.active && state.selection.primary.empty)
         {
             const match = matchingBracket(state.text, state.selection.primary.head);
             if (match.found)
@@ -1622,7 +1631,7 @@ struct EditorApp
     {
         if (recovery is null) return;
         recovery.observe(tabs, tabs.length ? tabs[activeTab].id : 0,
-            choosingTheme ? themeBeforePreview : themeName);
+            choosingTheme ? themeBeforePreview : themeName, MonoTime.currTime, toSession(settings));
     }
 
     /// Admit bytes before replacing any active state; unsupported UTF-8 leaves every tab intact.
@@ -1756,7 +1765,13 @@ struct EditorApp
         case Command.previousTab: activeTab = (activeTab + tabs.length - 1) % tabs.length; break;
         case Command.inspector: inspector = !inspector; break;
         case Command.presentation:
-            if (id.argument <= PresentationToggle.max) presentation.toggle(cast(PresentationToggle) id.argument);
+            if (id.argument <= PresentationToggle.max) settings.view.toggle(cast(PresentationToggle) id.argument);
+            break;
+        case Command.settings:
+            settingsPane.fileLayer = "the session";
+            // The pane keeps a pointer to `settings`, a field of this non-copyable
+            // app that outlives the pane it also owns.
+            (() @trusted => settingsPane.open(&settings, settings, settingsGeometry()))();
             break;
         case Command.find:
         case Command.replace:
@@ -1809,7 +1824,7 @@ struct EditorApp
             document.followCaret = true;
             break;
         case Command.indentation:
-            if (id.argument <= IndentChoice.max) editing.choose(cast(IndentChoice) id.argument);
+            if (id.argument <= IndentChoice.max) settings.editing.choose(cast(IndentChoice) id.argument);
             applyEditing();
             break;
         case Command.languages:
@@ -1912,6 +1927,11 @@ struct EditorApp
     {
         if (!recoveryExit) ensureInitialized();
         if (key.action == KeyAction.release) return;
+        if (settingsPane.active)
+        {
+            (() @trusted => cast(void) settingsPane.handleKey(key))();
+            return;
+        }
         if (pathDialog && pathInput.state.composition.active)
         {
             pathInput.key(key, now);
@@ -1963,6 +1983,16 @@ struct EditorApp
         finder.query.context.clipboardWrite = __traits(compiles, host.clipboard(""));
         finder.replacement.context.clipboardRead = canReadClipboard!H;
         finder.replacement.context.clipboardWrite = __traits(compiles, host.clipboard(""));
+        if (settingsPane.active)
+        {
+            event.match!(
+                (in KeyEvent key) { handleKey(key); },
+                (in PasteEvent paste) { (() @trusted => cast(void) settingsPane.handlePaste(paste.text[]))(); },
+                (in EndOfInput _) { closeRequested(host); },
+                (in _) { (() @trusted => cast(void) settingsPane.handleOverlay(event, settingsGeometry()))(); });
+            if (quitRequested) host.quit();
+            return;
+        }
         event.match!(
             (in KeyEvent key) { handleKey(key); },
             (in PasteEvent paste) { receivePaste(paste); },
@@ -2049,6 +2079,8 @@ struct EditorApp
             rows ~= closing.add(Widget(kind: WidgetKind.row, children: actions));
             return closing.finish(closing.add(Widget(kind: WidgetKind.column, children: rows)));
         }
+        lastSize = [host.size.width, host.size.height];
+        if (settingsPane.active) return (() @trusted => settingsPane.buildView(settingsGeometry()))();
         if (filesBusy) host.wakeIn(8.msecs);
         if (!filesBusy && startupCommand != Command.none)
         {
@@ -2236,7 +2268,7 @@ struct EditorApp
             // and the line-number gutter (EAP5). The caret is the host's cursor
             // (HST20) and takes no cell of its own.
             const digits = decimalDigits(count);
-            const gutterCells = presentation.lineNumbers ? digits + 1 : 0;
+            const gutterCells = settings.view.lineNumbers ? digits + 1 : 0;
             const width = host.size.width > 10 + gutterCells ? cast(size_t) host.size.width - 2 - gutterCells : 8;
             auto context = &document.field.context;
             context.options.wrapCells = width;
@@ -2296,7 +2328,7 @@ struct EditorApp
                         : editorLineSpans(document.field.state, line, options);
                     auto marks = globalMarks.dup;
                     findMarks(start, end, marks);
-                    if (presentation.trailingWhitespace)
+                    if (settings.view.trailingWhitespace)
                     {
                         const blank = trailingWhitespace(text, line);
                         // Whitespace being typed at the caret is not yet a mistake.
@@ -2305,19 +2337,19 @@ struct EditorApp
                     }
                     const logical = marks.length ? markSpans(plain, marks) : plain;
                     const layout = ParagraphLayout.of(text, line, context.options);
-                    const current = presentation.currentLine && line == caretLine && !composing
+                    const current = settings.view.currentLine && line == caretLine && !composing
                         && selection.ranges.length == 1 && selection.primary.empty;
                     foreach (row; visualRows(logical, layout, document.field.state))
                     {
                         if (line == document.firstLine && row.row < document.firstRow) continue;
                         if (rows.length == renderLimit) break;
-                        if (presentation.indentGuides) drawIndentGuides(row, layout, editing.indentWidth);
+                        if (settings.view.indentGuides) drawIndentGuides(row, layout, settings.editing.indentWidth);
                         const node = b.add(Widget(kind: WidgetKind.rich, width: SizeSpec.grow(),
                             height: SizeSpec.fixed(1), spans: row.spans, wrap: TextWrap.none,
                             caretColumn: row.caretColumn, slot: current ? Slot.surfaceRaised : Slot.inherit,
                             paintBackground: current));
                         shownRows ~= RowHit(node, line, row.row, row.inserted, row.caretColumn);
-                        if (presentation.lineNumbers)
+                        if (settings.view.lineNumbers)
                         {
                             auto cell = new GutterCell[1];
                             cell[0] = row.row == 0
@@ -2854,6 +2886,44 @@ struct EditorApp
     assert(!app.finder.open);
     type("!");
     assert(app.document.field.text.canFind("!"), "the document has the keyboard again");
+}
+
+/// The settings pane is generated from the settings subject, edits them live
+/// within their bounds, and gives the keyboard back when it closes (EAP15).
+@("editor.app.generatedSettings")
+@safe unittest
+{
+    import sparkles.input : charEvent, Key, keyEvent;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    EditorApp app;
+    RecordingHost host;
+    FrameSnapshot frame;
+    bool drawn(string label)
+    {
+        presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
+        foreach (node; frame.tree.nodes)
+        {
+            if (node.text == label) return true;
+            foreach (span; node.spans) if (span.text == label) return true;
+        }
+        return false;
+    }
+    app.execute(CommandId(Command.settings));
+    assert(app.settingsPane.active);
+    assert(drawn("View") && drawn("Editing"), "the subject's sections are the pane's rows");
+    // Open the View section and toggle its first row: the running settings change at once.
+    app.handle(host, keyEvent(Key.right));
+    app.handle(host, keyEvent(Key.down));
+    assert(drawn("Line numbers"));
+    app.handle(host, keyEvent(Key.enter));
+    assert(!app.settings.view.lineNumbers, "the pane edits the live subject");
+    app.handle(host, keyEvent(Key.escape));
+    app.handle(host, keyEvent(Key.escape));
+    assert(!app.settingsPane.active);
+    app.handle(host, charEvent('x'));
+    assert(app.document.field.text == "x", "the document has the keyboard again");
 }
 
 /// A displayed tab names its document even if an earlier tab closes before repaint.

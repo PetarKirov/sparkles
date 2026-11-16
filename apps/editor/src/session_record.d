@@ -38,6 +38,17 @@ struct SessionTab
     string durabilityWarning;
 }
 
+/// The accepted editor settings (`EAP15`), in a form owned by the record format.
+@WireStrict
+struct SessionSettings
+{
+    bool lineNumbers = true, currentLine = true, indentGuides = true, bracketMatching = true,
+        trailingWhitespace = true;
+    bool useTabs;
+    ubyte indentWidth = 4;
+    bool autoIndent = true;
+}
+
 /// One coherent session generation, including its accepted theme and active document.
 @WireStrict
 struct SessionRecord
@@ -45,10 +56,24 @@ struct SessionRecord
     ulong generation;
     ulong active;
     string theme;
+    /// Absent from version 2 records, which restore the shipped settings.
+    SessionSettings settings;
     SessionTab[] tabs;
 }
 
-private enum header = "SPARKLES-EDITOR-SESSION/2\n";
+/// A version 2 generation: no settings.
+@WireStrict
+private struct PreviousRecord
+{
+    ulong generation;
+    ulong active;
+    string theme;
+    SessionTab[] tabs;
+}
+
+private enum header = "SPARKLES-EDITOR-SESSION/3\n";
+// Version 2 lacks `settings`; it still decodes, with the shipped settings.
+private enum previousHeader = "SPARKLES-EDITOR-SESSION/2\n";
 private enum digestLength = 32;
 
 /// Encode one generation with a format version and BLAKE3 payload integrity.
@@ -59,7 +84,9 @@ Expected!string encodeSession(in SessionRecord record) @safe nothrow
     if (payload.hasError) return err!string("The session could not be encoded.");
     if (payload.value.length > size_t.max - header.length - digestLength)
         return err!string("The session is too large to encode.");
-    const digest = blake3(payload.value[]);
+    // Version 3 binds its header into the digest, so a damaged version byte
+    // cannot pass for an older format.
+    const digest = blake3(header ~ payload.value[]);
     auto bytes = new char[header.length + digestLength + payload.value.length];
     bytes[0 .. header.length] = header;
     foreach (i, byte_; digest) bytes[header.length + i] = cast(char) byte_;
@@ -70,21 +97,38 @@ Expected!string encodeSession(in SessionRecord record) @safe nothrow
 /// Refuse unsupported, truncated or corrupt records without changing their stored bytes.
 Expected!SessionRecord decodeSession(string bytes) @safe nothrow
 {
-    if (bytes.length < header.length + digestLength || bytes[0 .. header.length] != header)
+    static assert(previousHeader.length == header.length);
+    if (bytes.length < header.length + digestLength
+        || (bytes[0 .. header.length] != header && bytes[0 .. header.length] != previousHeader))
         return err!SessionRecord("The session version is unsupported or its header is incomplete.");
+    const previous = bytes[0 .. header.length] == previousHeader;
     const payload = bytes[header.length + digestLength .. $];
-    const digest = blake3(payload);
+    const digest = previous ? blake3(payload) : blake3(header ~ payload);
     foreach (i, byte_; digest)
         if (cast(ubyte) bytes[header.length + i] != byte_)
             return err!SessionRecord("The session checksum does not match; the record was preserved.");
-    auto record = (() @trusted => fromJSON!SessionRecord(payload))();
-    if (record.hasError) return err!SessionRecord("The session payload is invalid; the record was preserved.");
-    if (auto error = invalidRecord(record.value)) return err!SessionRecord(error);
-    return ok(record.value);
+    SessionRecord decoded;
+    if (previous)
+    {
+        auto record = (() @trusted => fromJSON!PreviousRecord(payload))();
+        if (record.hasError) return err!SessionRecord("The session payload is invalid; the record was preserved.");
+        decoded = SessionRecord(record.value.generation, record.value.active, record.value.theme,
+            SessionSettings.init, record.value.tabs);
+    }
+    else
+    {
+        auto record = (() @trusted => fromJSON!SessionRecord(payload))();
+        if (record.hasError) return err!SessionRecord("The session payload is invalid; the record was preserved.");
+        decoded = record.value;
+    }
+    if (auto error = invalidRecord(decoded)) return err!SessionRecord(error);
+    return ok(decoded);
 }
 
 private string invalidRecord(in SessionRecord record) @safe pure nothrow
 {
+    if (!record.settings.indentWidth || record.settings.indentWidth > 16)
+        return "The session indentation width is outside 1–16.";
     if (validateUtf8(record.theme).hasError) return "The session theme is not valid UTF-8.";
     bool[ulong] ids;
     bool active = record.tabs.length == 0 && record.active == 0;
@@ -189,4 +233,35 @@ private bool validPosition(string content, ulong position) @safe pure nothrow @n
         assert(decodeSession(corrupted.idup).hasError);
     }
     assert(decodeSession(encoded.value).hasValue);
+}
+
+/// Settings survive a round trip; a version 2 record still restores, with the
+/// shipped settings; an indentation width outside 1–16 is refused (EAP15, EAP26).
+@("editor.sessionRecord.settingsAndVersion2")
+@safe nothrow unittest
+{
+    SessionRecord current;
+    current.settings.lineNumbers = false;
+    current.settings.indentWidth = 2;
+    current.settings.useTabs = true;
+    const encoded = encodeSession(current);
+    assert(encoded.hasValue);
+    const decoded = decodeSession(encoded.value);
+    assert(decoded.hasValue && decoded.value.settings == current.settings);
+
+    PreviousRecord older;
+    older.generation = 7;
+    older.theme = "github-dark";
+    const payload = (() @trusted => toJSON(older))();
+    assert(payload.hasValue);
+    const digest = blake3(payload.value[]);
+    char[] bytes = previousHeader.dup;
+    foreach (byte_; digest) bytes ~= cast(char) byte_;
+    bytes ~= payload.value[];
+    const upgraded = decodeSession((() @trusted => cast(string) bytes)());
+    assert(upgraded.hasValue && upgraded.value.generation == 7 && upgraded.value.theme == "github-dark");
+    assert(upgraded.value.settings == SessionSettings.init);
+
+    current.settings.indentWidth = 40;
+    assert(encodeSession(current).hasError);
 }

@@ -2,7 +2,7 @@
 module session_snapshot;
 
 import editor_document : Document;
-import session_record : SessionRecord, SessionSelection, SessionSpan, SessionTab;
+import session_record : SessionRecord, SessionSelection, SessionSettings, SessionSpan, SessionTab;
 import sparkles.text_buffer.text : Text;
 import sparkles.ui.editor.selection : EditRange;
 import sparkles.ui.editor.state : ReadOnlySpan;
@@ -77,26 +77,31 @@ final class SessionSnapshot
     private CapturedTab[] tabs;
     private ulong revision_, active;
     private string theme;
+    private SessionSettings settings;
 
-    private this(scope Document[] documents, ulong active, string theme, ulong revision) @safe pure nothrow
+    private this(scope Document[] documents, ulong active, string theme, ulong revision,
+        SessionSettings settings) @safe pure nothrow
     in (revision != 0)
     {
         this.active = active;
         this.theme = theme;
+        this.settings = settings;
         revision_ = revision;
         foreach (document; documents) tabs ~= new CapturedTab(document);
     }
 
     /// Retain a coherent revision on the application thread.
-    static SessionSnapshot capture(scope Document[] documents, ulong active, string theme, ulong revision)
-        @safe pure nothrow => new SessionSnapshot(documents, active, theme, revision);
+    static SessionSnapshot capture(scope Document[] documents, ulong active, string theme, ulong revision,
+        SessionSettings settings = SessionSettings.init) @safe pure nothrow
+        => new SessionSnapshot(documents, active, theme, revision, settings);
 
     ulong revision() const @safe pure nothrow @nogc => revision_;
 
     /// Compare borrowed current state without flattening or allocating.
-    bool matches(scope Document[] documents, ulong active, string theme) const @safe pure nothrow @nogc
+    bool matches(scope Document[] documents, ulong active, string theme,
+        in SessionSettings settings = SessionSettings.init) const @safe pure nothrow @nogc
     {
-        if (this.active != active || this.theme != theme || tabs.length != documents.length) return false;
+        if (this.active != active || this.theme != theme || this.settings != settings || tabs.length != documents.length) return false;
         foreach (i, tab; tabs) if (!tab.matches(documents[i])) return false;
         return true;
     }
@@ -108,6 +113,7 @@ final class SessionSnapshot
         result.generation = generation;
         result.active = active;
         result.theme = theme;
+        result.settings = settings;
         foreach (tab; tabs) result.tabs ~= tab.record();
         return result;
     }

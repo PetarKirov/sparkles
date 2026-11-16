@@ -13,7 +13,8 @@ import settings : IndentChoice, label, PresentationToggle;
 enum Command : ubyte { none, palette, guide, newTab, nextTab, previousTab, inspector,
     example, themes, selectTheme, toggleTheme, edit, quit, open, save, saveAs, confirm, cancel,
     closeTab, discard, restoreSession, languages, selectLanguage, presentation, indentation,
-    find, replace, findNext, findPrevious, closeFind, findOption, findFocus, replaceOne, replaceAll, selectMatches }
+    find, replace, findNext, findPrevious, closeFind, findOption, findFocus, replaceOne, replaceAll, selectMatches,
+    settings }
 enum Scope : ubyte { @terminalScope modalModifiers, application, document, dialog, closing, recovery, find }
 /// The find bar's switches, as `findOption` arguments.
 enum FindOption : ubyte { regex, caseSensitive, wholeWord }
@@ -57,6 +58,10 @@ CommandBinding[] commandBindings(EditorTarget target) @safe pure nothrow
         bind(Scope.closing, chord('c'), Command.cancel, "Cancel close")];
     // Find and replace (EAP5, EAP7). A terminal keeps Ctrl-F and Ctrl-H for
     // Readline, so its bar opens through the leader there.
+    auto settingsKey = chord(','); settingsKey.ctrl = true;
+    result ~= target == EditorTarget.terminal
+        ? bind(Scope.application, leader, chord(','), Command.settings, "Settings")
+        : bind(Scope.application, settingsKey, Command.settings, "Settings");
     if (target == EditorTarget.terminal)
         result ~= [bind(Scope.application, leader, chord('f'), Command.find, "Find"),
             bind(Scope.application, leader, chord('h'), Command.replace, "Find and replace")];

@@ -1089,3 +1089,30 @@ reaches a bar field only while that bar (its epoch) and field are current.
 are painted, steps with Enter, switches to the replacement with Tab,
 replaces all, undoes once to restore both, checks an invalid regular
 expression edits nothing, and returns the keyboard with Escape.
+
+### Generated settings, persisted with the session — 2026-11-16
+
+The settings pane (Ctrl+, or F4 , in a terminal; also in the palette) is the
+shared `SettingsPane` over one subject, `EditorSettings`, so its rows,
+labels, bounds and edit history come from `PropertyTree` rather than a
+hand-drawn form: the View section is `PresentationSettings`, the Editing
+section `EditingSettings` (indentation width bounded to 1–16). Edits apply
+to the running editor at once, and the palette's View and Editing commands
+change the same values. While open the pane holds the keyboard, pointer and
+paste; Escape returns them to the document. Font controls join this
+subject with the font catalog (plan item 2).
+
+The accepted settings are part of the recovery session (`EAP26`): session
+records are now version 3, carrying `SessionSettings`, and bind their
+header into the BLAKE3 digest, so a damaged version byte cannot pass a
+version 3 record off as version 2. Version 2 records still decode, with the
+shipped settings, and a width outside 1–16 is refused. Restoring a session
+restores its settings.
+
+`editor.settings.generatedTree` checks the generated sections and that an
+out-of-bounds width is refused; `editor.settings.sessionRoundTrip` that the
+stored form converts exactly and the shipped defaults agree;
+`editor.sessionRecord.settingsAndVersion2` the round trip, the version 2
+upgrade and the width bound (the existing every-byte corruption test now
+also covers the header); `editor.app.generatedSettings` opens the pane,
+toggles line numbers from it, closes it and types into the document.
