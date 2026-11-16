@@ -222,8 +222,8 @@ a preedit — are drawn at the caret stop of their position, on the side of a
 soft wrap or bidi boundary that the range's affinity names. A preedit stands
 at its range's start, in place of the selected text it replaces.
 */
-VisualRow[] visualRows(scope const(TextSpan)[] logical, in ParagraphLayout layout, in EditorState state)
-    @safe pure nothrow
+VisualRow[] visualRows(scope const(TextSpan)[] logical, in ParagraphLayout layout, in EditorState state,
+    size_t firstRow = 0, size_t rowLimit = size_t.max) @safe pure nothrow
 {
     import sparkles.text_buffer.summary : Affinity;
 
@@ -292,7 +292,11 @@ VisualRow[] visualRows(scope const(TextSpan)[] logical, in ParagraphLayout layou
     }
 
     VisualRow[] rows;
-    foreach (r; 0 .. layout.rows.length)
+    // Only the rows asked for are projected: a long paragraph costs its window.
+    const rowCount = layout.rows.length;
+    const beginRow = firstRow < rowCount ? firstRow : rowCount;
+    const endRow = rowLimit < rowCount - beginRow ? beginRow + rowLimit : rowCount;
+    foreach (r; beginRow .. endRow)
     {
         VisualRow row;
         row.row = r;
@@ -911,4 +915,25 @@ unittest
     state.selection = SelectionSet.of(carets[], 0);
     const moved = visualRows(editorLineSpans(state, 0, host), layout, state);
     assert(moved[0].caretColumn == 2);
+}
+
+/// A row window projects exactly the rows a full projection has there.
+@("editor.view.visualRows.window")
+@safe pure nothrow unittest
+{
+    import sparkles.ui.editor.layout : LayoutOptions, ParagraphLayout;
+    import sparkles.ui.editor.testing : parse;
+    auto state = parse("aaaa bbbb cccc dddd eeee|");
+    LayoutOptions options;
+    options.wrapCells = 5;
+    const layout = ParagraphLayout.of(state.text, 0, options);
+    const logical = editorLineSpans(state, 0, EditorViewOptions(hostCursor: true));
+    const all = visualRows(logical, layout, state);
+    assert(all.length == 5);
+    const window = visualRows(logical, layout, state, 2, 2);
+    assert(window.length == 2 && window[0].row == 2 && window[1].row == 3);
+    assert(window[0].spans == all[2].spans && window[1].caretColumn == all[3].caretColumn);
+    assert(visualRows(logical, layout, state, 4, 10).length == 1);
+    assert(visualRows(logical, layout, state, 9, 1).length == 0);
+    assert(visualRows(logical, layout, state, 4, 10)[0].caretColumn == all[4].caretColumn);
 }

@@ -797,11 +797,31 @@ struct LayoutContext
                 && cachedText[i] == text)
                 return cached[i].rows.length;
         if (!options.wrapCells) return 1;
+        // No grapheme is wider than two cells or shorter than one byte, so a
+        // line of at most `wrapCells / 2` bytes is one row, without a layout.
+        const start = text.lineStart(line), length = text.lineEnd(line) - start;
+        if (2 * length <= options.wrapCells) return 1;
+        // Printable ASCII is one cell a byte: a line of it that fits is one row.
+        if (length <= options.wrapCells && printableAscii(text, start, start + length)) return 1;
         return ParagraphLayout.of(text, line, options).rows.length;
     }
 }
 
 static assert(isEditContext!LayoutContext);
+
+/// Whether `[from, to)` of `text` is printable ASCII, a cell per byte.
+private bool printableAscii(in Text text, size_t from, size_t to) @safe pure nothrow @nogc
+{
+    while (from < to)
+    {
+        const chunk = text.chunkAt(from);
+        const end = chunk.start + chunk.bytes.length < to ? chunk.start + chunk.bytes.length : to;
+        foreach (c; chunk.bytes[from - chunk.start .. end - chunk.start])
+            if (c < 0x20 || c > 0x7e) return false;
+        from = end;
+    }
+    return true;
+}
 
 private bool before(size_t lineA, size_t rowA, size_t lineB, size_t rowB) @safe pure nothrow @nogc
     => lineA < lineB || lineA == lineB && rowA < rowB;
@@ -1196,4 +1216,19 @@ version (unittest)
     assert(line == 1 && row == 0);
     scrollRows(c, text, -2, line, row);
     assert(line == 0 && row == 1);
+}
+
+/// A short line counts as one row without a layout, and agrees with one: wide
+/// and combining clusters included, at the bound and either side of it.
+@("editor.layout.rowCountShortLines")
+@safe pure nothrow unittest
+{
+    foreach (content; ["ab", "日本", "éé", "a\tb", "👍🏽x", "abcd ef", "int x = 1; // y", "a\x01b c"])
+        foreach (wrap; [1, 2, 3, 4, 6, 8, 12, 16])
+        {
+            const text = Text(content);
+            LayoutContext c;
+            c.options.wrapCells = wrap;
+            assert(c.rowCount(text, 0) == ParagraphLayout.of(text, 0, c.options).rows.length, content);
+        }
 }
