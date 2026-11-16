@@ -395,9 +395,6 @@ version (unittest)
     import std.array : array;
     import sparkles.build_primitives.dub_manifest : parseDubManifest;
 
-    package SubPackageRecipe recipe(string path, string sdl) @safe pure
-        => SubPackageRecipe(path, parseDubManifest(sdl).value);
-
     private string errorText(const DiscoveryError e) @safe
     {
         import std.conv : text;
@@ -407,6 +404,9 @@ version (unittest)
 
     private enum string[] linux = ["linux", "posix"];
 }
+
+package SubPackageRecipe recipe()(string path, string sdl) @safe pure
+    => SubPackageRecipe(path, parseDubManifest(sdl).value);
 
 @("build_primitives.workspace.package_graph.buildPackageGraph.configurationAwareEdges")
 @safe

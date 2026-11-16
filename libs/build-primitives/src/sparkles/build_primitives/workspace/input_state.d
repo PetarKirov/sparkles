@@ -779,29 +779,26 @@ private void settleTarget(V, Rights R, Cache)(DirRef!(V, R) root, ref LinkRead l
     }
 }
 
-version (unittest)
+// Observes `f` (all of it when `glob` is null) over `vfs` with `cache`,
+// following links beneath the root. A template, so that the test-only
+// modules it imports are imported only by the tests that call it.
+private InputState observed(V)(ref V vfs, ref DigestCache!() cache, string glob = null)
 {
-    // Observes `f` (all of it when `glob` is null) over `vfs` with `cache`,
-    // following links beneath the root. A template, so that the test-only
-    // modules it imports are imported only by the tests that call it.
-    InputState observed(V)(ref V vfs, ref DigestCache!() cache, string glob = null)
-    {
-        import sparkles.base.vfs.handles : ambientAuthority, openRoot;
-        import sparkles.base.vfs.types : ResolvePolicy, SymlinkPolicy;
-        import sparkles.build_primitives.fileset.pattern : CasePolicy;
-        import sparkles.build_primitives.fileset.testing : RecordingExecutor;
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : ResolvePolicy, SymlinkPolicy;
+    import sparkles.build_primitives.fileset.pattern : CasePolicy;
+    import sparkles.build_primitives.fileset.testing : RecordingExecutor;
 
-        auto sets = Filesets(CasePolicy.sensitive);
-        const f = glob is null ? sets.everything : sets.glob(glob).value;
-        ResolvePolicy beneath;
-        beneath.symlinks = SymlinkPolicy.beneath;
-        auto root = openRoot!(Rights.readOnly)(&vfs, "", ambientAuthority(), beneath);
-        assert(!root.hasError);
-        RecordingExecutor exec;
-        auto got = observe(root.value.borrow, sets, f, cache, exec);
-        assert(!got.hasError, got.hasError ? got.error.context : "");
-        return got.value;
-    }
+    auto sets = Filesets(CasePolicy.sensitive);
+    const f = glob is null ? sets.everything : sets.glob(glob).value;
+    ResolvePolicy beneath;
+    beneath.symlinks = SymlinkPolicy.beneath;
+    auto root = openRoot!(Rights.readOnly)(&vfs, "", ambientAuthority(), beneath);
+    assert(!root.hasError);
+    RecordingExecutor exec;
+    auto got = observe(root.value.borrow, sets, f, cache, exec);
+    assert(!got.hasError, got.hasError ? got.error.context : "");
+    return got.value;
 }
 
 /// A state's members are in path order, each with the BLAKE3 of its bytes;
