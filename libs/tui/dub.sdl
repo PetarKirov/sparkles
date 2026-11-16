@@ -18,6 +18,10 @@ dflags "-preview=in" "-preview=dip1000"
 // belong to `sparkles:ui`, which adapts to this library rather than the reverse.
 
 configuration "library" {
+    // Test-support modules: only the test root compiles them, so a
+    // `version (unittest)` in them changes nothing a dependent sees
+    // (build-graph BGV4).
+    excludedSourceFiles "src/sparkles/tui/integration.d"
     targetType "library"
     dependency "sparkles:base" path="../.."
     dependency "sparkles:input" path="../.."
