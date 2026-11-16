@@ -658,8 +658,9 @@ source or a guarantee of the width of an insertion.
 ## 13. Discovery, matching and fallback
 
 [`discovery.md`](./discovery.md) refines this section to operation level
-(`FTD13`–`FTD46`): sources and records, the persistent catalog, matching,
-chains, the box-drawing face, whole-span trials and the correction registry.
+(`FTD13`–`FTD51`): sources and records, the persistent catalog, matching,
+chains, the box-drawing face, whole-span trials, the correction registry, and
+the families and document-font controls a font picker offers.
 
 **FTD1: One catalog.** A font catalog **must** be built from [font sources](../../glossary.md#font-source) into [face
 records](../../glossary.md#face-record) produced by this library's parser. No record's content **may** come

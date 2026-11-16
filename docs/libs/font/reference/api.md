@@ -543,6 +543,31 @@ coordinates, a `MatchScore` of (phase, distance) per step, and the
 below 600; a slant for an italic or oblique request an upright face
 answers). `found` is false when no family matches.
 
+## Families and the document font — `sparkles.font.families`
+
+`collectFamilies(catalog, into)` appends a `FontFamily` per family the
+catalog names, in ASCII-folded order: its `name` (a `StringRef` into the
+catalog), the `StyleFace` realizing each `FamilyStyle` (`regular`, `bold`,
+`italic`, `boldItalic`), `monospace`, and the regular member's `wght` and
+`opsz` axes as `DeclaredAxis` values. Members come from `matchFont` with
+synthesis off, so a family without a bold face has no bold member; a
+variable face's bold is its own record with `wght` 700 among the member's
+`userCoordinates`. `monospace` needs one advance (or a CJK face's two) and
+the ASCII letters and digits. `writeRecordPath(catalog, record, writer)`
+writes the file a record came from.
+
+`ligatureSupport(face)` reads `GSUB` for `liga`, `calt` or `dlig`;
+`fontControls(family, ligatures)` reports every `FontControl` (`size`,
+`lineHeight`, `letterSpacing`, `bold`, `italic`, `boldItalic`, `ligatures`,
+`weight`, `opticalSize`) as `available`, `unsupported` or `unknown`, so an
+application shows a control the family cannot honour as disabled.
+`DocumentFont` holds the family, size (6–72 px), ligatures, line height
+(1.0–2.5), letter spacing (−2 to 4 px), weight and optical size (0 follows
+the size), with `@Range` bounds; `clamped()` and `fitTo(controls)` keep it
+inside them and the declared axes, and
+`instanceCoordinates(family, style, font, into)` gives the coordinates to
+instance a member with. The interface font is not part of it.
+
 ## Fallback chains — `sparkles.font.fallback`, `box_face`
 
 | Operation                                             | Result                                                                                                                 |

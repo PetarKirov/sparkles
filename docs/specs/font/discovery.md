@@ -586,16 +586,68 @@ rasterizer, `unsupportedCapability`.
      missing table matching a listed length of 0 (`tt_check_trickyness`,
      FreeType 2.14.3).
 
-## 9. Oracles
+## 9. Families and the document font
 
-| Operations      | Oracle                                                                                                                                             | Known divergence, and the substitute oracle                                                                                                                                                                                                                                                                                                                     |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FTD16`–`FTD21` | `fc-scan` over the bundle for family, style, weight, width and coverage; the records of hand-built fixtures                                        | fontconfig maps weights onto its own scale, reads a width from the style name when `usWidthClass` is absent, reads an oblique slant from a style name such as "Oblique" (DejaVu Sans Mono Oblique), and leaves C0 controls mapped to empty glyphs out of the charset; this page reads `OS/2` and the axes only. Substitute: fixtures and the raw `OS/2` values. |
-| `FTD18`         | `fc-list` on Linux; on macOS and Windows the CI runners' listing                                                                                   | —                                                                                                                                                                                                                                                                                                                                                               |
-| `FTD22`–`FTD24` | scenarios over `MemVfs`, whose modification times are set exactly                                                                                  | —                                                                                                                                                                                                                                                                                                                                                               |
-| `FTD25`–`FTD30` | hand-derived traces of CSS Fonts Level 4 §5.2 over a synthetic family of nine weights, two widths and four styles, and a variable family           | CSS leaves the synthesis threshold to the browser; this page follows Blink's 600.                                                                                                                                                                                                                                                                               |
-| `FTD31`–`FTD34` | fixtures with known coverage                                                                                                                       | —                                                                                                                                                                                                                                                                                                                                                               |
-| `FTD35`–`FTD38` | HarfBuzz and FreeType over the generated face: every glyph opens, shapes and rasterizes; hand-computed pixel coverage of lines, blocks and shades  | —                                                                                                                                                                                                                                                                                                                                                               |
-| `FTD40`         | a property over the bundle's faces: for each face and each scalar the rule prunes it for, alone and in sampled sequences, `hb_shape` gives glyph 0 | —                                                                                                                                                                                                                                                                                                                                                               |
-| `FTD39`–`FTD43` | real faces with inspected coverage: a mark sequence, an RGI ZWJ sequence and an Arabic word, each with a failing primary                           | —                                                                                                                                                                                                                                                                                                                                                               |
-| `FTD44`–`FTD46` | HarfBuzz 14.6.0 (`hb_ot_math_get_constant`, `hb_ot_layout_get_glyph_class`, `hb_font_get_nominal_glyph`); FreeType's `FT_IS_TRICKY`                | The signatures' fonts may not be redistributed; fixtures rebuild them byte for byte, as `testing.md` describes.                                                                                                                                                                                                                                                 |
+A picker offers families, and a code editor sets a document font over one.
+These operations derive both from a catalog's records without reading font
+bytes again, except for ligatures, which the records do not hold.
+
+**FTD47: Family members.** `collectFamilies` **must** list every family the
+catalog's family index names as the first record's own family name, once, in
+ASCII-folded order. Each family's four styles, regular, bold, italic and bold
+italic, **must** be the record `matchFont` (FTD27) gives for weight 400 or
+700 and style `normal` or `italic`, with weight and style synthesis off,
+together with the user coordinates that realize them. Regular is that match
+whatever it is. Bold **must** be absent unless the match's weight is at least
+600, and an upright style **must** be absent when the bold match is slanted.
+Italic and bold italic **must** be absent unless the match is italic or
+oblique at a positive (forward) angle. No member is ever synthesized.
+
+**FTD48: Monospace.** A family is monospace when its regular record's spacing
+is known and is `mono` or `dual` (FTP32), and that record covers `0`–`9`,
+`A`–`Z` and `a`–`z`. A face whose glyphs share one advance but which has no
+Latin letters, such as an emoji or notation face, is not offered as a code
+font.
+
+**FTD49: Declared axes.** A family's weight and optical-size controls **must**
+come from the `wght` and `opsz` axes of its regular record's `fvar`, in user
+units: minimum, default and maximum. A family without the axis declares no
+such control.
+
+**FTD50: Ligatures.** `ligatureSupport` **must** answer `declared` when the
+face's `GSUB` lists `liga`, `calt` or `dlig` in the default language system of
+the `DFLT` or `latn` script, and `none` otherwise, an unreadable or absent
+`GSUB` included. Until the caller has the face's bytes the support is
+`unknown`.
+
+**FTD51: The document font and its controls.** A `DocumentFont` **must** hold
+the family, a size of 6–72 px, ligatures on or off, a line height of 1.0–2.5
+times the font's, letter spacing of −2 to 4 px, a weight of 1–1,000 and an
+optical size of 0–144, where 0 follows the size. `clamped` **must** bring
+every field into those bounds, a NaN taking the field's default, and `fitTo`
+**must** further clamp the weight, and a nonzero optical size, into the
+family's declared axes. `fontControls` **must** report each control as
+`available`, `unsupported` or `unknown`. Size, line height and letter spacing
+are always available. Each style is available exactly when FTD47 found its
+member. Weight and optical size are available exactly when FTD49 declares
+the axis. Ligatures follow FTD50. `instanceCoordinates` **must** give a
+member's own coordinates. Where the axis is declared, the regular and italic
+members then take the weight as `wght`, and every member takes `opsz` from the
+optical size, or from the size when that is 0, as CSS's
+`font-optical-sizing: auto` does. Each value is clamped into its axis. The
+interface font is not part of a `DocumentFont`.
+
+## 10. Oracles
+
+| Operations      | Oracle                                                                                                                                                                                                                  | Known divergence, and the substitute oracle                                                                                                                                                                                                                                                                                                                     |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FTD16`–`FTD21` | `fc-scan` over the bundle for family, style, weight, width and coverage; the records of hand-built fixtures                                                                                                             | fontconfig maps weights onto its own scale, reads a width from the style name when `usWidthClass` is absent, reads an oblique slant from a style name such as "Oblique" (DejaVu Sans Mono Oblique), and leaves C0 controls mapped to empty glyphs out of the charset; this page reads `OS/2` and the axes only. Substitute: fixtures and the raw `OS/2` values. |
+| `FTD18`         | `fc-list` on Linux; on macOS and Windows the CI runners' listing                                                                                                                                                        | —                                                                                                                                                                                                                                                                                                                                                               |
+| `FTD22`–`FTD24` | scenarios over `MemVfs`, whose modification times are set exactly                                                                                                                                                       | —                                                                                                                                                                                                                                                                                                                                                               |
+| `FTD25`–`FTD30` | hand-derived traces of CSS Fonts Level 4 §5.2 over a synthetic family of nine weights, two widths and four styles, and a variable family                                                                                | CSS leaves the synthesis threshold to the browser; this page follows Blink's 600.                                                                                                                                                                                                                                                                               |
+| `FTD31`–`FTD34` | fixtures with known coverage                                                                                                                                                                                            | —                                                                                                                                                                                                                                                                                                                                                               |
+| `FTD35`–`FTD38` | HarfBuzz and FreeType over the generated face: every glyph opens, shapes and rasterizes; hand-computed pixel coverage of lines, blocks and shades                                                                       | —                                                                                                                                                                                                                                                                                                                                                               |
+| `FTD40`         | a property over the bundle's faces: for each face and each scalar the rule prunes it for, alone and in sampled sequences, `hb_shape` gives glyph 0                                                                      | —                                                                                                                                                                                                                                                                                                                                                               |
+| `FTD39`–`FTD43` | real faces with inspected coverage: a mark sequence, an RGI ZWJ sequence and an Arabic word, each with a failing primary                                                                                                | —                                                                                                                                                                                                                                                                                                                                                               |
+| `FTD44`–`FTD46` | HarfBuzz 14.6.0 (`hb_ot_math_get_constant`, `hb_ot_layout_get_glyph_class`, `hb_font_get_nominal_glyph`); FreeType's `FT_IS_TRICKY`                                                                                     | The signatures' fonts may not be redistributed; fixtures rebuild them byte for byte, as `testing.md` describes.                                                                                                                                                                                                                                                 |
+| `FTD47`–`FTD51` | synthetic families with known style fields; the bundle's DejaVu Sans Mono, Fira Code, Roboto and Maple Mono, and the corpus's Source Serif 4 Variable, whose members, advances, axes and `GSUB` features were inspected | —                                                                                                                                                                                                                                                                                                                                                               |
