@@ -2101,6 +2101,15 @@ struct EditorApp
                 (in KeyEvent key) { handleKey(key); },
                 (in PasteEvent paste) { (() @trusted => cast(void) settingsPane.handlePaste(paste.text[]))(); },
                 (in EndOfInput _) { closeRequested(host); },
+                (in PointerEvent p) {
+                    // The pane hits in cells; a window reports pixels.
+                    int cw = 1, ch = 1;
+                    static if (__traits(hasMember, H, "cellWidth"))
+                        if (host.backend == Backend.gui) { cw = host.cellWidth; ch = host.cellHeight; }
+                    PointerEvent cells = p;
+                    cells.pos = Point(p.pos.x / (cw > 0 ? cw : 1), p.pos.y / (ch > 0 ? ch : 1));
+                    (() @trusted => cast(void) settingsPane.handleOverlay(Event(cells), settingsGeometry()))();
+                },
                 (in _) { (() @trusted => cast(void) settingsPane.handleOverlay(event, settingsGeometry()))(); });
             if (quitRequested) host.quit();
             return;
@@ -2435,6 +2444,16 @@ struct EditorApp
                     if (document.syncedVisualRow != targetRow)
                         document.scroll.motion.jumpTo(cast(double) document.syncedVisualRow, document.scroll.limit);
                 }
+            }
+            // No empty rows below the end while rows above are hidden: when the
+            // view grows (a keyboard or palette leaves), the top moves up to fill it.
+            const overshoot = document.syncedVisualRow + cast(long) visible - totalRows;
+            if (overshoot > 0 && document.syncedVisualRow > 0)
+            {
+                scrollRows(*context, text, -(overshoot < document.syncedVisualRow ? overshoot : document.syncedVisualRow),
+                    document.firstLine, document.firstRow);
+                document.syncedVisualRow = visualRowIndex(document, document.firstLine, document.firstRow);
+                document.scroll.motion.jumpTo(cast(double) document.syncedVisualRow, document.scroll.limit);
             }
             context.originLine = document.firstLine;
             context.originRow = document.firstRow;
@@ -3125,6 +3144,30 @@ struct EditorApp
     FrameSnapshot frame;
     presentApp(*app, host, AppTheme(defaultTwoslashPalette()), frame);
     assert(!app.settingsPane.active && app.modal, "the dirty-close decision is shown");
+}
+
+/// When the view grows (a soft keyboard leaves), rows hidden above move back
+/// in rather than leave empty rows below the end (found on a phone).
+@("editor.app.growingViewFillsFromAbove")
+@safe unittest
+{
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
+    import sparkles.ui.editor.command : EditCommand;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    auto app = new EditorApp;
+    scope (exit) destroy(*app);
+    app.document.field.setText("1\n2\n3\n4\n5\n6\n7\n8\n9\n10");
+    app.document.field.run(EditCommand.setRange(app.document.field.state.text.length,
+        app.document.field.state.text.length));
+    RecordingHost host;
+    host.size.height = 9; // three document rows
+    FrameSnapshot frame;
+    presentApp(*app, host, AppTheme(defaultTwoslashPalette()), frame);
+    assert(app.document.firstLine > 0, "the caret's line scrolled into view");
+    host.size.height = 40;
+    presentApp(*app, host, AppTheme(defaultTwoslashPalette()), frame);
+    assert(app.document.firstLine == 0, "the grown view shows the whole document");
 }
 
 /// The settings pane is generated from the settings subject, edits them live
