@@ -57,14 +57,13 @@ package struct Node
     uint count;
 }
 
-version (unittest)
-{
-    /// Nodes this thread allocated and has not freed, and allocated in all.
-    /// Thread-local, so tests running in parallel do not see each other.
-    package size_t liveNodes;
-    /// ditto
-    package size_t allocatedNodes;
-}
+// Declared in every build, so the library and a consumer's `-unittest`
+// compile agree on it (build-graph BGV4); only tests use it.
+/// Nodes this thread allocated and has not freed, and allocated in all.
+/// Thread-local, so tests running in parallel do not see each other.
+package size_t liveNodes;
+/// ditto
+package size_t allocatedNodes;
 
 package @safe pure nothrow @nogc:
 
