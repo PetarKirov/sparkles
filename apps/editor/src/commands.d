@@ -12,8 +12,11 @@ import settings : IndentChoice, label, PresentationToggle;
 /// App operations; shared editing operations carry an EditorAction argument.
 enum Command : ubyte { none, palette, guide, newTab, nextTab, previousTab, inspector,
     example, themes, selectTheme, toggleTheme, edit, quit, open, save, saveAs, confirm, cancel,
-    closeTab, discard, restoreSession, languages, selectLanguage, presentation, indentation }
-enum Scope : ubyte { @terminalScope modalModifiers, application, document, dialog, closing, recovery }
+    closeTab, discard, restoreSession, languages, selectLanguage, presentation, indentation,
+    find, replace, findNext, findPrevious, closeFind, findOption, findFocus, replaceOne, replaceAll, selectMatches }
+enum Scope : ubyte { @terminalScope modalModifiers, application, document, dialog, closing, recovery, find }
+/// The find bar's switches, as `findOption` arguments.
+enum FindOption : ubyte { regex, caseSensitive, wholeWord }
 alias CommandId = PaletteCommand!Command;
 alias CommandBinding = Binding!(Command, Scope);
 
@@ -52,6 +55,39 @@ CommandBinding[] commandBindings(EditorTarget target) @safe pure nothrow
         bind(Scope.closing, chord('s'), Command.confirm, "Save and close"),
         bind(Scope.closing, chord('d'), Command.discard, "Discard changes"),
         bind(Scope.closing, chord('c'), Command.cancel, "Cancel close")];
+    // Find and replace (EAP5, EAP7). A terminal keeps Ctrl-F and Ctrl-H for
+    // Readline, so its bar opens through the leader there.
+    if (target == EditorTarget.terminal)
+        result ~= [bind(Scope.application, leader, chord('f'), Command.find, "Find"),
+            bind(Scope.application, leader, chord('h'), Command.replace, "Find and replace")];
+    else
+    {
+        auto find = chord('f'); find.ctrl = true;
+        auto replace = chord('h'); replace.ctrl = true;
+        result ~= [bind(Scope.application, find, Command.find, "Find"),
+            bind(Scope.application, replace, Command.replace, "Find and replace")];
+    }
+    auto backwards = chord(Key.f3); backwards.shift = typeof(backwards.shift).yes;
+    auto forwards = chord(Key.f3); forwards.shift = typeof(forwards.shift).no;
+    auto enter = chord(Key.enter); enter.shift = typeof(enter.shift).no;
+    auto shiftEnter = chord(Key.enter); shiftEnter.shift = typeof(shiftEnter.shift).yes;
+    auto all = chord(Key.enter); all.alt = true;
+    auto replaceAll = chord(Key.enter); replaceAll.ctrl = true; replaceAll.alt = true;
+    auto regex = chord('r'); regex.alt = true;
+    auto matchCase = chord('c'); matchCase.alt = true;
+    auto word = chord('w'); word.alt = true;
+    auto focus = chord(Key.tab); focus.shift = typeof(focus.shift).ignore;
+    result ~= [bind(Scope.application, forwards, Command.findNext, "Find next"),
+        bind(Scope.application, backwards, Command.findPrevious, "Find previous"),
+        bind(Scope.find, replaceAll, Command.replaceAll, "Replace all"),
+        bind(Scope.find, all, Command.selectMatches, "Select all matches"),
+        bind(Scope.find, enter, Command.findNext, "Find next"),
+        bind(Scope.find, shiftEnter, Command.findPrevious, "Find previous"),
+        bind(Scope.find, chord(Key.escape), Command.closeFind, "Close find"),
+        bind(Scope.find, focus, Command.findFocus, "Switch find/replace field"),
+        bind(Scope.find, regex, Command.findOption, "Toggle regular expression", arg: FindOption.regex),
+        bind(Scope.find, matchCase, Command.findOption, "Toggle match case", arg: FindOption.caseSensitive),
+        bind(Scope.find, word, Command.findOption, "Toggle whole word", arg: FindOption.wholeWord)];
     foreach (original; editorBindings(target))
     {
         if (original.cmd == EditorAction.none) continue;
@@ -93,6 +129,7 @@ PaletteEntry!Command[] commandCatalog(scope const(CommandBinding)[] bindings) @s
         const choice = cast(IndentChoice) i;
         result ~= PaletteEntry!Command(CommandId(Command.indentation, choice), label(choice), "Editing");
     }
+    result ~= PaletteEntry!Command(CommandId(Command.replaceOne), "Replace this match", "Find");
     return result;
 }
 
@@ -104,6 +141,8 @@ struct CommandContext
     bool modal;
     bool closing;
     bool recoveryAvailable;
+    /// The find bar holds the keyboard: its scope is live, the document's keys are not.
+    bool finding;
 
     bool available(CommandId command, ulong target) const scope @safe pure nothrow @nogc
     {
@@ -112,17 +151,25 @@ struct CommandContext
         if (command.operation == Command.discard) return closing;
         const dialogCommand = command.operation == Command.confirm || command.operation == Command.cancel;
         if (modal != dialogCommand) return false;
+        const findCommand = command.operation == Command.closeFind || command.operation == Command.findOption
+            || command.operation == Command.findFocus || command.operation == Command.replaceOne
+            || command.operation == Command.replaceAll || command.operation == Command.selectMatches;
+        if (findCommand && !finding) return false;
         const documentCommand = command.operation == Command.edit || command.operation == Command.save
             || command.operation == Command.saveAs || command.operation == Command.closeTab
             || command.operation == Command.languages || command.operation == Command.selectLanguage
-            || command.operation == Command.indentation;
+            || command.operation == Command.indentation || command.operation == Command.find
+            || command.operation == Command.replace || command.operation == Command.findNext
+            || command.operation == Command.findPrevious || findCommand;
         return !documentCommand || (target == document && document != 0);
     }
 
     bool reachable(Scope scope_) const scope @safe pure nothrow @nogc
         => scope_ == Scope.modalModifiers ? false : scope_ == Scope.closing ? closing
             : scope_ == Scope.recovery ? !modal && recoveryAvailable
-            : scope_ == Scope.dialog ? modal : !modal && (scope_ == Scope.application || document != 0);
+            : scope_ == Scope.dialog ? modal : scope_ == Scope.find ? !modal && finding && document != 0
+            : scope_ == Scope.document ? !modal && !finding && document != 0
+            : !modal && (scope_ == Scope.application || document != 0);
 
     /// Modified input belongs to the focused field, never to plain decision letters.
     bool scopeActive(Scope scope_, in KeyEvent key) const scope @safe pure nothrow @nogc

@@ -1063,3 +1063,29 @@ document's language and follows a manual override; a language without one
 the chosen width. `editor.app.indentationAndComments` indents, keeps the
 indent across Enter, comments and uncomments a D line, switches to tabs and
 checks a Markdown document is unchanged by the comment command.
+
+### Find and replace — 2026-11-16
+
+A find bar (Ctrl+F, or F4 F in a terminal, where Ctrl+F stays Readline's)
+and its replace row (Ctrl+H, F4 H) sit above the document. Both fields are
+shared single-line editors; while the bar is open it holds the keyboard
+(the `find` scope; document keys are not reachable), application commands
+still work, and Escape returns the keyboard to the document. The switches
+`.*`, `Aa` and `W` (Alt+R, Alt+C, Alt+W) choose regular-expression,
+case-sensitive and whole-word matching. Enter and Shift+Enter (also F3 and
+Shift+F3 from the document) select the next or previous match, wrapping;
+on the replacement field Enter replaces and moves on; Ctrl+Alt+Enter
+replaces every match as one undo step; Alt+Enter selects every match as
+multiple carets and closes the bar. Matches are painted as marks, counted
+as `2 of 5`, and a pattern error is shown in place of the count, leaving
+the text unchanged. Matching, the work bounds and replacement are the
+shared `sparkles.ui.editor.search` (ui `EDS1`–`EDS6`); the bar recomputes
+only when the text, query or a switch changes, within the default search
+budget, and reports a truncated result as `10000+`. A clipboard reply
+reaches a bar field only while that bar (its epoch) and field are current.
+
+`editor.findBar.refresh` covers the cached result and its summary.
+`editor.app.findAndReplace` types a query into the bar, checks both matches
+are painted, steps with Enter, switches to the replacement with Tab,
+replaces all, undoes once to restore both, checks an invalid regular
+expression edits nothing, and returns the keyboard with Escape.

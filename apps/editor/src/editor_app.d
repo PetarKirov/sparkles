@@ -13,6 +13,9 @@ import sparkles.ui.components.scroll_body : ScrollBody, scrollSeconds;
 import sparkles.ui.components.editor : drawIndentGuides, editorLineSpans, editorView, EditorViewOptions, layoutColumn, markSpans, TextMark, VisualRow, visualRows;
 import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell, GutterChannel, withGutterCells;
 import sparkles.ui.editor.presentation : matchingBracket, trailingWhitespace;
+import find_bar : FindBar;
+import sparkles.ui.editor.search : MatchRange, SearchBudget, replaceAll, replaceCurrent, selectAllMatches, selectNextMatch;
+import commands : FindOption;
 import settings : choose, EditingSettings, IndentChoice, PresentationSettings, PresentationToggle, toggle;
 import sparkles.ui.editor.line_edit : IndentOptions, lineCommentToken;
 import sparkles.ui.editor.context : CaretTarget;
@@ -140,6 +143,8 @@ private struct ClipboardRead
 {
     ulong document, palette, dialog;
     uint request;
+    /// The find bar's epoch and field (`2 * epoch + replacement`); 0 for none.
+    ulong find;
 }
 
 /// Closing a requester invalidates its reply even when the next tab reuses the local number.
@@ -498,6 +503,8 @@ struct EditorApp
     bool inspector;
     PresentationSettings presentation;
     EditingSettings editing;
+    /// The find and replace bar (EAP5, EAP7).
+    FindBar finder;
     bool quitRequested;
     string status;
     string shotPath;
@@ -1015,6 +1022,8 @@ struct EditorApp
     private enum size_t paletteCloseHit = 0x7900_0004;
     // One hit per undo revision the inspector lists, by creation index (EAP6).
     private enum size_t undoHitBase = 0x7A00_0000, undoHitLimit = 0x7B00_0000;
+    // The find bar's controls: a command per hit, `findHitBase + Command`.
+    private enum size_t findHitBase = 0x7C00_0000, findOptionHitBase = 0x7C01_0000, findFieldHit = 0x7C02_0000;
 
     /// Retain the committed frame for event routing; no second layout/hit model.
     void paint(H)(ref H host, const WidgetTree tree, const Frame[] frames)
@@ -1033,6 +1042,75 @@ struct EditorApp
             if (!modal && !commands.palette.active && drawnCaretArea(area))
                 host.textInputArea(area[0], area[1], area[2], area[3]);
         }
+    }
+
+    /**
+    The find bar (`EAP5`, `EAP7`): the query with its switches, its match
+    summary and Previous/Next/Close, and, when replacing, the replacement
+    with Replace and All. The focused field shows the host's cursor.
+    */
+    private uint findBar(ref Builder b) @safe
+    {
+        uint control(string label, Command command, bool on = false)
+            => b.add(Widget(kind: WidgetKind.text, text: label, hitId: findHitBase + command,
+                slot: on ? Slot.selection : Slot.docs, paintBackground: on, padding: Insets(0, 1, 0, 1)));
+        uint option(string label, FindOption which, bool on)
+            => b.add(Widget(kind: WidgetKind.text, text: label, hitId: findOptionHitBase + which,
+                slot: on ? Slot.selection : Slot.muted, paintBackground: on, padding: Insets(0, 1, 0, 1)));
+        uint field(ref EditorField input, bool focused, string placeholder)
+        {
+            const node = editorView(b, input.state, EditorViewOptions(visibleLines: 1, placeholder: placeholder,
+                caretVisible: focused, hostCursor: true));
+            b.nodes[node].width = SizeSpec.grow();
+            b.nodes[node].slot = Slot.surfaceSunken;
+            b.nodes[node].paintBackground = true;
+            b.nodes[node].hitId = findFieldHit + (&input is &finder.replacement);
+            return node;
+        }
+        const primary = document.field.state.selection.primary;
+        const summary = finder.summary(primary.start, primary.end);
+        uint[] query = [b.add(Widget(kind: WidgetKind.text, text: "Find", slot: Slot.muted)),
+            field(finder.query, !finder.onReplacement, "Search…"),
+            option(".*", FindOption.regex, finder.options.regex),
+            option("Aa", FindOption.caseSensitive, finder.options.caseSensitive),
+            option("W", FindOption.wholeWord, finder.options.wholeWord),
+            b.add(Widget(kind: WidgetKind.text, text: summary,
+                slot: finder.pattern.error.length ? Slot.error : Slot.muted)),
+            control("↑", Command.findPrevious), control("↓", Command.findNext), control("×", Command.closeFind)];
+        uint[] rows = [b.add(Widget(kind: WidgetKind.row, children: query, gap: 1, height: SizeSpec.fixed(1)))];
+        if (finder.replacing)
+            rows ~= b.add(Widget(kind: WidgetKind.row, gap: 1, height: SizeSpec.fixed(1), children: [
+                b.add(Widget(kind: WidgetKind.text, text: "Into", slot: Slot.muted)),
+                field(finder.replacement, finder.onReplacement, "Replacement…"),
+                control("Replace", Command.replaceOne), control("All", Command.replaceAll)]));
+        return b.add(Widget(kind: WidgetKind.column, children: rows, width: SizeSpec.grow()));
+    }
+
+    /// The find bar's seed: the primary selection when it is one short line.
+    private string findSeed() @safe
+    {
+        const primary = document.field.state.selection.primary;
+        if (primary.empty || primary.end - primary.start > 256) return null;
+        auto bytes = new char[primary.end - primary.start];
+        document.field.state.text.copyTo(primary.start, primary.end, bytes);
+        foreach (c; bytes) if (c == '\n' || c == '\r') return null;
+        return (() @trusted => cast(string) bytes)();
+    }
+
+    /// The find bar's matches on `[start, end]`, painted as marks (`EAP5`).
+    private void findMarks(size_t start, size_t end, ref TextMark[] marks) @safe
+    {
+        if (!finder.open || !finder.pattern.valid) return;
+        const matches = finder.result.matches;
+        size_t lo = 0, hi = matches.length;
+        while (lo < hi)
+        {
+            const mid = (lo + hi) / 2;
+            if (matches[mid].end <= start) lo = mid + 1;
+            else hi = mid;
+        }
+        for (size_t i = lo; i < matches.length && matches[i].start <= end; ++i)
+            if (!matches[i].empty) marks ~= TextMark(matches[i].start, matches[i].end, Slot.highlight);
     }
 
     /**
@@ -1323,6 +1401,24 @@ struct EditorApp
             if (pointer.action == PointerAction.press) execute(CommandId(Command.inspector));
             return;
         }
+        if (hit >= findHitBase && hit < findHitBase + 0x1_0000 && hit - findHitBase <= Command.max)
+        {
+            if (pointer.action == PointerAction.press && finder.open)
+                execute(CommandId(cast(Command)(hit - findHitBase)));
+            return;
+        }
+        if (hit >= findOptionHitBase && hit <= findOptionHitBase + FindOption.max)
+        {
+            if (pointer.action == PointerAction.press && finder.open)
+                execute(CommandId(Command.findOption, cast(ubyte)(hit - findOptionHitBase)));
+            return;
+        }
+        if (hit == findFieldHit || hit == findFieldHit + 1)
+        {
+            if (pointer.action == PointerAction.press && finder.open)
+                finder.onReplacement = hit == findFieldHit + 1 && finder.replacing;
+            return;
+        }
         if (hit >= undoHitBase && hit < undoHitLimit)
         {
             // The listed revisions belong to the document they were drawn for.
@@ -1426,7 +1522,8 @@ struct EditorApp
             pasteOwner = chunk.request ? clipboardReads[chunk.request]
                 : ClipboardRead(document.id,
                     commands.palette.active ? commands.palette.snapshot.ticket.value : 0,
-                    pathDialog ? dialogEpoch : 0, 0);
+                    pathDialog ? dialogEpoch : 0, 0,
+                    !pathDialog && !commands.palette.active && finding ? 2 * finder.epoch + finder.onReplacement : 0);
         }
         if (!clipboardOwnerValid(pasteOwner))
         {
@@ -1445,6 +1542,8 @@ struct EditorApp
             if (pasteRequest) clipboardReads.remove(pasteRequest);
         }
         if (pasteOwner.dialog) pathInput.paste(pasteBytes, pasteOwner.request, MonoTime.currTime);
+        else if (pasteOwner.find)
+            (pasteOwner.find & 1 ? finder.replacement : finder.query).paste(pasteBytes, pasteOwner.request, MonoTime.currTime);
         else if (pasteOwner.palette)
             apply(commands.paste(pasteBytes, pasteOwner.request, context, MonoTime.currTime));
         else
@@ -1461,6 +1560,12 @@ struct EditorApp
         if (owner.dialog)
             return pathDialog && owner.dialog == dialogEpoch && owner.document == document.id
                 && (!owner.request || owner.request == pathInput.state.record.pendingRequest);
+        if (owner.find)
+        {
+            auto field = owner.find & 1 ? &finder.replacement : &finder.query;
+            return finding && owner.find / 2 == finder.epoch && owner.document == document.id
+                && (!owner.request || owner.request == field.state.record.pendingRequest);
+        }
         if (owner.palette)
             return commands.palette.active && owner.palette == commands.palette.snapshot.ticket.value
                 && (!owner.request || owner.request == commands.query.state.record.pendingRequest);
@@ -1505,9 +1610,13 @@ struct EditorApp
     private bool pathDialog() const scope @safe pure nothrow @nogc
         => dialog == Dialog.openPath || dialog == Dialog.savePath;
 
+    /// The find bar holds the keyboard: open, with no dialog or palette over it.
+    private bool finding() const scope @safe pure nothrow @nogc
+        => finder.open && !modal && !commands.palette.active;
+
     CommandContext context() @safe => CommandContext(recoveryExit ? 0 : document.id,
         bindings, modal, dialog == Dialog.dirtyClose || dialog == Dialog.recoveryClose,
-        recovery !is null && recovery.offerCount != 0);
+        recovery !is null && recovery.offerCount != 0, finding);
 
     private void observeRecovery() @safe nothrow
     {
@@ -1649,6 +1758,56 @@ struct EditorApp
         case Command.presentation:
             if (id.argument <= PresentationToggle.max) presentation.toggle(cast(PresentationToggle) id.argument);
             break;
+        case Command.find:
+        case Command.replace:
+            finder.show(id.operation == Command.replace, findSeed(), target);
+            break;
+        case Command.findNext:
+        case Command.findPrevious:
+            if (!finder.query.text.length) { finder.show(false, findSeed(), target); break; }
+            // On the replacement field, Enter replaces and moves on.
+            if (finder.open && finder.onReplacement && finder.replacing && id.operation == Command.findNext)
+            {
+                execute(CommandId(Command.replaceOne), now);
+                break;
+            }
+            finder.refresh(document.field.state.text, document.id);
+            if (!finder.pattern.valid) { status = finder.pattern.error; break; }
+            const step = selectNextMatch(document.field.state, finder.pattern,
+                id.operation == Command.findNext ? 1 : -1, now);
+            status = step.error.length ? step.error : !step.found ? "No results."
+                : step.wrapped ? "Search wrapped." : null;
+            document.followCaret = true;
+            break;
+        case Command.closeFind: finder.close(); break;
+        case Command.findOption:
+            if (id.argument <= FindOption.max) finder.toggle(cast(FindOption) id.argument);
+            break;
+        case Command.findFocus:
+            if (finder.replacing) finder.onReplacement = !finder.onReplacement;
+            break;
+        case Command.replaceOne:
+        case Command.replaceAll:
+            finder.refresh(document.field.state.text, document.id);
+            if (!finder.pattern.valid) { status = finder.pattern.error; break; }
+            const replaced = id.operation == Command.replaceAll
+                ? replaceAll(document.field.state, finder.pattern, finder.replacement.text, SearchBudget.unbounded, now)
+                : replaceCurrent(document.field.state, finder.pattern, finder.replacement.text, now);
+            status = replaced.error.length ? replaced.error
+                : text("Replaced ", replaced.replaced, replaced.replaced == 1 ? " match" : " matches",
+                    replaced.skippedProtected ? text("; ", replaced.skippedProtected, " in protected text kept") : "",
+                    replaced.truncated ? "; more remain" : "", ".");
+            document.followCaret = true;
+            break;
+        case Command.selectMatches:
+            finder.refresh(document.field.state.text, document.id);
+            if (!finder.pattern.valid) { status = finder.pattern.error; break; }
+            const selected = selectAllMatches(document.field.state, finder.pattern, SearchBudget.unbounded, now);
+            status = selected.error.length ? selected.error
+                : !selected.matches.length ? "No results." : null;
+            if (selected.matches.length) finder.close(); // the selections are the document's to edit
+            document.followCaret = true;
+            break;
         case Command.indentation:
             if (id.argument <= IndentChoice.max) editing.choose(cast(IndentChoice) id.argument);
             applyEditing();
@@ -1758,6 +1917,11 @@ struct EditorApp
             pathInput.key(key, now);
             return;
         }
+        if (finding && finder.focused.state.composition.active)
+        {
+            finder.focused.key(key, now);
+            return;
+        }
         if (commands.palette.active)
         {
             apply(commands.key(key, context, now));
@@ -1774,6 +1938,7 @@ struct EditorApp
         else if (resolved.kind == StepKind.unbound)
         {
             if (pathDialog) pathInput.key(key, now);
+            else if (finding) finder.focused.key(key, now);
             else if (!modal) document.field.key(key, now);
         }
     }
@@ -1794,7 +1959,10 @@ struct EditorApp
         commands.query.context.clipboardRead = canReadClipboard!H;
         commands.query.context.clipboardWrite = __traits(compiles, host.clipboard(""));
         pathInput.context.clipboardRead = canReadClipboard!H;
-        pathInput.context.clipboardWrite = __traits(compiles, host.clipboard(""));
+        finder.query.context.clipboardRead = canReadClipboard!H;
+        finder.query.context.clipboardWrite = __traits(compiles, host.clipboard(""));
+        finder.replacement.context.clipboardRead = canReadClipboard!H;
+        finder.replacement.context.clipboardWrite = __traits(compiles, host.clipboard(""));
         event.match!(
             (in KeyEvent key) { handleKey(key); },
             (in PasteEvent paste) { receivePaste(paste); },
@@ -1804,6 +1972,7 @@ struct EditorApp
                     if (pathDialog) pathInput.compose(update, preedit, MonoTime.currTime);
                     else if (modal) return;
                     else if (commands.palette.active) commands.query.compose(update, preedit, MonoTime.currTime);
+                    else if (finding) finder.focused.compose(update, preedit, MonoTime.currTime);
                     else document.field.compose(update, preedit, MonoTime.currTime);
                 });
             },
@@ -1828,6 +1997,12 @@ struct EditorApp
                 commands.palette.snapshot.ticket.value), request) : 0u);
         forwardClipboard(pathInput, host,
             (uint request) => pathDialog ? routeClipboard(host, ClipboardRead(document.id, 0, dialogEpoch), request) : 0u);
+        forwardClipboard(finder.query, host,
+            (uint request) => finding && !finder.onReplacement
+                ? routeClipboard(host, ClipboardRead(document.id, 0, 0, 0, 2 * finder.epoch), request) : 0u);
+        forwardClipboard(finder.replacement, host,
+            (uint request) => finding && finder.onReplacement
+                ? routeClipboard(host, ClipboardRead(document.id, 0, 0, 0, 2 * finder.epoch + 1), request) : 0u);
         static if (__traits(compiles, host.takeClipboardError()))
             if (const error = host.takeClipboardError()) status = error;
         if (quitRequested) host.quit();
@@ -2047,7 +2222,14 @@ struct EditorApp
                 const shownCount = shownRowsCount ? shownRowsCount : 1;
                 paletteHeight = 2 + cast(int) shownCount * paletteRowHeight;
             }
-            const reserved = headerRows + tabRows + 3 + extraRows + paletteHeight;
+            int findRows;
+            if (finder.open)
+            {
+                finder.refresh(document.field.state.text, document.id);
+                children ~= findBar(b);
+                findRows = finder.replacing ? 2 : 1;
+            }
+            const reserved = headerRows + tabRows + 3 + extraRows + paletteHeight + findRows;
             const visible = host.size.height > reserved ? cast(size_t) host.size.height - reserved : 1;
             const count = document.field.state.text.lineCount;
             // Rows wrap at the field's width: the window less the root's padding
@@ -2113,6 +2295,7 @@ struct EditorApp
                             syntaxWindow(syntax.source, syntax.spans, start, end, syntaxTheme, theme.pageFg), options)
                         : editorLineSpans(document.field.state, line, options);
                     auto marks = globalMarks.dup;
+                    findMarks(start, end, marks);
                     if (presentation.trailingWhitespace)
                     {
                         const blank = trailingWhitespace(text, line);
@@ -2609,6 +2792,68 @@ struct EditorApp
     app.document.language = "markdown";
     act(EditorAction.toggleLineComment);
     assert(app.document.field.text == "\t    x\n    y", "no comment syntax, no change");
+}
+
+/// The find bar takes the keyboard, paints and steps through matches, replaces
+/// in one undo step, reports a bad pattern without editing, and gives the
+/// keyboard back on Escape (EAP5, EAP7).
+@("editor.app.findAndReplace")
+@safe unittest
+{
+    import sparkles.input : charEvent, Key, keyEvent;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
+    import sparkles.ui.editor.command : EditCommand, EditKind;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    import std.algorithm : canFind;
+    EditorApp app;
+    RecordingHost host;
+    FrameSnapshot frame;
+    app.document.field.setText("cat cot\ncat");
+    app.document.field.run(EditCommand.setRange(0, 0));
+    void type(string s) { foreach (dchar c; s) app.handle(host, charEvent(c)); }
+    void present()
+    {
+        presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
+        app.paint(host, frame.tree, frame.frames);
+    }
+    app.execute(CommandId(Command.replace));
+    type("cat");
+    assert(app.finder.query.text == "cat" && app.document.field.text == "cat cot\ncat", "keys reach the bar");
+    present();
+    size_t painted;
+    foreach (shown; app.displayed.rows)
+        foreach (span; frame.tree.nodes[shown.node].spans)
+            painted += span.slot == Slot.highlight;
+    assert(painted == 2, "both matches are painted");
+    app.handle(host, keyEvent(Key.enter));
+    auto primary = app.document.field.state.selection.primary;
+    assert(primary.start == 0 && primary.end == 3);
+    app.handle(host, keyEvent(Key.enter));
+    primary = app.document.field.state.selection.primary;
+    assert(primary.start == 8 && primary.end == 11, "Enter steps to the next match");
+    present();
+    bool shown(string label)
+    {
+        foreach (node; frame.tree.nodes) if (node.text == label) return true;
+        return false;
+    }
+    assert(shown("2 of 2"));
+    app.handle(host, keyEvent(Key.tab));
+    type("dog");
+    assert(app.finder.replacement.text == "dog");
+    app.execute(CommandId(Command.replaceAll));
+    assert(app.document.field.text == "dog cot\ndog" && app.status == "Replaced 2 matches.");
+    app.document.field.run(EditCommand.of(EditKind.undo));
+    assert(app.document.field.text == "cat cot\ncat", "one undo step restores both");
+    app.execute(CommandId(Command.findOption, FindOption.regex));
+    app.finder.query.setText("c(");
+    app.execute(CommandId(Command.replaceAll));
+    assert(app.document.field.text == "cat cot\ncat" && app.status.length, "a bad pattern edits nothing");
+    app.handle(host, keyEvent(Key.escape));
+    assert(!app.finder.open);
+    type("!");
+    assert(app.document.field.text.canFind("!"), "the document has the keyboard again");
 }
 
 /// A displayed tab names its document even if an earlier tab closes before repaint.

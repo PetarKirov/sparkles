@@ -98,10 +98,11 @@ a library preparation commit does not close an app or device acceptance gate.
    marks are drawn, each switchable (testing §6, 2026-11-16). Complete the undo-branch
    inspector, indentation/autoindent, language-aware commenting and the
    accepted editing actions through the common command policy.
-4. **Find and replace (A, V).** Add literal and regex search/replace over
-   retained revisions, including selection/occurrence workflows and protected
-   spans. Establish work, cancellation and pattern limits with the planned
-   adversarial fixtures before claiming responsive large-document behavior.
+4. **Find and replace (A, V).** Literal and regex search/replace, case and
+   whole-word switches, match selection, protected spans and pattern/work
+   limits are delivered (testing §6, 2026-11-16). Remaining: measure the
+   bounded search on the 1/10 MiB workloads before claiming responsive
+   large-document behavior.
 5. **Live composition and touch (U).** Complete desktop and Android preedit,
    cancel/commit, focus and candidate placement with real input methods.
    Extract reusable terminal selection geometry/gestures, then implement
