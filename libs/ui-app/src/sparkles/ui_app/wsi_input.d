@@ -124,7 +124,9 @@ struct WsiInput
     private TouchContacts contacts_;
     private MonoTime gestureClock_;
 
-    version (unittest) package static void gestureClockForTest(ref WsiInput i, MonoTime at)
+    // A template outside `version (unittest)`: only tests instantiate it, and
+    // the struct is the same in every build (build-graph BGV4).
+    package static void gestureClockForTest()(ref WsiInput i, MonoTime at)
     {
         i.gestureClock_ = at;
     }
@@ -1396,7 +1398,7 @@ version (unittest)
 {
     import sparkles.wsi.events : CompositionSegment, CompositionSegmentStyle;
 
-    alias WsiComposition = sparkles.wsi.events.CompositionEvent;
+    private alias WsiComposition = sparkles.wsi.events.CompositionEvent;
 
     // What each backend emits while composing にほん with ほん the clause
     // being converted, its preedit text id 0 — recorded from each mapping:
