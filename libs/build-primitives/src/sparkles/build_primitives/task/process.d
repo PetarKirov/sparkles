@@ -435,7 +435,6 @@ version (unittest)
     import sparkles.event_horizon.loop : LoopConfig;
     import sparkles.event_horizon.sched : SchedOptions;
     import sparkles.event_horizon.scope_ : withScope;
-    import sparkles.test_runner.skip : skipTest;
 
     import sparkles.build_primitives.task.action : EnvEntry;
     import sparkles.build_primitives.task.executor : ExecutorOptions, RunResult, runGraph;
@@ -462,6 +461,7 @@ version (unittest)
     private LiveRun runLive(TaskNode[] nodes, TaskEdge[] edges, ExecutorOptions options,
         string sandboxRoot = null, size_t budget = 1024 * 1024) @system
     {
+        import sparkles.test_runner.skip : skipTest;
         TaskGraphBuilder b;
         foreach (n; nodes)
             b.add(n);
@@ -651,6 +651,7 @@ unittest
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     import core.atomic : atomicLoad, atomicStore;
     import core.thread : Thread;
     import std.array : appender;
