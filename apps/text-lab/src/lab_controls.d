@@ -27,7 +27,7 @@ import sparkles.ui.state : hitAt, hoverTargets;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui_app.specimen_font : sameSpecimenRequest, SpecimenFallbackFace, SpecimenFontRequest;
 
-import font_catalog : FontEntry, FontFinder, FontLibrary, FontLoad;
+import sparkles.ui_app.font_library : FontEntry, FontFinder, FontLibrary, FontLoad;
 import font_settings : applyVariations, axisSettings, LabSettings;
 import unicode_samples : Showcase, showcaseFonts, unicodeSamples;
 

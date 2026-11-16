@@ -1,5 +1,10 @@
-/** Background catalog discovery and owned font-file preparation. */
-module font_catalog;
+/**
+The font library a font picker runs over: catalog discovery and font-file
+preparation on a bounded background pool, and a bounded fuzzy finder over
+the catalog's faces, with owned bytes that outlive every renderer instance
+that borrows them. Extracted from text-lab, which still drives it.
+*/
+module sparkles.ui_app.font_library;
 
 import std.file : mkdirRecurse;
 import std.path : baseName, buildPath, dirName;
@@ -397,7 +402,7 @@ size_t[] mainFontEntries(in FontEntry[] entries) @safe
 }
 
 /// Main family selection never removes fallback records or invents a root.
-@("text_lab.fontFinder.mainCollections")
+@("ui_app.fontLibrary.finder.mainCollections")
 @safe unittest
 {
     auto entries = [
@@ -419,7 +424,7 @@ size_t[] mainFontEntries(in FontEntry[] entries) @safe
 }
 
 /// Ranking uses family and style, preserving the catalog's exact face index.
-@("text_lab.fontFinder.ranksFixtureCatalog")
+@("ui_app.fontLibrary.finder.ranksFixtureCatalog")
 @safe unittest
 {
     FontFinder finder;
@@ -433,7 +438,7 @@ size_t[] mainFontEntries(in FontEntry[] entries) @safe
 }
 
 /// Discovery and file loading complete off-thread and preserve cached ownership.
-@("text_lab.fontCatalog.backgroundLoadsAndReusesOwnedBytes")
+@("ui_app.fontLibrary.backgroundLoadsAndReusesOwnedBytes")
 @system unittest
 {
     import core.thread : Thread;
@@ -475,7 +480,7 @@ size_t[] mainFontEntries(in FontEntry[] entries) @safe
 }
 
 /// A corpus larger than the bounded queue makes progress when submission retries.
-@("text_lab.fontCatalog.queuePressureRetriesWithoutDuplicateOwners")
+@("ui_app.fontLibrary.queuePressureRetriesWithoutDuplicateOwners")
 @system unittest
 {
     import core.thread : Thread;

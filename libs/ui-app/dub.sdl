@@ -23,6 +23,8 @@ dependency "sparkles:core-cli" path="../.."
 dependency "sparkles:event-horizon" path="../.."
 dependency "sparkles:image" path="../.."
 dependency "sparkles:font" path="../.."
+// The font library's finder ranks families and faces (`font_library.d`).
+dependency "sparkles:fuzzy" path="../.."
 // Frame records and the named CPU zones every arm's frame opens (`PRF22`);
 // it depends on `sparkles:base` alone.
 dependency "sparkles:profiling" path="../.."
