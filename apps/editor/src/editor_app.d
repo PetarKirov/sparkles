@@ -1137,6 +1137,14 @@ struct EditorApp
         return b.add(Widget(kind: WidgetKind.column, children: rows, width: SizeSpec.grow()));
     }
 
+    /// The tree nodes of the document rows last painted, top to bottom.
+    size_t[] paintedRowNodes() const @safe pure nothrow
+    {
+        size_t[] nodes;
+        if (displayed !is null) foreach (shown; displayed.rows) nodes ~= shown.node;
+        return nodes;
+    }
+
     /// The settings pane's size for the last frame's window.
     private SettingsGeometry settingsGeometry() const @safe pure nothrow @nogc
         => settingsGeometryFor(lastSize[0], lastSize[1]);

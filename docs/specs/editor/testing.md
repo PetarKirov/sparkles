@@ -1191,3 +1191,21 @@ controls; `editor.documentFont.discoverAndLoad` discovers families, loads a
 monospace one, does not reload it, and reports an unknown family;
 `editor.app.fontPicker` picks a family and then the default face again;
 `editor.settings.sessionRoundTrip` now covers the font fields.
+
+### Unicode corpus through the app — 2026-11-16
+
+`editor.app.unicodeCorpusReplay` opens one line per §3 corpus category
+(Latin NFC/NFD and stacked marks; Greek and Cyrillic; Arabic with digits and
+brackets; Hebrew with marks; Devanagari, Bengali, Tamil, Telugu, Sinhala;
+Thai, Lao, Khmer, Myanmar, Tibetan; kana with dakuten, Hangul, BMP and
+supplementary Han; historic supplementary scripts; emoji presentation,
+modifiers, ZWJ, flags, keycaps and a tag sequence) in the real app, at one
+row and wrapped at 12 cells. Its oracle is base's grapheme segmentation of
+the raw bytes, not the layout under test: every source byte is drawn
+exactly once across the rows; walking Right and Left from the line's start
+stops only on grapheme boundaries and reaches all of them, except that a
+line with right-to-left text may skip a boundary at a direction-run edge,
+where visual movement collapses two logical offsets into one stop (EAD9);
+and inserting at each boundary changes exactly that boundary and one undo
+restores the line. Font coverage is not part of this oracle: a missing
+glyph is a font fixture, not a navigation defect.
