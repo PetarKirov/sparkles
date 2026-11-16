@@ -83,3 +83,4 @@ dlang	AuburnSounds/Dplug	https://github.com/AuburnSounds/Dplug	master	f4a6d71ae3
 dlang	CyberShadow/ae	https://github.com/CyberShadow/ae	master	7870bc3cd03cd43fce638fcf3cf5a685cadea70a	3939	9	2
 go	golang/image	https://github.com/golang/image	master	b06f1de3f4900ff828b8f114c37eb9ea10dfed90	1	6	9
 cpp	google/skia	https://github.com/google/skia	main	3ad790ab4d6d596efae0d70e4b8bf7d339121984	1	67	98
+cpp	godotengine/godot	https://github.com/godotengine/godot	master	944a3c6cbbbb88284feebcb0603464cb175fa18e	1	143	56
