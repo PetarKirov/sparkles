@@ -28,16 +28,8 @@ in [decisions.md](./decisions.md).
      with the root mapped to `.` and test actions run in their worktree's root?
    - _Decision:_ any surviving path, or any use that cannot be fixed, puts the
      root path in the affected variants' keys.
-2. **Complete dependency output.** Add to the LDC fork:
-   - the ImportC headers in `--makedeps`;
-   - an opt-in list of absent candidates;
-   - coverage registration that honours the prefix map.
-
-   Each comes with tests that fail without it. Bump the toolchain to the
-   result.
-   - _Decision:_ a gap the fork cannot close keeps BGK6's conservative key for
-     the affected compiles.
-
+2. **Complete dependency output:** moved to E3, where the input manifest
+   (§5) first reads it.
 3. **dub as a library.**
    - _Question:_ which resolved fields does `dub describe` not expose, and can
      the pinned dub be linked as a library to obtain them?
@@ -45,8 +37,11 @@ in [decisions.md](./decisions.md).
 4. **Directive scan.** Scan every recipe in scope for directives and variable
    references, and complete BGR2's list.
 
-Gate: each spike's result is recorded; the LDC fork's tests pass in the
-toolchain the flake pins.
+Gate: each spike's result is recorded.
+
+Done: spikes 1, 3 and 4 are recorded as D18–D21. The fork's dependency output
+was never a spike. No milestone before E3 reads a compiler's dependency
+output, so it moved to E3, beside the fork's content digests (BGK2).
 
 ## E1a: The pinned test runner (superseded)
 
@@ -96,11 +91,13 @@ migration comparison snippets are out of scope (D25).
 - The action graph and its task-node exposure (BGA1–BGA3, BGA8), without
   execution.
 - Planning's read set (BGP1), checked against `ci`'s invalidators (CIC5).
-- **File access through the VFS (§12):** the resolver and planning move off
-  `std.file` onto the roots BGF2 names (BGF1–BGF3), and every listing is a
-  fileset resolution (BGF5). This needs the
-  [filesets plan](../filesets/PLAN.md)'s M1–M3 first, and its M5 for the
-  listing digests BGP1 records.
+- **File access through the VFS (§12):** planning reads through the roots
+  BGF2 names (BGF1–BGF3), and every listing is a fileset resolution (BGF5).
+  The resolver's half is delivered: the fileset-native workspace's W1–W4
+  moved discovery and resolution onto the capability VFS, with listings as
+  shared fileset resolutions and digests in the read set
+  ([fileset-native workspace](./fileset-native-workspace.md), D55). What
+  remains is planning's own reads: the source scans of BGV1 and BGV5.
 
 Gate: a test-only planner prints a deterministic action graph for the
 repository's test selection, with one compile per variant. Oracle 8's planning
@@ -127,10 +124,17 @@ scenarios, oracle 14, oracle 20 and oracle 24's planning steps pass.
   specification amended. The shader compiler is keyed by its manifest (BGG5)
   and built as a host variant (BGG6).
 - Toolchain identity (§8), with the toolchain's store paths remapped (BGA11).
-- **The LDC fork:** its dependency output reports, for each file, the content
-  digest of the bytes the compiler read (BGK2), with tests that fail without
-  it, and the toolchain is bumped to it. BGK7's check then compares those
-  digests.
+- **The LDC fork:** its dependency output is completed, with each addition
+  tested by a test that fails without it, and the toolchain is bumped to the
+  result. The additions are:
+  - the ImportC headers in `--makedeps`;
+  - an opt-in list of absent candidates;
+  - coverage registration that honours the prefix map;
+  - for each file, the content digest of the bytes the compiler read (BGK2).
+
+  BGK7's check then compares those digests. A gap the fork cannot close keeps
+  BGK6's conservative key for the affected compiles.
+
 - **Isolation spike (D39):** Landlock write confinement and an unshared
   network namespace for local build actions, with the list of test actions
   that write into the tree and a decision for each. The result is recorded in
@@ -142,6 +146,7 @@ scenarios, oracle 14, oracle 20 and oracle 24's planning steps pass.
 
 Gate:
 
+- The LDC fork's tests pass in the toolchain the flake pins.
 - Oracles 2–5, 7, 9, 10 and 16–19, steps 1–2 of oracle 11, oracle 13's
   execution-time scenario, oracle 8's revert check and oracle 24's store
   step pass through the test-only driver. Oracle 3 includes its write check.
@@ -180,9 +185,9 @@ Gate:
 
 | Milestone | State       |
 | --------- | ----------- |
-| E0        | in progress |
+| E0        | done        |
 | E1a       | superseded  |
 | E1        | done        |
-| E2        | not started |
+| E2        | in progress |
 | E3        | not started |
 | E4        | not started |
