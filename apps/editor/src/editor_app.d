@@ -13,7 +13,8 @@ import sparkles.ui.components.scroll_body : ScrollBody, scrollSeconds;
 import sparkles.ui.components.editor : drawIndentGuides, editorLineSpans, editorView, EditorViewOptions, layoutColumn, markSpans, TextMark, VisualRow, visualRows;
 import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell, GutterChannel, withGutterCells;
 import sparkles.ui.editor.presentation : matchingBracket, trailingWhitespace;
-import settings : PresentationSettings, PresentationToggle, toggle;
+import settings : choose, EditingSettings, IndentChoice, PresentationSettings, PresentationToggle, toggle;
+import sparkles.ui.editor.line_edit : IndentOptions, lineCommentToken;
 import sparkles.ui.editor.context : CaretTarget;
 import sparkles.text_buffer.summary : Affinity;
 import sparkles.ui.editor.layout : LayoutContext, ParagraphLayout, scrollRows, scrollToCaret;
@@ -496,6 +497,7 @@ struct EditorApp
     PaletteInput!(Command, 512) commands;
     bool inspector;
     PresentationSettings presentation;
+    EditingSettings editing;
     bool quitRequested;
     string status;
     string shotPath;
@@ -1034,6 +1036,19 @@ struct EditorApp
     }
 
     /**
+    Give the active document the app's indentation and its language's line
+    comment (`EAP7`): applied before each command and frame, so a language
+    override or a settings change reaches the next keystroke.
+    */
+    private void applyEditing() @safe
+    {
+        auto options = &document.field.state.options;
+        options.indent = IndentOptions(useTabs: editing.useTabs, width: editing.indentWidth,
+            autoIndent: editing.autoIndent);
+        options.lineComment = lineCommentToken(document.language);
+    }
+
+    /**
     Travel the active document's history to revision `index` in creation
     order (`EAP6`), through the shared editor's `earlier`/`later`, so the
     move is one ordinary history step. An index past the history is ignored.
@@ -1551,6 +1566,7 @@ struct EditorApp
     {
         if (!recoveryExit) ensureInitialized();
         if (!context.available(id, recoveryExit ? 0 : document.id)) return;
+        if (!recoveryExit) applyEditing();
         final switch (id.operation)
         {
         case Command.none: break;
@@ -1633,6 +1649,10 @@ struct EditorApp
         case Command.presentation:
             if (id.argument <= PresentationToggle.max) presentation.toggle(cast(PresentationToggle) id.argument);
             break;
+        case Command.indentation:
+            if (id.argument <= IndentChoice.max) editing.choose(cast(IndentChoice) id.argument);
+            applyEditing();
+            break;
         case Command.languages:
             endPicker(false);
             choosingLanguage = true;
@@ -1699,7 +1719,7 @@ struct EditorApp
                 if (id.argument == EditorAction.newline)
                 {
                     const predominant = document.predominant;
-                    document.field.insertEach((in Text current, size_t position)
+                    document.field.newlineEach((in Text current, size_t position)
                         => enterEnding(current, position, predominant), now);
                 }
                 else document.field.run(commandOf(cast(EditorAction) id.argument), now);
@@ -1866,6 +1886,7 @@ struct EditorApp
             host.quit();
             return WidgetTree.init;
         }
+        applyEditing();
         if (highlighting is null) highlighting = new HighlightSession;
         highlighting.request(document.field.state.text, document.language, document.id);
         highlighting.poll();
@@ -2107,7 +2128,7 @@ struct EditorApp
                     {
                         if (line == document.firstLine && row.row < document.firstRow) continue;
                         if (rows.length == renderLimit) break;
-                        if (presentation.indentGuides) drawIndentGuides(row, layout, 4);
+                        if (presentation.indentGuides) drawIndentGuides(row, layout, editing.indentWidth);
                         const node = b.add(Widget(kind: WidgetKind.rich, width: SizeSpec.grow(),
                             height: SizeSpec.fixed(1), spans: row.spans, wrap: TextWrap.none,
                             caretColumn: row.caretColumn, slot: current ? Slot.surfaceRaised : Slot.inherit,
@@ -2557,6 +2578,37 @@ struct EditorApp
     app.handle(host, Event(PointerEvent(PointerAction.press, PointerButton.left, Point(origin.x, origin.y))));
     assert(app.document.field.text == "abc", "the abandoned branch is back");
     assert(app.document.field.state.history.currentIndex == 1);
+}
+
+/// The app's indentation reaches the editor: Tab indents with spaces, Enter
+/// keeps the line's indent, the language's comment toggles, and a setting
+/// change applies to the next keystroke (EAP7).
+@("editor.app.indentationAndComments")
+@safe unittest
+{
+    import sparkles.ui.editor.command : EditCommand;
+    EditorApp app;
+    app.document.field.setText("x");
+    app.document.field.run(EditCommand.setRange(0, 0));
+    app.document.language = "d";
+    void act(EditorAction action) { app.execute(CommandId(Command.edit, action)); }
+    act(EditorAction.tab);
+    assert(app.document.field.text == "    x");
+    app.document.field.run(EditCommand.setRange(5, 5));
+    act(EditorAction.newline);
+    assert(app.document.field.text == "    x\n    ", "Enter keeps the indent");
+    app.document.field.insert("y");
+    act(EditorAction.toggleLineComment);
+    assert(app.document.field.text == "    x\n    // y");
+    act(EditorAction.toggleLineComment);
+    assert(app.document.field.text == "    x\n    y");
+    app.execute(CommandId(Command.indentation, IndentChoice.tabs));
+    app.document.field.run(EditCommand.setRange(0, 0));
+    act(EditorAction.tab);
+    assert(app.document.field.text == "\t    x\n    y");
+    app.document.language = "markdown";
+    act(EditorAction.toggleLineComment);
+    assert(app.document.field.text == "\t    x\n    y", "no comment syntax, no change");
 }
 
 /// A displayed tab names its document even if an earlier tab closes before repaint.

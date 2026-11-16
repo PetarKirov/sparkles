@@ -1049,3 +1049,17 @@ tree comes from text-buffer's `History.revision` (`TXB-HIS7`).
 `editor.app.undoInspector` types, undoes and types again, checks the
 listed rows name the branch point, then presses the abandoned revision and
 gets its text back.
+
+### Indentation, auto-indent and line comments — 2026-11-16
+
+The shared editor's indentation options, auto-indent and line comments
+(ui `EDC12`, `EDC13`) are applied to the active document before each
+command and frame (`EditingSettings`): spaces by default at width 4, with
+palette commands for tabs, widths 2/4/8 and auto-indent. Enter goes through
+`newlineEach`, so the document's line-break convention and the line's
+leading blanks arrive as one undo step. The comment token comes from the
+document's language and follows a manual override; a language without one
+(Markdown, plain text) leaves the command a no-op. Indentation guides use
+the chosen width. `editor.app.indentationAndComments` indents, keeps the
+indent across Enter, comments and uncomments a D line, switches to tabs and
+checks a Markdown document is unchanged by the comment command.

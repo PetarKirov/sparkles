@@ -7,12 +7,12 @@ import sparkles.ui.command_palette : PaletteCommand, PaletteEntry;
 import sparkles.ui.editor.keys : EditorAction, EditorTarget, editorBindings;
 import sparkles.ui.keymap : Binding, bind, terminalScope;
 import examples : Example;
-import settings : label, PresentationToggle;
+import settings : IndentChoice, label, PresentationToggle;
 
 /// App operations; shared editing operations carry an EditorAction argument.
 enum Command : ubyte { none, palette, guide, newTab, nextTab, previousTab, inspector,
     example, themes, selectTheme, toggleTheme, edit, quit, open, save, saveAs, confirm, cancel,
-    closeTab, discard, restoreSession, languages, selectLanguage, presentation }
+    closeTab, discard, restoreSession, languages, selectLanguage, presentation, indentation }
 enum Scope : ubyte { @terminalScope modalModifiers, application, document, dialog, closing, recovery }
 alias CommandId = PaletteCommand!Command;
 alias CommandBinding = Binding!(Command, Scope);
@@ -88,6 +88,11 @@ PaletteEntry!Command[] commandCatalog(scope const(CommandBinding)[] bindings) @s
         const which = cast(PresentationToggle) i;
         result ~= PaletteEntry!Command(CommandId(Command.presentation, which), label(which), "View");
     }
+    foreach (i; 0 .. IndentChoice.max + 1)
+    {
+        const choice = cast(IndentChoice) i;
+        result ~= PaletteEntry!Command(CommandId(Command.indentation, choice), label(choice), "Editing");
+    }
     return result;
 }
 
@@ -109,7 +114,8 @@ struct CommandContext
         if (modal != dialogCommand) return false;
         const documentCommand = command.operation == Command.edit || command.operation == Command.save
             || command.operation == Command.saveAs || command.operation == Command.closeTab
-            || command.operation == Command.languages || command.operation == Command.selectLanguage;
+            || command.operation == Command.languages || command.operation == Command.selectLanguage
+            || command.operation == Command.indentation;
         return !documentCommand || (target == document && document != 0);
     }
 

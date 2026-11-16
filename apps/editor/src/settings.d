@@ -55,3 +55,58 @@ void toggle(ref PresentationSettings settings, PresentationToggle which) @safe p
     settings.toggle(PresentationToggle.indentGuides);
     assert(settings == PresentationSettings.init);
 }
+
+/// How the document indents (`EAP7`): applied to every tab's editor.
+struct EditingSettings
+{
+    /// Indent with tab characters rather than spaces.
+    bool useTabs;
+    /// Columns per indentation level, 1–16.
+    ubyte indentWidth = 4;
+    /// Enter copies the line's leading blanks.
+    bool autoIndent = true;
+}
+
+/// One indentation choice, as a command argument.
+enum IndentChoice : ubyte { spaces, tabs, width2, width4, width8, autoIndent }
+
+/// The palette label of a choice.
+string label(IndentChoice choice) @safe pure nothrow @nogc
+{
+    final switch (choice)
+    {
+        case IndentChoice.spaces: return "Indent with spaces";
+        case IndentChoice.tabs: return "Indent with tabs";
+        case IndentChoice.width2: return "Indentation width: 2";
+        case IndentChoice.width4: return "Indentation width: 4";
+        case IndentChoice.width8: return "Indentation width: 8";
+        case IndentChoice.autoIndent: return "Toggle auto-indent";
+    }
+}
+
+/// Apply one choice.
+void choose(ref EditingSettings settings, IndentChoice choice) @safe pure nothrow @nogc
+{
+    final switch (choice)
+    {
+        case IndentChoice.spaces: settings.useTabs = false; break;
+        case IndentChoice.tabs: settings.useTabs = true; break;
+        case IndentChoice.width2: settings.indentWidth = 2; break;
+        case IndentChoice.width4: settings.indentWidth = 4; break;
+        case IndentChoice.width8: settings.indentWidth = 8; break;
+        case IndentChoice.autoIndent: settings.autoIndent = !settings.autoIndent; break;
+    }
+}
+
+/// Choices set exactly their own setting.
+@("editor.settings.indentChoices")
+@safe pure nothrow @nogc unittest
+{
+    EditingSettings settings;
+    settings.choose(IndentChoice.tabs);
+    settings.choose(IndentChoice.width2);
+    assert(settings.useTabs && settings.indentWidth == 2 && settings.autoIndent);
+    settings.choose(IndentChoice.autoIndent);
+    settings.choose(IndentChoice.spaces);
+    assert(!settings.useTabs && !settings.autoIndent && settings.indentWidth == 2);
+}
