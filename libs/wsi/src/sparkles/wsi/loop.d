@@ -1501,12 +1501,13 @@ version (unittest)
         }
     }
 
-    private WindowId openRecordingWindow(R)(ref R wsi)
-    {
-        WindowConfig config;
-        config.logicalSize = LogicalSize(10, 10);
-        return wsi.createWindow(config).value;
-    }
+}
+
+private WindowId openRecordingWindow(R)(ref R wsi)
+{
+    WindowConfig config;
+    config.logicalSize = LogicalSize(10, 10);
+    return wsi.createWindow(config).value;
 }
 
 @("wsi.loop.clipboardRoundTripsInChunks")
