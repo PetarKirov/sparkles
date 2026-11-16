@@ -955,12 +955,12 @@ version (unittest)
     import sparkles.base.text.seek : isGraphemeBoundary;
 
     /// A layout of `s` at `wrap` cells.
-    ParagraphLayout layoutOf(string s, size_t wrap = 0,
+    private ParagraphLayout layoutOf(string s, size_t wrap = 0,
         BidiDirection direction = BidiDirection.automatic) @safe pure nothrow @nogc
         => ParagraphLayout.ofBytes(s, LayoutOptions(wrap, direction));
 
     /// Row `r`'s clusters left to right, as their start offsets.
-    size_t[16] visualStarts(in ParagraphLayout p, size_t r, out size_t n) @safe pure nothrow @nogc
+    private size_t[16] visualStarts(in ParagraphLayout p, size_t r, out size_t n) @safe pure nothrow @nogc
     {
         size_t[16] result;
         n = p.rows[r].last - p.rows[r].first;

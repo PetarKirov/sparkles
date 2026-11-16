@@ -44,6 +44,10 @@ dependency "sparkles:wired" path="../.."
 dflags "-preview=in" "-preview=dip1000"
 
 configuration "library" {
+    // Test-support modules: only the test root compiles them, so a
+    // `version (unittest)` in them changes nothing a dependent sees
+    // (build-graph BGV4).
+    excludedSourceFiles "src/sparkles/ui/editor/line_edit_test.d" "src/sparkles/ui/editor/step_test.d" "src/sparkles/ui/editor/testing.d" "src/sparkles/ui/test_utils.d"
     // A real library, not a sourceLibrary: the toolkit carries the whole
     // component set, and recompiling it inside every dependent is the cost
     // `sparkles:core-cli` is a `library` to avoid. The templated parts (the
@@ -65,6 +69,9 @@ configuration "library" {
 // `--temp-build` keeps concurrent dependents from racing on the tool's build.
 configuration "gpu-effects" {
     targetType "library"
+    // As the library configuration: the test-support modules are the test
+    // root's alone.
+    excludedSourceFiles "src/sparkles/ui/editor/line_edit_test.d" "src/sparkles/ui/editor/step_test.d" "src/sparkles/ui/editor/testing.d" "src/sparkles/ui/test_utils.d"
     versions "SparklesUiGpuEffects"
     stringImportPaths "generated/shaders"
     preGenerateCommands "$DUB run --temp-build -q --root=$PACKAGE_DIR/../../apps/shader-compile -- --package=$PACKAGE_DIR --out=$PACKAGE_DIR/generated/shaders --if-stale"
