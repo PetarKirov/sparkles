@@ -68,7 +68,6 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          use-nix-cache: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v7

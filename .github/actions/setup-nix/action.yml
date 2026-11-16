@@ -44,7 +44,12 @@ inputs:
     required: false
     default: ''
   use-nix-cache:
-    description: Whether to use nix-community/cache-nix-action to cache /nix/store in GHA (opt-in)
+    description: >-
+      Whether to use nix-community/cache-nix-action to cache /nix/store in GHA
+      (opt-in). No Sparkles workflow turns it on: R2, the cache of record,
+      serves the store, a job that restored an archive set up no faster than
+      one that substituted (run 43782517554), saving it cost each job about
+      two minutes, and the archives filled the repository's cache budget.
     type: boolean
     required: false
     default: false

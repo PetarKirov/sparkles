@@ -261,13 +261,6 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           devshell: ci
-          use-nix-cache: true
-          # Keyed by system, not runner.os: that is "Linux" for x86_64 and arm64 alike,
-          # and two legs sharing one cache corrupt it for each other.
-          nix-cache-key: nix-v2-${{ matrix.system }}-${{ matrix.DC }}-${{ hashFiles('**/flake.lock') }}
-          nix-cache-restore-prefixes: |
-            nix-v2-${{ matrix.system }}-${{ matrix.DC }}-
-            nix-v2-${{ matrix.system }}-
 
       # The Windows leg's toolchain (LDC plus the dub it bundles). Pinned to the
       # flake's LDC so every leg agrees on the compiler; ci/install-ldc-windows.sh
@@ -285,7 +278,8 @@ jobs:
           path: |
             ~/.dub
             ~/.local/share/dub
-          # Same reason as the Nix cache key above.
+          # Keyed by system, not runner.os: that is "Linux" for x86_64 and
+          # arm64 alike, and two legs sharing one cache corrupt it for each other.
           key: ${{ matrix.system }}-dub-${{ hashFiles('**/dub.sdl', '**/dub.selections.json') }}
           restore-keys: |
             ${{ matrix.system }}-dub-
@@ -543,9 +537,8 @@ jobs:
         uses: actions/checkout@v7
 
       # The dev shell comes from the binary caches: `nix-build` pushes it to R2
-      # as part of `.#all-desktop`. No GHA `/nix` cache: twenty short jobs
-      # saving under the `test` legs' keys would race those legs for them, and
-      # their own keys would crowd the repository's cache quota.
+      # as part of `.#all-desktop`. Like every job here, no GHA `/nix` cache
+      # (setup-nix's `use-nix-cache` is off): the binary caches serve the store.
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
         with:
@@ -602,11 +595,6 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           devshell: ci
-          use-nix-cache: true
-          nix-cache-key: nix-v2-${{ runner.os }}-extracted-${{ hashFiles('**/flake.lock') }}
-          nix-cache-restore-prefixes: |
-            nix-v2-${{ runner.os }}-extracted-
-            nix-v2-${{ runner.os }}-
 
       - name: Cache DUB packages
         uses: actions/cache@v6
@@ -683,13 +671,6 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           devshell: ci
-          use-nix-cache: true
-          # ubuntu-latest is x86_64-linux; key by system, not runner.os, so a
-          # future arm64 Ubuntu runner cannot share this cache (see the test job).
-          nix-cache-key: nix-v2-x86_64-linux-sanitize-${{ hashFiles('**/flake.lock') }}
-          nix-cache-restore-prefixes: |
-            nix-v2-x86_64-linux-sanitize-
-            nix-v2-x86_64-linux-
 
       # Its own key family. dub hashes `$DFLAGS` into every build id, so an
       # ASan build shares nothing with a plain one; falling back to the test
@@ -749,14 +730,6 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          # The Linux fallback restored an 8 GiB compressed Android store
-          # and filled the runner during setup (run 42023216277). Use the binary
-          # caches for its closure instead of restoring a second full store copy.
-          use-nix-cache: ${{ matrix.runner != 'ubuntu-latest' }}
-          nix-cache-key: nix-${{ runner.os }}-nixbuild-${{ hashFiles('**/flake.lock') }}
-          nix-cache-restore-prefixes: |
-            nix-${{ runner.os }}-nixbuild-
-            nix-${{ runner.os }}-
 
       # `with-cache.sh` pushes each path as it is built, so a failure in the
       # step below still leaves this build's outputs in the cache.
@@ -904,11 +877,6 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          use-nix-cache: true
-          nix-cache-key: nix-v2-${{ matrix.system }}-staticapps-${{ hashFiles('**/flake.lock') }}
-          nix-cache-restore-prefixes: |
-            nix-v2-${{ matrix.system }}-staticapps-
-            nix-v2-${{ matrix.system }}-
 
       # `with-cache.sh` pushes each path as it completes, so a run that fails
       # or hits the cap still leaves its progress in the cache. One build at a
@@ -953,11 +921,6 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           devshell: pre-commit
-          use-nix-cache: true
-          nix-cache-key: nix-v2-${{ runner.os }}-lint-${{ hashFiles('**/flake.lock') }}
-          nix-cache-restore-prefixes: |
-            nix-v2-${{ runner.os }}-lint-
-            nix-v2-${{ runner.os }}-
 
       - name: Restore lychee cache
         uses: actions/cache/restore@v6
@@ -1057,7 +1020,6 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          use-nix-cache: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -1255,11 +1217,6 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           devshell: ci
-          use-nix-cache: true
-          nix-cache-key: nix-v2-x86_64-linux-sync-${{ hashFiles('**/flake.lock') }}
-          nix-cache-restore-prefixes: |
-            nix-v2-x86_64-linux-sync-
-            nix-v2-x86_64-linux-
 
       - name: base.sync with the portable parker
         run: dub test :base -c unittest-portable -- -i 'sync\.'
