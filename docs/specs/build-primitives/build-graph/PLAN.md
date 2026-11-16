@@ -111,6 +111,8 @@ imports (D57).
 The layout lint (`sparkles:unittest-layout`) gates planning through a
 callback, after the repository's 190 in-tree violations were fixed; findings
 in registry packages are reported (D58).
+The action graph (`build_graph/actions.d`) lowers the variants to compile, archive,
+link, generate and test actions, exposed as task nodes in OBD2's id form.
 
 ## E3: Local execution and the shared store
 
