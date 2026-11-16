@@ -8618,7 +8618,21 @@
               {
                 "text": "ae.utils.graphics",
                 "link": "/research/images/ae-graphics"
-              }
+              },
+              { "text": "gamut", "link": "/research/images/gamut" },
+              {
+                "text": "arsd image modules",
+                "link": "/research/images/arsd-image"
+              },
+              {
+                "text": "Dplug graphics",
+                "link": "/research/images/dplug-graphics"
+              },
+              {
+                "text": "intel-intrinsics",
+                "link": "/research/images/intel-intrinsics"
+              },
+              { "text": "dcompute", "link": "/research/images/dcompute" }
             ]
           },
           {
@@ -8628,9 +8642,118 @@
               { "text": "Boost.GIL", "link": "/research/images/boost-gil" },
               { "text": "VIGRA", "link": "/research/images/vigra" },
               { "text": "Halide", "link": "/research/images/halide" },
-              { "text": "JuliaImages", "link": "/research/images/juliaimages" }
+              { "text": "JuliaImages", "link": "/research/images/juliaimages" },
+              { "text": "ITK", "link": "/research/images/itk" },
+              { "text": "OpenCV", "link": "/research/images/opencv" },
+              { "text": "ImageSharp", "link": "/research/images/imagesharp" },
+              { "text": "libvips", "link": "/research/images/libvips" },
+              { "text": "OpenImageIO", "link": "/research/images/openimageio" },
+              { "text": "image-rs", "link": "/research/images/image-rs" },
+              { "text": "zune-image", "link": "/research/images/zune-image" },
+              { "text": "Skia", "link": "/research/images/skia" },
+              { "text": "CImg", "link": "/research/images/cimg" },
+              { "text": "SAIL", "link": "/research/images/sail" },
+              { "text": "stb_image", "link": "/research/images/stb-image" },
+              { "text": "Go image", "link": "/research/images/go-image" },
+              {
+                "text": "NumPy and the buffer protocol",
+                "link": "/research/images/numpy-buffer-protocol"
+              },
+              { "text": "DLPack", "link": "/research/images/dlpack" },
+              { "text": "GDAL and COG", "link": "/research/images/gdal" },
+              {
+                "text": "ROS image_transport",
+                "link": "/research/images/ros-image-transport"
+              }
             ]
-          }
+          },
+          {
+            "text": "Formats and metadata",
+            "collapsed": true,
+            "items": [
+              { "text": "Wuffs", "link": "/research/images/wuffs" },
+              { "text": "libpng", "link": "/research/images/libpng" },
+              { "text": "libspng", "link": "/research/images/libspng" },
+              {
+                "text": "libjpeg-turbo",
+                "link": "/research/images/libjpeg-turbo"
+              },
+              { "text": "libwebp", "link": "/research/images/libwebp" },
+              { "text": "libjxl", "link": "/research/images/libjxl" },
+              { "text": "libavif", "link": "/research/images/libavif" },
+              { "text": "OpenEXR", "link": "/research/images/openexr" },
+              { "text": "libheif", "link": "/research/images/libheif" },
+              { "text": "libtiff", "link": "/research/images/libtiff" },
+              { "text": "ExifTool", "link": "/research/images/exiftool" },
+              { "text": "Exiv2", "link": "/research/images/exiv2" },
+              {
+                "text": "The wired experiment",
+                "link": "/research/images/wired-flat-fit/"
+              },
+              {
+                "text": "wired requirements",
+                "link": "/research/images/wired-requirements"
+              }
+            ]
+          },
+          {
+            "text": "Colour",
+            "collapsed": true,
+            "items": [
+              { "text": "Little CMS 2", "link": "/research/images/lcms2" },
+              { "text": "OpenColorIO", "link": "/research/images/opencolorio" },
+              { "text": "ICC profiles", "link": "/research/images/icc" },
+              { "text": "CICP", "link": "/research/images/cicp" },
+              { "text": "HDR gain maps", "link": "/research/images/gain-maps" }
+            ]
+          },
+          {
+            "text": "GPU, SIMD and storage",
+            "collapsed": true,
+            "items": [
+              { "text": "Simd", "link": "/research/images/simd" },
+              { "text": "Highway", "link": "/research/images/highway" },
+              {
+                "text": "KTX-Software",
+                "link": "/research/images/ktx-software"
+              },
+              {
+                "text": "basis_universal",
+                "link": "/research/images/basis-universal"
+              },
+              { "text": "libyuv", "link": "/research/images/libyuv" },
+              {
+                "text": "nvImageCodec",
+                "link": "/research/images/nvimagecodec"
+              },
+              {
+                "text": "glTF textures",
+                "link": "/research/images/gltf-textures"
+              },
+              {
+                "text": "Filament and bgfx textures",
+                "link": "/research/images/filament-bgfx-textures"
+              },
+              {
+                "text": "Godot texture import",
+                "link": "/research/images/godot-texture-import"
+              },
+              {
+                "text": "Vulkan transfer",
+                "link": "/research/images/vulkan-transfer"
+              },
+              {
+                "text": "DirectStorage and IoRing",
+                "link": "/research/images/directstorage-ioring"
+              },
+              {
+                "text": "io_uring storage",
+                "link": "/research/images/io-uring-storage"
+              }
+            ]
+          },
+          { "text": "Tier C digest", "link": "/research/images/tier-c-digest" },
+          { "text": "Comparison", "link": "/research/images/comparison" }
         ]
       }
     ]
