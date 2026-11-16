@@ -61,12 +61,14 @@ final class DocumentFontService
         if (haveApplied && applied == font) return false;
         if (!font.family.length)
         {
+            loading = false; // an earlier family's load is no longer wanted
             state = "Default document font";
             return false; // the host's own cell font is the default
         }
         const family = library.familyIndex(font.family);
         if (family == size_t.max)
         {
+            loading = false;
             state = "Font not found: " ~ font.family;
             haveApplied = true;
             applied = font;

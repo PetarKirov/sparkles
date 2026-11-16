@@ -1209,3 +1209,21 @@ where visual movement collapses two logical offsets into one stop (EAD9);
 and inserting at each boundary changes exactly that boundary and one undo
 restores the line. Font coverage is not part of this oracle: a missing
 glyph is a font fixture, not a navigation defect.
+
+### Independent review of this series — 2026-11-16
+
+An `agy` adversarial review of the commits since `242128a03` reported seven
+findings; each was confirmed in the code and repaired. Replacements bypassed
+the field's scalar filter, single-line flattening and `maxLength`, and a
+refused or empty replacement was counted as made (`editor.search.
+replacementRespectsTheField`). A malformed UTF-8 byte ended a regex search
+silently (`editor.search.regexOverInvalidUtf8`). The font picker asserted
+when more families were installed than the palette holds; it now lists the
+first 511 and says so. "Replace this match" was unavailable from the
+palette over an open find bar, and a dirty close arriving while the
+settings pane was open stayed hidden behind it (`editor.app.reviewRepairs`);
+the pane is also re-pointed at the settings on each use, since the app can
+move. Switching to the default or an unknown font mid-load left the font
+service busy forever. The review found no defect in the row-count cache and
+fast paths, the presentation helpers, line editing, the regex work bounds,
+the session record or the undo inspector.

@@ -978,11 +978,23 @@ struct EditorApp
         fontNames = fonts is null ? null : fonts.familyNames(allFamilies);
         PaletteEntry!Command[] entries = [PaletteEntry!Command(CommandId(Command.selectFont, 0),
             "Default document font", "Font")];
+        // The palette holds a bounded catalog: list what fits and say so,
+        // rather than refuse the whole list.
+        enum size_t capacity = 511;
         foreach (index, name; fontNames)
+        {
+            if (entries.length > capacity) break;
             entries ~= PaletteEntry!Command(CommandId(Command.selectFont, index + 1), name,
                 allFamilies ? "Font" : "Monospace font");
-        const result = commands.palette.catalog(entries);
-        assert(result == PaletteStatus.ok);
+        }
+        if (fontNames.length > capacity)
+            status = text("Listing the first ", capacity, " of ", fontNames.length,
+                " families; set --document-font for another.");
+        if (commands.palette.catalog(entries) != PaletteStatus.ok)
+        {
+            status = "The font list could not be shown.";
+            return;
+        }
         if (commands.palette.active)
         {
             const searched = commands.palette.search(commands.palette.snapshot.ticket,
@@ -1143,6 +1155,24 @@ struct EditorApp
         size_t[] nodes;
         if (displayed !is null) foreach (shown; displayed.rows) nodes ~= shown.node;
         return nodes;
+    }
+
+    /**
+    Whether the settings pane holds the keyboard and the frame. A dialog (a
+    dirty close, say) closes it, so the decision is seen and answered. The
+    pane is re-pointed at `settings` on each use: the app can be moved, so a
+    pointer kept from `open` could be stale.
+    */
+    private bool settingsOpen() @safe
+    {
+        if (!settingsPane.active) return false;
+        if (modal)
+        {
+            (() @trusted => settingsPane.close())();
+            return false;
+        }
+        (() @trusted { settingsPane.subject = &settings; })(); // this app's field, current for this call
+        return true;
     }
 
     /// The settings pane's size for the last frame's window.
@@ -1690,7 +1720,9 @@ struct EditorApp
 
     CommandContext context() @safe => CommandContext(recoveryExit ? 0 : document.id,
         bindings, modal, dialog == Dialog.dirtyClose || dialog == Dialog.recoveryClose,
-        recovery !is null && recovery.offerCount != 0, finding);
+        // Find commands stay available from the palette over an open bar;
+        // the bar takes keys only while it, not the palette, has focus.
+        recovery !is null && recovery.offerCount != 0, finder.open && !modal);
 
     private void observeRecovery() @safe nothrow
     {
@@ -2007,7 +2039,7 @@ struct EditorApp
     {
         if (!recoveryExit) ensureInitialized();
         if (key.action == KeyAction.release) return;
-        if (settingsPane.active)
+        if (settingsOpen())
         {
             (() @trusted => cast(void) settingsPane.handleKey(key))();
             return;
@@ -2063,7 +2095,7 @@ struct EditorApp
         finder.query.context.clipboardWrite = __traits(compiles, host.clipboard(""));
         finder.replacement.context.clipboardRead = canReadClipboard!H;
         finder.replacement.context.clipboardWrite = __traits(compiles, host.clipboard(""));
-        if (settingsPane.active)
+        if (settingsOpen())
         {
             event.match!(
                 (in KeyEvent key) { handleKey(key); },
@@ -2160,7 +2192,7 @@ struct EditorApp
             return closing.finish(closing.add(Widget(kind: WidgetKind.column, children: rows)));
         }
         lastSize = [host.size.width, host.size.height];
-        if (settingsPane.active) return (() @trusted => settingsPane.buildView(settingsGeometry()))();
+        if (settingsOpen()) return (() @trusted => settingsPane.buildView(settingsGeometry()))();
         if (filesBusy) host.wakeIn(8.msecs);
         if (!filesBusy && startupCommand != Command.none)
         {
@@ -3062,6 +3094,37 @@ struct EditorApp
     app.execute(CommandId(Command.fonts));
     app.handle(host, keyEvent(Key.enter));
     assert(!app.settings.font.family.length, "the first row restores the default face");
+}
+
+/// Review repairs: "Replace this match" runs from the palette over an open
+/// bar, and a dirty close while the settings pane is open shows its decision.
+@("editor.app.reviewRepairs")
+@safe unittest
+{
+    import sparkles.input : EndOfInput, Event;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
+    import sparkles.ui.editor.command : EditCommand;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    auto app = new EditorApp;
+    scope (exit) destroy(*app);
+    RecordingHost host;
+    app.document.field.setText("cat cat");
+    app.document.field.run(EditCommand.setRange(0, 3));
+    app.execute(CommandId(Command.replace));
+    app.finder.replacement.setText("dog");
+    app.execute(CommandId(Command.palette));
+    assert(app.context.available(CommandId(Command.replaceOne), app.document.id));
+    app.execute(CommandId(Command.replaceOne));
+    assert(app.document.field.text == "dog cat");
+
+    app.execute(CommandId(Command.closeFind));
+    app.execute(CommandId(Command.settings));
+    assert(app.settingsPane.active);
+    app.handle(host, Event(EndOfInput.init));
+    FrameSnapshot frame;
+    presentApp(*app, host, AppTheme(defaultTwoslashPalette()), frame);
+    assert(!app.settingsPane.active && app.modal, "the dirty-close decision is shown");
 }
 
 /// The settings pane is generated from the settings subject, edits them live
