@@ -18,6 +18,10 @@ dflags "-preview=in" "-preview=dip1000"
 dflags "-linkonce-templates" platform="ldc"
 
 configuration "library" {
+    // Test-support modules: only the test root compiles them, so a
+    // `version (unittest)` in them changes nothing a dependent sees
+    // (build-graph BGV4).
+    excludedSourceFiles "src/sparkles/event_horizon/sys/vfs_test.d" "src/sparkles/event_horizon/sys/vfs_nt_test.d"
     targetType "library"
 }
 

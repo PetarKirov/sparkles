@@ -656,13 +656,12 @@ private:
         {
             for (uint races = 0; races <= raceRetries;)
             {
-                version (unittest)
-                    if (injectedRaces() > 0)
-                    {
-                        --injectedRaces();
-                        ++races;
-                        continue;
-                    }
+                if (injectedRaces() > 0)
+                {
+                    --injectedRaces();
+                    ++races;
+                    continue;
+                }
                 const res = attempt();
                 if (res >= 0)
                     return ioOk(Handle(res));
@@ -678,18 +677,16 @@ private:
             return ioErr!Handle(ErrorKind.raceRetryExhausted, OpKind.resolve, EAGAIN);
         }
 
-        version (unittest)
+        /// The test double of VFN4: this many of the calling thread's next
+        /// `openat2` attempts report `EAGAIN` without being made. Present in
+        /// every build: `retryRaces` is a template, and a consumer's test root
+        /// instantiating it must get the library's code (build-graph BGV4).
+        /// Attempts made on another thread, such as `RingVfs`'s offloaded ones,
+        /// do not see it.
+        package(sparkles.event_horizon) static ref int injectedRaces()() @safe nothrow @nogc
         {
-            /// The test double of VFN4: this many of the calling thread's next
-            /// `openat2` attempts report `EAGAIN` without being made. A template,
-            /// so a dependent package's test build, which compiles this module
-            /// without `-unittest`, still emits it. Attempts made on another
-            /// thread, such as `RingVfs`'s offloaded ones, do not see it.
-            package(sparkles.event_horizon) static ref int injectedRaces()() @safe nothrow @nogc
-            {
-                static int count;
-                return count;
-            }
+            static int count;
+            return count;
         }
 
         /// The classification of a failed `openat2` with errno `e`, shared with
