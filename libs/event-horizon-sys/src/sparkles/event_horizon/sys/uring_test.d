@@ -16,11 +16,11 @@ import core.stdc.errno : ETIME;
 import core.time : MonoTime, seconds;
 
 import sparkles.event_horizon.sys.uring;
-import sparkles.test_runner.skip : skipTest;
 
 /// Opens `io` with `entries` entries, or skips the test.
 private void openRing(ref Uring io, uint entries = 8) @safe nothrow @nogc
 {
+    import sparkles.test_runner.skip : skipTest;
     if (io.setup(entries) < 0)
         skipTest("io_uring_setup refused (no kernel support, seccomp or io_uring_disabled)");
 }
@@ -29,6 +29,7 @@ private void openRing(ref Uring io, uint entries = 8) @safe nothrow @nogc
 @safe nothrow @nogc
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     Uring io;
     openRing(io);
     if (!(io.params.features & SetupFeatures.EXT_ARG))
@@ -103,6 +104,7 @@ unittest
 {
     import core.stdc.errno : EBADF, EINVAL, errno;
     import std.traits : EnumMembers;
+    import sparkles.test_runner.skip : skipTest;
 
     io_uring_query_opcode ops;
     io_uring_query_hdr hdr = {

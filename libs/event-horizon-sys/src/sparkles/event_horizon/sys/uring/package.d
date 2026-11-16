@@ -450,7 +450,6 @@ struct Uring
         return payload.sq.next128();
     }
 
-    version (unittest)
     ubyte[] debugSubmissionSlotBytes(uint i) @trusted
     in (payload !is null, "Uring hasn't been initialized yet")
     {
