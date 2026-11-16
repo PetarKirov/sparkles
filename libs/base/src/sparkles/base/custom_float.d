@@ -712,45 +712,46 @@ version (unittest)
         return n.to!string ~ "e" ~ e.to!string;
     }
 
-    /// The largest finite pattern of `T` — the positive patterns below it are
-    /// every finite positive value, in order.
-    private enum maxFiniteBits(T) = T.max.bits;
+}
 
-    /// Exact round-to-nearest-even of `num / den` (both positive) in `fmt`.
-    private DecodedFloat oracleRound(BinaryFloatFormat fmt)(BigInt num, BigInt den)
+/// The largest finite pattern of `T` — the positive patterns below it are
+/// every finite positive value, in order.
+private enum maxFiniteBits(T) = T.max.bits;
+
+/// Exact round-to-nearest-even of `num / den` (both positive) in `fmt`.
+private DecodedFloat oracleRound(BinaryFloatFormat fmt)(BigInt num, BigInt den)
+{
+    enum p = fmt.mantDig;
+    // e = floor(log2(num / den)).
+    int e = cast(int)(num.uintLength * 32) - cast(int)(den.uintLength * 32);
+    while ((e >= 0 ? den << e : den) > (e < 0 ? num << -e : num))
+        e--;
+    while ((e + 1 >= 0 ? den << (e + 1) : den) <= (e + 1 < 0 ? num << -(e + 1) : num))
+        e++;
+    int lsb = e - (p - 1);
+    if (lsb < fmt.minSubnormalExp2)
+        lsb = fmt.minSubnormalExp2;
+    // q = floor(x / 2^lsb), r = the rest, compared with a half.
+    const scaledNum = lsb < 0 ? num << -lsb : num;
+    const scaledDen = lsb > 0 ? den << lsb : den;
+    BigInt q = scaledNum / scaledDen;
+    const rest = scaledNum - q * scaledDen;
+    const twice = rest * 2;
+    if (twice > scaledDen || (twice == scaledDen && (q & 1) == 1))
+        q++;
+    if (q == BigInt(1) << p)
     {
-        enum p = fmt.mantDig;
-        // e = floor(log2(num / den)).
-        int e = cast(int)(num.uintLength * 32) - cast(int)(den.uintLength * 32);
-        while ((e >= 0 ? den << e : den) > (e < 0 ? num << -e : num))
-            e--;
-        while ((e + 1 >= 0 ? den << (e + 1) : den) <= (e + 1 < 0 ? num << -(e + 1) : num))
-            e++;
-        int lsb = e - (p - 1);
-        if (lsb < fmt.minSubnormalExp2)
-            lsb = fmt.minSubnormalExp2;
-        // q = floor(x / 2^lsb), r = the rest, compared with a half.
-        const scaledNum = lsb < 0 ? num << -lsb : num;
-        const scaledDen = lsb > 0 ? den << lsb : den;
-        BigInt q = scaledNum / scaledDen;
-        const rest = scaledNum - q * scaledDen;
-        const twice = rest * 2;
-        if (twice > scaledDen || (twice == scaledDen && (q & 1) == 1))
-            q++;
-        if (q == BigInt(1) << p)
-        {
-            q = BigInt(1) << (p - 1);
-            lsb++;
-        }
-        DecodedFloat r;
-        if (q == 0)
-            return r;
-        r.lo = cast(ulong) q.toLong;
-        r.exp2 = lsb;
-        if (lsb + imported!"core.bitop".bsr(r.lo) > fmt.maxNormalExp2)
-            r.isInf = true;
-        return r;
+        q = BigInt(1) << (p - 1);
+        lsb++;
     }
+    DecodedFloat r;
+    if (q == 0)
+        return r;
+    r.lo = cast(ulong) q.toLong;
+    r.exp2 = lsb;
+    if (lsb + imported!"core.bitop".bsr(r.lo) > fmt.maxNormalExp2)
+        r.isInf = true;
+    return r;
 }
 
 // Every rounding boundary of every reduced format: the exact midpoint between

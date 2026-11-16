@@ -309,16 +309,17 @@ version (unittest)
     private struct TestTag {}
     private alias Small = TextPool!(TestTag, 4, 16);
 
-    /// The text `id` names, copied out so a test can compare it.
-    private bool holds(P, I)(ref P pool, I id, scope const(char)[] expected,
-        bool expectTruncated = false)
-    {
-        bool same;
-        auto read = pool.withText(id, (scope const(char)[] text, bool truncated) {
-            same = text == expected && truncated == expectTruncated;
-        });
-        return read.hasValue && same;
-    }
+}
+
+/// The text `id` names, copied out so a test can compare it.
+private bool holds(P, I)(ref P pool, I id, scope const(char)[] expected,
+    bool expectTruncated = false)
+{
+    bool same;
+    auto read = pool.withText(id, (scope const(char)[] text, bool truncated) {
+        same = text == expected && truncated == expectTruncated;
+    });
+    return read.hasValue && same;
 }
 
 @("pool.text_pool.internReadRelease")

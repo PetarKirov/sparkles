@@ -1090,84 +1090,85 @@ version (unittest)
         void put(ubyte b) @safe { buf[n++] = b; }
     }
 
-    /// Per-cell bench state on the GC heap. The timed/after callbacks are
-    /// member delegates (context = this instance), NOT frame closures:
-    /// `base` source-includes the runner impl, so under this package's
-    /// -preview=dip1000 the harness's delegate parameters scope-infer and a
-    /// frame closure passed to benchCase is stack-allocated — dangling by
-    /// the time the deferred measurement runs (stack-use-after-return).
-    private final class StreamingBenchCase(Alphabet a)
+}
+
+/// Per-cell bench state on the GC heap. The timed/after callbacks are
+/// member delegates (context = this instance), NOT frame closures:
+/// `base` source-includes the runner impl, so under this package's
+/// -preview=dip1000 the harness's delegate parameters scope-infer and a
+/// frame closure passed to benchCase is stack-allocated — dangling by
+/// the time the deferred measurement runs (stack-use-after-return).
+private final class StreamingBenchCase(Alphabet a)
+{
+    ubyte[] data;
+    char[] encoded;
+    ubyte[] decoded;
+
+    this(size_t size) @safe
     {
-        ubyte[] data;
-        char[] encoded;
-        ubyte[] decoded;
-
-        this(size_t size) @safe
+        data = new ubyte[](size);
+        uint x = 0x9E3779B9 ^ cast(uint) size;
+        foreach (ref b; data)
         {
-            data = new ubyte[](size);
-            uint x = 0x9E3779B9 ^ cast(uint) size;
-            foreach (ref b; data)
-            {
-                x = x * 1664525 + 1013904223;
-                b = cast(ubyte)(x >> 24);
-            }
-            encoded = new char[](encodedLen(a, size));
-            decoded = new ubyte[](size);
-            auto w = CharSink(encoded);
-            encodeBase!a(w, data); // seed `encoded` for the decode case
+            x = x * 1664525 + 1013904223;
+            b = cast(ubyte)(x >> 24);
         }
-
-        size_t timedEncode() @safe
-        {
-            auto w = CharSink(encoded);
-            encodeBase!a(w, data);
-            return w.n;
-        }
-
-        void afterEncode(ref size_t n) @safe
-        {
-            if (n != encoded.length)
-                throw new Exception("encoded length mismatch");
-        }
-
-        // The timed result must be default-constructible for the harness,
-        // which ParseExpected deliberately is not — collapse it to the
-        // byte count (size_t.max signals an error).
-        size_t timedDecode() @safe
-        {
-            auto w = ByteSink(decoded);
-            auto r = decodeBase!a(w, encoded);
-            return r.hasError ? size_t.max : r.value;
-        }
-
-        void afterDecode(ref size_t n) @safe
-        {
-            if (n != decoded.length)
-                throw new Exception("decode mismatch");
-        }
+        encoded = new char[](encodedLen(a, size));
+        decoded = new ubyte[](size);
+        auto w = CharSink(encoded);
+        encodeBase!a(w, data); // seed `encoded` for the decode case
     }
 
-    /// Registers the streaming encode + decode rows for one
-    /// (alphabet, size) cell.
-    private void registerStreamingBench(Alphabet a)(
-        string preset, string sizeLabel, size_t size) @safe
+    size_t timedEncode() @safe
     {
-        import sparkles.test_runner.bench : benchCase, Metric, Unit;
-
-        auto c = new StreamingBenchCase!a(size);
-        benchCase(
-            name: "scalar",
-            labels: ["preset": preset, "op": "encode", "size": sizeLabel],
-            timed: &c.timedEncode,
-            after: &c.afterEncode,
-            metrics: [Metric(Unit("B"), size, Metric.Mode.rate)]);
-        benchCase(
-            name: "scalar",
-            labels: ["preset": preset, "op": "decode", "size": sizeLabel],
-            timed: &c.timedDecode,
-            after: &c.afterDecode,
-            metrics: [Metric(Unit("B"), size, Metric.Mode.rate)]);
+        auto w = CharSink(encoded);
+        encodeBase!a(w, data);
+        return w.n;
     }
+
+    void afterEncode(ref size_t n) @safe
+    {
+        if (n != encoded.length)
+            throw new Exception("encoded length mismatch");
+    }
+
+    // The timed result must be default-constructible for the harness,
+    // which ParseExpected deliberately is not — collapse it to the
+    // byte count (size_t.max signals an error).
+    size_t timedDecode() @safe
+    {
+        auto w = ByteSink(decoded);
+        auto r = decodeBase!a(w, encoded);
+        return r.hasError ? size_t.max : r.value;
+    }
+
+    void afterDecode(ref size_t n) @safe
+    {
+        if (n != decoded.length)
+            throw new Exception("decode mismatch");
+    }
+}
+
+/// Registers the streaming encode + decode rows for one
+/// (alphabet, size) cell.
+private void registerStreamingBench(Alphabet a)(
+    string preset, string sizeLabel, size_t size) @safe
+{
+    import sparkles.test_runner.bench : benchCase, Metric, Unit;
+
+    auto c = new StreamingBenchCase!a(size);
+    benchCase(
+        name: "scalar",
+        labels: ["preset": preset, "op": "encode", "size": sizeLabel],
+        timed: &c.timedEncode,
+        after: &c.afterEncode,
+        metrics: [Metric(Unit("B"), size, Metric.Mode.rate)]);
+    benchCase(
+        name: "scalar",
+        labels: ["preset": preset, "op": "decode", "size": sizeLabel],
+        timed: &c.timedDecode,
+        after: &c.afterDecode,
+        metrics: [Metric(Unit("B"), size, Metric.Mode.rate)]);
 }
 
 @("text.base_codecs.bench.streaming")
