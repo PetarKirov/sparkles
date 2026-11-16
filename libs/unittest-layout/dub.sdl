@@ -1,0 +1,88 @@
+name "unittest-layout"
+description "The unittest layout lint: version (unittest) must change nothing a dependent can observe"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+importPaths "src"
+
+// The lint reads declarations before conditional compilation, so it parses
+// with DMD's own parser, parse-only, as libs/dmd-fmt's oracle does. Same pin
+// as libs/d-source, libs/dmd-fmt and libs/dmd-lsp (build-graph D56). The fork's
+// `dmd:parser` lacks the parse-only AST (`astbase.d`), so this takes
+// `dmd:frontend` until the fork carries it; the visitor is generic over the
+// AST family, so the switch changes no rule.
+dependency "dmd:frontend" repository="git+https://github.com/PetarKirov/dmd.git" \
+    version="e0be436ba491e506552e529a6a10983a436898e5"
+// One lock for DMD's process-wide state, shared with the token scans.
+dependency "sparkles:d-source" path="../.."
+
+// No -preview=in / -preview=dip1000, as for libs/dmd-fmt (BLD4).
+
+configuration "library" {
+    targetType "library"
+}
+
+configuration "unittest" {
+    dependency "sparkles:test-runner" path="../.."
+    // No -checkaction=context: dub passes it down into dmd:frontend's
+    // compile, which then fails to link (libs/dmd-fmt, libs/dmd-lsp).
+}
+
+// BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
+dflags "--linker=lld" platform="linux-ldc"
+dflags "-L-fuse-ld=lld" platform="linux-dmd"
+
+buildType "unittest" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-debug" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov" {
+    buildOptions "unittests" "coverage" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov-ctfe" {
+    buildOptions "unittests" "coverageCTFE" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
+buildType "bench" {
+    buildOptions "unittests" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-unchecked" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-static" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "--link-defaultlib-shared=false" platform="linux-ldc"
+    dflags "-defaultlib=libphobos2.a" platform="linux-dmd"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+// END managed build types
