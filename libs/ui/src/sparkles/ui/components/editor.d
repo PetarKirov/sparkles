@@ -666,10 +666,12 @@ uint editorView(ref Builder b, in EditorState state, EditorViewOptions options =
     if (state.text.length == 0 && !state.composition.active && options.placeholder.length)
     {
         TextSpan[] spans;
-        if (options.caretVisible)
+        if (options.caretVisible && !options.hostCursor)
             spans ~= TextSpan(text: caretGlyph, slot: Slot.caret);
         spans ~= TextSpan(text: options.placeholder, slot: Slot.muted);
-        return b.add(Widget(kind: WidgetKind.rich, spans: spans, width: SizeSpec.grow()));
+        // The host's cursor stands before the placeholder, at column 0.
+        return b.add(Widget(kind: WidgetKind.rich, spans: spans, width: SizeSpec.grow(),
+            caretColumn: options.hostCursor && options.caretVisible ? 0 : -1));
     }
     const lines = state.text.lineCount;
     const caretLine = state.text.lineOf(state.selection.primary.head);

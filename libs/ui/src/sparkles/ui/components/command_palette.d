@@ -24,6 +24,8 @@ struct PaletteViewOptions
     float scrollFrac = 0;
     string title = "Commands";
     string placeholder = "Search commands"; /// Query prompt for the catalog being searched.
+    /// Leave the query's caret to the host's cursor (ui-app `HST20`): no glyph moves the text.
+    bool hostCursor;
 }
 
 /// Retain these value-only actions with the displayed tree, not mutable list indices.
@@ -59,7 +61,8 @@ PaletteView!Cmd viewCommandPalette(Cmd, size_t Capacity, size_t QueryBytes, Cont
     }
     else
         children ~= b.add(Widget(kind: WidgetKind.text, text: options.title, slot: Slot.docs));
-    const prompt = editorView(b, query, EditorViewOptions(placeholder: options.placeholder));
+    const prompt = editorView(b, query, EditorViewOptions(placeholder: options.placeholder,
+        hostCursor: options.hostCursor));
     b.nodes[prompt].hitId = options.queryHit;
     const queryPadding = options.compact ? Insets(0, 1, 0, 1) : Insets(1, 1, 1, 1);
     children ~= b.add(Widget(kind: WidgetKind.column, children: [prompt],
