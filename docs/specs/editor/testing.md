@@ -1128,3 +1128,33 @@ and the input-method caret area follows the same rule.
 `editor.app.fieldsUseTheHostCursor` opens the palette and the path dialog,
 types into each, and checks the tree holds no `▏` glyph and exactly one
 cursor, at the focused field's column.
+
+### Document workloads — 2026-11-16
+
+`editor.workload.documents` (`dub test :editor -b bench -- --bench -i
+editor.workload`) opens a 1 MiB and a 10 MiB source file and a 1 MiB single
+line through the real app on the recording host (120×40 cells), and times
+each phase separately: opening, the first frame, the median of 15 steady
+frames, an edit in the middle with its frame, and a find-next with its
+frame. Its first run exposed whole-document work on every frame: the
+scroll extent laid out every paragraph, the viewport's row index every
+line above it, the draw loop bypassed the layout cache, and the status bar
+walked the caret's line by grapheme. Fixed: rows before each line are
+counted once per text and wrap width (`rowPrefix`), a line that provably
+fits one row is counted without a layout, the draw loop reads the layout
+cache and projects only the rows on screen, and the column is counted once
+per text and caret. Wall milliseconds, `bench` build, this x86_64 host:
+
+| Document       | Open | First frame | Steady frame | Edit + frame | Find + frame |
+| -------------- | ---: | ----------: | -----------: | -----------: | -----------: |
+| 1 MiB source   | 11.5 |         7.5 |         0.59 |          6.2 |         10.3 |
+| 10 MiB source  | 58.7 |        49.2 |         0.61 |         50.2 |         10.1 |
+| 1 MiB one line |  6.4 |       530.4 |         0.85 |        293.0 |        168.6 |
+
+Before the fixes the 1 MiB file's steady frame took 1964 ms and the 10 MiB
+file's 19 339 ms (debug build). What remains is per-edit work: an edit
+recounts every line's rows (about 50 ms at 10 MiB), and an edit in a 1 MiB
+line lays out and highlights the whole paragraph again (about 0.3 s). Both
+miss a 120 Hz frame; incremental row counts and windowed span production
+are the next steps, and no 120 Hz claim is made. Input latency,
+presentation and GPU time on a device are measured separately.

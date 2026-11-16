@@ -456,27 +456,38 @@ private struct ClipboardRead
         "An explicit Exit without recovery decision must not become a CLI failure afterward.");
 }
 
-private long visualRowIndex(ref LayoutContext context, in Text text,
-    size_t targetLine, size_t targetRow) @safe
+/**
+The visual rows before each line of `document` (`EAP17`, `EAP29`), counted
+once per text and wrap width: a steady frame reuses them, and a line short
+enough to be one row is counted without a layout.
+*/
+private const(long)[] rowPrefix(Document document) @safe
 {
-    long total;
+    auto context = &document.field.context;
+    const text = document.field.state.text;
+    if (document.countedWrap == context.options.wrapCells && document.countedText == text)
+        return document.rowPrefix;
     const count = text.lineCount;
+    document.rowPrefix.length = count + 1;
+    long total;
     foreach (line; 0 .. count)
     {
-        if (line == targetLine) return total + cast(long) targetRow;
-        total += cast(long) context.paragraph(text, line).rows.length;
+        document.rowPrefix[line] = total;
+        total += cast(long) context.rowCount(text, line);
     }
-    return total;
+    document.rowPrefix[count] = total;
+    document.countedText = Text(text);
+    document.countedWrap = context.options.wrapCells;
+    return document.rowPrefix;
 }
 
-private long totalVisualRows(ref LayoutContext context, in Text text) @safe
+private long visualRowIndex(Document document, size_t targetLine, size_t targetRow) @safe
 {
-    long total;
-    const count = text.lineCount;
-    foreach (line; 0 .. count)
-        total += cast(long) context.paragraph(text, line).rows.length;
-    return total;
+    const prefix = rowPrefix(document);
+    return (targetLine + 1 < prefix.length ? prefix[targetLine] : prefix[$ - 1]) + cast(long) targetRow;
 }
+
+private long totalVisualRows(Document document) @safe => rowPrefix(document)[$ - 1];
 
 private enum Dialog : ubyte { none, openPath, savePath, dirtyClose, recoveryClose, restoreOffer }
 
@@ -507,6 +518,9 @@ struct EditorApp
     /// The settings pane, generated from `settings` (EAP15); it holds the keyboard while open.
     SettingsPane!EditorSettings settingsPane;
     private int[2] lastSize = [80, 24];
+    // The status bar's column, for the text and caret it was counted at.
+    private Text columnText;
+    private size_t columnHead = size_t.max, columnValue = 1;
     /// The find and replace bar (EAP5, EAP7).
     FindBar finder;
     bool quitRequested;
@@ -1189,9 +1203,20 @@ struct EditorApp
         const state = &document.field.state;
         const head = state.selection.primary.head;
         const line = state.text.lineOf(head);
-        size_t column = 1;
-        for (size_t at = state.text.lineStart(line); at < head; at = nextGraphemeBoundary(state.text, at))
-            ++column;
+        // Counted once per text and caret: a long line's column is not walked per frame.
+        if (head != columnHead || state.text != columnText)
+        {
+            const start = state.text.lineStart(line);
+            auto bytes = new char[head - start];
+            state.text.copyTo(start, head, bytes);
+            size_t count = 1;
+            for (size_t at = 0; at < bytes.length; at = nextGraphemeBoundary(bytes, at))
+                ++count;
+            columnHead = head;
+            columnText = Text(state.text);
+            columnValue = count;
+        }
+        const column = columnValue;
         const ranges = state.selection.ranges.length;
         return text("Ln ", line + 1, ", Col ", column,
             ranges > 1 ? text("  •  ", ranges, " selections") : "",
@@ -2276,7 +2301,7 @@ struct EditorApp
             context.viewportLines = visible;
             if (document.firstLine >= count) document.firstLine = count ? count - 1 : 0;
             const text = document.field.state.text;
-            const totalRows = totalVisualRows(*context, text);
+            const totalRows = totalVisualRows(document);
             document.scroll.content = totalRows;
             document.scroll.viewport = cast(long) visible;
             document.scroll.motion.instant = host.backend != Backend.gui;
@@ -2285,7 +2310,7 @@ struct EditorApp
                 const primary = document.field.state.selection.primary;
                 scrollToCaret(*context, text, CaretTarget(primary.head, primary.affinity),
                     visible, document.firstLine, document.firstRow);
-                document.syncedVisualRow = visualRowIndex(*context, text, document.firstLine, document.firstRow);
+                document.syncedVisualRow = visualRowIndex(document, document.firstLine, document.firstRow);
                 document.scroll.motion.jumpTo(cast(double) document.syncedVisualRow, document.scroll.limit);
             }
             else
@@ -2297,7 +2322,7 @@ struct EditorApp
                 if (delta != 0)
                 {
                     scrollRows(*context, text, delta, document.firstLine, document.firstRow);
-                    document.syncedVisualRow = visualRowIndex(*context, text, document.firstLine, document.firstRow);
+                    document.syncedVisualRow = visualRowIndex(document, document.firstLine, document.firstRow);
                     if (document.syncedVisualRow != targetRow)
                         document.scroll.motion.jumpTo(cast(double) document.syncedVisualRow, document.scroll.limit);
                 }
@@ -2340,10 +2365,11 @@ struct EditorApp
                             marks ~= TextMark(blank[0], blank[1], Slot.diffRemoved);
                     }
                     const logical = marks.length ? markSpans(plain, marks) : plain;
-                    const layout = ParagraphLayout.of(text, line, context.options);
+                    const layout = context.paragraph(text, line);
                     const current = settings.view.currentLine && line == caretLine && !composing
                         && selection.ranges.length == 1 && selection.primary.empty;
-                    foreach (row; visualRows(logical, layout, document.field.state))
+                    const fromRow = line == document.firstLine ? document.firstRow : 0;
+                    foreach (row; visualRows(logical, layout, document.field.state, fromRow, renderLimit - rows.length))
                     {
                         if (line == document.firstLine && row.row < document.firstRow) continue;
                         if (rows.length == renderLimit) break;

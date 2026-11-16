@@ -21,6 +21,10 @@ class Document
     ScrollBody scroll;
     long syncedVisualRow;
     bool followCaret = true;
+    /// Visual rows before each line, for the text and wrap width they were counted at.
+    long[] rowPrefix;
+    Text countedText;
+    size_t countedWrap = size_t.max;
     string language = "text";
     bool bom;
     string predominant = "\n";
