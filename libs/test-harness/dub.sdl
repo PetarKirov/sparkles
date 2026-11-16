@@ -26,6 +26,10 @@ dependency "sparkles:profiling-counters" path="../.."
 targetType "library"
 
 configuration "library" {
+    // Test-support modules: only the test root compiles them, so a
+    // `version (unittest)` in them changes nothing a dependent sees
+    // (build-graph BGV4).
+    excludedSourceFiles "src/sparkles/test_runner/self_host.d"
     targetType "library"
 }
 
