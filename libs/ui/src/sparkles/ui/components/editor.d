@@ -1044,7 +1044,7 @@ version (unittest)
     import sparkles.ui.editor.testing : parse;
 
     /// The spans of `marked`'s first line, as `text/slot` pairs joined by `|`.
-    string spansOf(string marked, EditorViewOptions options = EditorViewOptions.init)
+    private string spansOf(string marked, EditorViewOptions options = EditorViewOptions.init)
         @safe pure nothrow
     {
         const state = parse(marked);

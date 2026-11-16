@@ -680,7 +680,7 @@ unittest
 
 // The table `rendered` (any value that writes itself) against `expected`,
 // with a diff on mismatch.
-version (unittest) private void checkRender(T)(in T rendered, string expected)
+private void checkRender(T)(in T rendered, string expected)
 {
     import std.conv : text;
     import sparkles.test_utils : diffWithTool, DiffTools;

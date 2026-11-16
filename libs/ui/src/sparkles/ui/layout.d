@@ -1208,24 +1208,23 @@ string dumpTree(in WidgetTree tree, in Frame[] frames)
     return w[];
 }
 
-version (unittest)
+// In every build: `display_list`'s tests use it too, and a dependent's
+// `-unittest` compile must see what the library has (build-graph BGV4).
+import sparkles.ui.style : FontRole, TypeStep;
+
+// A measurer for a target with an interface face (design-system `GLY10`):
+// a `ui` run is twice as wide as the cell measure, and a title takes two
+// rows. Everything else measures as cells.
+struct StyledMeasure
 {
-    import sparkles.ui.style : FontRole, TypeStep;
+    int width(scope const(char)[] s) const pure nothrow @nogc
+        => cast(int) visibleWidth(s);
 
-    // A measurer for a target with an interface face (design-system `GLY10`):
-    // a `ui` run is twice as wide as the cell measure, and a title takes two
-    // rows. Everything else measures as cells.
-    struct StyledMeasure
-    {
-        int width(scope const(char)[] s) const pure nothrow @nogc
-            => cast(int) visibleWidth(s);
+    int width(scope const(char)[] s, in TextStyle st) const pure nothrow @nogc
+        => st.fontRole == FontRole.ui ? 2 * cast(int) visibleWidth(s) : cast(int) visibleWidth(s);
 
-        int width(scope const(char)[] s, in TextStyle st) const pure nothrow @nogc
-            => st.fontRole == FontRole.ui ? 2 * cast(int) visibleWidth(s) : cast(int) visibleWidth(s);
-
-        int rows(in TextStyle st) const pure nothrow @nogc
-            => st.fontRole == FontRole.ui && st.typeStep == TypeStep.title ? 2 : 1;
-    }
+    int rows(in TextStyle st) const pure nothrow @nogc
+        => st.fontRole == FontRole.ui && st.typeStep == TypeStep.title ? 2 : 1;
 }
 
 @("ui.layout.styledMeasure.uiRunsTakeTheirWidthAndRows")
