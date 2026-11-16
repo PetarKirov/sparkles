@@ -191,6 +191,33 @@ unittest
     assert(text == "abcd" && back.state == 1);
 }
 
+/// An inspector reads the tree: parents, depths, a branch point and redo.
+@("History.revision.describesTheTree")
+@safe pure nothrow
+unittest
+{
+    auto text = Text("abc");
+    auto history = History!int(0, text.length);
+    void commit(size_t at, string inserted, int state, long time)
+    {
+        ChangeSet changes;
+        const Edit[1] edit = [Edit(at, at, inserted)];
+        assert(ChangeSet.of(text.length, edit[], changes) == ChangeSetStatus.ok);
+        history.commit(changes, changes.invert(text), 0, state, .at(time));
+        text = changes.apply(text);
+    }
+    commit(3, "d", 1, 1);
+    text = history.undo().changes.apply(text);
+    commit(0, "xy", 2, 2);
+    assert(history.length == 3);
+    const root = history.revision(0);
+    assert(root.depth == 0 && root.children == 2 && root.redoChild == 2 && root.length == 3);
+    const abandoned = history.revision(1);
+    assert(abandoned.parent == 0 && abandoned.depth == 1 && abandoned.children == 0 && abandoned.length == 4);
+    const current = history.revision(2);
+    assert(current.parent == 0 && current.length == 5 && current.time == .at(2));
+}
+
 /// Pruning removes the oldest childless revisions, then reroots
 /// (TXB-HIS5), and every remaining revision keeps its text.
 @("History.prune.oldestLeavesThenReroot")

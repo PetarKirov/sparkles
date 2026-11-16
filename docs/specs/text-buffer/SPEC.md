@@ -307,6 +307,11 @@ Timestamps are supplied by the caller; a timestamp earlier than the newest
 one recorded **must** be treated as equal to it, so a clock that steps back
 cannot break travel.
 
+**TXB-HIS7: Inspection.** `revision(index)` **must** report a revision's
+parent, depth, child count, redo child, timestamp and resulting text length
+in creation order, without moving the current revision, so an inspector can
+draw the tree and travel by `earlier`/`later`.
+
 ## 6. Ownership, threading and limits
 
 **TXB-OWN1: Deterministic release.** Nodes **must** be reference-counted
@@ -364,6 +369,7 @@ in size.
 | TXB-HIS4  | chronological travel            | full    | `History.earlier`, `History.later`, tests `History.model.randomNavigation`, `History.travelByTime.afterAmend`                                  |
 | TXB-HIS5  | pruning                         | full    | `History.prune`, test `History.prune.oldestLeavesThenReroot`                                                                                   |
 | TXB-HIS6  | time is an input                | full    | `History`, test `History.model.randomNavigation`                                                                                               |
+| TXB-HIS7  | inspection                      | full    | `History.revision`, test `History.revision.describesTheTree`                                                                                   |
 | TXB-OWN1  | deterministic release           | full    | `release`, tests `Text.release.returnsToBaseline`, `History.release.everyNodeFreed`                                                            |
 | TXB-OWN2  | sharing across threads          | partial | `retain`, `RcArray`, test `Text.threads.sharedCounts`; no explicit transfer operation exists yet                                               |
 | TXB-OWN3  | allocation                      | full    | `allocate`, `Scratch`, tests `Text.release.returnsToBaseline`, `History.release.everyNodeFreed`                                                |

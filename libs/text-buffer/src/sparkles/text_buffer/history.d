@@ -43,6 +43,23 @@ struct HistoryStep(S)
 
 private enum size_t none = size_t.max;
 
+/// One revision as an inspector sees it (`History.revision`).
+struct RevisionInfo
+{
+    /// The revision it was made from; the root's is 0.
+    size_t parent;
+    /// Distance from the root.
+    size_t depth;
+    /// How many revisions were made from it: more than one is a branch point.
+    size_t children;
+    /// The child `redo` would reach; 0 without one.
+    size_t redoChild;
+    /// When it was committed or last amended.
+    MonoTime time;
+    /// The text's length after it, in bytes.
+    size_t length;
+}
+
 private struct Revision(S)
 {
     size_t parent = none;
@@ -308,6 +325,25 @@ struct History(S)
         current = map[current];
         revisions = kept;
         return n - count;
+    }
+
+    /**
+    Revision `index`'s place in the tree, in creation order: what an undo
+    inspector draws. The root is revision 0, its own parent.
+    */
+    RevisionInfo revision(size_t index) const scope
+    in (index < length, "no such revision")
+    {
+        if (!revisions.length)
+            return RevisionInfo.init;
+        const all = revisions[];
+        const r = &all[index];
+        size_t children;
+        foreach (ref other; all)
+            children += other.parent == index;
+        return RevisionInfo(parent: r.parent == none ? 0 : r.parent, depth: r.depth,
+            children: children, redoChild: r.redoChild == none ? 0 : r.redoChild,
+            time: r.time, length: r.changes.resultLength);
     }
 
 private:
