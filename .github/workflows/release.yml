@@ -75,11 +75,6 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          use-nix-cache: true
-          nix-cache-key: nix-${{ runner.os }}-nixbuild-${{ hashFiles('**/flake.lock') }}
-          nix-cache-restore-prefixes: |
-            nix-${{ runner.os }}-nixbuild-
-            nix-${{ runner.os }}-
 
       # Usually all cache hits: CI's nix-build job already built and pushed
       # this commit's outputs before it reached main.
