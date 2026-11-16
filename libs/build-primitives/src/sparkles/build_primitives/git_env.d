@@ -119,6 +119,39 @@ auto runGit(scope const(string)[] args, scope const(char)[] workDir = null) @saf
         size_t.max, workDir);
 }
 
+/**
+$(LREF runGit) for a command whose output is data: `output` is git's
+standard output alone, and its standard error goes to this process's.
+Combined, a warning git prints while it works lands among the data:
+Windows' `core.autocrlf` prints "LF will be replaced by CRLF" for a file a
+`diff` reads, and the warning became part of a changed path's name.
+*/
+auto runGitStdout(scope const(string)[] args, scope const(char)[] workDir = null) @safe
+{
+    import std.process : Config, execute;
+
+    return execute("git" ~ args, gitChildEnvironment(),
+        Config.newEnv | Config.stderrPassThrough, size_t.max, workDir);
+}
+
+@("git_env.runGitStdout.keepsWarningsOutOfTheData")
+@system unittest
+{
+    import sparkles.build_primitives.testing : gitAvailable, TmpGitRepo;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (!gitAvailable)
+        return skipTest("git is not on PATH");
+    auto repo = TmpGitRepo.create();
+    repo.writeFile("a.txt", "one\n");
+    repo.commitAll();
+    repo.writeFile("a.txt", "one\ntwo\n");
+    // `core.safecrlf=warn` with `core.autocrlf=true` warns on every
+    // platform, so the test does not need Windows to see the warning.
+    const args = ["-c", "core.autocrlf=true", "-c", "core.safecrlf=warn", "diff", "--name-only", "HEAD"];
+    assert(runGitStdout(args, repo.dir).output == "a.txt\n");
+}
+
 @("git_env.withoutRepositoryLocation.removesEveryRedirectAndNothingElse")
 @safe pure unittest
 {

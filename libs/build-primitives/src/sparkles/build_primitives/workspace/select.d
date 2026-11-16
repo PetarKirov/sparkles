@@ -15,10 +15,10 @@ reported under.
 $(LREF selectPackages) is pure: it evaluates the selection algebra over a
 $(REF PackageGraph, sparkles,build_primitives,workspace,package_graph) and the
 seeds $(LREF seedsByClaims) derived from a change set. $(LREF gitChangesSince)
-is the one part that runs git, through `runGit`, so an inherited `GIT_DIR`
-cannot redirect it. $(LREF planPackages) puts the two together for a
-repository: it reads the workspace, resolves the requests and builds the
-input sets.
+is the one part that runs git, through `runGitStdout`, so an inherited
+`GIT_DIR` cannot redirect it and git's warnings stay out of the paths.
+$(LREF planPackages) puts the two together for a repository: it reads the
+workspace, resolves the requests and builds the input sets.
 +/
 module sparkles.build_primitives.workspace.select;
 
@@ -521,12 +521,13 @@ neither existing is `SelectionErrorKind.baseUnresolved`. Each path appears
 once, whether it was created, modified or removed: input sets judge a path
 without the file, so whether it exists does not matter ($(LREF seedsByClaims)).
 Renames count as a removal plus a creation. Every git call goes through
-`runGit`.
+`runGitStdout`: its output is parsed, so git's standard error is kept out.
 */
 PlanExpected!(SinceChanges, SelectionError) gitChangesSince(string repoRoot, string sinceRef) @safe
 {
     import std.string : strip;
-    import sparkles.build_primitives.git_env : runGit;
+    import std.conv : text;
+    import sparkles.build_primitives.git_env : runGitStdout;
 
     alias fail = (kind, detail) => planErr!SinceChanges(SelectionError(kind, detail));
 
@@ -548,7 +549,9 @@ PlanExpected!(SinceChanges, SelectionError) gitChangesSince(string repoRoot, str
     SinceChanges since;
     try
     {
-        auto git(scope const(string)[] args) => runGit(args, repoRoot);
+        // Their output is data, so git's warnings stay on its standard error.
+        auto git(scope const(string)[] args) => runGitStdout(args, repoRoot);
+        alias failed = (what, r) => text(what, " exited with status ", r.status, " (its message is above)");
 
         if (sinceRef.length == 0)
         {
@@ -566,7 +569,7 @@ PlanExpected!(SinceChanges, SelectionError) gitChangesSince(string repoRoot, str
         const mergeBase = git(["merge-base", sinceRef, "HEAD"]);
         if (mergeBase.status != 0)
             return fail(SelectionErrorKind.baseUnresolved,
-                "no merge base of " ~ sinceRef ~ " and HEAD: " ~ mergeBase.output.strip);
+                "no merge base of " ~ sinceRef ~ " and HEAD");
         since.mergeBase = mergeBase.output.strip;
 
         // Three views of "changed": the worktree against the base, the index
@@ -576,19 +579,19 @@ PlanExpected!(SinceChanges, SelectionError) gitChangesSince(string repoRoot, str
         bool[string] changed; // membership only; the result is sorted below
         const worktree = git(["diff", "--name-only", "-z", "--no-renames", since.mergeBase, "--"]);
         if (worktree.status != 0)
-            return fail(SelectionErrorKind.gitFailed, "git diff: " ~ worktree.output.strip);
+            return fail(SelectionErrorKind.gitFailed, failed("git diff", worktree));
         foreach (path; fields(worktree.output))
             changed[path] = true;
 
         const index = git(["diff", "--cached", "--name-only", "-z", "--no-renames", since.mergeBase, "--"]);
         if (index.status != 0)
-            return fail(SelectionErrorKind.gitFailed, "git diff --cached: " ~ index.output.strip);
+            return fail(SelectionErrorKind.gitFailed, failed("git diff --cached", index));
         foreach (path; fields(index.output))
             changed[path] = true;
 
         const untracked = git(["ls-files", "--others", "--exclude-standard", "-z"]);
         if (untracked.status != 0)
-            return fail(SelectionErrorKind.gitFailed, "git ls-files: " ~ untracked.output.strip);
+            return fail(SelectionErrorKind.gitFailed, failed("git ls-files", untracked));
         foreach (path; fields(untracked.output))
             changed[path] = true;
 
@@ -1423,19 +1426,16 @@ unittest
         assert(r.unresolved is null, r.unresolved);
 
     // The root recipe is a workspace input: a change to it seeds every
-    // request.
+    // request. With `core.autocrlf`, as on Windows, git warns about the
+    // edit as it diffs, and the warning must not become part of the path.
+    assert(repo.git(["config", "core.autocrlf", "true"]).status == 0);
+    assert(repo.git(["config", "core.safecrlf", "warn"]).status == 0);
     repo.writeFile("dub.sdl", "name \"sparkles\"\nsubPackage \"libs/c\"\nsubPackage \"libs/a\"\n"
         ~ "subPackage \"libs/b\"\n// edited\n");
-    auto all = planPackages(repo.dir, RecipeRole.test, FocusOptions(since: true, sinceRef: "main",
+    const all = planPackages(repo.dir, RecipeRole.test, FocusOptions(since: true, sinceRef: "main",
         platform: options.platform), linux);
     auto allPlan = appender!string;
     writeSelectionPlan(allPlan, all.value.selection);
-    {
-        import std.conv : text;
-
-        allPlan.put(text("changes: ", all.value.since.changes,
-            "\nstatus: ", repo.git(["status", "--porcelain"]).output));
-    }
     assert(all.value.selection.packages.length == 3, allPlan[]);
     assert(all.value.selection.packages[1].reasons[$ - 1] == SelectionReason(ReasonKind.workspaceInput, "dub.sdl"));
 
