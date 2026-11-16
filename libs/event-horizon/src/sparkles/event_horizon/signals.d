@@ -84,13 +84,13 @@ private:
 version (unittest)
 {
     import sparkles.event_horizon.sched : schedOrSkip;
-    import sparkles.test_runner.skip : skipTest;
 }
 
 @("signals.signalfd.throughRing")
 @safe
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     import core.sys.posix.signal : SIGUSR1, raise;
 
     Sched s;

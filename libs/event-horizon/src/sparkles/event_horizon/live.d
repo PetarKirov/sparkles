@@ -1060,7 +1060,6 @@ version (unittest)
     import sparkles.event_horizon.clock : isClock;
     import sparkles.event_horizon.net : isNet;
     import sparkles.event_horizon.proc : isProc;
-    import sparkles.test_runner.skip : skipTest;
 
     static assert(isClock!RingClock);
     static assert(isNet!RingNet);
@@ -1075,6 +1074,7 @@ version (unittest)
     /// workers are not test threads and do not count.
     private void requireSingleThreadedProcess() @system
     {
+        import sparkles.test_runner.skip : skipTest;
         foreach (t; Thread.getAll())
             if (t !is Thread.getThis() && !t.isDaemon)
                 skipTest("mutates process-global descriptors/signals; run with -t 1");
@@ -1789,31 +1789,29 @@ unittest
         "dup2(fd, fd) must not be followed by a child close action");
 }
 
-version (unittest)
+// `marker` plus the pid, rather than `TmpFS`'s default prefix: that
+// default is the *calling* function, so every test routed through this
+// helper would share one directory, and the runner is parallel.
+//
+// A template with the test-utils import in its body, outside `version
+// (unittest)`: only tests instantiate it, so the library carries no
+// test-utils edge, and a consumer's `-unittest` compile sees what the library
+// does (build-graph BGV4).
+private auto makeProbeDir()(string marker) @system
 {
-    // `marker` plus the pid, rather than `TmpFS`'s default prefix: that
-    // default is the *calling* function, so every test routed through this
-    // helper would share one directory, and the runner is parallel.
-    //
-    // A template with the test-utils import in its body, not a module-scope
-    // `version (unittest)` import: the latter is evaluated by every `-unittest`
-    // consumer that imports this module, and consumers carry no test-utils edge.
-    private auto makeProbeDir()(string marker) @system
-    {
-        import sparkles.test_utils.tmpfs : TmpFS;
-        import core.sys.posix.sys.stat : chmod;
-        import core.sys.posix.unistd : getpid;
-        import std.conv : text;
-        import std.string : toStringz;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import core.sys.posix.sys.stat : chmod;
+    import core.sys.posix.unistd : getpid;
+    import std.conv : text;
+    import std.string : toStringz;
 
-        auto tmp = TmpFS.create(text("eh-path-probe-", marker, "-", getpid()));
-        const script = tmp.writeFileAt("ehprobe", "#!/bin/sh\necho from-overlay\n");
-        // The executable bit is the point of the probe, and no fixture
-        // grants it — the test does.
-        enum uint mode755 = 493; // 0o755
-        cast(void) chmod(script.toStringz, mode755);
-        return tmp;
-    }
+    auto tmp = TmpFS.create(text("eh-path-probe-", marker, "-", getpid()));
+    const script = tmp.writeFileAt("ehprobe", "#!/bin/sh\necho from-overlay\n");
+    // The executable bit is the point of the probe, and no fixture
+    // grants it — the test does.
+    enum uint mode755 = 493; // 0o755
+    cast(void) chmod(script.toStringz, mode755);
+    return tmp;
 }
 
 @("live.env.pathLookupUsesTheOverlayResult")

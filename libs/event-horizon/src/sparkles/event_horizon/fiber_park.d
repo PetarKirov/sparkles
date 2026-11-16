@@ -480,11 +480,10 @@ package bool writeRingSleep(FiberTask t) @trusted nothrow @nogc
     }
 }
 
-version (unittest)
-{
-    /// Park-word wakes by `futex` call, for the tests.
-    package uint parkWordWakes;
-}
+// Declared in every build, so the library and a consumer's `-unittest`
+// compile agree on it (build-graph BGV4); only tests use it.
+/// Park-word wakes by `futex` call, for the tests.
+package uint parkWordWakes;
 
 static if (ringOps)
 {

@@ -366,7 +366,6 @@ private BufResult!B rw(Op, Flag!"sized" sized, B, Args...)(
 version (unittest)
 {
     import sparkles.event_horizon.sched : schedOrSkip;
-    import sparkles.test_runner.skip : skipTest;
 }
 
 @("io.pipe.directStyleReadWrite")
@@ -603,6 +602,7 @@ unittest
 @safe
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     static if (canSubmitOp!(DefaultBackend, OpPollAdd))
         readinessProbe();
     else
@@ -612,6 +612,7 @@ unittest
 private void readinessProbe()()
 {
     import core.time : msecs;
+    import sparkles.test_runner.skip : skipTest;
 
     Sched s;
     schedOrSkip(s);
@@ -659,6 +660,7 @@ private void readinessProbe()()
 @safe
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     import sparkles.base.buffer : Buffer, SharedBuffer;
     import sparkles.event_horizon.buffer : BufferPool;
 
@@ -859,6 +861,7 @@ static if (canSubmitOp!(DefaultBackend, OpRecvSelect))
 @safe
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     import core.lifetime : move;
 
     import sparkles.event_horizon.buffer : BufGroupId, BufOrigin, BufRing;

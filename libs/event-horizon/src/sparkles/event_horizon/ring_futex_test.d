@@ -17,7 +17,6 @@ import sparkles.event_horizon.backend.select : DefaultBackend;
 import sparkles.event_horizon.errors : IoErrorStage, OpKind, skipReason;
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig;
 import sparkles.event_horizon.op;
-import sparkles.test_runner.skip : skipTest;
 
 static if (canSubmitOp!(DefaultBackend, OpFutexWait)):
 
@@ -38,6 +37,7 @@ private void record(void* ctx, ref Completion done) nothrow @nogc
 /// Creates a loop whose kernel has the futex operations, or skips.
 private void createOrSkip(ref DefaultLoop loop, LoopConfig cfg = LoopConfig()) @safe nothrow @nogc
 {
+    import sparkles.test_runner.skip : skipTest;
     auto r = DefaultLoop.create(loop, cfg);
     if (r.hasError)
     {

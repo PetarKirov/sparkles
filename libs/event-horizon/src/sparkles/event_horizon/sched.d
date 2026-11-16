@@ -1659,32 +1659,36 @@ version (unittest)
     import core.time : MonoTime;
 
     import sparkles.event_horizon.errors : skipReason;
-    import sparkles.test_runner.skip : skipTest;
 
     private MonoTime MonoTimeStamp() @safe nothrow @nogc
         => MonoTime.currTime;
 
-    /**
-    Creates a `Sched` for a test, or SKIPs the test: on a host whose backend
-    cannot be created — container/seccomp, `kernel.io_uring_disabled`, a
-    pre-6.1 kernel — SPEC §3.4 makes that a hard error with no fallback, and
-    the test is recorded SKIPPED rather than silently green.
+}
 
-    Does not return on the skip path, which constrains where it may be called:
-    $(UL
-    $(LI before arming any `scope (exit)` — an `Error` unwinding out of a
-        `nothrow` frame is not guaranteed to run cleanup handlers;)
-    $(LI never from inside a fiber body or a `run` callback — `FiberTask.shell`
-        catches every `Throwable`, so under a scope the skip is folded into a
-        `die` cause and resurfaces as a *failure* on the next outcome assert.))
-    */
-    package void schedOrSkip(ref Sched s, in SchedOptions opts = SchedOptions(),
-        in LoopConfig loopCfg = LoopConfig()) @trusted nothrow
-    {
-        auto created = Sched.create(s, opts, loopCfg);
-        if (created.hasError)
-            skipTest(skipReason(created.error));
-    }
+// A template, outside `version (unittest)`: only tests instantiate it, and
+// they get the same code with or without `-unittest` (build-graph BGV4).
+/**
+Creates a `Sched` for a test, or SKIPs the test: on a host whose backend
+cannot be created — container/seccomp, `kernel.io_uring_disabled`, a
+pre-6.1 kernel — SPEC §3.4 makes that a hard error with no fallback, and
+the test is recorded SKIPPED rather than silently green.
+
+Does not return on the skip path, which constrains where it may be called:
+$(UL
+$(LI before arming any `scope (exit)` — an `Error` unwinding out of a
+    `nothrow` frame is not guaranteed to run cleanup handlers;)
+$(LI never from inside a fiber body or a `run` callback — `FiberTask.shell`
+    catches every `Throwable`, so under a scope the skip is folded into a
+    `die` cause and resurfaces as a *failure* on the next outcome assert.))
+*/
+package void schedOrSkip()(ref Sched s, in SchedOptions opts = SchedOptions(),
+    in LoopConfig loopCfg = LoopConfig())
+{
+    import sparkles.event_horizon.errors : skipReason;
+    import sparkles.test_runner.skip : skipTest;
+    auto created = Sched.create(s, opts, loopCfg);
+    if (created.hasError)
+        skipTest(skipReason(created.error));
 }
 
 @("sched.alarm.wakesOnceIsReusableAndLeavesNoLatch")

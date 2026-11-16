@@ -745,6 +745,7 @@ unittest
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     import core.atomic : atomicLoad, atomicOp, atomicStore;
     import core.time : msecs;
 
@@ -810,6 +811,7 @@ unittest
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     import core.atomic : atomicLoad, atomicOp;
     import core.time : msecs;
 
@@ -890,7 +892,6 @@ unittest
 version (unittest)
 {
     import sparkles.event_horizon.sched : schedOrSkip;
-    import sparkles.test_runner.skip : skipTest;
 }
 
 version (unittest)

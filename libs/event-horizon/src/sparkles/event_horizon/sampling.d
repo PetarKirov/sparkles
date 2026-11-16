@@ -1224,7 +1224,6 @@ version (linux)
         import core.thread : Thread;
 
         import sparkles.event_horizon.live : ChildProcess, spawnProcess;
-        import sparkles.test_runner.skip : skipTest;
 
         /// A blocking reap for substrate tests (no scheduler involved).
         /// Guarded: `waitpid(-1)` would reap another test's child.
@@ -1351,6 +1350,7 @@ version (linux)
     @system
     unittest
     {
+        import sparkles.test_runner.skip : skipTest;
         import sparkles.event_horizon.cgroup : CgroupRun, createRun,
             migrateInto, cleanupRun, killTree;
 
@@ -1446,6 +1446,7 @@ version (linux)
     @system
     unittest
     {
+        import sparkles.test_runner.skip : skipTest;
         import sparkles.event_horizon.cgroup : CgroupRun, cleanupRun, createRun,
             killTree, migrateInto;
 

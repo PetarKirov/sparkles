@@ -291,16 +291,16 @@ struct RingVfs
         /// See `BlockingVfs.ownedFd`.
         OwnedFd ownedFd(Handle h) const @nogc => inner.ownedFd(h);
 
-    version (unittest)
-    {
-        /// Calls this instance's thread completed on the pool; a test reads it
-        /// to tell the pool path from the inline fallback.
-        static uint poolCalls;
-        /// Calls submitted to the ring instead (VFB5), in all and per operation.
-        static uint ringCalls;
-        /// ditto
-        static uint[OpKind.max + 1] ringCallsOf;
-    }
+    // Counted in every build: this is a template, so a consumer's test root
+    // instantiating it with `-unittest` must get the library's code and
+    // layout (build-graph BGV4).
+    /// Calls this instance's thread completed on the pool; a test reads it
+    /// to tell the pool path from the inline fallback.
+    static uint poolCalls;
+    /// Calls submitted to the ring instead (VFB5), in all and per operation.
+    static uint ringCalls;
+    /// ditto
+    static uint[OpKind.max + 1] ringCallsOf;
 
 private:
     // ------------------------------------------------------- the ring path
@@ -337,11 +337,8 @@ private:
     {
         version (Posix)
         {
-            version (unittest)
-            {
-                ringCalls++;
-                ringCallsOf[Op.kind]++;
-            }
+            ringCalls++;
+            ringCallsOf[Op.kind]++;
             return currentScheduler().await(op).res;
         }
         else
@@ -391,8 +388,7 @@ private:
                 return call();
             if (!ran.hasError)
             {
-                version (unittest)
-                    poolCalls++;
+                poolCalls++;
                 return move(job.result);
             }
             static if (is(R == Expected!(T, IoError, NoGcHook), T))

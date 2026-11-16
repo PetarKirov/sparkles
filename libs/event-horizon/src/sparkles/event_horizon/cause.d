@@ -314,11 +314,10 @@ private void wakeCancelWord(CancelContext* node) @trusted nothrow @nogc
         ++cancelWordWakes;
 }
 
-version (unittest)
-{
-    /// Cancel-word wakes `cancelTree` has made, for the fiber parker's tests.
-    package uint cancelWordWakes;
-}
+// Declared in every build, so the library and a consumer's `-unittest`
+// compile agree on it (build-graph BGV4); only tests use it.
+/// Cancel-word wakes `cancelTree` has made, for the fiber parker's tests.
+package uint cancelWordWakes;
 
 /// Latches the interrupt on one fiber and fires its one-shot cancel
 /// function (if any). A `protect`ed fiber (SPEC §8.2) only latches — the

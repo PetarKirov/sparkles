@@ -690,7 +690,6 @@ version (unittest)
     import sparkles.event_horizon.blocking_pool : sharedBlockingPool;
     import sparkles.event_horizon.live : ChildProcess, spawnProcess, wait;
     import sparkles.event_horizon.sched : schedOrSkip;
-    import sparkles.test_runner.skip : skipTest;
 
     /// Whether the run directory exists on cgroupfs.
     private bool runDirExists(ref CgroupRun run) @trusted
@@ -705,6 +704,7 @@ version (unittest)
     /// no owned tier.
     private BlockingPool* createOrSkip(ref Sched s, ref CgroupRun run, uint id)
     {
+        import sparkles.test_runner.skip : skipTest;
         auto pool = sharedBlockingPool();
         assert(!pool.hasError);
         assert(!cgroupCreate(s, pool.value, run, id).hasError);
@@ -860,6 +860,7 @@ unittest
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     Sched s;
     schedOrSkip(s);
     auto r = s.run(() {

@@ -805,7 +805,6 @@ version (unittest)
     import sparkles.event_horizon.backend.concept : canSubmitOp, hasNativeWake, isCompletionBackend;
     import sparkles.event_horizon.errors : ioError, skipReason;
     import sparkles.event_horizon.op : OpClass;
-    import sparkles.test_runner.skip : skipTest;
 
     static assert(isCompletionBackend!UringBackend);
     static assert(canSubmitOp!(UringBackend, OpNop));
@@ -815,6 +814,7 @@ version (unittest)
     /// Call before arming any `scope (exit)`: it does not return on the skip.
     private void openOrSkip(ref UringBackend b) @safe nothrow @nogc
     {
+        import sparkles.test_runner.skip : skipTest;
         auto r = b.open(BackendConfig());
         if (r.hasError)
         {
@@ -909,6 +909,7 @@ unittest
 @safe nothrow @nogc
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     UringBackend b;
     OpSlot dummySlot;
     auto cfg = BackendConfig();

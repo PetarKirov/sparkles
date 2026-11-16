@@ -320,12 +320,12 @@ import sparkles.event_horizon.proc : MetricSource, ProcessEnd, ProcessEvent,
 import sparkles.event_horizon.sched : Sched, SchedOptions, schedOrSkip;
 import sparkles.event_horizon.scope_ : JoinHandle, withScope;
 import sparkles.event_horizon.supervise : supervise, testLastSupervisedPid;
-import sparkles.test_runner.skip : skipTest;
 
 // The existing no-zombie observation hook is process-global. Do not pretend
 // another concurrently running test's root is this probe's reap evidence.
 private void requireSerialReapEvidence() @system
 {
+    import sparkles.test_runner.skip : skipTest;
     foreach (thread; Thread.getAll())
         if (thread !is Thread.getThis() && !thread.isDaemon)
             skipTest("the process-global reap evidence hook requires -t 1");

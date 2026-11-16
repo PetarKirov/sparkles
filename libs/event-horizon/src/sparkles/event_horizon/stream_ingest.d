@@ -626,7 +626,6 @@ version (unittest)
     import core.time : Duration, msecs;
 
     import sparkles.event_horizon.loop : LoopConfig;
-    import sparkles.test_runner.skip : skipTest;
 
     // A sink that keeps what it is given, and can close its own source.
     private struct Kept
@@ -670,6 +669,7 @@ version (unittest)
         static Pipe open(bool nonBlocking = true) @system nothrow @nogc
         {
             import core.sys.posix.fcntl : F_GETFL, F_SETFL, fcntl, O_NONBLOCK;
+            import sparkles.test_runner.skip : skipTest;
             import core.sys.posix.unistd : pipe;
 
             Pipe p;
@@ -744,6 +744,7 @@ version (unittest)
     private void bothPaths(scope void delegate(ref StreamIngest, ref DefaultLoop) @system check)
         @system
     {
+        import sparkles.test_runner.skip : skipTest;
         static if (!canIngestStreams)
             skipTest("this event loop cannot read stream sources");
         foreach (hide; [false, true])
