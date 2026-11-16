@@ -16,6 +16,10 @@ dependency "sparkles:base" path="../.."
 dependency "sparkles:math" path="../.."
 
 configuration "library" {
+    // Test-support modules: only the test root compiles them, so a
+    // `version (unittest)` in them changes nothing a dependent sees
+    // (build-graph BGV4).
+    excludedSourceFiles "src/sparkles/text_buffer/change_set_test.d" "src/sparkles/text_buffer/history_test.d" "src/sparkles/text_buffer/text_test.d"
     targetType "library"
 }
 
