@@ -14,6 +14,8 @@ import sparkles.ui.components.editor : drawIndentGuides, editorLineSpans, editor
 import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell, GutterChannel, withGutterCells;
 import sparkles.ui.editor.presentation : matchingBracket, trailingWhitespace;
 import find_bar : FindBar;
+import document_font : DocumentFontService;
+import sparkles.ui_app.specimen_font : SpecimenFontRequest;
 import sparkles.ui.components.settings_pane : SettingsGeometry, settingsGeometryFor, SettingsPane;
 import sparkles.ui.editor.search : MatchRange, SearchBudget, replaceAll, replaceCurrent, selectAllMatches, selectNextMatch;
 import commands : FindOption;
@@ -554,6 +556,10 @@ struct EditorApp
     private LanguageCatalog languageCatalog;
     private string[] languageNames;
     private bool choosingLanguage;
+    // The font picker (EAP16): monospace families unless `allFamilies`.
+    private bool choosingFont, allFamilies;
+    private string[] fontNames;
+    private DocumentFontService fonts;
     private DocumentIo files;
     private ulong[ulong] openOrigins;
     private SaveIntent[ulong] saves;
@@ -932,6 +938,12 @@ struct EditorApp
         if (highlighting !is null) { highlighting.shutdown(); highlighting = null; }
         if (languageCatalog !is null) { languageCatalog.shutdown(); languageCatalog = null; }
         if (recovery !is null) { recovery.shutdown(); recovery = null; }
+        if (fonts !is null)
+        {
+            try fonts.stop();
+            catch (Exception) {} // a failed join leaves nothing for the caller to do
+            fonts = null;
+        }
     }
 
     /// The selected theme is a reversible preview until the palette emits acceptance.
@@ -946,7 +958,7 @@ struct EditorApp
 
     private void endPicker(bool accepted) @safe
     {
-        if (!choosingTheme && !choosingLanguage) return;
+        if (!choosingTheme && !choosingLanguage && !choosingFont) return;
         if (choosingTheme && !accepted)
         {
             theme = themeBefore;
@@ -955,8 +967,28 @@ struct EditorApp
         }
         choosingTheme = false;
         choosingLanguage = false;
+        choosingFont = false;
         const result = commands.palette.catalog(commandCatalog(bindings));
         assert(result == PaletteStatus.ok);
+    }
+
+    /// The font picker's rows: the default face, then the listed families (`EAP16`).
+    private void installFonts() @safe
+    {
+        fontNames = fonts is null ? null : fonts.familyNames(allFamilies);
+        PaletteEntry!Command[] entries = [PaletteEntry!Command(CommandId(Command.selectFont, 0),
+            "Default document font", "Font")];
+        foreach (index, name; fontNames)
+            entries ~= PaletteEntry!Command(CommandId(Command.selectFont, index + 1), name,
+                allFamilies ? "Font" : "Monospace font");
+        const result = commands.palette.catalog(entries);
+        assert(result == PaletteStatus.ok);
+        if (commands.palette.active)
+        {
+            const searched = commands.palette.search(commands.palette.snapshot.ticket,
+                commands.query.text, context);
+            assert(searched == PaletteStatus.ok);
+        }
     }
 
     private void installLanguages() @safe
@@ -1861,6 +1893,21 @@ struct EditorApp
             commands.open(PaletteInvocation(document.id, document.id), context);
             commands.query.target = target;
             break;
+        case Command.fonts:
+        case Command.allFonts:
+            endPicker(false);
+            choosingFont = true;
+            allFamilies = id.operation == Command.allFonts;
+            if (fonts is null) fonts = new DocumentFontService;
+            fonts.start();
+            installFonts();
+            commands.open(PaletteInvocation(document.id, document.id), context);
+            commands.query.target = target;
+            break;
+        case Command.selectFont:
+            if (id.argument == 0) settings.font.family = null;
+            else if (id.argument <= fontNames.length) settings.font.family = fontNames[cast(size_t) id.argument - 1];
+            break;
         case Command.selectLanguage:
             if (id.argument < languageNames.length)
                 document.language = languageNames[cast(size_t) id.argument];
@@ -1938,7 +1985,7 @@ struct EditorApp
                 status = "The command is no longer available in this context.";
                 return;
             }
-            const wasChoosing = choosingTheme || choosingLanguage;
+            const wasChoosing = choosingTheme || choosingLanguage || choosingFont;
             execute(effect.command);
             if (wasChoosing) endPicker(true);
         }
@@ -2118,6 +2165,25 @@ struct EditorApp
             host.quit();
             return WidgetTree.init;
         }
+        // The document font reaches a host that can draw one (EAP16); the
+        // interface font is the host's and does not change.
+        static if (__traits(hasMember, H, "specimenFont"))
+        {
+            if (fonts is null) fonts = new DocumentFontService;
+            if (settings.font.family.length) fonts.start();
+        }
+        if (fonts !is null)
+        {
+            const wasReady = fonts.familyNames(true).length != 0;
+            SpecimenFontRequest request;
+            // The family is resolved and loaded, which validates it and reports its
+            // controls. Drawing the document in it needs a widget scope with its own
+            // cell metrics (plan item 2), so the request is not handed to the host.
+            cast(void) fonts.poll(settings.font, request);
+            if (!wasReady && choosingFont && commands.palette.active && fonts.familyNames(true).length)
+                installFonts();
+            if (fonts.busy) host.wakeIn(16.msecs);
+        }
         applyEditing();
         if (highlighting is null) highlighting = new HighlightSession;
         highlighting.request(document.field.state.text, document.language, document.id);
@@ -2125,7 +2191,7 @@ struct EditorApp
         previewPicker();
         if (highlighting.busy) host.wakeIn(8.msecs);
         if (shotPath.length && !highlighting.busy && !filesBusy
-            && (languageCatalog is null || !languageCatalog.busy))
+            && (languageCatalog is null || !languageCatalog.busy) && (fonts is null || !fonts.busy))
         {
             if (highlighting.error.length)
             {
@@ -2164,7 +2230,7 @@ struct EditorApp
         enum size_t undoLimit = 6;
         const historyLength = document.field.state.history.length;
         const undoListed = inspector ? (historyLength < undoLimit ? historyLength : undoLimit) : 0;
-        const extraRows = (inspector ? 2 + cast(int) undoListed : 0) + (status.length ? 1 : 0)
+        const extraRows = (inspector ? 3 + cast(int) undoListed : 0) + (status.length ? 1 : 0)
             + (document.durabilityWarning.length ? 1 : 0)
             + (recovery is null ? 0 : 1 + (recoveryWarning ? 1 : 0)
                 + (recovery.notice.length ? 1 : 0) + (recovery.offerCount && !modal ? 3 : 0));
@@ -2269,9 +2335,12 @@ struct EditorApp
                         smoothScroll: true, hostCursor: true,
                         scrollWhole: paletteScroll.motion.whole,
                         scrollFrac: paletteScroll.motion.frac,
-                        placeholder: choosingTheme ? "Search themes" : choosingLanguage ? "Search languages" : "Search commands",
+                        placeholder: choosingTheme ? "Search themes" : choosingLanguage ? "Search languages"
+                            : choosingFont ? "Search font families" : "Search commands",
                         title: choosingTheme ? "Themes"
                             : choosingLanguage ? languageCatalog.busy ? "Listing languages…" : "Languages"
+                            : choosingFont ? fonts.busy && !fontNames.length ? "Listing fonts…"
+                                : allFamilies ? "All font families" : "Monospace fonts"
                             : "Commands"));
                 paletteChoices = paletteView.choices;
                 children ~= b.add(Widget(kind: WidgetKind.column, children: [paletteView.root],
@@ -2415,6 +2484,11 @@ struct EditorApp
                     document.field.state.selection.ranges.length, "  composition ",
                     document.field.state.composition.active, "  language ", document.language, "  highlighting ",
                     highlighting.busy ? "pending" : highlighting.error.length ? highlighting.error : "ready")));
+        if (inspector)
+            children ~= b.add(Widget(kind: WidgetKind.text, slot: Slot.info,
+                text: host.backend == Backend.gui
+                    ? "Font: " ~ (fonts is null ? "Default document font" : fonts.state)
+                    : "Font: a terminal draws with its own font; the document font applies in a window"));
         if (inspector) children ~= undoRows(b, undoLimit);
         if (status.length) children ~= b.add(Widget(kind: WidgetKind.text, text: status, slot: Slot.warn));
         if (document.durabilityWarning.length)
@@ -2951,6 +3025,35 @@ struct EditorApp
     app.execute(CommandId(Command.open));
     foreach (dchar c; "/tmp/x") app.handle(host, charEvent(c));
     assert(cursors() == [6], "the path field has the only cursor");
+}
+
+/// The font picker lists the default face and the discovered monospace
+/// families, and choosing one sets the document font, not the interface's (EAP16).
+@("editor.app.fontPicker")
+@safe unittest
+{
+    import core.time : seconds;
+    import sparkles.input : Key, keyEvent;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    import sparkles.test_runner.skip : skipTest;
+    auto app = new EditorApp;
+    scope (exit) destroy(*app);
+    RecordingHost host;
+    FrameSnapshot frame;
+    app.execute(CommandId(Command.fonts));
+    assert(app.commands.palette.active && app.commands.palette.rowCount == 1, "the default face first");
+    const deadline = MonoTime.currTime + 20.seconds;
+    while (app.commands.palette.rowCount == 1 && MonoTime.currTime < deadline)
+        presentApp(*app, host, AppTheme(defaultTwoslashPalette()), frame);
+    if (app.commands.palette.rowCount == 1) skipTest("no monospace font family is installed here");
+    app.handle(host, keyEvent(Key.down));
+    app.handle(host, keyEvent(Key.enter));
+    assert(!app.commands.palette.active && app.settings.font.family.length, "a family was chosen");
+    app.execute(CommandId(Command.fonts));
+    app.handle(host, keyEvent(Key.enter));
+    assert(!app.settings.font.family.length, "the first row restores the default face");
 }
 
 /// The settings pane is generated from the settings subject, edits them live
@@ -3531,7 +3634,9 @@ struct EditorApp
     import sparkles.ui_app.record : RecordingHost;
     foreach (command; [Command.open, Command.saveAs])
     {
-        EditorApp app;
+        // Heap-owned: two apps on one test stack exceed its watermark.
+        auto app = new EditorApp;
+        scope (exit) destroy(*app);
         RecordingHost host;
         app.execute(CommandId(command));
         app.closeRequested(host);

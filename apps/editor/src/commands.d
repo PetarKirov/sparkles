@@ -14,7 +14,7 @@ enum Command : ubyte { none, palette, guide, newTab, nextTab, previousTab, inspe
     example, themes, selectTheme, toggleTheme, edit, quit, open, save, saveAs, confirm, cancel,
     closeTab, discard, restoreSession, languages, selectLanguage, presentation, indentation,
     find, replace, findNext, findPrevious, closeFind, findOption, findFocus, replaceOne, replaceAll, selectMatches,
-    settings }
+    settings, fonts, allFonts, selectFont }
 enum Scope : ubyte { @terminalScope modalModifiers, application, document, dialog, closing, recovery, find }
 /// The find bar's switches, as `findOption` arguments.
 enum FindOption : ubyte { regex, caseSensitive, wholeWord }
@@ -135,6 +135,8 @@ PaletteEntry!Command[] commandCatalog(scope const(CommandBinding)[] bindings) @s
         result ~= PaletteEntry!Command(CommandId(Command.indentation, choice), label(choice), "Editing");
     }
     result ~= PaletteEntry!Command(CommandId(Command.replaceOne), "Replace this match", "Find");
+    result ~= PaletteEntry!Command(CommandId(Command.fonts), "Choose document font", "View");
+    result ~= PaletteEntry!Command(CommandId(Command.allFonts), "Choose document font (all families)", "View");
     return result;
 }
 

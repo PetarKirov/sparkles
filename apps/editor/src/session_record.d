@@ -47,6 +47,11 @@ struct SessionSettings
     bool useTabs;
     ubyte indentWidth = 4;
     bool autoIndent = true;
+    /// The document font (`EAP16`); an empty family is the default face.
+    string fontFamily;
+    float fontSize = 14;
+    bool ligatures = true;
+    float lineHeight = 1.2, letterSpacing = 0, fontWeight = 400, opticalSize = 0;
 }
 
 /// One coherent session generation, including its accepted theme and active document.
@@ -130,6 +135,7 @@ private string invalidRecord(in SessionRecord record) @safe pure nothrow
     if (!record.settings.indentWidth || record.settings.indentWidth > 16)
         return "The session indentation width is outside 1–16.";
     if (validateUtf8(record.theme).hasError) return "The session theme is not valid UTF-8.";
+    if (validateUtf8(record.settings.fontFamily).hasError) return "The session font family is not valid UTF-8.";
     bool[ulong] ids;
     bool active = record.tabs.length == 0 && record.active == 0;
     foreach (ref tab; record.tabs)

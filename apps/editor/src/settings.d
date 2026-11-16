@@ -2,6 +2,7 @@
 module settings;
 
 import sparkles.ui.property_tree : Doc, Label, Range;
+import sparkles.font.families : DocumentFont;
 import session_record : SessionSettings;
 
 /// Each part of the code-editor presentation, every one of which can be hidden.
@@ -125,6 +126,8 @@ struct EditorSettings
     PresentationSettings view;
     @Label("Editing") @Doc("Indentation and Enter (EAP7).")
     EditingSettings editing;
+    @Label("Document font") @Doc("The code font, independent of the interface's (EAP16).")
+    DocumentFont font;
 }
 
 /// The pane's tree is generated from the subject, with its bounds.
@@ -145,24 +148,33 @@ struct EditorSettings
 }
 
 /// The settings as the session record stores them (`EAP26`).
-SessionSettings toSession(in EditorSettings settings) @safe pure nothrow @nogc
+SessionSettings toSession(const EditorSettings settings) @safe pure nothrow @nogc
 {
     SessionSettings result;
     static foreach (field; __traits(allMembers, PresentationSettings))
         __traits(getMember, result, field) = __traits(getMember, settings.view, field);
     static foreach (field; __traits(allMembers, EditingSettings))
         __traits(getMember, result, field) = __traits(getMember, settings.editing, field);
+    result.fontFamily = settings.font.family;
+    result.fontSize = settings.font.size;
+    result.ligatures = settings.font.ligatures;
+    result.lineHeight = settings.font.lineHeight;
+    result.letterSpacing = settings.font.letterSpacing;
+    result.fontWeight = settings.font.weight;
+    result.opticalSize = settings.font.opticalSize;
     return result;
 }
 
 /// The settings a session record restores; its width is already validated.
-EditorSettings fromSession(in SessionSettings stored) @safe pure nothrow @nogc
+EditorSettings fromSession(const SessionSettings stored) @safe pure nothrow @nogc
 {
     EditorSettings result;
     static foreach (field; __traits(allMembers, PresentationSettings))
         __traits(getMember, result.view, field) = __traits(getMember, stored, field);
     static foreach (field; __traits(allMembers, EditingSettings))
         __traits(getMember, result.editing, field) = __traits(getMember, stored, field);
+    result.font = DocumentFont(stored.fontFamily, stored.fontSize, stored.ligatures, stored.lineHeight,
+        stored.letterSpacing, stored.fontWeight, stored.opticalSize).clamped;
     return result;
 }
 
@@ -174,6 +186,8 @@ EditorSettings fromSession(in SessionSettings stored) @safe pure nothrow @nogc
     settings.view.indentGuides = false;
     settings.editing.indentWidth = 8;
     settings.editing.useTabs = true;
+    settings.font.family = "DejaVu Sans Mono";
+    settings.font.lineHeight = 1.5;
     assert(fromSession(toSession(settings)) == settings);
     assert(fromSession(SessionSettings.init) == EditorSettings.init, "the shipped defaults agree");
 }

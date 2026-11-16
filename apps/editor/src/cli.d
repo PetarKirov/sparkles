@@ -41,6 +41,8 @@ struct Editor
     bool languages;
     @(Option("inspector", description: "Show editor diagnostics."))
     bool inspector;
+    @(Option("document-font", description: "The document's font family; the interface font is unchanged.", placeholder: "FAMILY"))
+    string documentFont;
     @(Option("shot", description: "Capture a native frame to PNG, then exit.", placeholder: "PATH"))
     string shot;
     @(Option("state-dir", description: "Session archive registry (defaults to XDG_STATE_HOME/sparkles/editor).", placeholder: "PATH"))
@@ -59,6 +61,7 @@ struct Editor
         EditorApp app;
         if (!app.useTheme(gui.theme)) return failRun("Unknown theme: " ~ gui.theme);
         app.inspector = inspector;
+        app.settings.font.family = documentFont;
         app.shotPath = shot;
         if (example != Example.none) app.execute(CommandId(AppCommand.example, example));
         foreach (path; paths)

@@ -1158,3 +1158,36 @@ line lays out and highlights the whole paragraph again (about 0.3 s). Both
 miss a 120 Hz frame; incremental row counts and windowed span production
 are the next steps, and no 120 Hz claim is made. Input latency,
 presentation and GPU time on a device are measured separately.
+
+### Document font: choice, controls and persistence — 2026-11-16
+
+The document font is a setting (`DocumentFont` from `sparkles.font.families`:
+family, size, ligatures, line height, letter spacing, weight and optical
+size, each bounded) in the generated settings pane and the recovery
+session, and `--document-font FAMILY` sets it at startup. "Choose document
+font" lists the default face and the discovered monospace families through
+the palette's fuzzy ranking; "Choose document font (all families)" is the
+explicit show-all. Discovery and loading run on `FontLibrary`'s workers
+(`DocumentFontService`); the chosen family's real regular, bold and italic
+members are loaded and the inspector names what it lacks ("no italic, no
+weight axis"), so unsupported controls are visible.
+
+Not yet delivered: drawing the document in that face. A headless capture
+(Xvfb, lavapipe) with `--document-font "DejaVu Sans Mono"` loaded the
+family, and the document's pixels matched the default capture exactly. The
+native host draws a specimen face only inside a scope an application opens
+in its own paint, at its own cell size; the editor draws through the
+widget tree on the interface's cell grid. The service therefore stops at
+loading and says so ("loaded, not yet drawn"), and the host is not asked to
+prepare a face nothing draws with. Drawing a widget subtree in the document
+face with its own cell metrics is a ui/ui-app change, tracked in plan
+item 2. Outside the development shell, platform discovery found no
+families on this NixOS host (fontconfig is loaded at run time); the Nix
+package needs fontconfig on its library path before that capture can be
+repeated from the package.
+
+`editor.documentFont.unsupported` checks the visible list of missing
+controls; `editor.documentFont.discoverAndLoad` discovers families, loads a
+monospace one, does not reload it, and reports an unknown family;
+`editor.app.fontPicker` picks a family and then the default face again;
+`editor.settings.sessionRoundTrip` now covers the font fields.
