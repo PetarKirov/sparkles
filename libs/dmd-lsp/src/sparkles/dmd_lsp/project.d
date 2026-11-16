@@ -962,32 +962,6 @@ version (unittest)
         dubTestSync = new Object;
     }
 
-    /**
-    A scratch dub project on disk; removed when the fixture leaves scope.
-
-    The `name` keeps concurrent tests apart — the runner is parallel, and
-    `TmpFS`'s default prefix would give every test routed through here the
-    same directory. The pid keeps concurrent test *processes* apart.
-
-    The fixture owns the tree, so the `.dub` cache directory a `dub describe`
-    run leaves inside it is removed with it.
-
-    A template with the test-utils import in its body: a module-scope
-    `version (unittest)` import is evaluated by every `-unittest` consumer that
-    imports this module (twoslash-extract, hue), and consumers carry no
-    test-utils edge. A template body is analyzed only when instantiated.
-    */
-    private auto tempProject()(string name) @system
-    {
-        import sparkles.test_utils.tmpfs : TmpFS;
-        import std.conv : to;
-        import std.process : thisProcessID;
-
-        auto t = TmpFS.create(
-            "sparkles-dmd-lsp-" ~ name ~ "-" ~ thisProcessID.to!string);
-        return t;
-    }
-
     private void requireDub() @system
     {
         import std.process : execute;
@@ -1004,6 +978,32 @@ version (unittest)
         }
         skipTest("dub not on PATH");
     }
+}
+
+/**
+A scratch dub project on disk; removed when the fixture leaves scope.
+
+The `name` keeps concurrent tests apart — the runner is parallel, and
+`TmpFS`'s default prefix would give every test routed through here the
+same directory. The pid keeps concurrent test *processes* apart.
+
+The fixture owns the tree, so the `.dub` cache directory a `dub describe`
+run leaves inside it is removed with it.
+
+A template with the test-utils import in its body: a module-scope
+`version (unittest)` import is evaluated by every `-unittest` consumer that
+imports this module (twoslash-extract, hue), and consumers carry no
+test-utils edge. A template body is analyzed only when instantiated.
+*/
+private auto tempProject()(string name) @system
+{
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import std.conv : to;
+    import std.process : thisProcessID;
+
+    auto t = TmpFS.create(
+        "sparkles-dmd-lsp-" ~ name ~ "-" ~ thisProcessID.to!string);
+    return t;
 }
 
 @("project.fallback.noneTargetRootInlineSubpackage")
