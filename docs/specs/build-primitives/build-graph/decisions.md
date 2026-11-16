@@ -15,7 +15,7 @@ D18–D21, the E0 spike results, on 2026-11-02; and D22–D25, from E1, on
 marked accepted were accepted on 2026-11-06. D44, routing the graph's file
 access through the capability VFS, was accepted on 2026-11-07, and D56,
 planning's source scans on DMD's lexer and parser, and D57, pruning's scan
-scope, on 2026-11-16. Records marked
+scope, and D58, the layout lint's gate, on 2026-11-16. Records marked
 **proposed** await the owner's decision.
 
 ## D1: Own the build instead of isolating dub (accepted)
@@ -1590,3 +1590,33 @@ branch imports DMD's backend, so a variant that may set `MARS` reaches
 
 **Revisit when** a scan that evaluates `version` conditions against the
 variant's own identifiers is worth its cost.
+
+## D58: The layout lint gates in-tree packages (accepted)
+
+**Question.** BGV5 fails the plan on every violation of BGV4 in the packages
+it plans. The lint's first run over this repository found 194, four of them
+in registry packages (`dmd:root`, `bolts`) that this repository cannot change.
+Fix the rest first, or relax the rule; and what of the registry's?
+
+**Evidence.** Of the 190 in-tree violations, most were test helpers declared
+`public` or `package` under `version (unittest)`, often in modules that are
+`version (unittest)` throughout; the rest were private templates there,
+test-only imports, imports a `public:` label re-exported, and test seams
+inside templates (`EventLoop`, the VFS), which a dependent's test root
+instantiated differently from the library.
+
+**Choice.** Decided by the owner on 2026-11-16 (BGV4, BGV5):
+
+- The rule stands, and the repository was brought to it first: test-support
+  modules leave their library configurations; test helpers that other
+  modules call become templates outside `version (unittest)`; hooks and
+  seams are declared, and in templates also run, in every build; the rest
+  are private.
+- A violation in a registry package is reported with the plan and does not
+  fail it.
+- The import rule reads the variant's own versions, so a module that is
+  `version (X):` throughout, for a configuration that sets `X` and depends
+  on what it imports, is judged as that configuration compiles it.
+
+**Revisit when** a registry package's finding is fixed upstream, or a
+configuration-gated hazard other than an import needs the same reading.

@@ -108,6 +108,9 @@ delivered (`build_graph/variants.d`), with the `isVersion` and divergent-mode li
 on `sparkles:d-source` (D56). Over this repository's 74 test roots, 1,044
 targets plan to 166 variants, against 393 without pruning; the scan follows
 imports (D57).
+The layout lint (`sparkles:unittest-layout`) gates planning through a
+callback, after the repository's 190 in-tree violations were fixed; findings
+in registry packages are reported (D58).
 
 ## E3: Local execution and the shared store
 
