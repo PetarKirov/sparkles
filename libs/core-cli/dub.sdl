@@ -24,6 +24,10 @@ importPaths "src"
 // theme and drive a live region). `sparkles:ui` does not depend on this
 // package, so this edge closes no cycle.
 configuration "library" {
+    // Test-support modules: only the test root compiles them, so a
+    // `version (unittest)` in them changes nothing a dependent sees
+    // (build-graph BGV4).
+    excludedSourceFiles "src/sparkles/core_cli/test_utils.d"
     targetType "library"
     dependency "sparkles:ui" path="../.."
 }
@@ -32,7 +36,8 @@ configuration "library" {
 // parse a command line without the UI toolkit (`fsx`, docs/specs/fsx `XA5`).
 configuration "args" {
     targetType "library"
-    excludedSourceFiles "src/sparkles/core_cli/prompts.d"
+    // As the library configuration, the test-support module too (BGV4).
+    excludedSourceFiles "src/sparkles/core_cli/prompts.d" "src/sparkles/core_cli/test_utils.d"
 }
 
 configuration "unittest" {
