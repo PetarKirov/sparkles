@@ -30,7 +30,6 @@ import sparkles.event_horizon.loop : LoopConfig;
 import sparkles.event_horizon.sched : Alarm, currentScheduler, FiberPark, Sched, SchedOptions,
     schedOrSkip;
 import sparkles.event_horizon.scope_ : checkCancellation, protect, withScope;
-import sparkles.test_runner.skip : skipTest;
 
 private:
 
@@ -159,6 +158,7 @@ unittest
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     foreach (path; parkPaths)
     {
         {
@@ -214,6 +214,7 @@ unittest
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     // EFP12, EFP13 under load: every handoff wakes a fiber on the other
     // worker, often between its `prepare` and its sleep. A wake lost, or a
     // stale one taken for a later sleep, ends a bounded wait or the run.
@@ -262,6 +263,7 @@ unittest
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     // EFP9: a wake one worker owes another worker's fiber is delivered while
     // the waking worker always has a fiber to run. On the ring path its
     // `IORING_OP_FUTEX_WAKE` must leave in a busy tick, not wait for the
@@ -786,6 +788,7 @@ unittest
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     foreach (path; parkPaths)
     {
         LoopGroup group;
@@ -823,6 +826,7 @@ unittest
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     foreach (path; parkPaths)
     {
         LoopGroup group;
@@ -862,6 +866,7 @@ unittest
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     import core.stdc.errno : ETIMEDOUT;
 
     foreach (path; parkPaths)
@@ -915,6 +920,7 @@ unittest
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     import core.stdc.errno : ETIMEDOUT;
 
     foreach (path; parkPaths)
@@ -979,6 +985,7 @@ bool sleepUntilCancelled() @system
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     // EFP6: `ring` waits in the kernel, `inbox` does not, on one kernel.
     foreach (path; parkPaths)
     {
@@ -1015,6 +1022,7 @@ unittest
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     // EFP8: the waiter parks and is released by a fiber on its worker before
     // the tick's submission point, so its wait is never written.
     Sched s;
@@ -1061,6 +1069,7 @@ unittest
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     import sparkles.base.sync.seam : WakeCount;
     import sparkles.event_horizon.sched : FiberTask;
 
@@ -1101,6 +1110,7 @@ unittest
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     // EFP8: a thread no scheduler knows wins the sleep before the tick's
     // submission point, which then finds the word resolved and resumes the
     // fiber without writing its wait.
@@ -1129,6 +1139,7 @@ unittest
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     import sparkles.event_horizon.cause : cancelWordWakes;
     import sparkles.event_horizon.fiber_park : parkWordWakes;
 

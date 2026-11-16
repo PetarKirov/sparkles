@@ -31,7 +31,6 @@ import sparkles.event_horizon.sched : currentScheduler, FiberPark, Sched, SchedO
     schedOrSkip;
 import sparkles.event_horizon.scope_ : withScope;
 import sparkles.event_horizon.testing : TestSched;
-import sparkles.test_runner.skip : skipTest;
 
 // A test that bounds a run's wall-clock time is `@serial`, as the supervise
 // tests are: beside the other parallel tests the bound would measure the
@@ -46,6 +45,7 @@ immutable FiberPark[2] parkPaths = [FiberPark.ring, FiberPark.inbox];
 /// Starts a thread-per-core group of `workers` on `path`, or skips.
 void startGroup(out LoopGroup group, FiberPark path, uint workers = 2) @system
 {
+    import sparkles.test_runner.skip : skipTest;
     {
         Sched probe;
         schedOrSkip(probe, SchedOptions(fiberPark: path));

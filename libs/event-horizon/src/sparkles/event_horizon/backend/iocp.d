@@ -1516,6 +1516,7 @@ version (unittest)
 @("iocp.waitHandle.missingExportsReject")
 @system unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     import core.sys.windows.winbase : CreateEventW;
     import sparkles.event_horizon.op : OpClass;
 
@@ -1853,6 +1854,9 @@ private void connectedSockets(out SOCKET client, out SOCKET server) @system noth
 
 version (unittest)
 {
+    // The module is under `public:`, which would re-export these imports.
+    private:
+
     import sparkles.event_horizon.backend.concept : isCompletionBackend;
 
     static assert(isCompletionBackend!IocpBackend);
@@ -1860,12 +1864,13 @@ version (unittest)
 
 version (unittest)
 {
+    private:
+
     import core.thread : Thread;
     import core.time : msecs;
 
     import sparkles.event_horizon.buffer : Buf;
     import sparkles.event_horizon.op : OpSlot;
-    import sparkles.test_runner.skip : skipTest;
     import sparkles.test_runner.attributes : serial;
 }
 
@@ -2019,6 +2024,7 @@ version (unittest)
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     IocpBackend b;
     if (b.open(BackendConfig()).hasError)
         skipTest("winsock unavailable");

@@ -285,7 +285,6 @@ version (EventHorizonLibkqueue) {} else version (Android) {} else version (linux
     version (unittest)
     {
         import sparkles.event_horizon.errors : ioError, skipReason;
-        import sparkles.test_runner.skip : skipTest;
     }
 
     @("probe.kernelVersion.parses")
@@ -301,6 +300,7 @@ version (EventHorizonLibkqueue) {} else version (Android) {} else version (linux
     @safe nothrow
     unittest
     {
+        import sparkles.test_runner.skip : skipTest;
         auto r = probeSystem();
         if (r.hasError)
         {

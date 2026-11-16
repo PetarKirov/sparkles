@@ -1240,49 +1240,11 @@ pragma(lib, "kernel32");
 
 version (unittest)
 {
-    /**
-    The test binary re-executed as a scripted child: `[self, "--eh-child",
-    mode, args…]` performs `mode` from a module constructor and exits before
-    the runner starts — exact bytes, exit codes, console handlers and
-    grandchildren with no shell and no PowerShell start-up.
-
-    $(UL
-        $(LI `lines` — stdout `a\r\nb`, stderr `\0\xff\n`, stdout `c\nlast`;)
-        $(LI `exit N`; `env NAME` (value or `<unset>`); `cwd`; `args …`
-            (one received argument per line); `cat` (stdin to stdout);)
-        $(LI `sleep MS` and `ignore-break MS` (prints `ready`, then sleeps;
-            the latter survives `CTRL_BREAK_EVENT`);)
-        $(LI `grandchild MS` — starts `sleep MS` sharing its stdio, prints
-            `ready`, exits 0;)
-        $(LI `alloc MB MS` — commits and touches MB MiB, prints `ready`, sleeps;
-            `alloc-tree MB MS` does the same beside a grandchild `alloc MB MS`;)
-        $(LI `feed` — stdin to stdout, then `err` to stderr, exit 3;
-            `console-size MS` — prints its console window's `cols rows`, sleeps;)
-        $(LI `chatty N` — N lines to each stream, interleaved;)
-        $(LI `has-handle H` — `yes` if handle value H is open in the child.))
-    */
-    package string[] childArgv(scope string[] script...) @safe nothrow
-        => [selfPath(), "--eh-child"] ~ script.dup;
-
-    package string selfPath() @trusted nothrow
+    private string selfPath() @trusted nothrow
     {
         wchar[1024] buf;
         const n = GetModuleFileNameW(null, buf.ptr, cast(uint) buf.length);
         return fromWide(buf[0 .. n]);
-    }
-
-    /// Skips only under Wine (no wait completion packets); native Windows
-    /// without them is a failure. Call before `Sched.run`.
-    package void requireProcessWait() @safe
-    {
-        import sparkles.event_horizon.sys.nt : runningUnderWine, waitPacketApi;
-        import sparkles.test_runner.skip : skipTest;
-
-        if (waitPacketApi() is null)
-        {
-            assert(runningUnderWine(), "native Windows without wait completion packets");
-            skipTest("Wine exports no NtAssociateWaitCompletionPacket");
-        }
     }
 
     private void childWrite(uint which, scope const(char)[] bytes) @trusted nothrow @nogc
@@ -1546,12 +1508,12 @@ version (unittest)
             const(wchar)* name);
     }
 
-    package extern (Windows) wchar** CommandLineToArgvW(const(wchar)* line, int* argc)
+    private extern (Windows) wchar** CommandLineToArgvW(const(wchar)* line, int* argc)
         nothrow @nogc;
     pragma(lib, "shell32");
 
     /// Reads `from` to EOF.
-    package const(ubyte)[] drainAll(BorrowedFd from) @trusted
+    private const(ubyte)[] drainAll(BorrowedFd from) @trusted
     {
         import sparkles.base.buffer : SharedBuffer;
         import sparkles.event_horizon.io : read;
@@ -1567,6 +1529,47 @@ version (unittest)
                 return all;
             all ~= got.buf[][0 .. got.res.value];
         }
+    }
+}
+
+// Templates outside `version (unittest)`, for `supervision_test`: only tests
+// instantiate them, and they get the same code with or without `-unittest`
+// (build-graph BGV4).
+/**
+The test binary re-executed as a scripted child: `[self, "--eh-child",
+mode, args…]` performs `mode` from a module constructor and exits before
+the runner starts — exact bytes, exit codes, console handlers and
+grandchildren with no shell and no PowerShell start-up.
+
+$(UL
+    $(LI `lines` — stdout `a\r\nb`, stderr `\0\xff\n`, stdout `c\nlast`;)
+    $(LI `exit N`; `env NAME` (value or `<unset>`); `cwd`; `args …`
+        (one received argument per line); `cat` (stdin to stdout);)
+    $(LI `sleep MS` and `ignore-break MS` (prints `ready`, then sleeps;
+        the latter survives `CTRL_BREAK_EVENT`);)
+    $(LI `grandchild MS` — starts `sleep MS` sharing its stdio, prints
+        `ready`, exits 0;)
+    $(LI `alloc MB MS` — commits and touches MB MiB, prints `ready`, sleeps;
+        `alloc-tree MB MS` does the same beside a grandchild `alloc MB MS`;)
+    $(LI `feed` — stdin to stdout, then `err` to stderr, exit 3;
+        `console-size MS` — prints its console window's `cols rows`, sleeps;)
+    $(LI `chatty N` — N lines to each stream, interleaved;)
+    $(LI `has-handle H` — `yes` if handle value H is open in the child.))
+*/
+package string[] childArgv()(scope string[] script...)
+    => [selfPath(), "--eh-child"] ~ script.dup;
+
+/// Skips only under Wine (no wait completion packets); native Windows
+/// without them is a failure. Call before `Sched.run`.
+package void requireProcessWait()()
+{
+    import sparkles.event_horizon.sys.nt : runningUnderWine, waitPacketApi;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (waitPacketApi() is null)
+    {
+        assert(runningUnderWine(), "native Windows without wait completion packets");
+        skipTest("Wine exports no NtAssociateWaitCompletionPacket");
     }
 }
 

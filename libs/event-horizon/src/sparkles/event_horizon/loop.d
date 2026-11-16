@@ -283,8 +283,7 @@ if (isCompletionBackend!Backend)
     {
         const token = _slab.acquire(Op.kind, OpClass.user, cb, ctx, held: true);
         auto slot = _slab.resolve(token);
-        version (unittest)
-            ++heldSubmitted;
+        ++heldSubmitted;
         while (!_backend.trySubmit(op, token, *slot))
         {
             auto flushed = _backend.flush();
@@ -404,12 +403,11 @@ if (isCompletionBackend!Backend)
         auto slot = _slab.resolve(h.token);
         if (slot is null || slot.state != OpState.armed)
             return ioOk(); // completed, already queued, or already submitted
-        version (unittest)
-            if (testHoldCancels)
-            {
-                enqueuePending(h.token.index, *slot);
-                return ioOk();
-            }
+        if (testHoldCancels)
+        {
+            enqueuePending(h.token.index, *slot);
+            return ioOk();
+        }
         if (!tryIssueCancel(h.token, *slot))
             enqueuePending(h.token.index, *slot);
         return ioOk();
@@ -475,9 +473,8 @@ if (isCompletionBackend!Backend)
     /// point; never blocks, never spins.
     private void pumpPendingCancels()
     {
-        version (unittest)
-            if (testHoldCancels)
-                return;
+        if (testHoldCancels)
+            return;
         while (_pendHead != uint.max && !_slab.reservedActive)
         {
             const index = _pendHead;
@@ -563,10 +560,9 @@ if (isCompletionBackend!Backend)
     /// retry decides), a hard error reaches the fatal hook at once.
     private void flushOrDie()
     {
-        version (unittest)
-            if (testFlushErrno != 0)
-                fatal(ioError(testFlushErrno, OpKind.none, IoErrorStage.submit,
-                    "injected flush failure"));
+        if (testFlushErrno != 0)
+            fatal(ioError(testFlushErrno, OpKind.none, IoErrorStage.submit,
+                "injected flush failure"));
         auto flushed = _backend.flush();
         if (flushed.hasError && !isBackpressure(flushed.error.code))
             fatal(flushed.error);
@@ -1085,10 +1081,10 @@ private:
     OpSlab!Allocator _slab;
     FatalHook _fatalHook;
     bool _open;
-    /// Ops `submitHeld` has written: the fiber parker's ring parks. Counted
-    /// in unittest builds only, but declared in all of them, like the test
-    /// seams below: a consumer that instantiates this template with
-    /// `-unittest` must agree with the library on its layout.
+    /// Ops `submitHeld` has written: the fiber parker's ring parks. Counted in
+    /// every build, as the test seams below are read in every build: this is a
+    /// template, so a consumer instantiating it with `-unittest` must get the
+    /// library's layout and code (build-graph BGV4).
     package uint heldSubmitted;
     bool _abandoned;
     bool _dispatching;
@@ -1126,13 +1122,13 @@ version (linux)  :  // tests drive the uring backend directly
 version (unittest)
 {
     import sparkles.event_horizon.errors : ioError, skipReason;
-    import sparkles.test_runner.skip : skipTest;
 
     /// Creates a loop for a test, or SKIPs it (no io_uring / old kernel).
     /// Call before arming any `scope (exit)`: it does not return on the skip.
     private void createOrSkip(ref DefaultLoop loop, LoopConfig cfg = LoopConfig())
         @safe nothrow @nogc
     {
+        import sparkles.test_runner.skip : skipTest;
         auto r = DefaultLoop.create(loop, cfg);
         if (r.hasError)
         {
@@ -1443,6 +1439,7 @@ unittest
 @safe nothrow @nogc
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     import sparkles.event_horizon.buffer : BufferPool, BufOrigin;
 
     DefaultLoop loop;
@@ -1770,6 +1767,7 @@ unittest
 @safe nothrow @nogc
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     import core.lifetime : move;
     import core.stdc.errno : ENOBUFS;
     import core.time : msecs;
@@ -1914,6 +1912,7 @@ unittest
 @safe nothrow @nogc
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     DefaultLoop loop;
     createOrSkip(loop);
 

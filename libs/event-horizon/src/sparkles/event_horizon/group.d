@@ -603,13 +603,13 @@ version (unittest)
 {
     import sparkles.event_horizon.errors : ioError, skipReason;
     import sparkles.event_horizon.sched : schedOrSkip;
-    import sparkles.test_runner.skip : skipTest;
 
     /// Starts a group for a test, or SKIPs it (no io_uring — SPEC §3.4).
     /// Call before arming any `scope (exit)`: it does not return on the skip.
     private void groupOrSkip(ref LoopGroup group,
         in LoopGroupConfig cfg = LoopGroupConfig())
     {
+        import sparkles.test_runner.skip : skipTest;
         auto started = LoopGroup.start(group, cfg);
         if (started.hasError)
             skipTest(skipReason(started.error));

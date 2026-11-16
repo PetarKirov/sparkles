@@ -1068,6 +1068,9 @@ private:
 
 version (unittest)
 {
+    // The module is under `public:`, which would re-export these imports.
+    private:
+
     import sparkles.event_horizon.backend.concept : hasNativeWake, isCompletionBackend;
 
     static assert(isCompletionBackend!KqueueBackend);
@@ -1076,16 +1079,18 @@ version (unittest)
 
 version (unittest)
 {
+    private:
+
     import core.thread : Thread;
 
     import sparkles.event_horizon.buffer : Buf;
     import sparkles.event_horizon.op : OpClass, OpToken;
-    import sparkles.test_runner.skip : skipTest;
 
     /// Opens a backend or skips — every test here needs a live kqueue, and on
     /// Linux+libkqueue the shim can be present but refuse to create one.
     private bool openOrSkip(ref KqueueBackend b, BackendConfig cfg = BackendConfig())
     {
+        import sparkles.test_runner.skip : skipTest;
         if (b.open(cfg).hasError)
         {
             skipTest("kqueue unavailable");
@@ -1527,6 +1532,7 @@ unittest
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     KqueueBackend b;
     if (b.open(BackendConfig()).hasError)
         skipTest("kqueue unavailable");

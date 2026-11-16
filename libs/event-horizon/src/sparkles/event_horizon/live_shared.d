@@ -348,12 +348,11 @@ Env liveEnv(Sched* sched) @safe pure nothrow @nogc
         return Env(RingClock(sched), RingVfs(), RingNet(sched));
 }
 
-version (unittest)
-{
-    /// Fault injection for `capture`'s drains: a non-zero errno replaces the
-    /// result of every successful read while set.
-    package int testCaptureReadErrno;
-    /// The pid of the child the last `capture` spawned — for the
-    /// no-zombie postconditions.
-    package int testLastCapturePid;
-}
+// Declared in every build, so the library and a consumer's `-unittest`
+// compile agree on it (build-graph BGV4); only tests use it.
+/// Fault injection for `capture`'s drains: a non-zero errno replaces the
+/// result of every successful read while set.
+package int testCaptureReadErrno;
+/// The pid of the child the last `capture` spawned — for the
+/// no-zombie postconditions.
+package int testLastCapturePid;

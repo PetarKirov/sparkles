@@ -2339,11 +2339,10 @@ private void probeCall(void* p) nothrow
     job.status = code == CLD_EXITED ? ExitStatus(false, status) : ExitStatus(true, status);
 }
 
-version (unittest)
-{
-    /// The pid of the last supervised root — for no-zombie postconditions.
-    package int testLastSupervisedPid;
-}
+// Declared in every build, so the library and a consumer's `-unittest`
+// compile agree on it (build-graph BGV4); only tests use it.
+/// The pid of the last supervised root — for no-zombie postconditions.
+package int testLastSupervisedPid;
 // ── supervised runs (SPEC §13.5–§13.8) ──────────────────────────────────────
 
 version (unittest):
@@ -2352,7 +2351,6 @@ version (Posix):
 import core.thread : Thread;
 
 import sparkles.event_horizon.sched : SchedOptions, schedOrSkip;
-import sparkles.test_runner.skip : skipTest;
 
 // A test that bounds a run's wall-clock time is `@serial`: every supervised run
 // in the process shares one blocking pool of at most four workers (cgroup
@@ -2397,6 +2395,7 @@ private struct EventLog
 /// workers are not test threads and do not count.
 private void requireSingleThreadedProcess() @system
 {
+    import sparkles.test_runner.skip : skipTest;
     foreach (t; Thread.getAll())
         if (t !is Thread.getThis() && !t.isDaemon)
             skipTest("mutates process-global descriptors/signals; run with -t 1");
@@ -4277,6 +4276,7 @@ version (linux)
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     import core.stdc.errno : ENOENT;
     import core.sys.posix.fcntl : O_CLOEXEC, O_NONBLOCK, O_RDWR, open;
     import core.sys.posix.signal : kill_ = kill;
@@ -4438,6 +4438,7 @@ else
 @system
 unittest
 {
+    import sparkles.test_runner.skip : skipTest;
     skipTest("needs a cgroup v2 run cgroup and procfs process identities");
 }
 
