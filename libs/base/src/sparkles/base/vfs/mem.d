@@ -1178,14 +1178,11 @@ private:
     }
 }
 
-version (unittest)
+/// A `MemVfs` over GC arenas, for tests that do not measure allocation.
+package MemVfs* testVfs()(size_t nodeCount = 256, size_t byteCount = 1 << 16) @safe
 {
-    /// A `MemVfs` over GC arenas, for tests that do not measure allocation.
-    package MemVfs* testVfs(size_t nodeCount = 256, size_t byteCount = 1 << 16) @safe
-    {
-        auto v = new MemVfs(new MemNode[nodeCount], new ubyte[byteCount]);
-        return v;
-    }
+    auto v = new MemVfs(new MemNode[nodeCount], new ubyte[byteCount]);
+    return v;
 }
 
 @("vfs.mem.treeAndPrimitives")

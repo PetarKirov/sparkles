@@ -600,31 +600,32 @@ version (unittest)
     import core.exception : AssertError;
     import std.typecons : tuple;
 
-    /// @nogc-compatible check helper using SharedBuffer
-    void check(T, Hook = void)(in T value, const(char)[] expected,
-            in PrettyPrintOptions!Hook opts = PrettyPrintOptions!Hook(colored: false),
-            string file = __FILE__, size_t line = __LINE__) @trusted
+}
+
+/// @nogc-compatible check helper using SharedBuffer
+private void check(T, Hook = void)(in T value, const(char)[] expected,
+        in PrettyPrintOptions!Hook opts = PrettyPrintOptions!Hook(colored: false),
+        string file = __FILE__, size_t line = __LINE__) @trusted
+{
+    import sparkles.base.lifetime : recycledErrorInstance;
+    import sparkles.base.buffer : SharedBuffer;
+
+    SharedBuffer!(char, 16 * 1024) buf;
+    writePretty(buf, value, opts);
+    const(char)[] actual = buf[];
+
+    if (actual != expected)
     {
-        import sparkles.base.lifetime : recycledErrorInstance;
-        import sparkles.base.buffer : SharedBuffer;
+        // Build error message in a separate buffer
+        SharedBuffer!(char, 4 * 1024) errBuf;
+        errBuf.put("prettyPrint mismatch:\nExpected:\n");
+        errBuf.put(expected);
+        errBuf.put("\nActual:\n");
+        errBuf.put(actual);
 
-        SharedBuffer!(char, 16 * 1024) buf;
-        writePretty(buf, value, opts);
-        const(char)[] actual = buf[];
-
-        if (actual != expected)
-        {
-            // Build error message in a separate buffer
-            SharedBuffer!(char, 4 * 1024) errBuf;
-            errBuf.put("prettyPrint mismatch:\nExpected:\n");
-            errBuf.put(expected);
-            errBuf.put("\nActual:\n");
-            errBuf.put(actual);
-
-            throw recycledErrorInstance!AssertError(
-                cast(string) errBuf[],
-                file, line);
-        }
+        throw recycledErrorInstance!AssertError(
+            cast(string) errBuf[],
+            file, line);
     }
 }
 
