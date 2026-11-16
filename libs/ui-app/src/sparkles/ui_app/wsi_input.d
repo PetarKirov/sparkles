@@ -858,15 +858,6 @@ version (unittest)
         return got;
     }
 
-    private WindowEvent ev(P)(P payload, MonoTime at = MonoTime.init)
-    {
-        WindowEvent e;
-        e.window = WindowId(0, 1);
-        e.payload = WindowEventPayload(payload);
-        e.timestamp = at;
-        return e;
-    }
-
     private sparkles.wsi.events.PointerEvent ptr(PointerPhase phase, int x, int y,
         PointerButton button = PointerButton.none, Mods mods = Mods.init)
     {
@@ -890,6 +881,15 @@ version (unittest)
 
     private TextCommittedEvent textNo(uint i)
         => TextCommittedEvent(TextId(i, 1));
+}
+
+private WindowEvent ev(P)(P payload, MonoTime at = MonoTime.init)
+{
+    WindowEvent e;
+    e.window = WindowId(0, 1);
+    e.payload = WindowEventPayload(payload);
+    e.timestamp = at;
+    return e;
 }
 
 @("ui_app.wsi_input.pointerPhasesInCells")
