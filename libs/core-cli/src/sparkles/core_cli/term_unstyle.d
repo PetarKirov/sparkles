@@ -22,10 +22,11 @@ string unstyle(in char[] s) pure nothrow
 
 version (unittest)
 {
+    // Test helpers for this module alone (build-graph BGV4).
+    private:
+
     import std.traits : EnumMembers;
     import sparkles.base.term_style : Style, stylize;
-
-    alias Seq(T...) = T;
 
     alias nonColorStyles = Seq!(Style.bold, Style.dim, Style.italic,
         Style.underline, Style.inverse, Style.strikethrough);
@@ -42,6 +43,8 @@ version (unittest)
         return table;
     }
 }
+
+private alias Seq(T...) = T;
 
 unittest
 {
