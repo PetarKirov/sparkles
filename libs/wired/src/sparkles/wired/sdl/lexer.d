@@ -1283,10 +1283,12 @@ private bool leapYear(SdlParserConfig config)(long year) @safe pure nothrow @nog
 
 private uint monthDays(SdlParserConfig config)(long year, ulong month)
     @safe pure nothrow @nogc
+in (month >= 1 && month <= 12)
 {
     static immutable ubyte[12] days = [31, 28, 31, 30, 31, 30,
         31, 31, 30, 31, 30, 31];
-    return month == 2 && leapYear!config(year) ? 29 : days[month - 1];
+    // An index is a `size_t`, 32 bits on wasm32: the month is 1–12 by now.
+    return month == 2 && leapYear!config(year) ? 29 : days[cast(size_t)(month - 1)];
 }
 
 /** The `Date` of a validated proleptic Gregorian civil date, without the
