@@ -50,6 +50,8 @@ struct RunLayout
     /// absolute; `runDirectory` must lie beneath it. Empty runs without a
     /// store (§6).
     string cache;
+    /// The toolchain identity (§8), which every declared key covers (BGK1).
+    string toolchain;
 
     /// The output directory of action `id`: its `$OUT`.
     string outOf(TaskId id) const @safe pure nothrow => runDirectory ~ "/out/" ~ idPath(id);
@@ -626,7 +628,7 @@ struct ActionDriver
     */
     private bool declaredPreimage(ref const Action a, out string preimage)
     {
-        string s = "format " ~ formatVersion.text ~ "\nkind " ~ text(a.kind) ~ "\n";
+        string s = "format " ~ formatVersion.text ~ "\nkind " ~ text(a.kind) ~ "\ntoolchain " ~ layout.toolchain ~ "\n";
         bool known = true;
         string normalized(string arg)
         {

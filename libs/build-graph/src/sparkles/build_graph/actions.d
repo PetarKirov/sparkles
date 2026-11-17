@@ -138,6 +138,12 @@ struct Tools
     /// files it read with their digests and the absent candidates (BGK2),
     /// which a compile's manifest comes from.
     bool dependencyOutput;
+    /// The compiler's configuration file, passed explicitly (`-conf=`, BGT1);
+    /// empty leaves the compiler to find its own.
+    string config;
+    /// Prefix maps for the toolchain's own paths, `<path>=<fixed>` (BGA11), so
+    /// no output names the store path of druntime's or Phobos' sources.
+    string[] prefixMaps;
 }
 
 /**
@@ -599,9 +605,14 @@ string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId
     if (ldc && tools.dependencyOutput)
         argv ~= ["--makedeps=$MEASURE/deps", "--makedeps-absent=$MEASURE/absent",
             "--makedeps-digests=$MEASURE/digests"];
+    if (tools.config.length)
+        argv ~= "-conf=" ~ tools.config;
     // BGA5: the root maps to `.` in what the outputs record.
     if (ldc)
         argv ~= "--ffile-prefix-map=$ROOT=.";
+    if (ldc)
+        foreach (m; tools.prefixMaps)
+            argv ~= "--ffile-prefix-map=" ~ m;
     if (ldc && tools.cc.length)
         argv ~= "-gcc=" ~ tools.cc;
     argv ~= optionFlags(s.options, ldc);
@@ -648,6 +659,8 @@ string[] linkArgv(ref const Variant v, string root, const Tools tools, TaskId co
     // after them, so they win over a recipe's `--linker=lld`.
     // dub turns build options into compiler flags before it links.
     string[] argv = [tools.compiler];
+    if (tools.config.length)
+        argv ~= "-conf=" ~ tools.config;
     argv ~= optionFlags(s.options, v.platform.compiler == "ldc");
     foreach (f; s.dflags)
         argv ~= f;
