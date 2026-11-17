@@ -123,9 +123,24 @@ options **must** produce CLI errors rather than assertion traces. Vulkan
 ## 2. Document surface and editing
 
 **EAP4: Documents and tabs.** Startup **must** permit an editable example, a
-new untitled document or a local UTF-8 file. Tabs **must** retain independent
-text, selections, undo histories, scroll positions and dirty state; switching
-tabs **must not** reset them. One document pane is active at a time.
+new untitled document or a local UTF-8 file. Each open document **must** have
+a `DocumentId` issued when it opens and kept for the session; its path or
+Android URI is an attribute of the document, so opening a file that is
+already open **must** reach the same document. Documents are shown as panes of
+the shared dock workspace ([`DCK16`, `DCK17`](../ui/containers.md#dock-container-dck)):
+a pane is a view holding its own selections, scroll position and folds, while
+the text, undo history and dirty state belong to the document. Switching tabs
+**must not** reset either. One pane is focused at a time.
+
+**EAP31: Editor splits.** The editor **must** split the focused pane right or
+down, move focus to a neighbouring pane, move a tab to the next group, and
+redock a tab by dragging it ([`DCK5`](../ui/containers.md#dock-container-dck)).
+Two panes on one document **must** show one text and share one undo history.
+Closing a pane that is not its document's last view **must not** prompt;
+closing the last view of a dirty document **must** follow `EAP25`. Find and
+replace, the history view and the status line **must** follow the focused
+pane's document. On a compact width the arrangement **must** be shown as one
+tabbed group and kept for when the window widens (`DCK18`).
 
 **EAP5: Code-editor presentation.** The active document **must** offer line
 numbers, current-line highlighting, indentation guides, bracket matching,
@@ -242,6 +257,9 @@ line height and letter spacing; weight and optical size controls **must**
 appear only when the face declares the axes. UI typography **must** remain
 independent of document typography. Unsupported font/style capabilities
 **must** be visible; arbitrary axis exploration belongs to text-lab.
+The document is set in its own face through a code font-role scope
+([`GLY13`](../design-system/glyphs.md#fonts-and-icons)), measured by the one
+layout pass (`EAP17`).
 
 ## 5. Unicode layout, touch and composition
 
@@ -337,8 +355,10 @@ permission. Revoked grants, unavailable providers and cancelled pickers
 cancellation outcome. URI/provider identities **must not** be treated as
 ordinary filesystem paths.
 
-**EAP25: Dirty-document closure.** Closing a dirty tab or deliberately exiting
-with dirty documents **must** offer Save, Discard and Cancel. Cancel
+**EAP25: Dirty-document closure.** Closing the last view of a dirty document
+(`EAP31`) or deliberately exiting with dirty documents **must** offer Save,
+Discard and Cancel in a modal dialog
+([`MDL12`, `MDL13`](../ui/popup.md#modality-and-focus-mdl)). Cancel
 **must** retain the document and focus; a failed save **must not** proceed as
 if saved. Explicit Discard authorizes discarding that document's changes,
 not unrelated tabs.
@@ -350,6 +370,12 @@ recoverable dirty contents without silently writing the original files.
 Corrupt, unsupported or partially written recovery records **must** be
 reported and preserved for recovery rather than destroying openable records.
 Recovery errors **must not** prevent a fresh empty document from opening.
+
+The session **must** be one record holding the dock layout value
+([`DCK2`](../ui/containers.md#dock-container-dck)), each pane's document and
+view state, and the document records keyed by `DocumentId`; it **must not**
+keep a tab list of its own. Recovery snapshots **must** key their contents by
+`DocumentId`, so a restored pane finds its document whatever its path.
 
 Recovery **must** identify the latest durably recoverable revision separately
 from the latest in-memory revision, and **must not** acknowledge a newer

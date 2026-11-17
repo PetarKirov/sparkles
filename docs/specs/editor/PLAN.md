@@ -173,8 +173,43 @@ and evidence citations that name the moved code. Branch
 | X13  | `pointer()`: pixel-to-cell conversion, touch slop, the palette's touch panning                                       | `sparkles.ui_app` (pointer cells, slop) and `sparkles.ui.components.command_palette` (touch panning)                                                                                             | delivered |
 
 X2 precedes X3 and X7 (the archive writes through the VFS). The rest are
-independent. Modal dialogs and hit identities, the document font service and
-the document/tab model need design first and are not on this list.
+independent.
+
+## Design decisions
+
+Modal dialogs and hit identities, the document font and the document/tab
+model needed design before they could move. They were settled with the owner
+and are written into the specs that own each concern:
+
+- **Dialogs** are ordinary `popup`-band overlays, modal by `MDL1`, with a
+  toolkit layout preset (title, body, buttons); a reply carries the overlay's
+  generational handle and a stale one is dropped
+  ([`MDL12`, `MDL13`](../ui/popup.md#modality-and-focus-mdl)). The editor's
+  `dialogEpoch` goes away.
+- **Hit ids** come from one registry keyed by component tag and instance,
+  stable across frames while the key is asked for
+  ([`INP27`, `INP28`](../ui/input.md#hit-testing-inp10-inp27-inp28)). The
+  hand-picked bases go, and with them the collision between the editor's
+  `undoHitBase` and the terminal's `toolHit`.
+- **The document font** is a font-role scope on a widget subtree, measured by
+  the one layout pass ([`GLY13`](../design-system/glyphs.md#fonts-and-icons)),
+  replacing the single specimen slot.
+- **Documents and tabs** are dock panes through one workspace adapter shared
+  with hue; a pane is a view onto a document identified by `DocumentId`, the
+  editor gains splits, and the session is one record over the dock layout
+  value ([`DCK16`–`DCK18`](../ui/containers.md#dock-container-dck), `EAP4`,
+  `EAP26`, `EAP31`).
+
+| Milestone | Scope                                                                                                          | Acceptance gate                                                                                                                                                                    | Status  |
+| --------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| M-a       | The hit-id registry; every hand-picked hit base in the toolkit, the editor, hue and the terminal moved onto it | no hit-id constant remains outside the registry; a test asks for two keys and asserts disjoint blocks, and a press held across a frame that adds a control keeps its id            | planned |
+| M-b       | Overlay handles and the dialog preset; the editor's dialogs ported                                             | a recording test answers a closed dialog with its stale handle and asserts the reply is dropped; save-before-close and go-to-line open through the preset                          | planned |
+| M-c       | The font-role scope; the editor's document drawn in its own face                                               | caret, hit and selection rectangles inside a code scope use the scope's cell metrics at two zoom levels; the TUI draws unchanged                                                   | planned |
+| M-d       | `DocumentId`, the workspace adapter, editor splits and the one session record; hue adopts the adapter          | one conformance test runs the adapter's scenarios against the editor and hue; two panes on one document share undo; a split session restores; compact width collapses and restores | planned |
+
+M-a precedes M-b and M-d, whose dialogs and tabs take registry ids. M-c is
+independent of both and may run alongside them. M-d is not complete until hue
+passes the same conformance test as the editor.
 
 ## Bounded feasibility experiments
 

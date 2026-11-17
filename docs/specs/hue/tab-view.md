@@ -18,9 +18,11 @@ The tab view is a **level-3 widget** in the UI component library
 across all three targets, with its parts on the library's levels — an
 **active-tab state machine** (level 1, [`STM`](./ui-architecture.md)), a tab-bar +
 panel **layout** (level 2, [`LAY`](./ui-architecture.md)), and per-backend
-**rendering**. It is the shared component behind two features that would otherwise
-hand-roll tabs: the viewer's **open-file tabs** and inline **code groups** in the
-markdown preview (see `TBU`).
+**rendering**. It is the shared component for tabs inside content — inline **code groups** in the
+markdown preview and the PR session (see `TBU`). The viewer's **open-file tabs**
+are not inline content: they are dock panes through the workspace adapter it
+shares with the editor ([`DCK16`](../ui/containers.md#dock-container-dck)), so
+hue and the editor have one tab, split and persistence model.
 
 Its HTML rendering is **pure CSS** (radio inputs + `:checked`, no JS) — which is
 exactly how VitePress's own code-group renders, and matches hue's established no-JS
@@ -50,20 +52,20 @@ doctrine ([folding](./folding.md) `FLD10`, notifier, twoslash HTML).
 Each use case is a thin **adapter** supplying the tabs (labels + panels + which
 have a close button) and consuming the shared component.
 
-| ID   | Use case                   | Adapter                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Status      | Traces to                                                                   |
-| ---- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------------------------- |
-| TBU1 | **Open files as tabs**     | one tab per open file, active = the current file, a **close** button per tab (`TAB3`), overflow-scrolled (`TAB4`); opening a file via [navigation](./navigation.md) `LNK3` adds/activates a tab, closing removes it. Implies a **multi-document** session. The [dock](./ui-architecture.md) is the mechanism — it already hosts tree, document and inspector panes — but it declares a single `docPane` today, so the capability is the gap, not the structure. | not started | [navigation.md](./navigation.md) `LNK3`; multi-doc session                  |
-| TBU2 | **Code group** (VitePress) | the `::: code-group` container of labeled fences (` ```js [label] `) becomes an **inline tabbed code block** in the preview — a block reserving rows (like a [media block](./media.md) `MDB1` / code block) with a tab bar; first tab default. Requires the markdown model to parse the container + fence `[label]`.                                                                                                                                            | not started | `sparkles:syntax` `md/model.d` (code-group parse); [gui.md](./gui.md) `COD` |
-| TBU3 | **PR-session tabs**        | a PR/MR session ([`DPR2`](./diff-view.md)) surfaces as tabs — **description** (markdown preview) · **changed files** (the diff session) · later **checks**; and the diff session's changed files feed the open-files tabs (`TBU1`).                                                                                                                                                                                                                             | not started | [diff-view.md](./diff-view.md) `DPR2`/`DVS4`; `TBU1`                        |
+| ID   | Use case                   | Adapter                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Status      | Traces to                                                                   |
+| ---- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- | --------------------------------------------------------------------------- |
+| TBU1 | **Open files as tabs**     | open files are **dock panes through the shared workspace adapter** ([`DCK16`–`DCK18`](../ui/containers.md#dock-container-dck)), the one the editor uses: a tabbed group per dock group (`DCK4`), a close and modified badge per tab, documents identified by `DocumentId` so a file opened twice is one document, and splits. Opening a file via [navigation](./navigation.md) `LNK3` adds or activates its pane. This use case does **not** consume the inline tab view (`TAB1`–`TAB6`), which stays for content that is not a pane (`TBU2`, `TBU3`). | planned     | [navigation.md](./navigation.md) `LNK3`; multi-doc session                  |
+| TBU2 | **Code group** (VitePress) | the `::: code-group` container of labeled fences (` ```js [label] `) becomes an **inline tabbed code block** in the preview — a block reserving rows (like a [media block](./media.md) `MDB1` / code block) with a tab bar; first tab default. Requires the markdown model to parse the container + fence `[label]`.                                                                                                                                                                                                                                   | not started | `sparkles:syntax` `md/model.d` (code-group parse); [gui.md](./gui.md) `COD` |
+| TBU3 | **PR-session tabs**        | a PR/MR session ([`DPR2`](./diff-view.md)) surfaces as tabs — **description** (markdown preview) · **changed files** (the diff session) · later **checks**; and the diff session's changed files feed the open-files tabs (`TBU1`).                                                                                                                                                                                                                                                                                                                    | not started | [diff-view.md](./diff-view.md) `DPR2`/`DVS4`; `TBU1`                        |
 
 ## Milestones
 
-| Milestone | Scope                                                                               | Status      | Requirements            |
-| --------- | ----------------------------------------------------------------------------------- | ----------- | ----------------------- |
-| B0        | Tab component (bar + active-tab state + panel swap) — GUI + TUI                     | not started | `TAB1`–`TAB3`, `TBB1/2` |
-| B1        | Open-files tabs: multi-document session + navigation integration + close + overflow | not started | `TBU1`, `TAB4`–`TAB6`   |
-| B2        | Code-group markdown parsing + inline tabbed code block                              | not started | `TBU2`                  |
-| B3        | HTML pure-CSS tabs                                                                  | not started | `TBB3`                  |
+| Milestone | Scope                                                                    | Status      | Requirements            |
+| --------- | ------------------------------------------------------------------------ | ----------- | ----------------------- |
+| B0        | Tab component (bar + active-tab state + panel swap) — GUI + TUI          | not started | `TAB1`–`TAB3`, `TBB1/2` |
+| B1        | Open-files tabs through the shared dock workspace (editor milestone M-d) | planned     | `TBU1`; `DCK16`–`DCK18` |
+| B2        | Code-group markdown parsing + inline tabbed code block                   | not started | `TBU2`                  |
+| B3        | HTML pure-CSS tabs                                                       | not started | `TBB3`                  |
 
 ## Relationship to existing specs
 
