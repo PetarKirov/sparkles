@@ -1,0 +1,7 @@
+# The keys whose signatures readers of refs/perf/data trust (observability
+# OBH8, OD21). Principals are role names, never a person's name or email.
+#   ci            the CI key: secret PERF_DATA_SIGNING_KEY in the `perf-data`
+#                 environment, whose deployment branches allow only `main`
+#   maintainer-1  a maintainer's key, for `ci perf push` and imported records
+ci namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM7SNNtWKGCLbcRpBYb8UkhNzuKKjWrteqtfJfHaqT5v
+maintainer-1 namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIzOWBjDjEtaBOikhPkiWU0VzhEunJH7XXC+fEY3HkK2
