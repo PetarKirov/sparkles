@@ -128,7 +128,7 @@ Expected!(string, string) appendRun(string recordsRoot, string runId, string att
     if (admitted.length == 0)
         return ok(report ~ "no record to append");
     Append[] appends = admitted.map!(r => Append(runDir(runDate, landedCommit, r.runId), r)).array;
-    const done = appendRecords(historyCacheDir(), remote, signersFile, appends, signingKey,
+    const done = appendRecords(historyCacheDir(remote), remote, signersFile, appends, signingKey,
         format("append %d record(s) of run %s attempt %s for %s", appends.length, runId, attempt,
             landedCommit[0 .. 12]));
     if (done.hasError)
@@ -176,7 +176,7 @@ Expected!(string, string) pushLocal(bool allowDirty, string signingKey, string r
     }
     if (appends.length == 0)
         return ok(report ~ "nothing to push");
-    const done = appendRecords(historyCacheDir(), remote, signersFile, appends, signingKey,
+    const done = appendRecords(historyCacheDir(remote), remote, signersFile, appends, signingKey,
         format("push %d local record(s)", appends.length));
     if (done.hasError)
         return err!string(report ~ done.error);
