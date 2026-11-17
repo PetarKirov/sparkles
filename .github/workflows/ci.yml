@@ -62,24 +62,99 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Each Nix leg's `ci --test` is split into shards, because it runs one
-  # package at a time and a single job was the pipeline's long pole (aarch64
-  # Linux took ~100m, macOS ~70m). A leg's first shard is its primary: it runs
-  # every step besides the tests, and tests every package the leg's other
-  # shards do not list (`--skip-packages`), so a package added to dub.sdl is
-  # tested there without editing this file. The other shards list theirs
-  # (`--packages`); a name that is no sub-package fails the run.
-  #
-  # The lists are a longest-first packing of each package's `ci --test`
-  # minutes (the sum of its runs' Δtᵢ) in run 43782517554, PR #734's last full
-  # run, with the primary's other steps counted against it: 28m on x86_64
-  # LDC, 19m on x86_64 DMD, 8m on macOS, 4m on aarch64 Linux. That run's
-  # unsharded legs took 92m, 62m, 74m and 102m besides setup; packed, each
-  # shard of a leg comes to 46m, 31m, 37m and 34m. Each shard builds the
-  # dependencies its own packages need, so it pays some compiles another
-  # shard also pays. Repack when a shard's job runs well past its siblings.
+  # The test shards come from data, not from this file (CIC14, apps/ci PLAN
+  # M3a). `ci/placements.json` declares each placement: its system, compiler,
+  # test mode, shard count and runner. `ci --list-placements` turns that into
+  # one matrix per mode, and names the `refs/perf/data` commit every shard
+  # packs from. Each shard then runs `ci --test --placement P --shard K/N`,
+  # which packs the placement's packages longest first by the median wall time
+  # of their last five recorded runs (observability OD21), so no workflow
+  # names a package and a package added to dub.sdl is tested without editing
+  # one. Each shard uploads its run record; `main-checks.yml` appends the
+  # records of the run that validated `main`'s tree to the history.
+  placements:
+    name: Plan the test shards
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      test: ${{ steps.plan.outputs.matrix-test }}
+      sanitize: ${{ steps.plan.outputs.matrix-sanitize }}
+      extracted: ${{ steps.plan.outputs.matrix-extracted }}
+      tip: ${{ steps.plan.outputs.tip }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+
+      - name: List the placements and their history
+        id: plan
+        run: nix run .#ci-minimal -- --list-placements --github-output "$GITHUB_OUTPUT"
+
   test:
-    name: test (${{ matrix.system }}, ${{ matrix.DC }}, ${{ matrix.shard }})
+    name: test (${{ matrix.placement }}, ${{ matrix.shard }})
+    needs: placements
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.placements.outputs.test) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          devshell: ci
+
+      - name: Cache DUB packages
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.dub
+            ~/.local/share/dub
+          # Keyed by system, not runner.os: that is "Linux" for x86_64 and
+          # arm64 alike, and two legs sharing one cache corrupt it for each other.
+          key: ${{ matrix.system }}-dub-${{ hashFiles('**/dub.sdl', '**/dub.selections.json') }}
+          restore-keys: |
+            ${{ matrix.system }}-dub-
+
+      - name: Test the shard's packages
+        run: ci --test --fail-fast --placement "$PLACEMENT" --shard "$SHARD" --history-tip "$TIP"
+        env:
+          # The compiler the placement tests with; both are on PATH via the
+          # `ci` dev shell, and `ci` itself embeds dmd.
+          DC: ${{ matrix.compiler }}
+          PLACEMENT: ${{ matrix.placement }}
+          SHARD: ${{ matrix.shard }}
+          TIP: ${{ needs.placements.outputs.tip }}
+
+      - name: Upload the run record
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-records-test-${{ strategy.job-index }}
+          path: ~/.cache/sparkles/perf/runs
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # Everything a test leg's first shard used to run beside its tests, one job
+  # per system: flake checks, the configuration-specific test builds, the
+  # examples, the GPU read-backs and the windowing demos, and Windows' own
+  # suite, which runs without Nix through ci/test-windows.sh.
+  platform:
+    name: platform (${{ matrix.system }}, ${{ matrix.DC }})
     strategy:
       fail-fast: false
       matrix:
@@ -87,129 +162,19 @@ jobs:
           - runner: ubuntu-latest
             system: x86_64-linux
             DC: ldc2
-            timeout: 120
-            shard: 1/2
-            primary: true
-            select: >-
-              --skip-packages android appearance base build-primitives ci
-              core-cli diff dmd-fmt doc-view docs dsv hue image math metadata
-              nix raylib-text reflection release shader-compile syntax
-              terminal terminal-benchmark terminal-view test-runner
-              test-runner-core test-runner-impl test-utils text-buffer
-              text-conformance tui twoslash twoslash-extract twoslash-protocol
-              ui-app ui-sdl3 versions vulkan vulkan-wsi wired
-          - runner: ubuntu-latest
-            system: x86_64-linux
-            DC: ldc2
-            timeout: 120
-            shard: 2/2
-            primary: false
-            select: >-
-              --packages android appearance base build-primitives ci core-cli
-              diff dmd-fmt doc-view docs dsv hue image math metadata nix
-              raylib-text reflection release shader-compile syntax terminal
-              terminal-benchmark terminal-view test-runner test-runner-core
-              test-runner-impl test-utils text-buffer text-conformance tui
-              twoslash twoslash-extract twoslash-protocol ui-app ui-sdl3
-              versions vulkan vulkan-wsi wired
+            timeout: 75
           - runner: ubuntu-latest
             system: x86_64-linux
             DC: dmd
-            timeout: 75
-            shard: 1/2
-            primary: true
-            select: >-
-              --skip-packages android base build-primitives dbus diff dmd-fmt
-              doc-view dql dsv event-horizon event-horizon-sys font fuzzy hue
-              image input math nix reflection release shader-compile terminal
-              terminal-view test-attributes test-harness test-runner
-              test-runner-impl test-utils text-buffer text-conformance
-              text-lab twoslash-d ui-app ui-raylib ui-sdl3 versions vulkan-wsi
-              wired wired-sdl-select wsi
-          - runner: ubuntu-latest
-            system: x86_64-linux
-            DC: dmd
-            timeout: 75
-            shard: 2/2
-            primary: false
-            select: >-
-              --packages android base build-primitives dbus diff dmd-fmt
-              doc-view dql dsv event-horizon event-horizon-sys font fuzzy hue
-              image input math nix reflection release shader-compile terminal
-              terminal-view test-attributes test-harness test-runner
-              test-runner-impl test-utils text-buffer text-conformance
-              text-lab twoslash-d ui-app ui-raylib ui-sdl3 versions vulkan-wsi
-              wired wired-sdl-select wsi
+            timeout: 60
           - runner: macos-latest
             system: aarch64-darwin
             DC: ldc2
-            timeout: 110
-            shard: 1/2
-            primary: true
-            select: >-
-              --skip-packages android base ci ci-provider diff dmd-lsp
-              doc-view docs dql event-horizon font font-oracle fuzzy image
-              math metadata nix profiling-counters raylib-text reflection
-              release shaders source-view syntax table-wasm terminal
-              test-harness test-runner-core test-runner-impl text-buffer
-              text-lab twoslash-d ui ui-sdl3 vulkan vulkan-wsi wired
-          - runner: macos-latest
-            system: aarch64-darwin
-            DC: ldc2
-            timeout: 110
-            shard: 2/2
-            primary: false
-            select: >-
-              --packages android base ci ci-provider diff dmd-lsp doc-view
-              docs dql event-horizon font font-oracle fuzzy image math
-              metadata nix profiling-counters raylib-text reflection release
-              shaders source-view syntax table-wasm terminal test-harness
-              test-runner-core test-runner-impl text-buffer text-lab
-              twoslash-d ui ui-sdl3 vulkan vulkan-wsi wired
-          # The one host where `real` is binary128 (`real.mant_dig == 113`):
-          # the leg that compiles and runs the wide-format conversion paths
-          # natively. Scoped to `ci --test` for now; the example and OS-API
-          # steps below are keyed to the x86_64 leg until this one is proven.
+            timeout: 60
           - runner: ubuntu-24.04-arm
             system: aarch64-linux
             DC: ldc2
-            timeout: 120
-            shard: 1/3
-            primary: true
-            select: >-
-              --skip-packages android appearance base build-primitives
-              code-instrumentation core-cli dbus diagram dmd-lsp docs dql
-              event-horizon event-horizon-sys font font-oracle ghostty input
-              math nix profiling profiling-counters raylib-text reflection
-              release shader-compile shaders terminal terminal-benchmark
-              terminal-view test-attributes test-harness test-runner
-              test-runner-core test-runner-impl text-buffer text-conformance
-              text-lab tree-sitter twoslash twoslash-d twoslash-protocol ui
-              ui-raylib ui-tui ui-vulkan vulkan wired wsi
-          - runner: ubuntu-24.04-arm
-            system: aarch64-linux
-            DC: ldc2
-            timeout: 120
-            shard: 2/3
-            primary: false
-            select: >-
-              --packages android appearance build-primitives dbus dql
-              event-horizon event-horizon-sys font-oracle input nix profiling
-              profiling-counters raylib-text terminal terminal-view
-              test-attributes test-harness text-conformance twoslash-d ui
-              ui-tui ui-vulkan vulkan wired wsi
-          - runner: ubuntu-24.04-arm
-            system: aarch64-linux
-            DC: ldc2
-            timeout: 120
-            shard: 3/3
-            primary: false
-            select: >-
-              --packages base code-instrumentation core-cli diagram dmd-lsp
-              docs font ghostty math reflection release shader-compile shaders
-              terminal-benchmark test-runner test-runner-core test-runner-impl
-              text-buffer text-lab tree-sitter twoslash twoslash-protocol
-              ui-raylib
+            timeout: 60
           # Native Windows — the host the `sparkles:wsi` Win32 backend had only
           # ever been certified on through Wine. There is no Nix on the hosted
           # runner, so this leg takes its toolchain from setup-dlang and runs
@@ -221,30 +186,11 @@ jobs:
             system: x86_64-windows
             DC: ldc2
             timeout: 40
-            shard: 1/1
-            primary: true
-            select: ''
     runs-on: ${{ matrix.runner }}
-    # Budget the entire job, including cold toolchain builds and cleanup.
-    # macOS passed its tests but twice hit 40m during the example sweep.
-    # Native macOS linked package 28/55 near 40m in run 37332583414.
-    # Its ~36m test prefix plus ~5m setup projects to ~78m before examples.
-    # ARM Linux twice spent the whole 40m cap bootstrapping the SPIR-V LLVM
-    # toolchain; cancelled builds do not publish that unfinished derivation,
-    # so an unchanged rerun repeats the cold build instead of warming its cache.
-    # x86_64 LDC also includes the complete X11/Wayland demo sweep. Run
-    # 37375104839 spent ~45m on tests and ~10m on examples before that sweep;
-    # its 55m cap cancelled the otherwise passing job during the demos.
-    # Run 39400408038 passed all 58 packages at ~69m and was cancelled at
-    # 75m during the steps after them: x86_64 LDC now has 95m. x86_64 DMD
-    # takes 33-37m, and runs 39435191749 and 39436564680 were cancelled at
-    # its 40m cap while building the examples: it now has 60m.
-    # Run 41293450019 (PR #708) spent ~57m in the x86_64 DMD steps and ~87m in
-    # the macOS ones (a cold `ci` and shell: Setup Nix took 19m, the tests 58m),
-    # and both were cancelled at their caps while saving caches after every
-    # step had passed: x86_64 DMD now has 75m and macOS 110m.
-    # x86_64 LDC's last pass took 87m, and PR runs 42386797516 and 42404867685
-    # were cancelled at its 95m cap after `ci --test` had passed: it now has 120m.
+    # Budget the entire job, including a cold toolchain build and cleanup:
+    # in run 43782517554 these steps took 28m on x86_64 LDC, 19m on DMD, 8m on
+    # macOS and 4m on aarch64 Linux, besides a setup of 3 to 10m. The test
+    # legs' history of caps, which these replace, is in git.
     timeout-minutes: ${{ matrix.timeout }}
     steps:
       - name: Checkout
@@ -296,7 +242,7 @@ jobs:
             ${{ matrix.system }}-dub-
 
       - name: Run flake checks
-        if: matrix.primary && matrix.system != 'aarch64-linux' && runner.os != 'Windows'
+        if: matrix.system != 'aarch64-linux' && runner.os != 'Windows'
         run: nix flake check
 
       # sparkles:shaders SHT3 on its third platform: the Nix build job, which
@@ -304,7 +250,7 @@ jobs:
       # runner, so this leg hashes it there for `shader-reproducibility`. It
       # runs before the tests, so a failing test cannot drop the platform.
       - name: Hash the generated shaders
-        if: matrix.primary && matrix.system == 'aarch64-linux'
+        if: matrix.system == 'aarch64-linux'
         run: |
           for p in ui-shaders vulkan-wsi-shaders; do
             out="$(nix build --no-link --print-out-paths ".#$p")"
@@ -313,26 +259,14 @@ jobs:
           done | tee "shaders-${{ runner.os }}-${{ runner.arch }}.hash"
 
       - name: Upload the generated shaders' hash
-        if: matrix.primary && matrix.system == 'aarch64-linux'
+        if: matrix.system == 'aarch64-linux'
         uses: actions/upload-artifact@v7
         with:
           name: shaders-${{ runner.os }}-${{ runner.arch }}
           path: shaders-${{ runner.os }}-${{ runner.arch }}.hash
 
-      - name: Build and test with dub
-        if: runner.os != 'Windows'
-        run: ci --test --fail-fast ${{ matrix.select }}
-        env:
-          # `ci` embeds dmd (small closure); honour the matrix compiler for the
-          # test suite so the ldc2/dmd dimensions are actually exercised. Both
-          # are on PATH via the `ci` dev shell.
-          DC: ${{ matrix.DC }}
-
-      # The terminal's raylib arm (`version (TerminalVulkan)` off): its own
-      # test configuration, which `ci --test` (the default, native one) never
-      # builds, kept until the raylib arm is retired.
       - name: The terminal on the raylib arm
-        if: matrix.primary && runner.os == 'Linux'
+        if: runner.os == 'Linux'
         run: dub test :terminal --compiler=${{ matrix.DC }} -c unittest-raylib
 
       # `ci --test` without the `ci` helper: `dub test` per allowlisted
@@ -349,7 +283,7 @@ jobs:
       # variable itself, so each OS builds it (DS24); the `sync` job covers
       # x86-64 Linux.
       - name: base.sync with the portable parker
-        if: matrix.primary && (runner.os == 'macOS' || runner.os == 'Windows')
+        if: (runner.os == 'macOS' || runner.os == 'Windows')
         shell: bash
         run: dub test :base --compiler=${{ matrix.DC }} -c unittest-portable -- -i 'sync\.'
 
@@ -357,11 +291,11 @@ jobs:
       # deliberately weakened primitive must show a stale read. `dub test`'s
       # unoptimized build cannot, so this is the oracle.
       - name: base.sync litmus tests
-        if: matrix.primary && runner.arch == 'ARM64'
+        if: runner.arch == 'ARM64'
         run: dub run --single --temp-build libs/base/tools/check-sync-litmus.d
 
       - name: Build and run examples
-        if: matrix.primary && matrix.system != 'aarch64-linux' && runner.os != 'Windows'
+        if: matrix.system != 'aarch64-linux' && runner.os != 'Windows'
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
             dub run --single apps/ci/tools/prepare-event-horizon-comparisons.d --temp-build -b checked
@@ -375,7 +309,7 @@ jobs:
       # the Nix-built raylib is pointed at the flake's Mesa explicitly. Opted
       # into, the test fails rather than skips when it cannot run.
       - name: Read back generated shaders on a GL driver
-        if: matrix.primary && matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
+        if: matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
         run: |
           mesa="$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#mesa)"
           export LIBGL_DRIVERS_PATH="$mesa/lib/dri"
@@ -389,7 +323,7 @@ jobs:
       # layer loaded and no message allowed. Opted into, the test fails rather
       # than skips when it cannot run.
       - name: Read back the triangle on a Vulkan driver
-        if: matrix.primary && matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
+        if: matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
         run: |
           mesa="$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#mesa)"
           layers="$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#vulkan-validation-layers)"
@@ -403,7 +337,7 @@ jobs:
       # real window under xvfb; Wayland has no compositor in CI so it prints SKIP and
       # exits 0. (macOS/iOS/Android are verified out of band — see the surveys.)
       - name: Build & run OS-API windowing examples (X11 + Wayland)
-        if: matrix.primary && matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
+        if: matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
         run: |
           xvfb-run -a dub run --compiler=ldc2 --root=docs/research/window-system-integration/os-apis/x11/example
           dub run --compiler=ldc2 --root=docs/research/window-system-integration/os-apis/wayland/example
@@ -418,7 +352,7 @@ jobs:
       # red the build. X11 demos run under Xvfb; Wayland demos under a headless
       # weston instance.
       - name: Build & run OS-API windowing demos (X11 + Wayland)
-        if: matrix.primary && matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
+        if: matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
         env:
           WSI_AUTO_EXIT: 1
         run: |
@@ -579,8 +513,12 @@ jobs:
   # exercise the compiler far more than the host.
   extracted-tests:
     name: Extracted test modes (--better-c, --wasm)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    needs: placements
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.placements.outputs.extracted) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -612,9 +550,19 @@ jobs:
       # any such skip into a failure — without it a missing wasm-ld would
       # leave this job green having run nothing.
       - name: Run --better-c and --wasm for every sub-package that uses them
-        run: ci --test-extracted --fail-fast
+        run: ci --test-extracted --fail-fast --placement "$PLACEMENT"
         env:
           DC: ldc2
+          PLACEMENT: ${{ matrix.placement }}
+
+      - name: Upload the run record
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-records-extracted-${{ strategy.job-index }}
+          path: ~/.cache/sparkles/perf/runs
+          if-no-files-found: ignore
+          retention-days: 30
 
   # AddressSanitizer + LDC stack-overflow sanitizer. Linux LDC only: nixpkgs
   # LDC links gcc libasan on Linux and has no ASan runtime dylib on Darwin.
@@ -626,35 +574,15 @@ jobs:
   # every package at 43.6m and was cancelled at 45m.
   # Main's runs take 48-59m; run 42395259454 (PR #719) was still testing,
   # nothing failed, when its 60m cap cancelled it: it now has 75m.
-  # Two shards, packed like the test job's from the same run (59.6m of
-  # tests unsharded, 29.8m a shard): the second lists its packages, and the
-  # first takes every other one.
+  # Its shards come from `ci/placements.json`, packed like the test job's.
   sanitize:
     name: Sanitizers (ASan, stackovf) (${{ matrix.shard }})
+    needs: placements
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - shard: 1/2
-            select: >-
-              --skip-packages android build-primitives code-instrumentation
-              core-cli dbus dmd-fmt doc-view dsv event-horizon
-              event-horizon-sys font font-oracle ghostty http input math
-              metadata profiling-counters raylib-text source-view syntax
-              table-wasm terminal test-runner test-utils text-buffer
-              text-conformance text-wasm tui twoslash-d twoslash-extract ui
-              ui-gallery ui-raylib ui-vulkan vulkan vulkan-wsi
-          - shard: 2/2
-            select: >-
-              --packages android build-primitives code-instrumentation
-              core-cli dbus dmd-fmt doc-view dsv event-horizon
-              event-horizon-sys font font-oracle ghostty http input math
-              metadata profiling-counters raylib-text source-view syntax
-              table-wasm terminal test-runner test-utils text-buffer
-              text-conformance text-wasm tui twoslash-d twoslash-extract ui
-              ui-gallery ui-raylib ui-vulkan vulkan vulkan-wsi
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
+      matrix: ${{ fromJSON(needs.placements.outputs.sanitize) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: ${{ matrix.timeout }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -689,9 +617,21 @@ jobs:
             x86_64-linux-asan-dub-
 
       - name: Run tests under ASan
-        run: ci --test-sanitize --fail-fast ${{ matrix.select }}
+        run: ci --test-sanitize --fail-fast --placement "$PLACEMENT" --shard "$SHARD" --history-tip "$TIP"
         env:
           DC: ldc2
+          PLACEMENT: ${{ matrix.placement }}
+          SHARD: ${{ matrix.shard }}
+          TIP: ${{ needs.placements.outputs.tip }}
+
+      - name: Upload the run record
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-records-sanitize-${{ strategy.job-index }}
+          path: ~/.cache/sparkles/perf/runs
+          if-no-files-found: ignore
+          retention-days: 30
 
   # Build the Nix outputs and push them to the binary cache, once per system
   # (the derivations are compiler-agnostic — they always build with ldc — so
@@ -779,7 +719,7 @@ jobs:
     name: Generated shaders agree across platforms
     # The Nix build job hashes x86_64 Linux and aarch64 macOS; the aarch64
     # Linux test leg hashes the third (`SHT4`'s platforms).
-    needs: [nix-build, test]
+    needs: [nix-build, platform]
     runs-on: ubuntu-latest
     steps:
       - name: Download every platform's hash
@@ -1302,7 +1242,8 @@ jobs:
   # plans each one R2 lacks (`toolchain-pin-check --plan`,
   # apps/ci/src/derivation_pin_build.d). One Cachix serves is left to the
   # gate's mirror step, which copies it. Of the rest, each one whose recorded
-  # build cost (nix/pin-build-costs.json) fits a job's budget, or that has no
+  # build cost (its median recorded build on refs/perf/data, against the
+  # budget in ci/placements.json) fits a job, or that has no
   # recorded cost, is built by `pin-build` on a runner of its system; one over
   # budget, and one whose closure needs it, is reported with the command that
   # builds it on a developer host. A pull request that leaves the toolchain
@@ -1327,14 +1268,18 @@ jobs:
 
       - name: Plan the builds of missing toolchain outputs
         id: plan
-        run: nix run .#toolchain-pin-check -- --plan --github-output "$GITHUB_OUTPUT"
+        run: |
+          # Each pin's cost is the median of its recorded builds on refs/perf/data.
+          nix run .#ci-minimal -- --write-pin-costs "$RUNNER_TEMP/pin-costs.json"
+          nix run .#toolchain-pin-check -- --plan --costs "$RUNNER_TEMP/pin-costs.json" \
+            --github-output "$GITHUB_OUTPUT"
 
   # Builds what `pin-plan` found missing, one job per system, and pushes each
   # finished derivation to R2 as it completes (ci/with-cache.sh), so a job
   # that hits its limit keeps its progress and a re-run resumes. Without the
   # R2 secrets (a fork's pull request) it builds and pushes nothing, and the
   # gate stays red. The step summary records the build's wall clock, the
-  # figure nix/pin-build-costs.json takes.
+  # figure each pin's next cost comes from, through its run record.
   pin-build:
     name: Toolchain build (${{ matrix.system }})
     needs: pin-plan
@@ -1365,12 +1310,30 @@ jobs:
           NIX_R2_SIGNING_KEY: ${{ secrets.NIX_R2_SIGNING_KEY }}
           INSTALLABLES: ${{ matrix.installables }}
           PINS: ${{ matrix.pins }}
+          SYSTEM: ${{ matrix.system }}
         run: |
-          start=$SECONDS
-          # shellcheck disable=SC2086 # INSTALLABLES is a space-separated list.
-          ci/with-cache.sh nix build --no-link --print-build-logs $INSTALLABLES
-          printf '%s on %s: built in %d min\n' "$PINS" "$RUNNER_OS/$RUNNER_ARCH" \
-            $(((SECONDS - start + 59) / 60)) >> "$GITHUB_STEP_SUMMARY"
+          # One pin at a time, each recorded as its own task: its wall time is
+          # the cost the next plan reads. A pin built after another that shares
+          # its dependencies is cheaper, so a cost is an upper bound.
+          read -ra installables <<< "$INSTALLABLES"
+          read -ra pins <<< "$PINS"
+          for i in "${!installables[@]}"; do
+            start=$SECONDS
+            nix run .#ci-minimal -- --record-task "pin-build:${pins[$i]}" \
+              --placement "pin-build-$SYSTEM" -- \
+              ci/with-cache.sh nix build --no-link --print-build-logs "${installables[$i]}"
+            printf '%s on %s: built in %d min\n' "${pins[$i]}" "$RUNNER_OS/$RUNNER_ARCH" \
+              $(((SECONDS - start + 59) / 60)) >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Upload the run records
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-records-pin-build-${{ strategy.job-index }}
+          path: ~/.cache/sparkles/perf/runs
+          if-no-files-found: ignore
+          retention-days: 30
 
   # The gate. It runs after the builds, whether they built, failed or were
   # skipped, and asks R2 again; it builds nothing and needs no token.
@@ -1413,7 +1376,9 @@ jobs:
   ci:
     name: CI
     needs:
+      - placements
       - test
+      - platform
       - slow-tests-list
       - slow-tests
       - extracted-tests

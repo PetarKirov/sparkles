@@ -99,7 +99,8 @@ names:
   run beside its tests move to jobs of their own. CircleCI runs the same
   placements by `--shard ${CIRCLE_NODE_INDEX}/${CIRCLE_NODE_TOTAL}`.
 - **The toolchain's build plan** reads each pin's cost the same way, from the
-  `pin-build:<pin>` tasks its builds record; `nix/pin-build-costs.json` goes.
+  `pin-build:<pin>` tasks its builds record (`--write-pin-costs`), and the
+  hand-kept `nix/pin-build-costs.json` is gone.
 
 Prerequisites from the owner: the CI signing key's environment and the
 allowed-signers file (OD21).
@@ -108,6 +109,14 @@ Gate: two consecutive `main` landings append their records; a third run's
 shards are packed from them, with no package named in any workflow; every
 shard of a run packs identically, checked by a test that packs one placement
 from two `--history-tip` reads; a forged or unsigned record is not read.
+
+Progress: delivered on `feat/ci-placements`, waiting for the gate's landings.
+Run records (`perf_record`, `perf_run`), the signed history (`perf_history`),
+publishing (`perf_publish`: `--perf-append`, `--perf-push`,
+`--perf-import-github-run`), `ci/placements.json` with `--list-placements`
+and `--shard`, the workflows (`ci.yml`'s `placements`, `test` and `platform`
+jobs, `main-checks.yml`'s `perf-append`, CircleCI's parallelism) and the
+toolchain's recorded costs (`--write-pin-costs`).
 
 ## M7: Canonical CLI and the `ci test` cutover onto the build graph
 

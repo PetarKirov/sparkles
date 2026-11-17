@@ -415,13 +415,14 @@ source to copy from while it still holds an output.
 When R2 lacks a toolchain output — a pull request moved the lock and no one
 built it yet — `pin-plan` plans it before the gate runs
 (`toolchain-pin-check --plan`, TCD13). One Cachix serves is copied by the
-mirror step. Each other missing output whose recorded
-cost in `nix/pin-build-costs.json` fits the budget, or has no recorded cost,
-is built by `pin-build` on a runner of its system, through `with-cache.sh`,
-so it reaches R2 as it finishes. One over the budget, and one that needs it,
-is reported with the `toolchain-pin.d` command that builds it on a developer
-host. Each `pin-build` step summary gives the build's wall clock; record it
-in the cost file, with its source.
+mirror step. Each other missing output whose recorded cost fits the budget in
+`ci/placements.json`, or that has no recorded cost, is built by `pin-build` on
+a runner of its system, through `with-cache.sh`, so it reaches R2 as it
+finishes. One over the budget, and one that needs it, is reported with the
+`toolchain-pin.d` command that builds it on a developer host. Each build is
+recorded as a `pin-build:<pin>` task (`ci --record-task`), and a pin's cost is
+the median of its records on `refs/perf/data`, which `ci --write-pin-costs`
+writes out for the plan.
 
 `nix-cache-info` in the bucket was written once by hand, not by Nix (which
 writes `StoreDir` alone, leaving priority 50):
