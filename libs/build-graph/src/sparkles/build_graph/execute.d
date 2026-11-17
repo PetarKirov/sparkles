@@ -645,6 +645,12 @@ struct ActionDriver
                 ctx.output(OutputStream.stderr, "not published: " ~ why);
                 return outcome;
             }
+            // BGK8: a read outside the declared roots fails the compile.
+            if (const outside = outsideRoots(**a, manifest))
+            {
+                ctx.output(OutputStream.stderr, "read outside its declared roots: " ~ outside);
+                return TaskOutcome(Failed(FailureReason.contract));
+            }
             record.resultKey = resultKey(declared, manifest);
         }
         else
@@ -891,6 +897,46 @@ struct ActionDriver
         if (!out_.hasError)
             walk(out_.value, "");
         return records.sort!((x, y) => x.path < y.path).release;
+    }
+
+    /*
+    BGK8: the first file a compile's manifest lists that lies outside every
+    root it declares, or null: its import, string import and C include
+    roots and its sources, as its arguments name them; the outputs of the
+    generators it reads (`$RUN/out/`); and the store, which holds the
+    toolchain and the registry sources.
+    */
+    private string outsideRoots(ref const Action a, const ref Manifest m) const
+    {
+        string[] roots;
+        a.action.match!(
+            (ref const ProcessAction p) {
+                foreach (arg; p.argv)
+                {
+                    foreach (prefix; ["-I=", "-J=", "-P-I"])
+                        if (arg.startsWith(prefix))
+                            roots ~= named(arg[prefix.length .. $]);
+                    if (arg.length && arg[0] != '-' && arg[0] != '$' && arg.canFind('/'))
+                        roots ~= arg;
+                }
+            },
+            (ref const _) {});
+        bool inside(string path)
+        {
+            if (path.startsWith("/nix/store/") || path.startsWith("$RUN/out/"))
+                return true;
+            foreach (r; roots)
+            {
+                const root = r.length > 1 && r[$ - 1] == '/' ? r[0 .. $ - 1] : r;
+                if (path == root || path.startsWith(root ~ "/"))
+                    return true;
+            }
+            return false;
+        }
+        foreach (ref f; m.files)
+            if (!inside(f.path))
+                return f.path;
+        return null;
     }
 
     /*
