@@ -15,7 +15,7 @@ D18–D21, the E0 spike results, on 2026-11-02; and D22–D25, from E1, on
 marked accepted were accepted on 2026-11-06. D44, routing the graph's file
 access through the capability VFS, was accepted on 2026-11-07, and D56,
 planning's source scans on DMD's lexer and parser, and D57, pruning's scan
-scope, and D58, the layout lint's gate, on 2026-11-16. Records marked
+scope, and D58, the layout lint's gate, on 2026-11-16; D59, what planning's trace holds, on 2026-11-17. Records marked
 **proposed** await the owner's decision.
 
 ## D1: Own the build instead of isolating dub (accepted)
@@ -1621,7 +1621,7 @@ instantiated differently from the library.
 **Revisit when** a registry package's finding is fixed upstream, or a
 configuration-gated hazard other than an import needs the same reading.
 
-## D59: What planning's trace holds, and what stands for the rest (proposed)
+## D59: What planning's trace holds, and what stands for the rest (accepted)
 
 **Question.** Oracle 20 step 1 checks planning's system-call trace against
 its read set, and oracle 24 step 2 checks that planning names no path from
@@ -1646,7 +1646,7 @@ stands for what does not?
   dub's rules make for the root recipe, and which no workspace input
   covered.
 
-**Choice.** Proposed on 2026-11-17, for the owner to confirm (BGP1, BGF2,
+**Choice.** Decided by the owner on 2026-11-17 (BGP1, BGF2,
 BGF3):
 
 - **Roots.** Planning reads through a tree that serves only BGF2's roots:
