@@ -1620,3 +1620,59 @@ instantiated differently from the library.
 
 **Revisit when** a registry package's finding is fixed upstream, or a
 configuration-gated hazard other than an import needs the same reading.
+
+## D59: What planning's trace holds, and what stands for the rest (proposed)
+
+**Question.** Oracle 20 step 1 checks planning's system-call trace against
+its read set, and oracle 24 step 2 checks that planning names no path from
+the process's root but BGF2's roots. Planning resolves libraries through
+`pkg-config` (BGR5), which runs as a process with reads of its own; the
+process's runtime reads files of its own too; and the resolver probes the
+root package's default directories. What belongs in the read set, and what
+stands for what does not?
+
+**Evidence.** The first traced plan of this repository found:
+
+- the lookups planning makes for itself, each a file, probe, listing or
+  link it records, and, before links were recorded, a link it crossed
+  without a record (`libs/ui-app/spec/resilience.md`, D24);
+- 74 `pkg-config` queries, whose processes made about 42,000 lookups of
+  `.pc` files, libraries and the shell's own start-up;
+- two reads of the runtime's: the collector's count of processors
+  (`/sys/devices/system/cpu/online`) on its first collection, and the C
+  library's time zone (`/etc/localtime`) when the DMD frontend first asks
+  the date;
+- probes of `source/`, `src/` and `views/` in the repository root, which
+  dub's rules make for the root recipe, and which no workspace input
+  covered.
+
+**Choice.** Proposed on 2026-11-17, for the owner to confirm (BGP1, BGF2,
+BGF3):
+
+- **Roots.** Planning reads through a tree that serves only BGF2's roots:
+  the worktree, which follows links beneath it, and the pinned registry
+  sources, one directory holding every registry package, which follows
+  none. A path beneath neither fails planning.
+- **Links.** The tree resolves a path one entry at a time and records each
+  link it crosses with its target, and the target's bytes as a file read of
+  their own. A listing resolves from the root that holds it, so a link
+  beneath a listed directory whose target climbs above it but stays in the
+  worktree resolves (FSD6). A link that is absolute, or that climbs out of
+  its root, fails planning naming the link.
+- **Queries.** Each `pkg-config` query is recorded with its arguments, its
+  status and the digest of its output, and the variables `pkg-config`
+  reads are recorded with their values. The query stands for its
+  process's reads, as an action's manifest stands for its process's
+  (§12): those reads are left out of the trace check. BGF2's root for each
+  directory a query searches waits for `.pc` files read in process (BGK9,
+  E3).
+- **The runtime's reads** are the process's, not planning's: the traced
+  planner makes them before its first marker (it collects once and sets the
+  time zone), and they are in no read set.
+- **The root package's default directories** are workspace inputs that
+  `ci` states (`rootDefaults` in `apps/ci/src/repository_inputs.d`): a plan
+  depends on their absence.
+
+**Revisit when** `pkg-config` is read in process (BGK9), or when the
+resolver stops probing the default directories of a root recipe that no
+target builds.

@@ -103,25 +103,26 @@ Gate: a test-only planner prints a deterministic action graph for the
 repository's test selection, with one compile per variant. Oracle 8's planning
 scenarios, oracle 14, oracle 20 and oracle 24's planning steps pass.
 
-Progress: variant keys, roles, pruning and dedup across requests are
-delivered (`build_graph/variants.d`), with the `isVersion` and divergent-mode lints,
-on `sparkles:d-source` (D56). Over this repository's 74 test roots, 1,044
-targets plan to 166 variants, against 393 without pruning; the scan follows
-imports (D57).
-The layout lint (`sparkles:unittest-layout`) gates planning through a
-callback, after the repository's 190 in-tree violations were fixed; findings
-in registry packages are reported (D58).
-The action graph (`build_graph/actions.d`) lowers the variants to compile, archive,
-link, generate and test actions, exposed as task nodes in OBD2's id form.
+Done: variant keys, roles, pruning and dedup across requests are delivered
+(`build_graph/variants.d`), with the `isVersion` and divergent-mode lints, on
+`sparkles:d-source` (D56). Over this repository's 75 test roots, 1,053
+targets plan to 167 variants, against 393 without pruning; the scan follows
+imports (D57). The layout lint (`sparkles:unittest-layout`) gates planning
+through a callback, after the repository's 190 in-tree violations were
+fixed; findings in registry packages are reported (D58). The action graph
+(`build_graph/actions.d`) lowers the variants to compile, archive, link, generate
+and test actions, exposed as task nodes in OBD2's id form, with coverage
+attempts and their plain fallbacks (CIC7). Planning reads through a tree
+over BGF2's roots, records the links it crosses and its `pkg-config`
+queries, and resolves libraries (D59).
 
 The test-only planner is `apps/ci/tools/plan-graph.d`; `--check` runs the
-gate over this repository's 75 test roots (167 variants, 167 compiles, 500
-actions). It passes oracle 8's planning scenarios with the real lint, oracle
-14's determinism scenario, oracle 20 step 3 (CIC5) over 1,865 reads, and
-oracle 24 steps 1 and 3. Open: oracle 14's coverage-fallback scenario, which
-needs coverage attempts planned; oracle 20 steps 1 and 2 (the system-call
-trace and the edit sample); and oracle 24 steps 2 and 4 (the trace, and
-links: the read set does not record a link a lookup crossed yet, BGF3).
+gate over this repository's test selection: 167 variants, 167 compiles and
+500 actions. Oracle 8's planning scenarios, oracle 14's two scenarios,
+oracle 20's three steps (a trace of about 196,000 lookups, 20 edits, and
+2,364 reads against `ci`'s invalidators) and oracle 24's planning steps
+(1–4) pass. What the gate leaves to E3: oracle 8's revert check, oracle 24's
+store step, and a stored result serving both graphs of invariant 7.
 
 ## E3: Local execution and the shared store
 
@@ -208,6 +209,6 @@ Gate:
 | E0        | done        |
 | E1a       | superseded  |
 | E1        | done        |
-| E2        | in progress |
+| E2        | done        |
 | E3        | not started |
 | E4        | not started |
