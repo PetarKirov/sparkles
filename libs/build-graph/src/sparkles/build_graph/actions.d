@@ -356,6 +356,17 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
                 before ~= gen;
                 generated ~= GeneratedRoot(plan.generators[gi].output, gen);
             }
+            // A string import root inherited from a dependency is filled by
+            // the dependency's generator, as dub runs it first: `dmd:parser`
+            // imports the `VERSION` that `dmd:lexer`'s `config.d` writes.
+            foreach (gi, ref other; plan.generators)
+                if (!v.generators.canFind(gi) && other.output.length
+                    && v.settings.stringImportPaths.canFind!(p => trimmed(p) == other.output))
+                {
+                    const gen = generatorAction(gi);
+                    before ~= gen;
+                    generated ~= GeneratedRoot(other.output, gen);
+                }
             const generatedRoot = before.length && v.role == Role.testRoot && r.testRoot.generated
                 ? before[0] : TaskId.init;
             auto c = Action(ActionKind.compile, actionId(ActionKind.compile, *v), vi,
@@ -1030,6 +1041,14 @@ version (unittest)
     assert(cargv.canFind("-J=$IN(" ~ gen.id.text ~ ")"), text(cargv));
     assert(g.value.edges.canFind!(e => e.prerequisite == gen.id && e.dependent == compile.id));
     assert(g.value.actions.count!(a => a.kind == ActionKind.generate && a.id.text.startsWith("generate:r.tool")) == 1);
+
+    // `t` inherits `g`'s root, and reads the same output after the same
+    // generator, which runs once.
+    const dependent = of("compile:r.t:test-root:");
+    const dargv = dependent.action.match!((ref const ProcessAction p) => p.argv, (_) => null);
+    assert(dargv.canFind("-J=$IN(" ~ gen.id.text ~ ")") && !dargv.canFind("-J=g/gen"), text(dargv));
+    assert(g.value.edges.canFind!(e => e.prerequisite == gen.id && e.dependent == dependent.id));
+    assert(g.value.actions.count!(a => a.id == gen.id) == 1);
 }
 
 @("build_graph.actions.planActions.timeLimits")
