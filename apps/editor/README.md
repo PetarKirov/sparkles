@@ -64,8 +64,8 @@ The Linux storage fault checks use real syscall injection. Build the checked
 probe, then run the driver with `strace` available:
 
 ```bash
-dub run --single apps/editor/tools/storage-fault-probe.d -b checked --compiler=ldc2 -- baseline
-dub run --single apps/editor/tools/storage-faults.d -b checked --compiler=ldc2
+dub run --single libs/recovery/tools/storage-fault-probe.d -b checked --compiler=ldc2 -- baseline
+dub run --single libs/recovery/tools/storage-faults.d -b checked --compiler=ldc2
 ```
 
 The X11 probe uses a private Xvfb server and temporary state registry. It

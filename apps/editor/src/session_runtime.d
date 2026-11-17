@@ -1,17 +1,16 @@
-/** Application-facing recovery service; initialization and cleanup use a CPU worker. */
+/** Application-facing recovery service over `sparkles:recovery`; maintenance runs on a CPU worker. */
 module session_runtime;
 
 import core.time : Duration, MonoTime, msecs, seconds;
 import editor_document : Document;
-import session_archive : ArchiveCleanup, pruneSessionArchive;
+import session_archive : sessionLayout, validSession;
 import session_checkpoint : CheckpointWriter;
-import session_directory : SessionDirectory;
 import session_record : SessionSettings;
 import session_snapshot : SessionSnapshot;
 import session_discovery : discoverSessions, RecoveryCatalog, RecoveryOffer;
-import sparkles.event_horizon.job_queue : Drain, JobQueue;
-
-private enum Maintenance : ubyte { initialize, cleanup, discover, adopt }
+import sparkles.event_horizon.job_queue : Drain;
+import sparkles.recovery.directory : LeasedDirectory;
+import sparkles.recovery.maintenance : InitializeTask, MaintenanceQueue, MaintenanceTask, PruneTask;
 
 private final class Adoption
 {
@@ -20,39 +19,29 @@ private final class Adoption
     bool done;
 }
 
-private final class MaintenanceJob
+/// The editor's own maintenance: offers to restore.
+private final class DiscoverTask : MaintenanceTask
 {
-    Maintenance kind;
-    string base, root, error;
-    SessionDirectory directory;
-    ArchiveCleanup cleanup;
+    string base;
     RecoveryCatalog catalog;
+    this(string base) @safe pure nothrow { this.base = base; }
+    override void run() @safe nothrow { catalog = discoverSessions(base); }
+}
+
+/// The editor's own maintenance: retiring offers a new archive durably includes.
+private final class AdoptTask : MaintenanceTask
+{
     Adoption[] adoptions;
-    ulong through;
-
-    void run() @safe nothrow
+    override void run() @safe nothrow
     {
-        if (kind == Maintenance.initialize)
+        foreach (adopted; adoptions)
         {
-            auto created = SessionDirectory.create(base, root);
-            if (created.hasError) error = created.error.message;
-            else directory = created.value;
+            const retired = adopted.offer.retire();
+            adopted.done = retired.hasValue && retired.value.durable;
+            if (!adopted.done) error = retired.hasError ? retired.error
+                : "Recovery adoption durability could not be acknowledged.";
         }
-        else if (kind == Maintenance.discover) catalog = discoverSessions(base);
-        else if (kind == Maintenance.adopt)
-        {
-            foreach (adopted; adoptions)
-            {
-                const retired = adopted.offer.retire();
-                adopted.done = retired.hasValue && retired.value.durable;
-                if (!adopted.done) error = retired.hasError ? retired.error
-                    : "Recovery adoption durability could not be acknowledged.";
-            }
-        }
-        else cleanup = pruneSessionArchive(directory, through);
     }
-
-    void cancelled() @safe nothrow { error = "Recovery maintenance was cancelled."; }
 }
 
 /// Restoring an offer retires it only after the new archive acknowledges its captured contents.
@@ -72,7 +61,7 @@ private final class MaintenanceJob
     import std.path : buildPath;
     auto fixture = TmpFS.create();
     const base = buildPath(fixture.dir, "sessions");
-    auto old = SessionDirectory.create(base, fixture.dir);
+    auto old = LeasedDirectory.create(base, fixture.dir);
     assert(old.hasValue);
     const originalArchive = old.value.path;
     SessionRecord record;
@@ -147,7 +136,7 @@ private final class MaintenanceJob
     import std.path : buildPath;
     auto fixture = TmpFS.create();
     const base = buildPath(fixture.dir, "sessions");
-    auto old = SessionDirectory.create(base, fixture.dir);
+    auto old = LeasedDirectory.create(base, fixture.dir);
     assert(old.hasValue);
     SessionRecord record;
     record.generation = 1;
@@ -185,9 +174,9 @@ only after both workers stop; it does not promise to submit unflushed state.
 */
 final class RecoverySession
 {
-    private JobQueue!(MaintenanceJob, 2) queue;
-    private MaintenanceJob job;
-    private SessionDirectory directory;
+    private MaintenanceQueue queue;
+    private MaintenanceTask job;
+    private LeasedDirectory directory;
     private CheckpointWriter writer;
     private SessionSnapshot latest;
     private RecoveryOffer[] offers;
@@ -203,7 +192,7 @@ final class RecoverySession
     {
         this.base = base;
         this.root = root;
-        queue = new JobQueue!(MaintenanceJob, 2);
+        queue = new MaintenanceQueue;
         poll();
     }
 
@@ -259,30 +248,30 @@ final class RecoverySession
     void poll(MonoTime now = MonoTime.currTime) @safe nothrow
     {
         if (stopped) return;
-        MaintenanceJob finished;
+        MaintenanceTask finished;
         foreach (published; queue.poll()) finished = published; // one at a time
         if (finished !is null)
         {
             job = null;
-            if (finished.kind == Maintenance.initialize)
+            if (auto initialized = cast(InitializeTask) finished)
             {
-                initializationError = finished.error;
-                if (finished.directory !is null)
+                initializationError = initialized.error;
+                if (initialized.directory !is null)
                 {
-                    directory = finished.directory;
+                    directory = initialized.directory;
                     writer = new CheckpointWriter(directory);
                     if (latest !is null) writer.request(latest, haveFirstObserved ? firstObserved : now);
                     haveFirstObserved = false;
                 }
                 else retryAt = now + 1.seconds;
             }
-            else if (finished.kind == Maintenance.discover)
+            else if (auto discovery = cast(DiscoverTask) finished)
             {
-                offers = finished.catalog.offers;
+                offers = discovery.catalog.offers;
                 discovered = true;
-                if (finished.catalog.issues.length) cleanupNotice = finished.catalog.issues[0];
+                if (discovery.catalog.issues.length) cleanupNotice = discovery.catalog.issues[0];
             }
-            else if (finished.kind == Maintenance.adopt)
+            else if (cast(AdoptTask) finished)
             {
                 retirementError = finished.error;
                 retirementRetryAt = now + 1.seconds;
@@ -294,17 +283,13 @@ final class RecoverySession
                 }
                 adoptions = retained;
             }
-            else if (finished.cleanup.issues.length) cleanupNotice = finished.cleanup.issues[0];
+            else if (auto pruned = cast(PruneTask) finished)
+                if (pruned.cleanup.issues.length) cleanupNotice = pruned.cleanup.issues[0];
         }
         if (writer is null)
         {
             if (job is null && now >= retryAt)
-            {
-                auto requested = new MaintenanceJob;
-                requested.base = base;
-                requested.root = root;
-                if (!submit(requested)) retryAt = now + 1.seconds;
-            }
+                if (!submit(new InitializeTask(base, root))) retryAt = now + 1.seconds;
             return;
         }
         if (flushing && writer.currentRevision > flushedRevision)
@@ -314,27 +299,19 @@ final class RecoverySession
         }
         else writer.poll(now);
         if (job is null && !discovered)
-        {
-            auto requested = new MaintenanceJob;
-            requested.kind = Maintenance.discover;
-            requested.base = base;
-            submit(requested);
-        }
+            submit(new DiscoverTask(base));
         else if (job is null && adoptions.length && now >= retirementRetryAt)
         {
-            auto requested = new MaintenanceJob;
-            requested.kind = Maintenance.adopt;
+            auto requested = new AdoptTask;
             foreach (adopted; adoptions)
                 if (adopted.revision <= writer.durableRevision) requested.adoptions ~= adopted;
             if (requested.adoptions.length) submit(requested);
         }
         if (job is null && writer.durableGeneration > cleanedThrough)
         {
-            auto requested = new MaintenanceJob;
-            requested.kind = Maintenance.cleanup;
-            requested.directory = directory;
-            requested.through = writer.durableGeneration;
-            if (submit(requested)) cleanedThrough = requested.through;
+            const through = writer.durableGeneration;
+            if (submit(new PruneTask(directory, through, sessionLayout,
+                (ulong g, string b) => validSession(g, b)))) cleanedThrough = through;
         }
     }
 
@@ -375,12 +352,13 @@ final class RecoverySession
         queue.shutdown(Drain.run);
         foreach (offered; offers) offered.close();
         foreach (adopted; adoptions) adopted.offer.close();
-        if (job !is null) foreach (offered; job.catalog.offers) offered.close();
+        if (auto discovery = cast(DiscoverTask) job) foreach (offered; discovery.catalog.offers) offered.close();
         if (writer !is null) writer.shutdown();
-        else if (job !is null && job.directory !is null) job.directory.close();
+        else if (auto initialized = cast(InitializeTask) job)
+            if (initialized.directory !is null) initialized.directory.close();
     }
 
-    private bool submit(MaintenanceJob requested) @safe nothrow
+    private bool submit(MaintenanceTask requested) @safe nothrow
     {
         if (!queue.start())
         {
@@ -435,8 +413,7 @@ final class RecoverySession
     assert(saved.hasValue && saved.value.tabs[0].content == "before after");
     const path = recovery.directoryPath;
     recovery.shutdown();
-    import session_directory : SessionDirectory;
-    auto reclaimed = SessionDirectory.claim(path);
+    auto reclaimed = LeasedDirectory.claim(path);
     assert(reclaimed.hasValue);
     reclaimed.value.close();
 }

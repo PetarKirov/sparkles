@@ -1,5 +1,14 @@
-/** Private, durable archive directories with process-shared ownership leases. */
-module session_directory;
+/**
+Private, durable archive directories with process-shared ownership leases.
+
+A `LeasedDirectory` is one archive: a private directory created under a base
+directory with a random name, synced up to a durable namespace root, and held
+with an exclusive `flock` for as long as its owner lives. Another process
+claims it only after the owner closes it or dies, so a crashed session's
+archive is recovered without two instances writing to it. Linux only, for
+now: elsewhere every call reports `unavailable`.
+*/
+module sparkles.recovery.directory;
 
 import sparkles.base.expected : Expected, err, ok;
 import sparkles.base.text.cstring : hasInteriorNul, toTempStringz;
@@ -18,13 +27,23 @@ version (linux)
         O_RDONLY, O_DIRECTORY, O_CLOEXEC;
 }
 
-enum DirectoryIssueKind : ubyte { busy, missing, unavailable }
+/// Why a lease was not granted.
+enum DirectoryIssueKind : ubyte
+{
+    busy,        /// another live owner holds it
+    missing,     /// the archive no longer exists
+    unavailable, /// anything else; the message says what
+}
+
+/// A refused lease and its user-facing message.
 struct DirectoryIssue
 {
-    DirectoryIssueKind kind;
-    string message;
+    DirectoryIssueKind kind; ///
+    string message;          ///
 }
-alias DirectoryResult = Expected!(SessionDirectory, DirectoryIssue);
+
+/// A granted lease or why not.
+alias DirectoryResult = Expected!(LeasedDirectory, DirectoryIssue);
 
 /**
 One archive's directory lock. Keep this owner alive until its storage work has
@@ -32,7 +51,7 @@ stopped, then close it explicitly. Other processes can claim an archive only
 after its owner closes or terminates. Creation and claim serialize against
 the base directory lock so a half-initialized archive cannot be claimed.
 */
-class SessionDirectory
+class LeasedDirectory
 {
     private string path_;
     private OwnedFd descriptor;
@@ -43,8 +62,11 @@ class SessionDirectory
         descriptor = OwnedFd(directory.release());
     }
 
+    /// The archive's absolute path.
     string path() const @safe pure nothrow @nogc => path_;
+    /// Whether this owner still holds the lease.
     bool owned() const @safe pure nothrow @nogc => descriptor.valid;
+    /// Releases the lease; idempotent.
     void close() @safe nothrow @nogc { descriptor.close(); }
 
     /**
@@ -81,8 +103,8 @@ class SessionDirectory
                 if (!directory.valid || lock(directory.borrowFd.fd, LOCK_EX | LOCK_NB) != 0)
                     return unavailable("The new recovery archive could not be owned.");
                 auto synced = syncAncestors(path, durableRoot);
-                if (synced.hasError) return err!SessionDirectory(synced.error);
-                return ok!DirectoryIssue(new SessionDirectory(path, directory));
+                if (synced.hasError) return err!LeasedDirectory(synced.error);
+                return ok!DirectoryIssue(new LeasedDirectory(path, directory));
             }
             catch (Exception) { return unavailable("The recovery archive could not be initialized."); }
         }
@@ -105,18 +127,18 @@ class SessionDirectory
                 if (!directory.valid)
                 {
                     if (errno == ENOENT)
-                        return err!SessionDirectory(DirectoryIssue(DirectoryIssueKind.missing,
+                        return err!LeasedDirectory(DirectoryIssue(DirectoryIssueKind.missing,
                             "The recovery archive no longer exists."));
                     return unavailable("The recovery archive is not an accessible ordinary directory.");
                 }
                 if (lock(directory.borrowFd.fd, LOCK_EX | LOCK_NB) != 0)
                 {
                     if (errno == EAGAIN || errno == EWOULDBLOCK)
-                        return err!SessionDirectory(DirectoryIssue(DirectoryIssueKind.busy,
+                        return err!LeasedDirectory(DirectoryIssue(DirectoryIssueKind.busy,
                             "The recovery archive belongs to another active owner."));
                     return unavailable("The recovery archive could not be locked.");
                 }
-                return ok!DirectoryIssue(new SessionDirectory(path, directory));
+                return ok!DirectoryIssue(new LeasedDirectory(path, directory));
             }
             catch (Exception) { return unavailable("The recovery archive could not be claimed."); }
         }
@@ -125,7 +147,7 @@ class SessionDirectory
 }
 
 private DirectoryResult unavailable(string message) @safe pure nothrow @nogc
-    => err!SessionDirectory(DirectoryIssue(DirectoryIssueKind.unavailable, message));
+    => err!LeasedDirectory(DirectoryIssue(DirectoryIssueKind.unavailable, message));
 
 version (linux)
 {
@@ -167,7 +189,7 @@ version (linux)
 }
 
 /// An active archive cannot be claimed again, and closing releases its lease.
-@("editor.sessionDirectory.privateOwnershipAndReclaim")
+@("recovery.directory.privateOwnershipAndReclaim")
 @safe unittest
 {
     version (linux) {}
@@ -181,21 +203,21 @@ version (linux)
     import std.path : buildPath;
     auto fixture = TmpFS.create();
     const base = buildPath(fixture.dir, "new", "sessions");
-    auto created = SessionDirectory.create(base, fixture.dir);
+    auto created = LeasedDirectory.create(base, fixture.dir);
     assert(created.hasValue);
     scope (exit) created.value.close();
     assert(((() @trusted => getAttributes(created.value.path))() & 63) == 0);
-    auto busy = SessionDirectory.claim(created.value.path);
+    auto busy = LeasedDirectory.claim(created.value.path);
     assert(busy.hasError && busy.error.kind == DirectoryIssueKind.busy);
     const path = created.value.path;
     created.value.close();
-    auto claimed = SessionDirectory.claim(path);
+    auto claimed = LeasedDirectory.claim(path);
     assert(claimed.hasValue && claimed.value.path == path);
     scope (exit) claimed.value.close();
 }
 
 /// Initialization needs no read access above the platform-provided namespace root.
-@("editor.sessionDirectory.staysInsideSandboxRoot")
+@("recovery.directory.staysInsideSandboxRoot")
 @safe unittest
 {
     import sparkles.test_runner.skip : skipTest;
@@ -212,10 +234,10 @@ version (linux)
         (() @trusted { mkdir(root); })();
         scope (exit) (() @trusted => chmod(fixture.dir.toTempStringz.ptr, S_IRWXU))();
         assert((() @trusted => chmod(fixture.dir.toTempStringz.ptr, S_IXUSR))() == 0);
-        auto directory = SessionDirectory.create(buildPath(root, "new", "sessions"), root);
+        auto directory = LeasedDirectory.create(buildPath(root, "new", "sessions"), root);
         assert(directory.hasValue);
         scope (exit) directory.value.close();
-        auto escaped = SessionDirectory.create(buildPath(root, "..", "escape"), root);
+        auto escaped = LeasedDirectory.create(buildPath(root, "..", "escape"), root);
         assert(escaped.hasError && !(() @trusted => exists(buildPath(fixture.dir, "escape")))());
     }
     else skipTest("Recovery directory initialization currently requires Linux.");

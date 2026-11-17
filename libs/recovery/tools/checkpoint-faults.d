@@ -1,6 +1,6 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
-    name "editor-checkpoint-faults"
+    name "recovery-checkpoint-faults"
     targetPath "../../../build"
     dependency "sparkles:test-utils" path="../../.."
     buildType "checked" {
@@ -21,8 +21,8 @@ import std.string : indexOf, splitLines;
 
 int main(string[] args) @system
 {
-    const probe = args.length > 1 ? args[1] : "build/editor-checkpoint-fault-probe";
-    enforce(exists(probe), "Build apps/editor/tools/checkpoint-fault-probe.d first.");
+    const probe = args.length > 1 ? args[1] : "build/recovery-checkpoint-fault-probe";
+    enforce(exists(probe), "Build libs/recovery/tools/checkpoint-fault-probe.d first.");
     auto fixture = TmpFS.create();
     const tracePath = buildPath(fixture.dir, "checkpoint.trace");
     const result = execute(["strace", "-f", "-qq", "-yy", "-o", tracePath,

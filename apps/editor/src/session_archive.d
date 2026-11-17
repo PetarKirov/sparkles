@@ -1,136 +1,56 @@
-/** Immutable session-generation files, written only by background storage work. */
+/**
+The editor's session generations: its record schema over `sparkles:recovery`'s
+numbered immutable archive. The layout keeps the names archives already on
+disk use (`<20 digits>.session`, `adopted-<20 digits>`).
+*/
 module session_archive;
 
 import session_record : decodeSession, encodeSession, SessionRecord, SessionSelection, SessionTab;
-import document_files : readRegularBytes, saveAtomic, SaveReceipt;
-import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.expected : Expected, err, ok;
-import sparkles.base.text.cstring : hasInteriorNul;
-import sparkles.base.text.writers : writeIntegerPadded;
-import sparkles.base.text.readers : readInteger;
-import session_directory : SessionDirectory;
-import std.algorithm.sorting : sort;
-import std.file : dirEntries, remove, SpanMode;
-import std.path : baseName, buildPath;
+import sparkles.recovery.archive : appendGeneration, ArchiveCleanup, ArchiveLayout, generationOf,
+    pruneArchive, readGeneration, WriteReceipt;
+import sparkles.recovery.directory : LeasedDirectory;
+import std.path : buildPath;
 
-private enum size_t maximumGenerationBytes = 512 * 1024 * 1024;
+/// Where and how the editor's archive keeps its generations and adoption markers.
+enum ArchiveLayout sessionLayout = ArchiveLayout(".session", "adopted-", "SPARKLES-EDITOR-ADOPTED/1");
 
 /// Recognize a canonical positive generation filename; zero means an unrelated entry.
 ulong sessionGenerationOfName(scope const(char)[] name) @safe pure nothrow @nogc
-{
-    if (name.length != 28 || name[20 .. $] != ".session") return 0;
-    const(char)[] digits = name[0 .. 20];
-    const parsed = readInteger!ulong(digits);
-    return parsed.hasValue && digits.length == 0 ? parsed.value : 0;
-}
+    => generationOf(sessionLayout, name);
 
-/// Cleanup considers only canonical positive names, including the full uint64 range.
-@("editor.sessionArchive.generationNames")
-@safe pure nothrow @nogc unittest
-{
-    assert(sessionGenerationOfName("00000000000000000001.session") == 1);
-    assert(sessionGenerationOfName("18446744073709551615.session") == ulong.max);
-    foreach (name; ["00000000000000000000.session", "18446744073709551616.session",
-        "00000000000000000001.session.bak", "0000000000000000000x.session",
-        "+0000000000000000001.session", "notes.txt"])
-        assert(sessionGenerationOfName(name) == 0);
-}
+/// Keep the two newest valid records at or below the acknowledged cutoff (`pruneArchive`).
+ArchiveCleanup pruneSessionArchive(LeasedDirectory directory, ulong durableThrough) @safe nothrow
+    => pruneArchive(directory, durableThrough, sessionLayout, (ulong g, string b) => validSession(g, b));
 
-/// Best-effort retirement results; failures preserve files and do not revoke a newer acknowledgment.
-struct ArchiveCleanup
+/// A payload is valid when it decodes to the generation its name says.
+string validSession(ulong generation, string bytes) @safe nothrow
 {
-    ulong[] removed;
-    string[] issues;
-}
-
-/**
-Keep the two newest valid generations at or below the acknowledged cutoff.
-Corrupt, unsupported, symlinked and newer entries remain untouched. The
-caller keeps the exclusive directory lease throughout this worker operation.
-Removal is best effort: a deletion may reappear after interruption without
-affecting the newer durable records.
-*/
-ArchiveCleanup pruneSessionArchive(SessionDirectory directory, ulong durableThrough) @safe nothrow
-{
-    ArchiveCleanup report;
-    if (directory is null || !directory.owned)
-    {
-        report.issues ~= "Recovery cleanup requires an owned archive.";
-        return report;
-    }
-    if (!durableThrough) return report;
-    ulong[] generations;
-    try
-    {
-        foreach (entry; dirEntries(directory.path, SpanMode.shallow, false))
-        {
-            const generation = sessionGenerationOfName(baseName(entry.name));
-            if (!generation || generation > durableThrough) continue;
-            if (entry.isSymlink)
-            {
-                report.issues ~= "A symbolic recovery entry was preserved.";
-                continue;
-            }
-            generations ~= generation;
-        }
-    }
-    catch (Exception)
-    {
-        report.issues ~= "Recovery generations could not be listed for cleanup.";
-        return report;
-    }
-    generations.sort!"a > b";
-    size_t kept;
-    foreach (generation; generations)
-    {
-        auto record = readSessionGeneration(directory.path, generation);
-        if (record.hasError) { report.issues ~= record.error; continue; }
-        if (kept < 2) { ++kept; continue; }
-        try
-        {
-            (() @trusted { remove(generationPath(directory.path, generation)); })();
-            report.removed ~= generation;
-        }
-        catch (Exception) { report.issues ~= "An older recovery generation could not be removed."; }
-    }
-    return report;
-}
-
-private string generationPath(string directory, ulong generation) @safe pure nothrow
-{
-    UniqueBuffer!(char, 64) name;
-    writeIntegerPadded!10(name, generation, 20);
-    name ~= ".session";
-    return buildPath(directory, name[].idup);
+    auto record = decodeSession(bytes);
+    if (record.hasError) return record.error;
+    if (record.value.generation != generation)
+        return "The recovery generation does not match its file identity.";
+    return null;
 }
 
 /**
 Append a positive generation without ever replacing a previous checkpoint.
 The caller supplies an existing private directory whose creation is already
 durable. A successful receipt acknowledges the file commit and separately
-reports directory durability. The caller must retain prior durable files
-until a newer generation receives a durable acknowledgment.
+reports directory durability.
 */
-Expected!SaveReceipt appendSessionGeneration(string directory, in SessionRecord record) @safe nothrow
+Expected!WriteReceipt appendSessionGeneration(string directory, in SessionRecord record) @safe nothrow
 {
-    if (!directory.length || directory.hasInteriorNul)
-        return err!SaveReceipt("The recovery directory is invalid.");
-    if (!record.generation) return err!SaveReceipt("Recovery generations must be positive.");
+    if (!record.generation) return err!WriteReceipt("Recovery generations must be positive.");
     auto encoded = encodeSession(record);
-    if (encoded.hasError) return err!SaveReceipt(encoded.error);
-    if (encoded.value.length > maximumGenerationBytes)
-        return err!SaveReceipt("The recovery generation exceeds the archive's byte limit.");
-    try { return saveAtomic(generationPath(directory, record.generation), encoded.value); }
-    catch (Exception) { return err!SaveReceipt("The recovery generation could not be written."); }
+    if (encoded.hasError) return err!WriteReceipt(encoded.error);
+    return appendGeneration(directory, record.generation, encoded.value, sessionLayout);
 }
 
 /// Validate the complete immutable record and its identity before returning recovered contents.
 Expected!SessionRecord readSessionGeneration(string directory, ulong generation) @safe nothrow
 {
-    if (!directory.length || directory.hasInteriorNul)
-        return err!SessionRecord("The recovery directory is invalid.");
-    if (!generation) return err!SessionRecord("Recovery generations must be positive.");
-    auto bytes = readRegularBytes(generationPath(directory, generation), maximumGenerationBytes);
+    auto bytes = readGeneration(directory, generation, sessionLayout);
     if (bytes.hasError) return err!SessionRecord(bytes.error);
     auto record = decodeSession(bytes.value);
     if (record.hasError) return record;
@@ -183,7 +103,7 @@ Expected!SessionRecord readSessionGeneration(string directory, ulong generation)
         import sparkles.test_runner.skip : skipTest;
         skipTest("The native recovery archive currently requires Linux.");
     }
-    import session_directory : SessionDirectory;
+    import sparkles.recovery.directory : SessionDirectory = LeasedDirectory;
     import sparkles.test_utils.tmpfs : TmpFS;
     import std.conv : text;
     import std.file : write;

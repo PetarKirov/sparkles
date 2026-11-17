@@ -1,13 +1,13 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
-    name "editor-storage-faults"
+    name "recovery-storage-faults"
     targetPath "../../../build"
     dependency "sparkles:test-utils" path="../../.."
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"
     }
 +/
-/// Linux black-box save failures against real native syscalls, not a duplicated storage model.
+/// Linux black-box failures of atomic saves and recovery appends against real native syscalls.
 module storage_faults;
 
 import std.algorithm.searching : canFind, startsWith;
@@ -22,8 +22,8 @@ import sparkles.test_utils.tmpfs : TmpFS;
 
 int main(string[] args) @system
 {
-    const probe = args.length > 1 ? args[1] : "build/editor-storage-fault-probe";
-    enforce(exists(probe), "Build apps/editor/tools/storage-fault-probe.d first.");
+    const probe = args.length > 1 ? args[1] : "build/recovery-storage-fault-probe";
+    enforce(exists(probe), "Build libs/recovery/tools/storage-fault-probe.d first.");
     auto fixture = TmpFS.create();
     const baselinePath = buildPath(fixture.dir, "baseline.trace");
     const baseline = execute(["strace", "-qq", "-yy", "-o", baselinePath,

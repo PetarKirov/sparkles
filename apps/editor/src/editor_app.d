@@ -382,7 +382,7 @@ private struct ClipboardHooks
     }
     import core.thread : Thread;
     import core.time : seconds;
-    import session_directory : SessionDirectory;
+    import sparkles.recovery.directory : SessionDirectory = LeasedDirectory;
     import session_archive : appendSessionGeneration;
     import session_record : SessionRecord, SessionTab, SessionSelection;
     import sparkles.test_utils.tmpfs : TmpFS;
@@ -435,7 +435,7 @@ private struct ClipboardHooks
     }
     import core.thread : Thread;
     import core.time : seconds;
-    import session_directory : SessionDirectory;
+    import sparkles.recovery.directory : SessionDirectory = LeasedDirectory;
     import session_archive : appendSessionGeneration;
     import session_record : SessionRecord, SessionTab, SessionSelection;
     import sparkles.test_utils.tmpfs : TmpFS;

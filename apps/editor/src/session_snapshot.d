@@ -2,7 +2,8 @@
 module session_snapshot;
 
 import editor_document : Document;
-import session_record : SessionRecord, SessionSelection, SessionSettings, SessionSpan, SessionTab;
+import session_record : encodeSession, SessionRecord, SessionSelection, SessionSettings, SessionSpan, SessionTab;
+import sparkles.base.expected : Expected;
 import sparkles.text_buffer.text : Text;
 import sparkles.base.text.envelope : lineEndingText;
 import sparkles.ui.editor.selection : EditRange;
@@ -118,6 +119,9 @@ final class SessionSnapshot
         foreach (tab; tabs) result.tabs ~= tab.record();
         return result;
     }
+
+    /// The checkpoint payload of this state as `generation` (`sparkles.recovery.writer`).
+    Expected!string encode(ulong generation) const @safe nothrow => encodeSession(record(generation));
 }
 
 private string copyBytes(in Text content) @safe pure nothrow

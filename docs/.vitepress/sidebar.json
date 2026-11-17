@@ -745,6 +745,23 @@
         ]
       },
       {
+        "text": "recovery",
+        "link": "/libs/recovery/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Reference",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "API",
+                "link": "/libs/recovery/reference/api"
+              }
+            ]
+          }
+        ]
+      },
+      {
         "text": "shaders",
         "link": "/libs/shaders/"
       },

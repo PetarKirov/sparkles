@@ -4,7 +4,8 @@
     dependency "sparkles:wsi" path="../../.."
     dependency "sparkles:ui" path="../../.."
     dependency "sparkles:wired" path="../../.."
-    dflags "-I$PACKAGE_DIR/../src" "-i=session_archive" "-i=session_record" "-i=session_directory" "-i=document_files"
+    dependency "sparkles:recovery" path="../../.."
+    dflags "-I$PACKAGE_DIR/../src" "-i=session_archive" "-i=session_record" "-i=document_files"
     targetPath "../build"
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"

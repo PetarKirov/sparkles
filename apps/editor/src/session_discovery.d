@@ -1,31 +1,25 @@
 /** Discover claimable recovery archives without touching document originals. */
 module session_discovery;
 
-import session_archive : readSessionGeneration, sessionGenerationOfName;
-import session_directory : DirectoryIssueKind, SessionDirectory;
+import session_archive : readSessionGeneration, sessionLayout;
 import session_record : SessionRecord;
-import std.algorithm.sorting : sort;
-import std.file : dirEntries, SpanMode;
-import std.path : baseName;
 import editor_document : Document;
 import sparkles.base.text.envelope : encodeEnvelope, lineEndingOf, LineEnding, TextEnvelope;
 import sparkles.text_buffer.text : Text;
 import sparkles.ui.editor.selection : EditRange, SelectionSet;
 import sparkles.ui.editor.state : ReadOnlySpan;
-import document_files : readRegularBytes, saveAtomic, SaveAuthorization, SaveReceipt;
-import sparkles.base.buffer : UniqueBuffer;
-import sparkles.base.expected : Expected, err;
-import sparkles.base.text.writers : writeIntegerPadded;
-import std.path : buildPath;
+import sparkles.base.expected : Expected;
+import sparkles.recovery.archive : claimArchives, retire, Retirement, retirementOf, WriteReceipt;
+import sparkles.recovery.directory : LeasedDirectory;
 
 /// An immutable record plus the exclusive lease held while its restore offer is outstanding.
 final class RecoveryOffer
 {
-    private SessionDirectory directory;
+    private LeasedDirectory directory;
     private SessionRecord record_;
     private Document[] documents;
 
-    private this(SessionDirectory directory, SessionRecord record) @safe pure nothrow
+    private this(LeasedDirectory directory, SessionRecord record) @safe pure nothrow
     {
         this.directory = directory;
         record_ = record;
@@ -61,45 +55,17 @@ final class RecoveryOffer
         in (index < documents.length) => documents[index];
     void close() @safe nothrow @nogc { directory.close(); }
 
+
     /**
     Worker-only retirement after a new archive durably includes this offer.
     The marker names this exact source generation; source records remain
     intact. Retrying a valid marker re-syncs its replacement before acknowledgment.
     Invalid existing markers are preserved rather than overwritten.
     */
-    Expected!SaveReceipt retire() @safe nothrow
-    {
-        if (!directory.owned) return err!SaveReceipt("The restored archive lease is unavailable.");
-        const marker = markerBytes(record_.generation);
-        const path = markerPath(directory.path, record_.generation);
-        const existing = readRegularBytes(path, 256);
-        if (existing.hasValue && existing.value != marker)
-            return err!SaveReceipt("A damaged recovery adoption marker was preserved.");
-        try
-        {
-            return saveAtomic(path, marker, existing.hasValue
-                ? SaveAuthorization.replaceConfirmed : SaveAuthorization.createOnly);
-        }
-        catch (Exception) { return err!SaveReceipt("The restored archive could not be retired."); }
-    }
+    Expected!WriteReceipt retire() @safe nothrow
+        => .retire(directory, record_.generation, sessionLayout);
 }
 
-private string markerBytes(ulong generation) @safe pure nothrow
-{
-    UniqueBuffer!(char, 64) token;
-    token ~= "SPARKLES-EDITOR-ADOPTED/1\n";
-    writeIntegerPadded!10(token, generation, 20);
-    token ~= '\n';
-    return token[].idup;
-}
-
-private string markerPath(string directory, ulong generation) @safe pure nothrow
-{
-    UniqueBuffer!(char, 64) name;
-    name ~= "adopted-";
-    writeIntegerPadded!10(name, generation, 20);
-    return buildPath(directory, name[].idup);
-}
 
 /// Prepared restore tabs preserve the saved-byte baseline, selections and protected intervals.
 @("editor.sessionDiscovery.preparesEditingState")
@@ -118,7 +84,7 @@ private string markerPath(string directory, ulong generation) @safe pure nothrow
     import std.path : buildPath;
     auto fixture = TmpFS.create();
     const base = buildPath(fixture.dir, "sessions");
-    auto old = SessionDirectory.create(base, fixture.dir);
+    auto old = LeasedDirectory.create(base, fixture.dir);
     assert(old.hasValue);
     SessionRecord record;
     record.generation = 1;
@@ -152,6 +118,7 @@ struct RecoveryCatalog
     string[] issues;
 }
 
+
 /**
 Run on a CPU worker. Scan only immediate archive directories, skip active
 owners, and offer each archive's newest valid nonempty session. Older valid
@@ -161,48 +128,31 @@ must explicitly close every offered lease after deciding what to restore.
 RecoveryCatalog discoverSessions(string base) @safe nothrow
 {
     RecoveryCatalog catalog;
-    try
+    auto scan = claimArchives(base, sessionLayout);
+    catalog.issues = scan.issues;
+    foreach (archive; scan.archives)
     {
-        foreach (entry; dirEntries(base, SpanMode.shallow, false))
+        bool retained;
+        scope (exit) if (!retained) archive.directory.close();
+        const path = archive.directory.path;
+        foreach (generation; archive.generations)
         {
-            if (entry.isSymlink || !entry.isDir) continue;
-            auto claimed = SessionDirectory.claim(entry.name);
-            if (claimed.hasError)
+            auto found = readSessionGeneration(path, generation);
+            if (found.hasError) { catalog.issues ~= found.error; continue; }
+            const marker = retirementOf(path, generation, sessionLayout);
+            if (marker == Retirement.retired) break;
+            if (marker == Retirement.damaged)
+                catalog.issues ~= "A damaged recovery adoption marker was preserved.";
+            // A valid empty session is a deliberate empty state, not a reason
+            // to resurrect tabs from an older generation.
+            if (found.value.tabs.length)
             {
-                if (claimed.error.kind == DirectoryIssueKind.unavailable)
-                    catalog.issues ~= claimed.error.message;
-                continue;
+                catalog.offers ~= new RecoveryOffer(archive.directory, found.value);
+                retained = true;
             }
-            bool retained;
-            scope (exit) if (!retained) claimed.value.close();
-            ulong[] generations;
-            foreach (file; dirEntries(entry.name, SpanMode.shallow, false))
-            {
-                if (file.isSymlink) continue;
-                const generation = sessionGenerationOfName(baseName(file.name));
-                if (generation) generations ~= generation;
-            }
-            generations.sort!"a > b";
-            foreach (generation; generations)
-            {
-                auto found = readSessionGeneration(entry.name, generation);
-                if (found.hasError) { catalog.issues ~= found.error; continue; }
-                const marker = readRegularBytes(markerPath(entry.name, generation), 256);
-                if (marker.hasValue && marker.value == markerBytes(generation)) break;
-                if (marker.hasValue)
-                    catalog.issues ~= "A damaged recovery adoption marker was preserved.";
-                // A valid empty session is a deliberate empty state, not a reason
-                // to resurrect tabs from an older generation.
-                if (found.value.tabs.length)
-                {
-                    catalog.offers ~= new RecoveryOffer(claimed.value, found.value);
-                    retained = true;
-                }
-                break;
-            }
+            break;
         }
     }
-    catch (Exception) { catalog.issues ~= "Some recovery archives could not be listed."; }
     return catalog;
 }
 
@@ -216,7 +166,6 @@ RecoveryCatalog discoverSessions(string base) @safe nothrow
         import sparkles.test_runner.skip : skipTest;
         skipTest("Recovery directory leases currently require Linux.");
     }
-    import session_directory : SessionDirectory;
     import session_archive : appendSessionGeneration;
     import session_record : SessionRecord, SessionTab, SessionSelection;
     import sparkles.test_utils.tmpfs : TmpFS;
@@ -224,8 +173,8 @@ RecoveryCatalog discoverSessions(string base) @safe nothrow
     import std.file : write, readText;
     auto fixture = TmpFS.create();
     const base = buildPath(fixture.dir, "sessions");
-    auto abandoned = SessionDirectory.create(base, fixture.dir);
-    auto active = SessionDirectory.create(base, fixture.dir);
+    auto abandoned = LeasedDirectory.create(base, fixture.dir);
+    auto active = LeasedDirectory.create(base, fixture.dir);
     assert(abandoned.hasValue && active.hasValue);
     scope (exit) active.value.close();
     const source = fixture.writeFile("unchanged original");

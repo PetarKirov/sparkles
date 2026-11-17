@@ -314,8 +314,8 @@ captured text revisions, validates UTF-8/builds persistent text off-frame,
 limits outstanding jobs to eight and delivers const results after completion.
 The app/storage suite passed 15 tests before the CLI-open integration.
 
-The checked [fault probe](../../../apps/editor/tools/storage-fault-probe.d)
-and [fault runner](../../../apps/editor/tools/storage-faults.d) passed real
+The checked [fault probe](../../../libs/recovery/tools/storage-fault-probe.d)
+and [fault runner](../../../libs/recovery/tools/storage-faults.d) passed real
 Linux syscall injection at all six stages: write (`ENOSPC`), temporary sync
 (`EIO`), temporary close (`EIO`), replacement (`EACCES`), no-replace creation
 (`EEXIST`) and directory sync (`EIO`). Every pre-commit failure asserts that
@@ -472,11 +472,11 @@ test; it does not establish Android device acceptance.
 
 Directory `flock` leases distinguish active owners from claimable archives;
 creation and claim serialize against the registry directory. The checked
-[owner probe](../../../apps/editor/tools/recovery-owner-probe.d) launches a
+[owner probe](../../../libs/recovery/tools/recovery-owner-probe.d) launches a
 separate owner process, writes and acknowledges a dirty generation, verifies
 that another process cannot claim it, kills only that probe-owned process,
 and reclaims/reloads its dirty text. The original document remains unchanged.
-Repeat it with `dub run --single apps/editor/tools/recovery-owner-probe.d -b checked`.
+Repeat it with `dub run --single libs/recovery/tools/recovery-owner-probe.d -b checked`.
 This tests process interruption after a filesystem acknowledgment; power-loss,
 application scheduling, startup offers and orderly-exit integration remain open.
 
@@ -507,8 +507,8 @@ updates without claiming a hardware latency guarantee. Shutdown drains
 accepted work and publishes receipts before releasing the directory lease;
 newer unsubmitted input still requires explicit flush.
 
-The checked [checkpoint probe](../../../apps/editor/tools/checkpoint-fault-probe.d)
-and [fault runner](../../../apps/editor/tools/checkpoint-faults.d) inject a real
+The checked [checkpoint probe](../../../libs/recovery/tools/checkpoint-fault-probe.d)
+and [fault runner](../../../libs/recovery/tools/checkpoint-faults.d) inject a real
 directory `fsync` failure in the writer thread. Generation 4 remains committed
 but unconfirmed, durable revision 3 remains acknowledged, and retry of the
 same observation uses generation 5 before acknowledging revision 4. The
@@ -1280,3 +1280,29 @@ adapter tests (`editor.documentFiles.atomicCreateAndAuthorizedReplace`,
 now traces `renameat2`, injects `EEXIST` there, and adds a case that fails
 `renameat2` with `EINVAL` and the fallback `linkat` with `EEXIST`; all nine
 cases passed on Linux x86_64 6.18, and `dub test :editor` passed 81 tests.
+
+### Recovery storage as `sparkles:recovery` — 2026-11-17
+
+The archive's generic half moved into a library (`PLAN.md` step X7):
+leased directories (`LeasedDirectory`, was `SessionDirectory`), numbered
+immutable generations, retirement markers and the scan for abandoned
+archives (`sparkles.recovery.archive`), the coalescing `CheckpointWriter`
+over any snapshot with `revision` and `encode`, and the initialize and prune
+maintenance tasks. The editor keeps its record schema (`session_record.d`),
+its snapshots, which now `encode` themselves, its restore offers and
+discovery (`session_discovery.d`, over `claimArchives`), the `RecoverySession`
+wiring and the discover/adopt tasks. Its layout keeps the names archives on
+disk already use: `<20 digits>.session` and `adopted-<20 digits>` with the
+`SPARKLES-EDITOR-ADOPTED/1` tag. Generations are written by the VFS's
+create-only atomic write with a directory sync, and read with `readFile`,
+never through a link.
+
+The storage, checkpoint and owner probes moved to `libs/recovery/tools` and
+now exercise the library with opaque payloads; the close and cadence probes
+stay with the editor. On Linux x86_64 6.18 the storage runner passed its nine
+injections, the checkpoint runner retained the unconfirmed generation 4 and
+acknowledged revision 4 with generation 5, and the owner probe refused an
+active lease and reclaimed the killed owner's archive. `dub test :recovery`
+passed 11 tests and `dub test :editor` 78; the directory, generation-name
+and writer tests moved to the library, and the editor keeps its
+record-level archive, discovery and session scenarios.
