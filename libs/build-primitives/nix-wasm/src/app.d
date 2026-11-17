@@ -13,6 +13,10 @@ import std.traits : FieldNameTuple, Unqual;
 import sparkles.build_primitives.dub_manifest : DubManifest, parseDubManifest;
 import sparkles.wired.sdl : OwnedSdlExtras;
 
+// Each call is a fresh instance whose memory is dropped when it returns, so
+// collecting would be wasted work: the manual GC never does.
+extern (C) __gshared string[] rt_options = ["gcopt=gc:manual"];
+
 alias ValueId = uint;
 
 /// One `make_attrset` entry.
@@ -46,6 +50,28 @@ noreturn fail(scope const(char)[] message) @trusted
 /// The Nix spelling of a D field: `version_` → `version`.
 enum nixName(string field) = field[$ - 1] == '_' ? field[0 .. $ - 1] : field;
 
+/// Whether `value` is empty: an empty string or list, `false`, or a struct
+/// whose fields are all empty. An empty field is left out of its attribute
+/// set; Nix reads it with an `or` default.
+bool isEmpty(T)(ref const T value)
+{
+    alias U = Unqual!T;
+    static if (is(U == bool))
+        return !value;
+    else static if (is(U == E[], E))
+        return value.length == 0;
+    else static if (is(U == struct))
+    {
+        static foreach (field; FieldNameTuple!U)
+            static if (!is(typeof(__traits(getMember, U, field)) == OwnedSdlExtras))
+                if (!isEmpty(__traits(getMember, value, field)))
+                    return false;
+        return true;
+    }
+    else
+        static assert(0, "no Nix form for " ~ T.stringof);
+}
+
 ValueId toNix(T)(ref const T value) @trusted
 {
     alias U = Unqual!T;
@@ -55,21 +81,24 @@ ValueId toNix(T)(ref const T value) @trusted
         return make_bool(value);
     else static if (is(U == E[], E))
     {
-        auto ids = new ValueId[value.length];
+        // Recipes' lists are short: a stack buffer serves them without the GC.
+        ValueId[64] small = void;
+        ValueId[] ids = value.length <= small.length ? small[0 .. value.length] : new ValueId[value.length];
         foreach (i, ref e; value)
             ids[i] = toNix(e);
         return make_list(addr(ids.ptr), cast(uint) ids.length);
     }
     else static if (is(U == struct))
     {
-        NixAttr[FieldNameTuple!U.length] attrs;
+        NixAttr[FieldNameTuple!U.length] attrs = void;
         uint n;
         static foreach (field; FieldNameTuple!U)
             static if (!is(typeof(__traits(getMember, U, field)) == OwnedSdlExtras))
             {{
                 static immutable string name = nixName!field;
-                attrs[n++] = NixAttr(addr(name.ptr), cast(uint) name.length,
-                    toNix(__traits(getMember, value, field)));
+                if (!isEmpty(__traits(getMember, value, field)))
+                    attrs[n++] = NixAttr(addr(name.ptr), cast(uint) name.length,
+                        toNix(__traits(getMember, value, field)));
             }}
         return make_attrset(addr(attrs.ptr), n);
     }
