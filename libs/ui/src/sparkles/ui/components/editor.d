@@ -18,10 +18,13 @@ import sparkles.base.term_style : UnderlineStyle;
 import sparkles.input.events : CompositionStyle;
 import sparkles.text_buffer.text : Text;
 import sparkles.ui.editor.selection : EditRange;
-import sparkles.ui.editor.layout : ParagraphLayout;
+import core.time : MonoTime;
+import sparkles.ui.editor.context : CaretTarget;
+import sparkles.ui.editor.layout : LayoutContext, ParagraphLayout;
 import sparkles.ui.editor.state : EditorState, ReadOnlySpan;
 import sparkles.ui.style : Slot;
-import sparkles.ui.geometry : SizeSpec;
+import sparkles.ui.geometry : Point, SizeSpec;
+import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind;
 
 /// How an editor is drawn.
@@ -390,19 +393,289 @@ its left are not the layout's, text a preedit hides is, and a column inside
 an inserted span is the stop it was inserted at.
 */
 size_t layoutColumn(in VisualRow row, in ParagraphLayout layout, size_t column) @safe pure nothrow @nogc
+    => layoutColumn(row.row, row.inserted, layout, column);
+
+/// ditto, for row `row` of `layout` drawn with `inserted` (`VisualRow.inserted`).
+size_t layoutColumn(size_t row, scope const(size_t[3])[] inserted, in ParagraphLayout layout, size_t column)
+    @safe pure nothrow @nogc
 {
     long shift; // drawn minus layout cells left of the column
-    foreach (inserted; row.inserted)
+    foreach (span; inserted)
     {
-        const at = cast(long) layout.stopCells(row.row, inserted[0]) + shift;
+        const at = cast(long) layout.stopCells(row, span[0]) + shift;
         if (column < at)
             break;
-        if (column < at + cast(long) inserted[1])
+        if (column < at + cast(long) span[1])
             return cast(size_t)(at - shift);
-        shift += cast(long) inserted[1] - cast(long) inserted[2];
+        shift += cast(long) span[1] - cast(long) span[2];
     }
     const result = cast(long) column - shift;
     return result < 0 ? 0 : cast(size_t) result;
+}
+
+/// One painted visual row (`EAP17`): its widget node, logical line, row in
+/// that line's layout, inserted cells and the primary caret's column.
+struct PaintedRow
+{
+    /// The row's node in the painted tree.
+    size_t node;
+    /// The logical line and its visual row.
+    size_t line, row;
+    /// `VisualRow.inserted`: drawn cells that are not the layout's.
+    const(size_t[3])[] inserted;
+    /// The primary caret's drawn column on this row, or -1 (`VisualRow.caretColumn`).
+    int caretColumn = -1;
+}
+
+/**
+The visual rows an editor painted, kept beside the committed frame so a
+pointer or the input method is answered from what is on screen rather than
+a second layout (`EAP17`, `EAP20`). The ledger answers only for the text and
+wrap width it was laid out at (`answersFor`): a hit on rows of an older
+revision would move the caret to a byte the user did not see.
+
+A view that projects rows with `visualRows` records each with `add`; the
+host keeps the ledger with the frames it lays out and asks `caretAtPoint`
+for a press or drag, and `caretCell` for the input method's area.
+*/
+struct PaintedRows
+{
+    /// The rows, top to bottom.
+    PaintedRow[] rows;
+    /// The text and wrap width the rows were laid out at.
+    Text source;
+    /// ditto
+    size_t wrapCells;
+
+    /// Start a ledger for `source` laid out at `wrapCells`.
+    static PaintedRows of(in Text source, size_t wrapCells) @safe pure nothrow @nogc
+    {
+        PaintedRows ledger;
+        ledger.source = Text(source);
+        ledger.wrapCells = wrapCells;
+        return ledger;
+    }
+
+    /// Record `row` of logical line `line`, painted as tree node `node`.
+    void add(size_t node, size_t line, in VisualRow row) @safe pure nothrow
+    {
+        rows ~= PaintedRow(node, line, row.row, row.inserted.dup, row.caretColumn);
+    }
+
+    /// Whether the rows were laid out for `text` at `wrapCells`.
+    bool answersFor(in Text text, size_t wrapCells) const @safe pure nothrow @nogc
+        => this.wrapCells == wrapCells && source == text;
+
+    /**
+    The index of the row nearest `point` vertically in `frames`, or
+    `size_t.max`. With `exact` the point must lie on a row's band: a press
+    lands on a row, a drag beyond the rows follows the nearest one.
+    */
+    size_t rowAt(scope const Frame[] frames, Point point, bool exact = false) const @safe pure nothrow @nogc
+    {
+        size_t chosen = size_t.max;
+        long nearest = long.max;
+        foreach (i, row; rows)
+        {
+            if (row.node >= frames.length) continue;
+            const rect = frames[row.node].rect;
+            const top = rect.origin.y, bottom = rect.origin.y + rect.size.height;
+            const distance = point.y < top ? top - point.y : point.y >= bottom ? point.y - bottom + 1 : 0;
+            if (distance < nearest) { nearest = distance; chosen = i; }
+        }
+        return chosen == size_t.max || nearest && exact ? size_t.max : chosen;
+    }
+
+    /**
+    The caret under `point` (`EAP17`): the nearest painted row, its drawn
+    column less the cells inserted left of it, and `context.caretAt` on
+    that layout row, with the affinity that draws the caret on the hit's
+    side of a soft wrap or bidi boundary. `false` when no row answers (see
+    `rowAt`). The caller checks `answersFor` first.
+    */
+    bool caretAtPoint(ref LayoutContext context, in Text text, scope const Frame[] frames, Point point,
+        bool exact, out CaretTarget at) const @safe pure nothrow @nogc
+    {
+        const index = rowAt(frames, point, exact);
+        if (index == size_t.max) return false;
+        const shown = rows[index];
+        const origin = frames[shown.node].rect.origin;
+        ref layout = context.paragraph(text, shown.line);
+        const column = point.x <= origin.x ? 0 : layoutColumn(shown.row, shown.inserted, layout, point.x - origin.x);
+        at = context.caretAt(text, layout.rows[shown.row].line, column);
+        return true;
+    }
+
+    /**
+    The primary caret's drawn cell, `[column, row, 1, 1]` in the frames'
+    cells (`EDI6`, `EAP20`, ui-app `HST20`): the painted row carrying the
+    host's cursor, so candidates sit beside the cursor as drawn, after any
+    inserted cells and at a preedit's cursor. `false` when the caret's row
+    is not painted.
+    */
+    bool caretCell(scope const Frame[] frames, out int[4] area) const @safe pure nothrow @nogc
+    {
+        foreach (shown; rows)
+            if (shown.caretColumn >= 0 && shown.node < frames.length)
+            {
+                const origin = frames[shown.node].rect.origin;
+                area = [origin.x + shown.caretColumn, origin.y, 1, 1];
+                return true;
+            }
+        return false;
+    }
+}
+
+/**
+Press-and-drag selection (`EAP17`): a press fixes the anchor (the primary
+range's own with `extend`, as Shift does) and every move selects from it
+to the caret under the pointer, the caret keeping the hit's affinity.
+*/
+struct DragSelection
+{
+    /// A press began a selection that moves follow.
+    bool active;
+    /// Where the selection is anchored.
+    size_t anchor;
+
+    /// Begin at `at`; `extend` keeps `state`'s primary anchor.
+    void press(in EditorState state, CaretTarget at, bool extend) @safe pure nothrow @nogc
+    {
+        anchor = extend ? state.selection.primary.anchor : at.position;
+        active = true;
+    }
+
+    /// End the selection; later moves change nothing.
+    void release() @safe pure nothrow @nogc { active = false; }
+
+    /**
+    Select from the anchor to `at` in `field` (an `EditorFieldOf`), placing
+    the head on `at`'s side of a soft wrap or bidi boundary. Returns whether
+    a selection was active.
+    */
+    bool moveTo(Field)(ref Field field, CaretTarget at, MonoTime now = MonoTime.init)
+    {
+        import sparkles.ui.editor.command : EditCommand;
+        import sparkles.ui.editor.selection : SelectionSet;
+
+        if (!active) return false;
+        field.run(EditCommand.setRange(anchor, at.position), now);
+        auto placed = field.state.selection.primary;
+        if (field.state.selection.length == 1 && placed.head == at.position)
+        {
+            placed.affinity = at.affinity;
+            field.state.selection = SelectionSet.single(placed);
+        }
+        return true;
+    }
+}
+
+version (unittest)
+{
+    /// A field of `text` at `wrap` cells, painted row by row as the rows
+    /// of one column; the ledger and the frames.
+    private struct PaintedFixture
+    {
+        import sparkles.ui.editor.field : EditorFieldOf;
+
+        EditorFieldOf!LayoutContext field;
+        PaintedRows painted;
+        Frame[] frames;
+
+        static PaintedFixture of(string text, size_t wrap) @safe
+        {
+            import sparkles.ui.layout : layout;
+
+            PaintedFixture f;
+            f.field = typeof(f.field).make(text);
+            f.field.context.options.wrapCells = wrap;
+            Builder b;
+            uint[] nodes;
+            f.painted = PaintedRows.of(f.field.state.text, wrap);
+            const options = EditorViewOptions(hostCursor: true);
+            foreach (line; 0 .. f.field.state.text.lineCount)
+            {
+                ref paragraph = f.field.context.paragraph(f.field.state.text, line);
+                foreach (row; visualRows(editorLineSpans(f.field.state, line, options), paragraph, f.field.state))
+                {
+                    const node = b.add(Widget(kind: WidgetKind.rich, spans: row.spans,
+                        height: SizeSpec.fixed(1), caretColumn: row.caretColumn));
+                    f.painted.add(node, line, row);
+                    nodes ~= node;
+                }
+            }
+            f.frames = layout(b.finish(b.add(Widget(kind: WidgetKind.column, children: nodes))));
+            return f;
+        }
+
+        Point cell(size_t index, int column) const @safe pure nothrow @nogc
+        {
+            const origin = frames[painted.rows[index].node].rect.origin;
+            return Point(origin.x + column, origin.y);
+        }
+    }
+}
+
+/// A click on a wrapped row resolves through that row's layout; a press
+/// below the rows misses, a drag there follows the last row.
+@("editor.view.paintedRows.caretAtPoint")
+@safe unittest
+{
+    auto f = PaintedFixture.of("alpha beta gamma delta", 12);
+    assert(f.painted.rows.length == 2 && f.painted.answersFor(f.field.state.text, 12));
+    assert(!f.painted.answersFor(f.field.state.text, 13));
+    CaretTarget at;
+    assert(f.painted.caretAtPoint(f.field.context, f.field.state.text, f.frames, f.cell(1, 2), true, at));
+    assert(at.position == 13, "column 2 of `gamma delta`");
+    const below = Point(f.cell(1, 0).x, f.cell(1, 0).y + 3);
+    assert(!f.painted.caretAtPoint(f.field.context, f.field.state.text, f.frames, below, true, at));
+    assert(f.painted.caretAtPoint(f.field.context, f.field.state.text, f.frames, below, false, at));
+    assert(at.position == 11);
+}
+
+/// Right-to-left text: the hit's side of the bidi boundary decides the caret.
+@("editor.view.paintedRows.bidi")
+@safe unittest
+{
+    auto f = PaintedFixture.of("ab אב", 0);
+    CaretTarget at;
+    // Drawn `ab בא`: cell 4 is Alef, its left edge is after Bet (byte 5).
+    assert(f.painted.caretAtPoint(f.field.context, f.field.state.text, f.frames, f.cell(0, 4), true, at));
+    assert(at.position == 5);
+}
+
+/// A press anchors, a drag extends, Shift keeps the old anchor, release ends.
+@("editor.view.dragSelection")
+@safe unittest
+{
+    auto f = PaintedFixture.of("alpha beta", 0);
+    DragSelection drag;
+    CaretTarget at;
+    f.painted.caretAtPoint(f.field.context, f.field.state.text, f.frames, f.cell(0, 1), true, at);
+    drag.press(f.field.state, at, false);
+    assert(drag.moveTo(f.field, at));
+    f.painted.caretAtPoint(f.field.context, f.field.state.text, f.frames, f.cell(0, 5), false, at);
+    drag.moveTo(f.field, at);
+    assert(f.field.state.selection.primary.anchor == 1 && f.field.state.selection.primary.head == 5);
+    drag.release();
+    f.painted.caretAtPoint(f.field.context, f.field.state.text, f.frames, f.cell(0, 8), true, at);
+    assert(!drag.moveTo(f.field, at) && f.field.state.selection.primary.head == 5);
+    drag.press(f.field.state, at, true);
+    drag.moveTo(f.field, at);
+    assert(f.field.state.selection.primary.anchor == 1 && f.field.state.selection.primary.head == 8);
+}
+
+/// The input method's cell is the host cursor's column on its painted row.
+@("editor.view.paintedRows.caretCell")
+@safe unittest
+{
+    auto f = PaintedFixture.of("alpha beta gamma", 8);
+    int[4] area;
+    assert(f.painted.caretCell(f.frames, area), "the caret ends the text");
+    const last = f.painted.rows[$ - 1];
+    const origin = f.frames[last.node].rect.origin;
+    assert(area == [origin.x + last.caretColumn, origin.y, 1, 1] && last.caretColumn == 5);
+    assert(!PaintedRows.init.caretCell(f.frames, area));
 }
 
 /// A source range painted over a line's text; see `sparkles.ui.editor.presentation`.

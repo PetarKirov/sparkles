@@ -10,7 +10,7 @@ import sparkles.ui.command_palette : PaletteChoice, PaletteEffect, PaletteEffect
 import sparkles.ui.command_palette_input : PaletteInput;
 import sparkles.ui.components.command_palette : PaletteViewOptions, viewCommandPalette;
 import sparkles.ui.components.scroll_body : ScrollBody, scrollSeconds;
-import sparkles.ui.components.editor : drawIndentGuides, editorLineSpans, editorView, EditorViewOptions, layoutColumn, markSpans, TextMark, VisualRow, visualRows;
+import sparkles.ui.components.editor : DragSelection, drawIndentGuides, editorLineSpans, editorView, EditorViewOptions, markSpans, PaintedRow, PaintedRows, TextMark, visualRows;
 import sparkles.ui.components.gutter : blankCell, GutterCell, GutterChannel, lineNumberCell, lineNumberWidth, withGutterCells;
 import sparkles.ui.editor.presentation : bracketMarks, CaretPosition, matchMarks, trailingWhitespaceMarks;
 import std.array : Appender, appender;
@@ -63,17 +63,6 @@ import document_files : SaveAuthorization;
 import std.path : absolutePath, baseName;
 import session_runtime : RecoverySession;
 
-/// One drawn visual row: its widget, logical line, row and inserted cells.
-private struct RowHit
-{
-    size_t node;
-    size_t line;
-    size_t row;
-    const(size_t[3])[] inserted;
-    /// The primary caret's drawn column on this row, or -1.
-    int caretColumn = -1;
-}
-
 private class DisplayedFrame
 {
     const WidgetTree tree;
@@ -84,8 +73,12 @@ private class DisplayedFrame
     Text pathSource;
     ulong[] tabs;
     /// The document's drawn rows and the wrap they were laid out at.
-    RowHit[] rows;
-    size_t wrapCells;
+    PaintedRows painted;
+
+    /// The painted rows, top to bottom.
+    inout(PaintedRow)[] rows() inout @safe pure nothrow @nogc => painted.rows;
+    /// The wrap width the rows were laid out at.
+    size_t wrapCells() const @safe pure nothrow @nogc => painted.wrapCells;
 
     this(const WidgetTree tree, const Frame[] frames, Document document) @safe pure nothrow
     {
@@ -1026,15 +1019,15 @@ struct EditorApp
     }
     private DisplayedFrame displayed;
     /// The rows the last view drew, for the frame `paint` retains.
-    private RowHit[] shownRows;
-    private size_t shownWrap;
+    private PaintedRows shownRows;
     /// Whether text input has been asked for since the text was last tapped.
     private bool keyboardAsked;
     private HoverTarget[] hits;
     private const(PaletteChoice!Command)[] paletteChoices;
-    private bool selecting;
+    /// A press on the document began a selection that drags extend (`EAP17`).
+    private DragSelection drag;
+    private ref bool selecting() return @safe pure nothrow @nogc => drag.active;
     private ulong selectingDocument;
-    private size_t selectionAnchor;
     private ScrollBody paletteScroll;
     private size_t paletteLastSelection = size_t.max, paletteLastRowCount = size_t.max;
     private bool paletteTouching, palettePanning;
@@ -1063,8 +1056,7 @@ struct EditorApp
         foreach (tab; tabs) displayed.tabs ~= tab.id;
         displayed.dialogEpoch = dialogEpoch;
         if (pathDialog) displayed.pathSource = Text(pathInput.state.text);
-        displayed.rows = shownRows;
-        displayed.wrapCells = shownWrap;
+        displayed.painted = shownRows;
         hits = hoverTargets(tree, frames);
         static if (__traits(hasMember, H, "textInputArea"))
         {
@@ -1246,28 +1238,11 @@ struct EditorApp
         return marks[];
     }
 
-    /**
-    The primary caret's drawn cell, `[column, row, 1, 1]` in the window's
-    cells, from the rows just painted (`EDI6`, `EAP20`): the layout's column,
-    the inserted cells before it, and a preedit's cursor within it, as
-    `visualRows` reported it for the host's cursor. `false`
-    when the caret's row is not on screen.
-    */
+    /// The primary caret's drawn cell in the window, from the rows just
+    /// painted (`EDI6`, `EAP20`, `PaintedRows.caretCell`); `false` when the
+    /// caret's row is not on screen.
     private bool drawnCaretArea(out int[4] area) @safe
-    {
-        if (displayed is null)
-            return false;
-        // The painted row that carries the host's cursor (`HST20`): the same
-        // column the cursor is drawn at, so candidates sit beside it.
-        foreach (shown; displayed.rows)
-            if (shown.caretColumn >= 0 && shown.node < displayed.frames.length)
-            {
-                const origin = displayed.frames[shown.node].rect.origin;
-                area = [origin.x + shown.caretColumn, origin.y, 1, 1];
-                return true;
-            }
-        return false;
-    }
+        => displayed !is null && displayed.painted.caretCell(displayed.frames, area);
 
     private void pointer(H)(ref H host, in PointerEvent pointer) @safe
     {
@@ -1498,44 +1473,17 @@ struct EditorApp
     private void placeCaretAt(Point point, bool shift, bool press) @safe
     {
         // A press must land on a row; a drag beyond the rows follows the nearest one.
-        size_t chosen = size_t.max;
-        long nearest = long.max;
-        foreach (i, row; displayed.rows)
-        {
-            if (row.node >= displayed.frames.length) continue;
-            const rect = displayed.frames[row.node].rect;
-            const top = rect.origin.y, bottom = rect.origin.y + rect.size.height;
-            const distance = point.y < top ? top - point.y : point.y >= bottom ? point.y - bottom + 1 : 0;
-            if (distance < nearest) { nearest = distance; chosen = i; }
-        }
-        if (chosen == size_t.max || nearest && press) return;
-        const shown = displayed.rows[chosen];
-        const rect = displayed.frames[shown.node].rect;
-        const text = document.field.state.text;
-        auto context = &document.field.context;
         CaretTarget at;
-        {
-            ref layout = context.paragraph(text, shown.line);
-            const column = point.x <= rect.origin.x ? 0
-                : layoutColumn(VisualRow(shown.row, null, shown.inserted.dup), layout, point.x - rect.origin.x);
-            at = context.caretAt(text, layout.rows[shown.row].line, column);
-        }
+        if (!displayed.painted.caretAtPoint(document.field.context, document.field.state.text,
+            displayed.frames, point, press, at))
+            return;
         if (press)
         {
-            selectionAnchor = shift ? document.field.state.selection.primary.anchor : at.position;
-            selecting = true;
+            drag.press(document.field.state, at, shift);
             keyboardAsked = false;
             selectingDocument = document.id;
         }
-        if (!selecting) return;
-        document.field.run(EditCommand.setRange(selectionAnchor, at.position), MonoTime.currTime);
-        // The hit's side of a soft wrap or bidi boundary is where the caret draws.
-        auto placed = document.field.state.selection.primary;
-        if (document.field.state.selection.length == 1 && placed.head == at.position)
-        {
-            placed.affinity = at.affinity;
-            document.field.state.selection = SelectionSet.single(placed);
-        }
+        drag.moveTo(document.field, at, MonoTime.currTime);
     }
 
     private void receivePaste(in PasteEvent chunk) @safe
@@ -2396,8 +2344,7 @@ struct EditorApp
                 caretVisible: documentFocused);
             const syntax = highlighting.snapshot(text, document.language, document.id);
             uint field;
-            shownRows = null;
-            shownWrap = width;
+            shownRows = PaintedRows.of(text, width);
             if (text.length || document.field.state.composition.active)
             {
                 uint[] rows;
@@ -2434,7 +2381,7 @@ struct EditorApp
                             caretColumn: documentFocused ? row.caretColumn : -1,
                             slot: current ? Slot.surfaceRaised : Slot.inherit,
                             paintBackground: current));
-                        shownRows ~= RowHit(node, line, row.row, row.inserted, row.caretColumn);
+                        shownRows.add(node, line, row);
                         if (settings.view.lineNumbers)
                         {
                             auto cell = new GutterCell[1];

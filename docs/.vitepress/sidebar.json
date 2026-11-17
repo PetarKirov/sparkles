@@ -2229,6 +2229,10 @@
             "link": "/libs/ui/reference/editor-context"
           },
           {
+            "text": "Editor surface components",
+            "link": "/libs/ui/reference/editor-surface"
+          },
+          {
             "text": "Backends",
             "link": "/specs/ui/backends"
           },
