@@ -69,6 +69,27 @@ Exclusions: no run record, no compile or link family, no history.
 Gate: oracles 4, 10, 11 and 15 pass, and oracle 16 for `show`, `--observe`
 and the reporters. Every `ci test` run writes a record that passes the scan.
 
+## O2a: Test wall times for placements, with `apps/ci` M3a
+
+The slice of O2 and O5 that
+[OD21](./decisions.md#od21-test-wall-times-reach-the-history-before-the-build-graph-accepted)
+names, delivered on the current test modes ahead of both:
+
+- Run records holding each task's id, series key, outcome and `task.wall`,
+  with the source, host and run facts that exist before the build graph
+  (OBD1, OBD4–OBD7, OBD11–OBD12, OBR7), and the privacy scan (OBP1–OBP4).
+- The ref and its README, signature checks in every reader, appending from
+  `main-checks.yml` with validation, and the lazy, offline-tolerant read
+  (OBH1–OBH6, OBH8–OBH10). `ci perf push`, and an importer that seeds the
+  history from earlier runs' job logs.
+
+Exclusions: compaction (OBH7) waits for S6 and O5, and every family but
+`task.wall`, and `ci perf show`, `history` and the gate, wait for O1, O2, O5
+and O6.
+
+Gate: `apps/ci` M3a's gate. Oracle 12's signature and append steps pass against
+a local remote.
+
 ## O3: Compile and link families
 
 - The fork's time-trace summary mode (OBC8), with tests that fail without it,
@@ -143,6 +164,7 @@ Gate: oracles 2, 3 and 8 on macOS and Windows, and oracle 10's Nix scenario.
 | --------- | ----------------------------------- | ----------- |
 | O0        | Specification and spikes            | in review   |
 | O1        | Vocabulary and action accounting    | not started |
+| O2a       | Test wall times for placements      | in progress |
 | O2        | Run records and reports             | not started |
 | O3        | Compile and link families           | not started |
 | O4        | Test usage                          | not started |

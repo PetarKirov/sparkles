@@ -224,6 +224,17 @@ one data file:
   [run records](../../build-primitives/observability/SPEC.md#_11-run-records)
   hold. A task
   with no recorded wall time takes a declared default weight.
+- **One packing per run:** every shard of a run **must** pack from the same
+  records. The workflow's planning job passes the `refs/perf/data` commit it
+  read to each shard (`--history-tip`). A shard given none reads the newest
+  commit of the ref whose committer time is not later than the measured
+  commit's, so CI providers with no planning job agree too.
+
+Before `ci pipeline` exists, the same placements serve the current
+`--test`, `--test-sanitize` and `--test-extracted` modes, and the toolchain's
+build plan: `--placement NAME --shard K/N` runs a shard's packages
+([PLAN M3a](./PLAN.md#m3a-placements-before-the-build-graph),
+[OD21](../../build-primitives/observability/decisions.md#od21-test-wall-times-reach-the-history-before-the-build-graph-accepted)).
 
 **CIC15: No diffs on CI.** The repository's workflows **must not** pass
 `--since`. On CI, reuse comes from keys, not from diffs. `--since` stays a

@@ -431,6 +431,56 @@ uncalibrated, and the gate report-only, until S2 measures hosted-runner noise.
 **Revisit when** hosted runners expose counters, or a self-hosted runner with a
 PMU takes over the gated leg.
 
+## OD21: Test wall times reach the history before the build graph (accepted)
+
+**Question.** CI's test legs are split into shards by hand-written package
+lists in `ci.yml` (PR `#737`), packed from one run's log. CircleCI would need
+a second copy, the lists drift as packages change, and nothing records how a
+package's time moves. The toolchain's build plan grew a parallel data file
+(`nix/pin-build-costs.json`). `ci pipeline`'s placements
+([CIC14](../../ci/task-dag/SPEC.md#_1-3-ci-pipeline)) pack shards from recorded
+`task.wall`, but they wait for `apps/ci` M7 and this specification's O2 and
+O5. Should the data path come first?
+
+**Alternatives.**
+
+1. **Wait for M7.** Keep the lists until `ci pipeline` exists.
+2. **Every CI job as a flake check**, distributed through `/etc/nix/machines`.
+   Most test packages cannot run sandboxed (GPU, display servers, D-Bus,
+   PTYs, timing-sensitive supervision tests), and one derivation per package
+   rebuilds its whole dependency closure until the build graph's Nix backend
+   lowers actions (BGN1–BGN4).
+3. **Deliver the data path now, on the current test modes**: run records that
+   hold each task's wall time, their history on `refs/perf/data`, and
+   placements packed from it, with the build graph's Nix backend taking over
+   distribution later.
+
+**Choice.** Alternative 3, on the owner's acceptance of 2026-11-17. The slice is
+a subset of O2 and O5, and changes no requirement:
+
+- **Records:** `ci --test`, `--test-sanitize` and `--test-extracted` write a
+  record (OBD1, OBD4–OBD7, OBD11–OBD12) holding one task per package run, with
+  its task id, series key, outcome and `task.wall`, and the facts of OBR7 that
+  exist before the build graph: source, host and run. They pass the privacy scan
+  (OBP1–OBP4). A command that `ci` does not run, such as a toolchain pin build,
+  is recorded through `ci --record-task ID -- COMMAND`.
+- **History:** CI appends records as OBH3–OBH5 state, signed as OBH8 states;
+  readers verify signatures (OBH8) and fetch lazily (OBH9–OBH10). Compaction
+  (OBH7), `ci perf show`, `history` and the gate stay with O2, O5 and O6.
+- **Use:** placements, and the toolchain's build plan, read the median
+  `task.wall` of a task's last five records on its placement
+  ([CIC14](../../ci/task-dag/SPEC.md#_1-3-ci-pipeline)). The
+  build-cost data file goes.
+
+**Prerequisites from the owner.** A CI signing key in a deployment environment
+whose deployment branches allow only `main`; `nix/perf-data-signers` with the
+`ci` principal and a maintainer's; a maintainer key, so that records imported
+from earlier runs' logs can seed the history through `ci perf push`.
+
+**Revisit when** `apps/ci` M7 replaces the test modes: the records' tasks then
+come from the executor's measurement table (OBA5) and keep their task ids, so
+the series continue.
+
 ## Questions
 
 Every question was resolved by the owner on 2026-11-06; each entry records the
