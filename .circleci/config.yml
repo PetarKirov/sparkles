@@ -209,6 +209,10 @@ jobs:
         type: enum
         enum: [ldc2, dmd]
     executor: linux
+    # Shards of the placement (ci/placements.json), packed from refs/perf/data by
+    # `ci`: every node reads the same history commit, found from HEAD's committer
+    # time, so no package list lives here (CIC14, apps/ci PLAN M3a).
+    parallelism: 2
     environment:
       DC: << parameters.dc >>
     steps:
@@ -219,18 +223,21 @@ jobs:
       - restore_dub_cache
       - run:
           name: Run flake checks
-          command: nix flake check
+          # The first node runs the steps besides the tests.
+          command: if [ "$CIRCLE_NODE_INDEX" = 0 ]; then nix flake check; fi
           no_output_timeout: 20m
       - run:
           # `ci` embeds dmd (small closure); honour the matrix compiler for the
           # test suite so the ldc2/dmd dimensions are actually exercised. Both
           # are on PATH via the `default` devShell.
           name: Build and test with dub
-          command: ci/run-batch.sh 20m ci --test --fail-fast
+          command: >-
+            ci/run-batch.sh 20m ci --test --fail-fast --placement x86_64-linux-<< parameters.dc >>
+            --shard "$((CIRCLE_NODE_INDEX + 1))/$CIRCLE_NODE_TOTAL"
           no_output_timeout: 20m
       - run:
           name: Build and run examples
-          command: ci/run-batch.sh 20m ci --example-files --fail-fast
+          command: if [ "$CIRCLE_NODE_INDEX" = 0 ]; then ci/run-batch.sh 20m ci --example-files --fail-fast; fi
           no_output_timeout: 20m
       - when:
           # OS-API research examples (docs/research/.../os-apis). These are
@@ -244,6 +251,7 @@ jobs:
             - run:
                 name: Build & run OS-API windowing examples (X11 + Wayland)
                 command: |
+                  [ "$CIRCLE_NODE_INDEX" = 0 ] || exit 0
                   xvfb-run -a dub run --compiler=ldc2 \
                     --root=docs/research/window-system-integration/os-apis/x11/example
                   dub run --compiler=ldc2 \
@@ -257,6 +265,10 @@ jobs:
 
   test-macos:
     executor: macos
+    # Shards of the placement (ci/placements.json), packed from refs/perf/data by
+    # `ci`: every node reads the same history commit, found from HEAD's committer
+    # time, so no package list lives here (CIC14, apps/ci PLAN M3a).
+    parallelism: 2
     environment:
       DC: ldc2
     steps:
@@ -270,15 +282,18 @@ jobs:
       - restore_dub_cache
       - run:
           name: Run flake checks
-          command: nix flake check
+          # The first node runs the steps besides the tests.
+          command: if [ "$CIRCLE_NODE_INDEX" = 0 ]; then nix flake check; fi
           no_output_timeout: 20m
       - run:
           name: Build and test with dub
-          command: ci/run-batch.sh 20m ci --test --fail-fast
+          command: >-
+            ci/run-batch.sh 20m ci --test --fail-fast --placement aarch64-darwin-ldc2
+            --shard "$((CIRCLE_NODE_INDEX + 1))/$CIRCLE_NODE_TOTAL"
           no_output_timeout: 20m
       - run:
           name: Build and run examples
-          command: ci/run-batch.sh 20m ci --example-files --fail-fast
+          command: if [ "$CIRCLE_NODE_INDEX" = 0 ]; then ci/run-batch.sh 20m ci --example-files --fail-fast; fi
           no_output_timeout: 20m
       - save_dub_cache
 
@@ -315,6 +330,10 @@ jobs:
   # GitHub Actions `sanitize` job). One `-t N` leg on 4 MiB workers.
   sanitize-tests:
     executor: linux
+    # Shards of the placement (ci/placements.json), packed from refs/perf/data by
+    # `ci`: every node reads the same history commit, found from HEAD's committer
+    # time, so no package list lives here (CIC14, apps/ci PLAN M3a).
+    parallelism: 2
     environment:
       DC: ldc2
     steps:
@@ -325,7 +344,9 @@ jobs:
       - restore_asan_dub_cache
       - run:
           name: Run tests under ASan
-          command: ci/run-batch.sh 45m ci --test-sanitize --fail-fast
+          command: >-
+            ci/run-batch.sh 45m ci --test-sanitize --fail-fast --placement x86_64-linux-sanitize
+            --shard "$((CIRCLE_NODE_INDEX + 1))/$CIRCLE_NODE_TOTAL"
           no_output_timeout: 45m
       - save_asan_dub_cache
 

@@ -71,6 +71,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       mirrored: ${{ steps.mirror.outputs.mirrored }}
+      head-sha: ${{ steps.mirror.outputs.head-sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -121,3 +122,91 @@ jobs:
     if: needs.mirror.outputs.mirrored != 'true' && !inputs.dry_run
     uses: ./.github/workflows/ci.yml
     secrets: inherit
+
+  # The validating run's run records reach `refs/perf/data` (observability
+  # OBH4, OD21): on the mirror path, those the pull request's `ci.yml` run
+  # uploaded; on the rebuild path, this run's own. The run's identity and date
+  # come from GitHub's API, never from the records (OBH5). The CI signing key
+  # lives in the `perf-data` environment, whose deployment branches allow only
+  # `main`, so no pull request's workflow can sign (OBH8, OD16).
+  perf-append:
+    name: Append the run records to refs/perf/data
+    needs: [mirror, rebuild]
+    if: >-
+      ${{ !cancelled() && !inputs.dry_run
+      && (needs.mirror.outputs.mirrored == 'true' || needs.rebuild.result == 'success'
+      || needs.rebuild.result == 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: perf-data
+    permissions:
+      contents: write # the push to refs/perf/data
+      actions: read # the validating run's artifacts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+
+      - name: Find the validating run
+        id: run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MIRRORED: ${{ needs.mirror.outputs.mirrored }}
+          HEAD_SHA: ${{ needs.mirror.outputs.head-sha }}
+        run: |
+          if [ "$MIRRORED" = true ]; then
+            # The latest pull-request run of ci.yml that built the head.
+            run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$HEAD_SHA&event=pull_request" \
+              --jq '[.workflow_runs[] | select(.status == "completed")][0] | "\(.id) \(.run_attempt) \(.run_started_at)"')
+          else
+            run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              --jq '"\(.id) \(.run_attempt) \(.run_started_at)"')
+          fi
+          read -r id attempt started <<< "$run"
+          if [ -z "$id" ] || [ "$id" = null ]; then
+            echo "::warning::no validating run found; nothing to append"
+            exit 0
+          fi
+          {
+            echo "id=$id"
+            echo "attempt=$attempt"
+            echo "date=${started:0:10}"
+          } >> "$GITHUB_OUTPUT"
+
+      # A run's artifacts, this run's own on the rebuild path included: the
+      # action reads the current run when run-id is this run's.
+      - name: Download its run records
+        if: steps.run.outputs.id != ''
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: perf-records-*
+          path: ${{ runner.temp }}/records
+          run-id: ${{ steps.run.outputs.id }}
+          github-token: ${{ github.token }}
+
+      - name: Append them, signed with the CI key
+        if: steps.run.outputs.id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNING_KEY: ${{ secrets.PERF_DATA_SIGNING_KEY }}
+          RUN_ID: ${{ steps.run.outputs.id }}
+          ATTEMPT: ${{ steps.run.outputs.attempt }}
+          DATE: ${{ steps.run.outputs.date }}
+          SHA: ${{ inputs.sha || github.sha }}
+        run: |
+          key="$RUNNER_TEMP/perf-data-key"
+          (umask 077 && printf '%s\n' "$SIGNING_KEY" > "$key")
+          # The push authenticates with this job's token, not a credential in a URL.
+          git config --global "http.https://github.com/.extraheader" \
+            "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          mkdir -p "$RUNNER_TEMP/records"
+          nix run .#ci-minimal -- --perf-append --perf-records "$RUNNER_TEMP/records" \
+            --perf-run-id "$RUN_ID" --perf-run-attempt "$ATTEMPT" --perf-run-date "$DATE" \
+            --landed-commit "$SHA" --signing-key "$key" \
+            --history-remote "https://github.com/$GITHUB_REPOSITORY.git"
