@@ -294,7 +294,7 @@ import sparkles.event_horizon.sched : Sched;
 import sparkles.build_graph.store : Manifest, ManifestEntry, OutputRecord, ResultRecord, Store,
     preimageDifferences, differences,
     cacheDirTag, declaredKeyOf, formatVersion, hexOf, layoutVersion, parseHex, readAll, readBytes, resultKey,
-    statPath;
+    statPath, resolvedPath;
 
 /// What a run did with each kind of action: reused it from the store, or
 /// executed it.
@@ -1143,12 +1143,19 @@ struct ActionDriver
         // file system whose clock the store's probe read.
         import sparkles.base.vfs.types : Stat, StatMask;
 
+        // A worktree path is read where its links lead, each resolved from the
+        // root, so a link that climbs out of its directory reads (BGF3), and
+        // the identity cached is its target's.
+        string resolved = path;
+        if (!path.startsWith("$RUN/") && !path.startsWith("/"))
+            if (const r = resolvedPath(worktree, path))
+                resolved = r;
         const cacheable = clocked && !path.startsWith("$RUN/") && !path.startsWith("/");
         Stat st;
         bool sameClock;
         if (cacheable)
         {
-            auto s = statPath(worktree, path, cast(StatMask)(StatMask.mtime | StatMask.identity | StatMask.change));
+            auto s = statPath(worktree, resolved, cast(StatMask)(StatMask.mtime | StatMask.identity | StatMask.change));
             sameClock = !s.hasError && s.value.device == clockDevice;
             if (sameClock)
                 st = s.value;
@@ -1171,7 +1178,7 @@ struct ActionDriver
         else if (path.startsWith("/"))
             read = readBytes(system, path[1 .. $], bytes);
         else
-            read = readBytes(worktree, path, bytes);
+            read = readBytes(worktree, resolved, bytes);
         if (!read)
             return false;
         digest = blake3(bytes);
@@ -1646,4 +1653,34 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
     assert(fetchLockedSources(right, sources.value, sourcesPath, fetcher) is null);
     string text_;
     assert(readAll(sources.value, ".dub/packages/pkg/1.0.0/pkg/source/pkg.d", text_) && text_ == "module pkg;\n");
+}
+
+/// A link whose target climbs out of its own directory but not out of the
+/// root resolves, component by component; one that leaves the root does not.
+@("build_graph.execute.resolvedPath")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : DotDotPolicy, ResolvePolicy, Rights, SymlinkPolicy;
+    import sparkles.event_horizon.sys : BlockingVfs;
+    import std.process : environment, thisProcessID;
+
+    auto vfs = new BlockingVfs;
+    auto tmp = openRoot!(Rights.all)(vfs, environment.get("TMPDIR", "/tmp"), ambientAuthority(),
+        ResolvePolicy(SymlinkPolicy.beneath, DotDotPolicy.reject));
+    const name = text("sparkles-resolved-", thisProcessID);
+    auto top = tmp.value.walkAll(name);
+    scope (exit)
+        cast(void) tmp.value.removeTree(name);
+    auto a = top.value.walkAll("a");
+    auto b = top.value.walkAll("b");
+    assert(!a.value.writeFileAtomic("f", "x").hasError);
+    assert(!b.value.symlinkAt("l", "../a/f").hasError);
+    assert(!b.value.symlinkAt("dir", "../a").hasError);
+    assert(!b.value.symlinkAt("out", "../../elsewhere").hasError);
+    assert(resolvedPath(top.value, "b/l") == "a/f");
+    assert(resolvedPath(top.value, "b/dir/f") == "a/f");
+    assert(resolvedPath(top.value, "b/out") is null);
+    string text_;
+    assert(readAll(top.value, resolvedPath(top.value, "b/l"), text_) && text_ == "x");
 }
