@@ -141,6 +141,7 @@ int main(string[] args)
         const name = runOnly[0]["--run=".length .. $];
         const jobs = args.filter!(a => a.startsWith("--jobs=")).array;
         runJobs = jobs.length ? jobs[0]["--jobs=".length .. $].to!uint : 0;
+        traceCompiles = args.canFind("--trace-compiles");
         return runPackage(root, name == "all" ? null : name, runDir, cache, args.canFind("--check-determinism"),
             args.canFind("--confine-tests") ? Confinement.tests : args.canFind("--confine") ? Confinement.builds
             : Confinement.none);
@@ -617,6 +618,8 @@ struct TraceEvent
     string path;    // absolute; empty for an operation on a held descriptor itself
     bool fromRoot;  // named from the process's root or current directory
     bool ok;
+    string args;    // the call's arguments, as strace prints them
+    string ret;     // its result: `3`, `-1 ENOENT (No such file or directory)`
 }
 
 // Parses `strace -f -y -e trace=%file` output, joining resumed calls.
@@ -665,6 +668,8 @@ TraceEvent[] parseTrace(string trace, string cwd)
         const args = body_[open + 1 .. eq];
         const ret = body_[eq + 4 .. $];
         e.ok = !ret.startsWith("-1");
+        e.args = args.idup;
+        e.ret = ret.idup;
         string base, name;
         size_t i;
         if (args.startsWith("AT_FDCWD"))
@@ -1212,6 +1217,9 @@ actions into `into` on the task-DAG executor: compiles, archives and the
 link with the fixed environment, then the test. Prints each task's lines
 and its outcome; the exit status is the run's.
 */
+/// Oracle 3: whether a run traces its compiles (`--trace-compiles`).
+__gshared bool traceCompiles;
+
 /// The weight a run admits at once; 0 for one per processor.
 __gshared uint runJobs;
 
@@ -1267,6 +1275,24 @@ int runPackage(string root, string only, string into, string cache, bool checkDe
         return 2;
     }
     mkdirRecurse(into);
+    // Oracle 3: every compile under `strace`, its trace beside its manifest.
+    if (traceCompiles)
+    {
+        const strace = onPath("strace");
+        if (strace is null)
+        {
+            stderr.writeln("plan-graph: --trace-compiles needs strace on PATH");
+            return 2;
+        }
+        foreach (ref a; p.graph.actions)
+            if (a.kind == ActionKind.compile)
+                a.action.match!(
+                    (ref ProcessAction pa) {
+                        pa.argv = [strace, "-f", "-y", "-qq", "-e", "trace=%file", "-o", "$MEASURE/trace", "--"]
+                            ~ pa.argv;
+                    },
+                    (ref _) {});
+    }
     // D39's spike: every build action confined to its own directories and
     // without a network; tests too with `--confine-tests`, which may also
     // write their temporary directory.
@@ -1327,6 +1353,17 @@ int runPackage(string root, string only, string into, string cache, bool checkDe
         return 1;
     }
     writeln("BGX1: no test ran dub");
+    if (traceCompiles)
+    {
+        size_t compiles, opened, lookups;
+        const failures = manifestCompleteness(p.graph, root, into, compiles, opened, lookups);
+        foreach (f; failures[0 .. failures.length < 40 ? $ : 40])
+            writeln("oracle 3: ", f);
+        writeln(failures.length ? "fail" : "pass", " oracle 3 (manifest completeness): ", compiles, " compiles, ",
+            opened, " files opened, ", lookups, " failed lookups under their roots; ", failures.length, " failures");
+        if (failures.length)
+            return 1;
+    }
     return r.exitCode;
 }
 
@@ -1557,4 +1594,96 @@ string fetchSources(string root, string cache)
         return null;
     }
     return sourcesPath;
+}
+
+/**
+Oracle 3, manifest completeness: each compile of a `--trace-compiles` run
+ran under `strace`, and its trace is compared with the manifest its
+dependency output gave. Every file it opened for reading, the toolchain's
+store paths and the host's `/etc`, `/proc`, `/sys` and `/dev` aside, must
+be a file of the manifest; every lookup that failed beneath one of its
+import or string import roots must be an absent candidate or a directory
+one lies beneath; and every write, rename or removal must fall inside its
+own output and measurement directories (invariant 6). Returns the
+failures, one per line; empty when the oracle holds.
+*/
+string[] manifestCompleteness(const ActionGraph g, string root, string runDirectory, out size_t compiles,
+    out size_t opened, out size_t failedLookups)
+{
+    import std.file : exists, isDir, readText;
+    import std.string : lineSplitter;
+    import sparkles.build_graph.execute : RunLayout, makeRulePrerequisites;
+
+    const layout = RunLayout(root, runDirectory);
+    string[] failures;
+    string absolute(string p) => p.startsWith("$RUN/") ? runDirectory ~ p[4 .. $]
+        : p.startsWith("/") ? p : buildPath(root, p);
+    foreach (ref a; g.actions)
+    {
+        if (a.kind != ActionKind.compile)
+            continue;
+        const measure = layout.measureOf(a.id), out_ = layout.outOf(a.id);
+        const tracePath = buildPath(measure, "trace");
+        if (!tracePath.exists)
+            continue; // reused, or not traced
+        ++compiles;
+        bool[string] files, absent;
+        foreach (line; readText(buildPath(measure, "digests")).lineSplitter)
+            if (line.length > 66)
+                files[buildNormalizedPath(absolute(line[66 .. $]))] = true;
+        foreach (p; makeRulePrerequisites(readText(buildPath(measure, "absent"))))
+            absent[buildNormalizedPath(absolute(p))] = true;
+        string[] roots;
+        a.action.match!(
+            (ref const ProcessAction p) {
+                foreach (arg; p.argv)
+                    foreach (prefix; ["-I=", "-J="])
+                        if (arg.startsWith(prefix) && !arg[prefix.length .. $].startsWith("$"))
+                            roots ~= buildNormalizedPath(absolute(arg[prefix.length .. $]));
+            },
+            (ref const _) {});
+        bool underAbsent(string path)
+        {
+            if (path in absent)
+                return true;
+            foreach (k, _; absent)
+                if (k.startsWith(path ~ "/"))
+                    return true;
+            return false;
+        }
+        bool ours(string path) => path.startsWith(out_ ~ "/") || path == out_
+            || path.startsWith(measure ~ "/") || path == measure || path.startsWith("/dev/");
+        bool host(string path) => ["/nix/store/", "/etc/", "/proc/", "/sys/", "/dev/"].canFind!(h => path.startsWith(h));
+        foreach (ref e; parseTrace(readText(tracePath), root))
+        {
+            if (e.path.length == 0)
+                continue;
+            const writes = e.call.canFind("rename") || e.call.canFind("unlink") || e.call.canFind("mkdir")
+                || e.call.canFind("rmdir") || ((e.call == "openat" || e.call == "open")
+                    && (e.args.canFind("O_WRONLY") || e.args.canFind("O_RDWR") || e.args.canFind("O_CREAT")));
+            if (writes)
+            {
+                if (!ours(e.path))
+                    failures ~= text(a.id.text, ": writes outside its directories: ", e.call, " ", e.path);
+                continue;
+            }
+            if ((e.call == "openat" || e.call == "open") && e.ok && !e.args.canFind("O_DIRECTORY"))
+            {
+                if (host(e.path) || ours(e.path) || (e.path.exists && e.path.isDir))
+                    continue;
+                ++opened;
+                // A path the manifest names through a link names the same bytes.
+                if (e.path !in files)
+                    failures ~= text(a.id.text, ": read but not in the manifest: ", e.path);
+                continue;
+            }
+            if (!e.ok && e.ret.canFind("ENOENT") && roots.canFind!(r => e.path.startsWith(r ~ "/")))
+            {
+                ++failedLookups;
+                if (!underAbsent(e.path))
+                    failures ~= text(a.id.text, ": a failed lookup that is no absent candidate: ", e.path);
+            }
+        }
+    }
+    return failures;
 }
