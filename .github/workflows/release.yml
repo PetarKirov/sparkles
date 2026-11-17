@@ -92,3 +92,47 @@ jobs:
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CI_SYSTEM: ${{ matrix.system }}
         run: ci/release-pin.sh
+
+  # The npm package `@sparkles-pkgs/wired` (docs/specs/wired/wasm WW13, WW14):
+  # the site's `spk-wired.wasm` wrapped for JavaScript, versioned by the
+  # release's tag. It publishes through npm's trusted publishing: the job's
+  # OpenID Connect token stands in for an npm token, which the repository does
+  # not hold, and npm attaches provenance. Trust in this workflow is configured
+  # once on npmjs.com, in the package's settings.
+  publish-npm:
+    name: Publish @sparkles-pkgs/wired to npm
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+
+      - name: Build and test the package
+        run: |
+          nix build -L .#checks.x86_64-linux.npm-wired
+          nix build -L -o npm-wired .#npm-wired
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          cp -rL npm-wired package && chmod -R u+w package && cd package
+          npm version --no-git-tag-version "${TAG#v}"
+          npm publish --provenance --access public

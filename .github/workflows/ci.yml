@@ -1195,12 +1195,15 @@ jobs:
       - name: Run complete offline official corpora
         run: nix build -L .#checks.x86_64-linux.text-conformance
 
-  # The Nix module of docs/specs/wired/wasm (WW10): `builtins.wasm` exists only
-  # in Determinate Nix, behind `wasm-builtin`, so this job installs that
-  # evaluator, builds the module and the native oracle's answers with it, and
-  # requires the two to agree on every tracked recipe and fixture.
+  # The WebAssembly modules' checks. The site's modules against the same D run
+  # natively (docs/specs/toolchain/wasm-modules.md TCM9) and the npm package's
+  # tests under node (docs/specs/wired/wasm WW13); then the Nix module (WW10):
+  # `builtins.wasm` exists only in Determinate Nix, behind `wasm-builtin`, so
+  # this job installs that evaluator, and the module must agree with the native
+  # oracle on every tracked recipe and fixture, and the recipe table's two
+  # readers with each other.
   nix-wasm:
-    name: Nix builtins.wasm recipe module
+    name: WebAssembly modules (site, npm, Nix builtins.wasm)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -1217,6 +1220,9 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
+
+      - name: Check the site's modules and the npm package
+        run: nix build -L .#checks.x86_64-linux.wasm-modules .#checks.x86_64-linux.npm-wired
 
       - name: Check the module against the native oracle and the regex readers
         run: nix run -L .#check-nix-wasm

@@ -129,6 +129,33 @@
         description = "sparkles:wired as a WebAssembly module (the docs' JSON/SDL playground, the npm package)";
       };
 
+      # The npm package `@sparkles-pkgs/wired` (docs/specs/wired/wasm WW13): its
+      # sources with the site's module beside them, as `npm publish` takes it.
+      # The release workflow sets the version from the tag.
+      packages.npm-wired = pkgs.runCommand "npm-wired" { } ''
+        mkdir $out
+        cp ${../../libs/wired/wired-wasm/npm}/{package.json,index.js,index.d.ts,README.md} $out/
+        install -m644 ${config.packages.wired-wasm}/spk-wired.wasm $out/spk-wired.wasm
+      '';
+
+      # The package's tests under node, its one dependency (the WASI shim the
+      # site uses) placed as npm would place it.
+      checks.npm-wired =
+        pkgs.runCommand "npm-wired-tests"
+          {
+            nativeBuildInputs = [ pkgs.nodejs ];
+          }
+          ''
+            cp -r ${config.packages.npm-wired} pkg
+            chmod -R u+w pkg
+            cp -r ${../../libs/wired/wired-wasm/npm/test} pkg/test
+            mkdir -p pkg/node_modules/@bjorn3
+            ln -s ${browserWasiShim} pkg/node_modules/@bjorn3/browser_wasi_shim
+            cd pkg
+            set -o pipefail
+            node --test test/index.test.mjs | tee "$out"
+          '';
+
       packages.docs-wasm = pkgs.runCommand "docs-wasm" { } ''
         install -Dm644 ${config.packages.text-wasm}/spk-text.wasm $out/spk-text.wasm
         install -Dm644 ${config.packages.table-wasm}/spk-table.wasm $out/spk-table.wasm
