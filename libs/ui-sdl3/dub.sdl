@@ -10,7 +10,7 @@ dflags "-preview=in" "-preview=dip1000"
 
 // pkg-config supplies both the link flags and — prefixed `-P-I` by dub — the
 // ImportC include path for the `<SDL3/*.h>` headers.
-libs "SDL3"
+libs "sdl3"
 
 dependency "sparkles:vulkan" path="../.."
 // Presentation resources are backend-neutral Vulkan objects. SDL only owns

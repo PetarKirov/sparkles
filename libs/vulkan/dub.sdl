@@ -31,14 +31,26 @@ libs "vulkan"
 // This and `expected` are the whole D dependency floor; keep it that way.
 dependency "sparkles:base" path="../.."
 
+// On Linux `vulkan_c.c` declares the Wayland and XCB surfaces, so it includes
+// their headers; naming the libraries brings their include paths, as with
+// `vulkan` above, and `--as-needed` drops the links again. Android is `linux`
+// to dub and has neither: its configuration, first so dub picks it there and
+// only there, names neither.
+configuration "android" {
+    platforms "android"
+    targetType "sourceLibrary"
+}
+
 configuration "library" {
     // `sourceLibrary`, not `library`: dub skips pkg-config for `library` and
     // `staticLibrary` targets, so the ImportC include path would never reach
     // the compiler. See docs/guidelines/importc-c-libraries.md.
     targetType "sourceLibrary"
+    libs "wayland-client" "xcb" platform="linux"
 }
 
 configuration "unittest" {
+    libs "wayland-client" "xcb" platform="linux"
     dependency "sparkles:test-runner" path="../.."
 
     dflags "-checkaction=context" "-allinst"
