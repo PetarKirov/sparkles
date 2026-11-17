@@ -125,11 +125,15 @@ private bool closureNeeds(const PlanTarget a, const PlanTarget b) @safe
 private Expected!(void, string) plan(string costsPath, string githubOutput, string r2, string cachix) @system
 {
     const repoRoot = findRepoRoot();
-    string costsText;
-    try
-        costsText = readText(costsPath);
-    catch (Exception e)
-        return err!void(format("cannot read the build costs %s: %s", costsPath, e.msg));
+    // No cost file: no recorded cost, so every missing output is attempted.
+    string costsText = `{"budgetMinutes":300,"costs":{}}`;
+    if (costsPath.length)
+    {
+        try
+            costsText = readText(costsPath);
+        catch (Exception e)
+            return err!void(format("cannot read the build costs %s: %s", costsPath, e.msg));
+    }
     auto costs = parseBuildCosts(costsText);
     if (costs.hasError)
         return err!void(costs.error);
@@ -195,7 +199,7 @@ or plan the CI builds of those that are not.
                             list the missing outputs, and write matrix and
                             any as job outputs.
     --costs <file>          The recorded build costs
-                            (default: nix/pin-build-costs.json).
+                            (ci --write-pin-costs writes it; default: none).
     --github-output <file>  Append the plan's outputs to this file (the job's
                             $GITHUB_OUTPUT) rather than printing them.
     -h, --help              Show this help.
@@ -204,7 +208,7 @@ or plan the CI builds of those that are not.
 int main(string[] args)
 {
     bool planMode;
-    string costs = "nix/pin-build-costs.json";
+    string costs;
     string githubOutput;
     for (size_t i = 1; i < args.length; ++i)
     {

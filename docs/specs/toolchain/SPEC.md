@@ -309,9 +309,11 @@ closure needs a missing output whose cost does. An output with no recorded
 cost **must** be attempted. CI **must** push every derivation it finishes as
 the build proceeds, so a build that reaches its job's limit keeps what it
 completed. An output CI does not build **must** be reported with the command
-that builds and pushes it from a developer host. The costs and the budget are
-data in the repository (`nix/pin-build-costs.json`), each cost with its
-source.
+that builds and pushes it from a developer host. An output's cost **must** be
+the median of its recorded builds, the `pin-build:<pin>` tasks of the run
+records on `refs/perf/data`
+([OD21](../build-primitives/observability/decisions.md#od21-test-wall-times-reach-the-history-before-the-build-graph-accepted)),
+and the budget is data in the repository (`ci/placements.json`).
 
 _Rationale:_ The aim is that no pull request waits on a person for what CI
 can build within a job. The cost of an output decides where it is built, not

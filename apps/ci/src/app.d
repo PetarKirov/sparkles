@@ -311,6 +311,11 @@ struct CliParams
     @(Option(`landed-commit`, description: "With --perf-append: the commit of main the records describe."))
     string landedCommit;
 
+    @(Option(`write-pin-costs`,
+        description: "Write the toolchain build plan's cost file to this path: each pin's median "
+        ~ "recorded build time on refs/perf/data and ci/placements.json's budget (TC23)."))
+    string writePinCosts;
+
     @(Option(`list-placements`,
         description: "Print ci/placements.json's shards as a CI provider's matrix, with the "
         ~ "refs/perf/data commit every shard reads (CIC14). With --github-output, also set it as "
@@ -684,6 +689,7 @@ enum ProgramMode
     checkPinCache,
     recordTask,
     listPlacements,
+    writePinCosts,
     perfPush,
     perfImport,
     perfAppend,
@@ -852,6 +858,8 @@ int ciMain(string[] args)
         return runCheckCredits();
     if (mode == ProgramMode.perfPush || mode == ProgramMode.perfImport || mode == ProgramMode.perfAppend)
         return runPerfPublish(mode, cli);
+    if (mode == ProgramMode.writePinCosts)
+        return runWritePinCosts(cli.writePinCosts, cli.historyRemote);
     if (mode == ProgramMode.listPlacements)
         return runListPlacements(cli.provider, cli.githubOutput, cli.historyRemote);
     if (mode == ProgramMode.recordTask)
@@ -1221,6 +1229,8 @@ private ProgramMode resolveProgramMode(in CliParams cli)
         return ProgramMode.perfImport;
     if (cli.perfAppend)
         return ProgramMode.perfAppend;
+    if (cli.writePinCosts.length)
+        return ProgramMode.writePinCosts;
     if (cli.listPlacements)
         return ProgramMode.listPlacements;
     if (cli.recordTask.length)
@@ -1269,6 +1279,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.checkPinCache:      return "--check-pin-cache";
         case ProgramMode.recordTask:         return "--record-task";
         case ProgramMode.listPlacements:     return "--list-placements";
+        case ProgramMode.writePinCosts:      return "--write-pin-costs";
         case ProgramMode.perfPush:           return "--perf-push";
         case ProgramMode.perfImport:         return "--perf-import-github-run";
         case ProgramMode.perfAppend:         return "--perf-append";
@@ -1867,6 +1878,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkPinCache:
             case ProgramMode.recordTask:
             case ProgramMode.listPlacements:
+            case ProgramMode.writePinCosts:
             case ProgramMode.perfPush:
             case ProgramMode.perfImport:
             case ProgramMode.perfAppend:
@@ -7065,9 +7077,9 @@ private int runListPlacements(string provider, string githubOutput, string histo
     if (githubOutput.length)
     {
         // One matrix per mode as well: a job cannot filter a matrix it is given.
-        string lines = "matrix=" ~ matrix ~ "\n";
+        string lines = "matrix=" ~ matrix ~ "\ntip=" ~ tip ~ "\n";
         foreach (m; ["test", "sanitize", "extracted"])
-            lines ~= "matrix-" ~ m ~ "=" ~ placementMatrix(loaded.value, provider, tip, m) ~ "\n";
+            lines ~= "matrix-" ~ m ~ "=" ~ placementMatrix(loaded.value, provider, null, m) ~ "\n";
         append(githubOutput, lines);
     }
     return 0;
@@ -7132,5 +7144,31 @@ private int runPerfPublish(ProgramMode mode, const ref CliParams cli)
     }
     foreach (line; done.value.lineSplitter)
         info(i"$(line)");
+    return 0;
+}
+
+/// `--write-pin-costs FILE`: the toolchain build plan's costs, from the history.
+private int runWritePinCosts(string path, string historyRemote)
+{
+    import std.file : write;
+    import placements_run : pinCostsJson;
+
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+    {
+        error(i"Could not detect repository root");
+        return 1;
+    }
+    string[] degradations;
+    const json = pinCostsJson(repoRoot, historyRemote, degradations);
+    foreach (d; degradations)
+        warning(i"$(d)");
+    if (json.hasError)
+    {
+        error(i"$(json.error)");
+        return 1;
+    }
+    write(path, json.value ~ "\n");
+    info(i"wrote $(path)");
     return 0;
 }

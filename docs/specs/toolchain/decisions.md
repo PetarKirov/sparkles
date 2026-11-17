@@ -270,13 +270,16 @@ effort (the owner's direction: everything is pushed to R2). A `pin-plan` job
 evaluates the toolchain's outputs for every host, asks R2, and plans the ones
 it lacks (`apps/ci/src/derivation_pin_build.d`). One Cachix still serves is
 copied to R2 by the mirror step, not rebuilt. Of the rest, an output is built by a `pin-build`
-job on a runner of its system when its cost in `nix/pin-build-costs.json` is
-within the budget there, or is not recorded. One over the budget is deferred
-to a developer host, and so is every missing output whose derivation closure
-holds it, with the command that builds it. The gate runs after the builds.
-The cost file starts empty: costs are recorded from `pin-build`'s step
-summaries, each with its source, so an estimate is never mistaken for a
-measurement.
+job on a runner of its system when its cost is within the budget, or is not
+recorded. One over the budget is deferred to a developer host, and so is every
+missing output whose derivation closure holds it, with the command that builds
+it. The gate runs after the builds. An output's cost is the median of the
+builds `pin-build` recorded for it, one `pin-build:<pin>` task each, in the run
+records on `refs/perf/data`
+([OD21](../build-primitives/observability/decisions.md#od21-test-wall-times-reach-the-history-before-the-build-graph-accepted));
+`ci --write-pin-costs` hands them to the plan. Nothing is estimated: an output
+never built has no cost and is attempted. The budget is
+`ci/placements.json`'s `pinBuildBudgetMinutes`.
 
 Alternative 1 blocks a pull request on a person for work CI can do.
 Alternative 2 spends six runner hours on every retry of an output that cannot

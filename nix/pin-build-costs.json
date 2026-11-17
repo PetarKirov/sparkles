@@ -1,5 +1,0 @@
-{
-  "about": "TC23's build costs: minutes a pin-set entry takes to build on a GitHub-hosted runner of its system, keyed by pin name (<name>-<system>). pin-plan builds a missing entry in CI when its cost is at most budgetMinutes or unrecorded, and defers it to a developer host otherwise. Record a cost from a pin-build job's step summary, and say where it came from in source.",
-  "budgetMinutes": 300,
-  "costs": {}
-}
