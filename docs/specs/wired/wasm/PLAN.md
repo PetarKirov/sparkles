@@ -91,8 +91,15 @@ exception's readers are now the fallback of WW7.
 
 ## W5 — Portability
 
-Obligations: WW15. Mark the core's tests that need no file system,
-process or thread `@wasm`; run them under `ci --test-extracted`.
+Done: `sparkles.wired.wasm_portability` (4 `@wasm` tests) and
+`sparkles.build_primitives.dub_manifest_wasm` (3), run by `ci
+--test-extracted`; the Nix module joins `ci --build-each-commit`'s
+WebAssembly packages. The first run found a 64-bit-only index in the SDL
+lexer's month table, fixed before them.
+
+Obligations: WW15. `@wasm` tests over each format's reader, writer, typed
+codec and errors, and the recipe schema's forms and rejections; run them
+under `ci --test-extracted`.
 
 ## W6 — Playground; W7 — npm package
 
