@@ -136,6 +136,8 @@ module app;
 // std.* modules
 import perf_record : testTaskId;
 import perf_run : RunRecorder;
+import placements : parseShard;
+import placements_run : chooseShard, loadPlacements, PlacementArgs, placementMatrix;
 import watch_mode : runWatchMode, WatchAction;
 import std.algorithm : any, canFind, countUntil, filter, joiner, map, min, sort, startsWith;
 import std.array : array, join, split;
@@ -270,6 +272,29 @@ struct CliParams
         description: "With --test, --test-sanitize or --test-extracted: leave these "
         ~ "sub-packages out, so a CI shard can take every package the others do not list."))
     string[] skipPackages;
+
+    @(Option(`list-placements`,
+        description: "Print ci/placements.json's shards as a CI provider's matrix, with the "
+        ~ "refs/perf/data commit every shard reads (CIC14). With --github-output, also set it as "
+        ~ "the step's `matrix` output."))
+    bool listPlacements;
+
+    @(Option(`provider`,
+        description: "With --list-placements: the CI provider whose runners to list (default: github)."))
+    string provider = "github";
+
+    @(Option(`github-output`,
+        description: "With --list-placements: append the matrix to this file, the step's $GITHUB_OUTPUT."))
+    string githubOutput;
+
+    @(Option(`history-tip`,
+        description: "With --shard: the refs/perf/data commit to pack from, as the planning job "
+        ~ "read it. Default: the newest commit not later than HEAD's committer time."))
+    string historyTip;
+
+    @(Option(`history-remote`,
+        description: "The repository whose refs/perf/data to read (default: Sparkles' own)."))
+    string historyRemote;
 
     @(Option(`placement`,
         description: "With --test, --test-sanitize or --test-extracted: the placement of "
@@ -620,6 +645,7 @@ enum ProgramMode
     checkCredits,
     checkPinCache,
     recordTask,
+    listPlacements,
     checkBlobPaths,
     gcReport,
     checkWasmModules,
@@ -783,6 +809,8 @@ int ciMain(string[] args)
         return runCheckOpaqueRecipes();
     if (mode == ProgramMode.checkCredits)
         return runCheckCredits();
+    if (mode == ProgramMode.listPlacements)
+        return runListPlacements(cli.provider, cli.githubOutput, cli.historyRemote);
     if (mode == ProgramMode.recordTask)
         return runRecordTask(cli.recordTask, cli.positionals, cli.placement, cli.shard);
     if (mode == ProgramMode.checkPinCache)
@@ -822,16 +850,16 @@ int ciMain(string[] args)
         return cli.watch
             ? runWatchMode(WatchAction.test, cli.failFast)
             : runDubTestsMode(cli.failFast, coverage, cli.packages, cli.skipPackages,
-                cli.placement, cli.shard);
+                placementArgs(cli));
 
     if (mode == ProgramMode.runSanitizeTests)
         return runDubTestsMode(cli.failFast, coverage, cli.packages, cli.skipPackages,
-            cli.placement, cli.shard,
+            placementArgs(cli),
             sanitize: true);
 
     if (mode == ProgramMode.runExtractedTests)
         return runExtractedTestsMode(cli.failFast, cli.packages, cli.skipPackages,
-            cli.placement, cli.shard);
+            placementArgs(cli));
 
     if (mode == ProgramMode.listSlowTests)
         return runListSlowTestsMode();
@@ -1144,6 +1172,8 @@ private ProgramMode resolveProgramMode(in CliParams cli)
         return ProgramMode.checkOpaqueRecipes;
     if (cli.checkCredits)
         return ProgramMode.checkCredits;
+    if (cli.listPlacements)
+        return ProgramMode.listPlacements;
     if (cli.recordTask.length)
         return ProgramMode.recordTask;
     if (cli.checkPinCache)
@@ -1189,6 +1219,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.checkCredits:       return "--check-credits";
         case ProgramMode.checkPinCache:      return "--check-pin-cache";
         case ProgramMode.recordTask:         return "--record-task";
+        case ProgramMode.listPlacements:     return "--list-placements";
         case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
         case ProgramMode.gcReport:           return "--gc-report";
         case ProgramMode.checkWasmModules:   return "--check-wasm-modules";
@@ -1783,6 +1814,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkCredits:
             case ProgramMode.checkPinCache:
             case ProgramMode.recordTask:
+            case ProgramMode.listPlacements:
             case ProgramMode.checkBlobPaths:
             case ProgramMode.checkWasmModules:
             case ProgramMode.stageDocsWasm:
@@ -3971,7 +4003,7 @@ private bool requestedSubPackages(string repoRoot, in string[] requested,
 }
 
 private int runDubTestsMode(bool failFast, bool coverage, in string[] requested,
-    in string[] skipped, string placement, string shard, bool sanitize = false)
+    in string[] skipped, in PlacementArgs where, bool sanitize = false)
 {
     if (sanitize)
     {
@@ -3999,6 +4031,8 @@ private int runDubTestsMode(bool failFast, bool coverage, in string[] requested,
     info(i"parsing dub.sdl sub-packages");
     string[] subPackages;
     if (!requestedSubPackages(repoRoot, requested, skipped, subPackages))
+        return 1;
+    if (where.shard.length && !narrowToShard(repoRoot, requested, skipped, where, subPackages))
         return 1;
     info(i"$(subPackages.length) sub-package(s) to test");
     if (sanitize)
@@ -4049,7 +4083,7 @@ private int runDubTestsMode(bool failFast, bool coverage, in string[] requested,
     // One task per package leg, in a run record (observability OD21): the
     // placements pack their shards from the history of these wall times.
     auto recorder = RunRecorder.open(repoRoot, sanitize ? "--test-sanitize" : "--test",
-        recordedOptions(requested, skipped, coverage), placement, shard);
+        recordedOptions(requested, skipped, coverage), where.placement, where.shard);
     scope (exit)
         if (const degradation = recorder.finish())
             warning(i"$(degradation)");
@@ -4314,7 +4348,7 @@ private ExtractedModes extractedModesOf(string repoRoot, string packagePath)
 /// exactly wrong here — without it a missing linker would leave this reporting
 /// success having run nothing.
 private int runExtractedTestsMode(bool failFast, in string[] requested, in string[] skipped,
-    string placement, string shard)
+    in PlacementArgs where)
 {
     info(i"resolving repository root");
     const repoRoot = detectRepoRoot();
@@ -4328,6 +4362,8 @@ private int runExtractedTestsMode(bool failFast, in string[] requested, in strin
     info(i"scanning sub-packages for @betterC / @wasm");
     string[] subPackages;
     if (!requestedSubPackages(repoRoot, requested, skipped, subPackages))
+        return 1;
+    if (where.shard.length && !narrowToShard(repoRoot, requested, skipped, where, subPackages))
         return 1;
 
     struct Job
@@ -4367,7 +4403,7 @@ private int runExtractedTestsMode(bool failFast, in string[] requested, in strin
     }
 
     auto recorder = RunRecorder.open(repoRoot, "--test-extracted",
-        recordedOptions(requested, skipped, false), placement, shard);
+        recordedOptions(requested, skipped, false), where.placement, where.shard);
     scope (exit)
         if (const degradation = recorder.finish())
             warning(i"$(degradation)");
@@ -6891,4 +6927,87 @@ private int runRecordTask(string taskId, string[] command, string placement, str
     if (const degradation = recorder.finish())
         warning(i"$(degradation)");
     return status;
+}
+
+/// The placement options of `cli`, as the test modes take them.
+private PlacementArgs placementArgs(const ref CliParams cli) @safe pure nothrow =>
+    PlacementArgs(cli.placement, cli.shard, cli.historyTip, cli.historyRemote);
+
+/**
+`--shard K/N`: replace `subPackages` by the packages shard `K` of
+`where.placement` runs, packed from the history (CIC14). The shard owns its
+selection, so `--packages` and `--skip-packages` are refused beside it.
+*/
+private bool narrowToShard(string repoRoot, in string[] requested, in string[] skipped,
+    in PlacementArgs where, ref string[] subPackages)
+{
+    if (where.placement.length == 0)
+    {
+        error(i"--shard needs --placement");
+        return false;
+    }
+    if (requested.length || skipped.length)
+    {
+        error(i"--shard chooses the packages itself; drop --packages and --skip-packages");
+        return false;
+    }
+    const kn = parseShard(where.shard);
+    if (kn.hasError)
+    {
+        error(i"$(kn.error)");
+        return false;
+    }
+    const chosen = chooseShard(repoRoot, subPackages, where.placement, kn.value[0], kn.value[1],
+        where.historyTip, where.historyRemote);
+    if (chosen.hasError)
+    {
+        error(i"$(chosen.error)");
+        return false;
+    }
+    foreach (d; chosen.value.degradations)
+        warning(i"$(d)");
+    const tip = chosen.value.historyTip;
+    const at = tip.length ? "refs/perf/data " ~ tip[0 .. 12] : "no history";
+    info(i"shard $(where.shard) of $(where.placement): $(chosen.value.packages.length) of $(subPackages.length) package(s), packed from $(chosen.value.records) record(s) at $(at)");
+    subPackages = chosen.value.packages.dup;
+    return true;
+}
+
+/// `--list-placements`: the placements' shards as a CI matrix, with the tip
+/// of `refs/perf/data` every shard reads.
+private int runListPlacements(string provider, string githubOutput, string historyRemote)
+{
+    import std.file : append;
+    import std.path : buildPath;
+    import std.stdio : stdout;
+    import perf_history : canonicalRemote, historyCacheDir, historyTip, openHistory;
+
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+    {
+        error(i"Could not detect repository root");
+        return 1;
+    }
+    auto loaded = loadPlacements(repoRoot);
+    if (loaded.hasError)
+    {
+        error(i"$(loaded.error)");
+        return 1;
+    }
+    string tip;
+    auto history = openHistory(historyCacheDir(), historyRemote.length ? historyRemote : canonicalRemote,
+        buildPath(repoRoot, "nix", "perf-data-signers"));
+    if (history.hasError)
+        warning(i"$(history.error)");
+    else
+    {
+        foreach (d; history.value.degradations)
+            warning(i"$(d)");
+        tip = historyTip(history.value, null, long.max);
+    }
+    const matrix = placementMatrix(loaded.value, provider, tip);
+    stdout.writeln(matrix);
+    if (githubOutput.length)
+        append(githubOutput, "matrix=" ~ matrix ~ "\n");
+    return 0;
 }

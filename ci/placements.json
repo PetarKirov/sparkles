@@ -1,0 +1,77 @@
+{
+  "placements": [
+    {
+      "compiler": "ldc2",
+      "mode": "test",
+      "name": "x86_64-linux-ldc2",
+      "runners": {
+        "circleci": "linux",
+        "github": "ubuntu-latest"
+      },
+      "shards": 2,
+      "system": "x86_64-linux",
+      "timeoutMinutes": 120
+    },
+    {
+      "compiler": "dmd",
+      "mode": "test",
+      "name": "x86_64-linux-dmd",
+      "runners": {
+        "circleci": "linux",
+        "github": "ubuntu-latest"
+      },
+      "shards": 2,
+      "system": "x86_64-linux",
+      "timeoutMinutes": 75
+    },
+    {
+      "compiler": "ldc2",
+      "mode": "test",
+      "name": "aarch64-darwin-ldc2",
+      "runners": {
+        "circleci": "macos",
+        "github": "macos-latest"
+      },
+      "shards": 2,
+      "system": "aarch64-darwin",
+      "timeoutMinutes": 110
+    },
+    {
+      "compiler": "ldc2",
+      "mode": "test",
+      "name": "aarch64-linux-ldc2",
+      "runners": {
+        "github": "ubuntu-24.04-arm"
+      },
+      "shards": 3,
+      "system": "aarch64-linux",
+      "timeoutMinutes": 120
+    },
+    {
+      "compiler": "ldc2",
+      "mode": "sanitize",
+      "name": "x86_64-linux-sanitize",
+      "runners": {
+        "circleci": "linux",
+        "github": "ubuntu-latest"
+      },
+      "shards": 2,
+      "system": "x86_64-linux",
+      "timeoutMinutes": 75
+    },
+    {
+      "compiler": "ldc2",
+      "mode": "extracted",
+      "name": "x86_64-linux-extracted",
+      "runners": {
+        "circleci": "linux",
+        "github": "ubuntu-latest"
+      },
+      "shards": 1,
+      "system": "x86_64-linux",
+      "timeoutMinutes": 15
+    }
+  ],
+  "schema": "sparkles.ci.placements",
+  "version": 1
+}
