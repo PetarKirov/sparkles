@@ -55,3 +55,20 @@ The host routes keys to `bar.focused` while the bar is open, refreshes it
 before each frame and maps the hits it assigned to its own commands, which
 call `selectNextMatch`, `replaceCurrent`, `replaceAll` or
 `selectAllMatches` with `bar.pattern`.
+
+## The undo history view
+
+`sparkles.ui.components.history_view` lists a branching
+`sparkles.text_buffer.history.History` (text-buffer `TXB-HIS7`) and travels
+it.
+
+| Symbol                                     | Meaning                                                                                              |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `HistoryViewOptions`                       | `limit` rows, the `hitBase` of revision 0's row (0: no hits), a `hint` appended to the header        |
+| `viewHistory(b, history, options)`         | The header and one row per listed revision: `● #4 from #3  12 B  ⑂ 2 branches`, indented by depth    |
+| `historyWindow(current, total, limit)`     | The listed revisions `[first, last]`: up to half the window past the current one, filled near an end |
+| `revisionAtHit(hit, hitBase, length, out)` | The revision whose row has hit identity `hit`                                                        |
+| `travelTo(field, index, now)`              | Move the field to revision `index` with `earlier`/`later`, one ordinary history step                 |
+
+A host checks that the rows it drew belong to the active document before
+it travels on a press.

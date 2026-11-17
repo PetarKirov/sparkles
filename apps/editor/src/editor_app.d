@@ -11,6 +11,7 @@ import sparkles.ui.command_palette_input : PaletteInput;
 import sparkles.ui.components.command_palette : PaletteViewOptions, viewCommandPalette;
 import sparkles.ui.components.scroll_body : ScrollBody, scrollSeconds;
 import sparkles.ui.components.editor : DragSelection, drawIndentGuides, editorLineSpans, editorView, EditorViewOptions, markSpans, PaintedRow, PaintedRows, TextMark, visualRows;
+import sparkles.ui.components.history_view : HistoryViewOptions, travelHistory = travelTo, viewHistory;
 import sparkles.ui.components.gutter : blankCell, GutterCell, GutterChannel, lineNumberCell, lineNumberWidth, withGutterCells;
 import sparkles.ui.editor.presentation : bracketMarks, CaretPosition, matchMarks, trailingWhitespaceMarks;
 import std.array : Appender, appender;
@@ -1150,42 +1151,17 @@ struct EditorApp
     */
     void travelTo(size_t index) @safe
     {
-        const history = &document.field.state.history;
-        if (index >= history.length) return;
-        const current = history.currentIndex;
-        if (index < current) document.field.run(EditCommand.earlier(current - index), MonoTime.currTime);
-        else if (index > current) document.field.run(EditCommand.later(index - current), MonoTime.currTime);
+        travelHistory(document.field, index, MonoTime.currTime);
     }
 
     /**
-    The inspector's undo tree (`EAP6`): up to `limit` revisions in creation
-    order ending past the current one, each naming its parent, its text
-    length and whether it is a branch point; a press travels there.
+    The inspector's undo tree (`EAP6`, `viewHistory`): up to `limit`
+    revisions in creation order around the current one; revision `i`'s row
+    is hit `undoHitBase + i`, and a press travels there.
     */
     private uint[] undoRows(ref Builder b, size_t limit) @safe
-    {
-        const history = &document.field.state.history;
-        const current = history.currentIndex;
-        const total = history.length;
-        size_t last = current + limit / 2 < total ? current + limit / 2 : total - 1;
-        const first = last + 1 > limit ? last + 1 - limit : 0;
-        if (last - first + 1 < limit && total > limit) last = first + limit - 1 < total ? first + limit - 1 : total - 1;
-        uint[] rows;
-        rows ~= b.add(Widget(kind: WidgetKind.text, slot: Slot.info,
-            text: text("Undo history: revision ", current, " of ", total - 1,
-                "  (Alt+U earlier, Alt+Shift+U later; select one to travel)")));
-        foreach (i; first .. last + 1)
-        {
-            const info = history.revision(i);
-            const label = text(i == current ? "● " : "○ ", i == 0 ? "root" : text("#", i),
-                i == 0 ? "" : text(" from ", info.parent == 0 ? "root" : text("#", info.parent)),
-                "  ", info.length, " B", info.children > 1 ? text("  ⑂ ", info.children, " branches") : "");
-            rows ~= b.add(Widget(kind: WidgetKind.text, text: label, hitId: undoHitBase + i,
-                slot: i == current ? Slot.selection : Slot.docs, paintBackground: i == current,
-                padding: Insets(0, 0, 0, 2 * (info.depth < 8 ? cast(int) info.depth : 8))));
-        }
-        return rows;
-    }
+        => viewHistory(b, document.field.state.history, HistoryViewOptions(limit: limit, hitBase: undoHitBase,
+            hint: "Alt+U earlier, Alt+Shift+U later; select one to travel"));
 
     /**
     The status bar's position (`EAP5`): the primary caret's 1-based line and

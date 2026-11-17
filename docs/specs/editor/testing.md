@@ -1045,7 +1045,9 @@ current one, each naming the revision it was made from, its text length and
 whether it is a branch point, indented by depth. A press on a row travels
 there with the shared editor's `earlier`/`later`, so the move is an
 ordinary history step; a row drawn for another document is ignored. The
-tree comes from text-buffer's `History.revision` (`TXB-HIS7`).
+tree comes from text-buffer's `History.revision` (`TXB-HIS7`), drawn and
+travelled by `sparkles.ui.components.history_view` (`viewHistory`,
+`travelTo`; tests `ui.historyView.window`, `ui.historyView.rowsAndTravel`).
 `editor.app.undoInspector` types, undoes and types again, checks the
 listed rows name the branch point, then presses the abandoned revision and
 gets its text back.
