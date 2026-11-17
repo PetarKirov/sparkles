@@ -1459,3 +1459,73 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
     assert(!store.cachedDigest("libs/a.d", replaced, got));
     assert(!store.cachedDigest("libs/b.d", st, got));
 }
+
+/// BGR4 without Nix: a tree's NAR digest is the one `nix-hash` prints, and a
+/// locked archive is fetched, checked against its flat SHA-256, unpacked
+/// without its top directory and published; a wrong hash publishes nothing.
+@("build_graph.execute.fetchLockedSources")
+@system unittest
+{
+    import std.digest.sha : sha256Of;
+    import std.zip : ArchiveMember, ZipArchive;
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : Access, Disposition, DotDotPolicy, OpenMode, ResolvePolicy, Rights,
+        SymlinkPolicy;
+    import sparkles.build_graph.fetch : Fetcher, fetchLockedSources, narDigest, nixBase32,
+        parseNixBase32;
+    import sparkles.build_primitives.resolve.registry : LockedPackage;
+    import sparkles.event_horizon.sys : BlockingVfs;
+    import std.process : environment, thisProcessID;
+
+    auto vfs = new BlockingVfs;
+    const tmpPath = environment.get("TMPDIR", "/tmp");
+    auto tmp = openRoot!(Rights.all)(vfs, tmpPath, ambientAuthority(),
+        ResolvePolicy(SymlinkPolicy.beneath, DotDotPolicy.reject));
+    const name = text("sparkles-fetch-", thisProcessID);
+    auto top = tmp.value.walkAll(name);
+    scope (exit)
+        cast(void) tmp.value.removeTree(name);
+
+    // `nix-hash --type sha256 --base32` of this tree.
+    auto fixture = top.value.walkAll("nar/sub");
+    auto nar = top.value.walk("nar");
+    assert(!nar.value.writeFileAtomic("a.txt", "hello\n").hasError);
+    assert(!fixture.value.writeFileAtomic("b", "deep").hasError);
+    {
+        auto run = nar.value.openFile!(OpenMode(Access.write, Disposition.createNew, executable: true))("run.sh");
+        assert(!run.value.write(cast(const(ubyte)[]) "#!/bin/sh\n").hasError);
+    }
+    assert(!nar.value.symlinkAt("link", "a.txt").hasError);
+    ubyte[32] digest, expected;
+    assert(narDigest(nar.value, digest));
+    assert(parseNixBase32("17ykq8r6hx1xwcmvbbvfw2cyqp0ivybay79fdjvha4jwqw9griyi", expected));
+    assert(digest == expected, nixBase32(digest));
+
+    // A registry archive, served by a fetcher that writes it where asked.
+    auto zip = new ZipArchive;
+    foreach (member; [["pkg-1.0.0/dub.sdl", "name \"pkg\"\n"], ["pkg-1.0.0/source/pkg.d", "module pkg;\n"]])
+    {
+        auto m = new ArchiveMember;
+        m.name = member[0];
+        m.expandedData = cast(ubyte[]) member[1].dup;
+        zip.addMember(m);
+    }
+    const archive = cast(ubyte[]) zip.build();
+    auto sources = top.value.walkAll("sources");
+    const sourcesPath = tmpPath ~ "/" ~ name ~ "/sources";
+    auto fetcher = Fetcher(
+        (string url, string destination) {
+            assert(url == "https://code.dlang.org/packages/pkg/1.0.0.zip", url);
+            return !sources.value.walk("staging").value.writeFileAtomic(
+                destination[sourcesPath.length + "/staging/".length .. $], archive).hasError;
+        },
+        (string url, string commit, string destination) => false);
+    auto wrong = [LockedPackage("pkg", "1.0.0", null, nixBase32(sha256Of("other")), "lock.json")];
+    const refused = fetchLockedSources(wrong, sources.value, sourcesPath, fetcher);
+    assert(refused.canFind("the lock pins"), refused);
+    assert(statPath(sources.value, ".dub/packages/pkg/1.0.0/pkg").hasError);
+    auto right = [LockedPackage("pkg", "1.0.0", null, nixBase32(sha256Of(archive)), "lock.json")];
+    assert(fetchLockedSources(right, sources.value, sourcesPath, fetcher) is null);
+    string text_;
+    assert(readAll(sources.value, ".dub/packages/pkg/1.0.0/pkg/source/pkg.d", text_) && text_ == "module pkg;\n");
+}
