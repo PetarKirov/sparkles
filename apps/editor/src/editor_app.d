@@ -9,7 +9,9 @@ import sparkles.text_buffer.text : Text;
 import sparkles.ui.command_palette : PaletteChoice, PaletteEffect, PaletteEffectKind, PaletteInvocation, PaletteStatus;
 import sparkles.ui.command_palette_input : PaletteInput;
 import sparkles.ui.components.command_palette : PaletteViewOptions, viewCommandPalette;
-import sparkles.ui.components.scroll_body : ScrollBody, scrollSeconds;
+import sparkles.ui.components.scroll_body : ScrollBody, scrollSeconds, TouchPan, TouchStep;
+import sparkles.ui.components.command_palette : PaletteHit, paletteHitAt, PaletteTouch;
+import sparkles.ui_app.pointer_cells : pointerCells;
 import sparkles.ui.components.editor : DragSelection, drawIndentGuides, editorLineSpans, editorView, EditorViewOptions, markSpans, PaintedRow, PaintedRows, TextMark, visualRows;
 import sparkles.ui.components.history_view : HistoryViewOptions, travelHistory = travelTo, viewHistory;
 import sparkles.ui.components.gutter : blankCell, GutterCell, GutterChannel, lineNumberCell, lineNumberWidth, withGutterCells;
@@ -280,6 +282,44 @@ private struct ClipboardHooks
     assert(first.field.text == "from A" && second.field.text == "from B");
     pasteChunks("old reply", (in Event event) { app.handle(host, event); }, requestA);
     assert(first.field.text == "from A" && second.field.text == "from B");
+}
+
+/// On a touch screen a palette row runs on a tap, never on the press that starts a scroll.
+@("editor.app.paletteTouchTapsAndPans")
+@safe unittest
+{
+    import sparkles.input : Point, PointerAction, PointerButton, PointerEvent, touchPointer;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    auto app = new EditorApp;
+    scope (exit) destroy(*app);
+    RecordingHost host;
+    host.capabilities = touchPointer;
+    FrameSnapshot frame;
+    Point openRow()
+    {
+        app.execute(CommandId(Command.palette));
+        app.commands.insert("Toggle inspector", app.context);
+        presentApp(*app, host, AppTheme(defaultTwoslashPalette()), frame);
+        app.paint(host, frame.tree, frame.frames);
+        foreach (target; app.hits)
+            if (target.hitId == PaletteViewOptions.init.hitBase)
+                return Point(target.rect.x + 1, target.rect.y);
+        assert(false, "the palette draws its row");
+    }
+    const touch = (PointerAction action, Point at) => Event(PointerEvent(action, PointerButton.left, at));
+
+    const row = openRow();
+    app.handle(host, touch(PointerAction.press, row));
+    assert(app.commands.palette.active && !app.inspector, "a press alone runs nothing");
+    app.handle(host, touch(PointerAction.drag, Point(row.x, row.y + 4)));
+    app.handle(host, touch(PointerAction.release, Point(row.x, row.y + 4)));
+    assert(app.commands.palette.active && !app.inspector, "a scroll runs nothing");
+
+    app.handle(host, touch(PointerAction.press, row));
+    app.handle(host, touch(PointerAction.release, row));
+    assert(!app.commands.palette.active && app.inspector, "a tap runs the row");
 }
 
 /// Without an interactive surface, a failed final checkpoint is returned to the CLI.
@@ -1062,10 +1102,8 @@ struct EditorApp
     private ulong selectingDocument;
     private ScrollBody paletteScroll;
     private size_t paletteLastSelection = size_t.max, paletteLastRowCount = size_t.max;
-    private bool paletteTouching, palettePanning;
-    private PointerEvent paletteTouchPress;
-    private bool editorTouching, editorPanning;
-    private PointerEvent editorTouchPress;
+    private PaletteTouch paletteTouch;
+    private TouchPan editorTouch;
     private enum size_t tabHitBase = 0x7400_0000;
     private enum size_t dialogConfirmHit = 0x7500_0000, dialogCancelHit = 0x7500_0001;
     private enum size_t dialogDiscardHit = 0x7600_0000;
@@ -1227,91 +1265,29 @@ struct EditorApp
 
     private void pointer(H)(ref H host, in PointerEvent pointer) @safe
     {
-        int cw = 1, ch = 1;
-        static if (__traits(hasMember, H, "cellWidth"))
-            if (host.backend == Backend.gui) { cw = host.cellWidth; ch = host.cellHeight; }
-        if (cw < 1) cw = 1;
-        if (ch < 1) ch = 1;
-        bool touch = false;
-        static if (__traits(hasMember, H, "capabilities")) touch = !host.capabilities.hover;
-        const float fx = pointer.pos.x / cast(float) cw;
-        const float fy = pointer.pos.y / cast(float) ch;
-        const point = Point(pointer.pos.x / cw, pointer.pos.y / ch);
-        const slop = (cw > ch ? cw : ch) / 4 + 1;
+        const cells = pointerCells(host);
+        const touch = cells.touch;
+        const fx = cells.column(pointer.pos.x), fy = cells.row(pointer.pos.y);
+        const point = cells.cell(pointer.pos);
 
-        if (touch && commands.palette.active && paletteTouching && pointer.pointerId == paletteTouchPress.pointerId)
+        if (touch && commands.palette.active && paletteTouch.captures(pointer))
         {
-            if (pointer.action == PointerAction.leave)
-            {
-                paletteTouching = palettePanning = false;
-                paletteScroll.cancelDrag();
-                return;
-            }
-            const dx = pointer.pos.x - paletteTouchPress.pos.x;
-            const dy = pointer.pos.y - paletteTouchPress.pos.y;
-            const ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
-            if (!palettePanning && ay >= slop && ay > ax) palettePanning = true;
-            if (palettePanning)
-            {
-                paletteScroll.dragTo(pointer.pos.y / cast(double) ch, scrollSeconds());
-                if (pointer.action == PointerAction.release)
-                {
-                    paletteScroll.endDrag(scrollSeconds());
-                    paletteTouching = palettePanning = false;
-                }
-                return;
-            }
-            if (pointer.action == PointerAction.release)
-            {
-                paletteTouching = palettePanning = false;
-                paletteScroll.cancelDrag();
-                if (ax < slop && ay < slop)
-                {
-                    const hit = hits.hitAt(fx, fy);
-                    const base = PaletteViewOptions.init.hitBase;
-                    if (hit >= base && hit - base < paletteChoices.length)
-                        apply(commands.palette.activate(paletteChoices[hit - base], context));
-                    else if (hit == paletteCloseHit || hit == paletteHit || hit == 0)
-                        commands.palette.cancel(commands.palette.snapshot.ticket);
-                }
-                return;
-            }
+            choosePalette(paletteTouch.track(paletteScroll, pointer, cells.cellHeight, cells.slop,
+                scrollSeconds(), () => paletteTarget(hits.hitAt(fx, fy))));
             return;
         }
-        if (touch && editorTouching && pointer.pointerId == editorTouchPress.pointerId)
+        if (touch && editorTouch.captures(pointer))
         {
-            if (pointer.action == PointerAction.leave)
+            final switch (editorTouch.track(document.scroll, pointer, cells.cellHeight, cells.slop, scrollSeconds()))
             {
-                editorTouching = editorPanning = false;
-                document.scroll.cancelDrag();
-                return;
-            }
-            const dx = pointer.pos.x - editorTouchPress.pos.x;
-            const dy = pointer.pos.y - editorTouchPress.pos.y;
-            const ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
-            if (!editorPanning && ay >= slop && ay > ax)
-            {
-                editorPanning = true;
-                document.followCaret = false;
-                document.scroll.motion.instant = false;
-            }
-            if (editorPanning)
-            {
-                document.scroll.dragTo(pointer.pos.y / cast(double) ch, scrollSeconds());
-                if (pointer.action == PointerAction.release)
-                {
-                    document.scroll.endDrag(scrollSeconds());
-                    editorTouching = editorPanning = false;
-                }
-                return;
-            }
-            if (pointer.action == PointerAction.release)
-            {
-                editorTouching = editorPanning = false;
-                document.scroll.cancelDrag();
-                if (ax < slop && ay < slop)
+                case TouchStep.panning:
+                    document.followCaret = false;
+                    break;
+                case TouchStep.tapped:
                     placeCaretAt(point, pointer.mods.shift, true);
-                return;
+                    break;
+                case TouchStep.ignored, TouchStep.holding, TouchStep.cancelled:
+                    break;
             }
             return;
         }
@@ -1354,23 +1330,9 @@ struct EditorApp
         if (commands.palette.active)
         {
             if (touch && pointer.action == PointerAction.press)
-            {
-                paletteTouching = true;
-                palettePanning = false;
-                paletteTouchPress = pointer;
-                paletteScroll.touch = true;
-                paletteScroll.motion.instant = false;
-                paletteScroll.beginDrag(pointer.pos.y / cast(double) ch, scrollSeconds());
-                return;
-            }
-            const base = PaletteViewOptions.init.hitBase;
-            if (pointer.action == PointerAction.press)
-            {
-                if (hit >= base && hit - base < paletteChoices.length)
-                    apply(commands.palette.activate(paletteChoices[hit - base], context));
-                else if (hit == paletteCloseHit || hit == paletteHit || hit == 0)
-                    commands.palette.cancel(commands.palette.snapshot.ticket);
-            }
+                paletteTouch.press(paletteScroll, pointer, cells.cellHeight, scrollSeconds());
+            else if (pointer.action == PointerAction.press)
+                choosePalette(paletteTarget(hit));
             return;
         }
         if (hit == paletteHit)
@@ -1440,15 +1402,29 @@ struct EditorApp
         }
         if (touch && pointer.action == PointerAction.press)
         {
-            editorTouching = true;
-            editorPanning = false;
-            editorTouchPress = pointer;
-            document.scroll.touch = true;
-            document.scroll.motion.instant = false;
-            document.scroll.beginDrag(pointer.pos.y / cast(double) ch, scrollSeconds());
+            editorTouch.begin(document.scroll, pointer, cells.cellHeight, scrollSeconds());
             return;
         }
         placeCaretAt(point, pointer.mods.shift, pointer.action == PointerAction.press);
+    }
+
+    /// `hit` on the open palette; the header's Commands chip dismisses it too.
+    private PaletteHit paletteTarget(size_t hit) const @safe
+        => paletteHitAt(hit, paletteChoices.length, PaletteViewOptions(closeHit: paletteCloseHit), paletteHit);
+
+    private void choosePalette(in PaletteHit target) @safe
+    {
+        final switch (target.kind)
+        {
+            case PaletteHit.Kind.choose:
+                apply(commands.palette.activate(paletteChoices[target.choice], context));
+                break;
+            case PaletteHit.Kind.dismiss:
+                commands.palette.cancel(commands.palette.snapshot.ticket);
+                break;
+            case PaletteHit.Kind.none:
+                break;
+        }
     }
 
     private void placeCaretAt(Point point, bool shift, bool press) @safe
@@ -1907,11 +1883,7 @@ struct EditorApp
                 (in EndOfInput _) { closeRequested(host); },
                 (in PointerEvent p) {
                     // The pane hits in cells; a window reports pixels.
-                    int cw = 1, ch = 1;
-                    static if (__traits(hasMember, H, "cellWidth"))
-                        if (host.backend == Backend.gui) { cw = host.cellWidth; ch = host.cellHeight; }
-                    PointerEvent cells = p;
-                    cells.pos = Point(p.pos.x / (cw > 0 ? cw : 1), p.pos.y / (ch > 0 ? ch : 1));
+                    const cells = pointerCells(host).inCells(p);
                     (() @trusted => cast(void) settingsPane.handleOverlay(Event(cells), settingsGeometry()))();
                 },
                 (in _) { (() @trusted => cast(void) settingsPane.handleOverlay(event, settingsGeometry()))(); });
