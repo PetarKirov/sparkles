@@ -32,7 +32,7 @@ reused. Without a cache, every run builds what it plans.
 module sparkles.build_graph.execute;
 
 import std.algorithm.searching : canFind, startsWith;
-import std.array : replace;
+import std.array : join, replace;
 import std.conv : text;
 import std.sumtype : match;
 
@@ -305,6 +305,16 @@ struct RunStats
     size_t[string] executed; /// by kind
     size_t[string] misses;   /// by class (BGS8): `declared`, `manifest`, `evicted`
 
+    string[] futureTimes; /// files whose modification time is later than the clock (BGK5)
+
+    void future(string path) @safe pure nothrow
+    {
+        foreach (p; futureTimes)
+            if (p == path)
+                return;
+        futureTimes ~= path;
+    }
+
     void miss(string class_) @safe pure nothrow
     {
         if (auto n = class_ in misses)
@@ -338,6 +348,8 @@ struct RunStats
                 ~ text(reused.get(k, 0)) ~ " reused";
         foreach (c; misses.keys.sort)
             s ~= "; " ~ text(misses[c]) ~ " " ~ c ~ " misses";
+        if (futureTimes.length)
+            s ~= "; " ~ text(futureTimes.length) ~ " files dated in the future, rehashed: " ~ futureTimes.join(", ");
         return s;
     }
 }
@@ -478,6 +490,9 @@ struct ActionDriver
     private const(Action)*[string] planned;
     private string[string] outputsDigestOf; // by task id: what a consumer's key holds (BGK1)
     private ubyte[32][string] digests;      // file digests read this run, by manifest path
+    private bool clocked;      // whether the store's probe read its file system's clock (BGK5)
+    private long clockNs;
+    private ulong clockDevice;
     private string failure;
 
     /// What the run did, by action kind: reused from the store, or executed.
@@ -525,6 +540,8 @@ struct ActionDriver
                     run_ = move(made.value);
                     stored = (() @trusted => Store!(Dir!(BlockingVfs, Rights.all)).open(build.value,
                         leaseHolder(), store))();
+                    if (stored)
+                        clocked = store.probeClock(clockNs, clockDevice);
                 }
             }
             auto root = openRoot!(Rights.readOnly)(vfs, "/", ambientAuthority(),
@@ -1004,6 +1021,30 @@ struct ActionDriver
                 digest = *d;
                 return true;
             }
+        // BGK5: a worktree file's digest is cached by its identity, on the
+        // file system whose clock the store's probe read.
+        import sparkles.base.vfs.types : Stat, StatMask;
+
+        const cacheable = clocked && !path.startsWith("$RUN/") && !path.startsWith("/");
+        Stat st;
+        bool sameClock;
+        if (cacheable)
+        {
+            auto s = statPath(worktree, path, cast(StatMask)(StatMask.mtime | StatMask.identity | StatMask.change));
+            sameClock = !s.hasError && s.value.device == clockDevice;
+            if (sameClock)
+                st = s.value;
+            if (sameClock)
+            {
+                if (st.mtimeNs > clockNs)
+                    stats.future(path); // rehashed on every read, and reported
+                else if (!fresh && store.cachedDigest(path, st, digest))
+                {
+                    digests[path] = digest;
+                    return true;
+                }
+            }
+        }
         ubyte[] bytes;
         bool read;
         if (path.startsWith("$RUN/"))
@@ -1017,6 +1058,8 @@ struct ActionDriver
             return false;
         digest = blake3(bytes);
         digests[path] = digest;
+        if (sameClock && st.mtimeNs <= clockNs)
+            store.cacheDigest(path, st, clockNs, digest);
         return true;
     }
 
@@ -1371,4 +1414,48 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
     assert(store.remove((ref const ResultRecord r) => r.task == "c", &dead, held) == ["c-key"] && !held.length);
     assert(store.collectGarbage(&dead) >= 2);
     assert(store.entries.length == 0);
+}
+
+/// BGK5: a cached digest is trusted only for the same identity tuple, and
+/// only when the file's times are older than its recording minus two
+/// seconds; a racily clean one is rehashed.
+@("build_graph.execute.digestCache")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : DotDotPolicy, ResolvePolicy, Rights, Stat, SymlinkPolicy;
+    import sparkles.event_horizon.sys : BlockingVfs;
+    import std.process : environment, thisProcessID;
+
+    auto vfs = new BlockingVfs;
+    auto tmp = openRoot!(Rights.all)(vfs, environment.get("TMPDIR", "/tmp"), ambientAuthority(),
+        ResolvePolicy(SymlinkPolicy.beneath, DotDotPolicy.reject));
+    const name = text("sparkles-digest-cache-", thisProcessID);
+    auto top = tmp.value.walkAll(name);
+    scope (exit)
+        cast(void) tmp.value.removeTree(name);
+    Store!(typeof(top.value)) store;
+    assert(Store!(typeof(top.value)).open(top.value, "1-1", store));
+    long now;
+    ulong device;
+    assert(store.probeClock(now, device) && now > 0);
+
+    Stat st;
+    st.device = device;
+    st.inode = 7;
+    st.size = 3;
+    st.mtimeNs = 1_000_000_000_000;
+    st.ctimeNs = 1_000_000_000_000;
+    ubyte[32] digest = 9, got;
+    store.cacheDigest("libs/a.d", st, st.mtimeNs + 1_000_000_000, digest); // racy: within two seconds
+    assert(!store.cachedDigest("libs/a.d", st, got));
+    store.cacheDigest("libs/a.d", st, st.mtimeNs + 3_000_000_000, digest);
+    assert(store.cachedDigest("libs/a.d", st, got) && got == digest);
+    auto touched = st;
+    touched.ctimeNs += 1;
+    assert(!store.cachedDigest("libs/a.d", touched, got)); // a hard link or chmod: rehash
+    auto replaced = st;
+    replaced.inode = 8;
+    assert(!store.cachedDigest("libs/a.d", replaced, got));
+    assert(!store.cachedDigest("libs/b.d", st, got));
 }
