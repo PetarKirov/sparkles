@@ -956,6 +956,68 @@ bool parseHex(scope const(char)[] s, out ubyte[32] digest) @safe pure nothrow @n
     return true;
 }
 
+/**
+`path` beneath `root` with every link it crosses replaced by its target,
+one component at a time, as planning's tree resolves one (BGF3): the path a
+handle on `root` reads without crossing a link, for a link whose target
+climbs out of its own directory but not out of the root. Null when a link
+leaves the root, is absolute, or the chain is longer than 40 links.
+*/
+string resolvedPath(D)(ref D root, string path)
+{
+    import std.array : join, split;
+
+    string[] done;
+    string[] rest = path.split("/");
+    size_t links;
+    while (rest.length)
+    {
+        const c = rest[0];
+        rest = rest[1 .. $];
+        if (c.length == 0 || c == ".")
+            continue;
+        if (c == "..")
+        {
+            if (!done.length)
+                return null;
+            done = done[0 .. $ - 1];
+            continue;
+        }
+        const here = (done ~ c).join("/");
+        auto st = statPath(root, here);
+        if (!st.hasError && st.value.kind == EntryKind.symlink)
+        {
+            if (++links > 40)
+                return null;
+            char[4096] buffer;
+            string target;
+            if (done.length)
+            {
+                auto dir = root.walk(done.join("/"));
+                if (dir.hasError)
+                    return null;
+                auto t = dir.value.readlinkAt(c, buffer[]);
+                if (t.hasError)
+                    return null;
+                target = t.value.idup;
+            }
+            else
+            {
+                auto t = root.readlinkAt(c, buffer[]);
+                if (t.hasError)
+                    return null;
+                target = t.value.idup;
+            }
+            if (target.length == 0 || target[0] == '/')
+                return null;
+            rest = target.split("/") ~ rest;
+            continue;
+        }
+        done ~= c;
+    }
+    return done.join("/");
+}
+
 /// Reads the whole file at the `/`-separated `path` beneath `dir`.
 bool readAll(D)(ref D dir, scope const(char)[] path, out string text_)
 {
