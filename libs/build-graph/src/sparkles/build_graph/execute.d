@@ -460,6 +460,34 @@ string[] makeRulePrerequisites(scope const(char)[] text) @safe pure
     return result;
 }
 
+/**
+The worktree path of a test-root generator's tested `source`, which is
+relative to the package directory `dir` (itself relative to the worktree), or
+null when it leaves the worktree. A package may test a sibling's file
+(`../font/test/…`), and the VFS resolves no `..`, so the path is normalized.
+*/
+string testedSourcePath(string dir, string source) @safe pure nothrow
+{
+    import std.path : buildNormalizedPath;
+
+    if (!source.length || source[0] == '/' || (dir.length && dir[0] == '/'))
+        return null;
+    const joined = dir.length && dir != "." ? dir ~ "/" ~ source : source;
+    const path = buildNormalizedPath(joined);
+    return path == ".." || path.startsWith("../") ? null : path;
+}
+
+///
+@("build_graph.execute.testedSourcePath")
+@safe pure nothrow unittest
+{
+    assert(testedSourcePath("libs/font-oracle", "../font/test/fixtures.d") == "libs/font/test/fixtures.d");
+    assert(testedSourcePath("libs/a", "src/m.d") == "libs/a/src/m.d");
+    assert(testedSourcePath(".", "src/m.d") == "src/m.d");
+    assert(testedSourcePath("libs/a", "../../../etc/passwd") is null);
+    assert(testedSourcePath("libs/a", "/etc/passwd") is null);
+}
+
 /// `-makedeps` rules read back, escapes undone.
 @("build_graph.execute.makeRulePrerequisites")
 @safe pure unittest
@@ -993,7 +1021,13 @@ struct ActionDriver
                     while (at < i.arguments.length && i.arguments[at] != "--")
                         ++at;
                     foreach (source; i.arguments[at + 1 .. $])
-                        input(dir.length && dir != "." ? dir ~ "/" ~ source : source);
+                    {
+                        const path = testedSourcePath(dir, source);
+                        if (path.length)
+                            input(path);
+                        else
+                            known = false; // it fails, and is not keyed
+                    }
                 }
             },
             (ref const InertAction _) {});
@@ -1531,9 +1565,9 @@ struct ActionDriver
         string[] modules;
         foreach (source; a.arguments[at + 1 .. $])
         {
-            const path = packageDir.length && packageDir != "." ? packageDir ~ "/" ~ source : source;
+            const path = testedSourcePath(packageDir, source);
             string text_;
-            if (!readWorktree(path, text_))
+            if (!path.length || !readWorktree(path, text_))
                 return fail("generate:test-root-module: cannot read " ~ path);
             modules ~= moduleNameOf(source, text_, roots);
         }
