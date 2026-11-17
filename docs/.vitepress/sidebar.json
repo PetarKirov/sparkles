@@ -2333,6 +2333,10 @@
             "link": "/libs/ui-app/reference/clipboard"
           },
           {
+            "text": "Pointer cells",
+            "link": "/libs/ui-app/reference/pointer-cells"
+          },
+          {
             "text": "Specimen font hosting",
             "link": "/libs/ui-app/reference/specimen-fonts"
           },
