@@ -101,6 +101,16 @@ int main(string[] args)
 
     if (traceTarget.length)
         return tracedPlan(root, traceTarget[0]["--trace-target=".length .. $]);
+    if (args.canFind("--fetch-sources"))
+    {
+        // BGR4: the locked sources, fetched into the store, in Nix's place.
+        const cacheArg = args.filter!(a => a.startsWith("--cache=")).array;
+        const xdg = environment.get("XDG_CACHE_HOME", buildPath(environment.get("HOME", "/"), ".cache"));
+        fetchedSources = fetchSources(root, cacheArg.length
+            ? absolutePath(cacheArg[0]["--cache=".length .. $]) : buildPath(xdg, "sparkles"));
+        if (fetchedSources is null)
+            return 2;
+    }
     const cacheOps = args.filter!(a => a.startsWith("--cache-op=")).array;
     if (cacheOps.length)
     {
@@ -252,7 +262,7 @@ DriverEnvironment driverEnvironment()
     import std.file : exists, isFile;
 
     DriverEnvironment d;
-    d.sources = environment.get("SPARKLES_DUB_SOURCES");
+    d.sources = fetchedSources.length ? fetchedSources : environment.get("SPARKLES_DUB_SOURCES");
     foreach (v; RecordingPkgConfig.variables)
         if (auto value = environment.get(v))
             d.pkgConfigVariables[v] = value;
@@ -1468,4 +1478,83 @@ int cacheOp(string cache, string op)
             stderr.writeln("plan-graph: unknown cache operation ", op);
             return 2;
     }
+}
+
+/// With `--fetch-sources`: the registry sources the run fetched (BGR4),
+/// which planning reads in place of `SPARKLES_DUB_SOURCES`'s.
+__gshared string fetchedSources;
+
+/**
+BGR4 without Nix: fetches the packages the dub lockfiles pin into
+`<cache>/build/v1/sources`, verified by the locks' hashes. Archives come
+through `curl`, repositories through a shallow `git fetch` of the pinned
+commit. Returns the sources directory, or null after printing why not.
+*/
+string fetchSources(string root, string cache)
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : DotDotPolicy, ResolvePolicy, Rights, SymlinkPolicy;
+    import sparkles.build_primitives.git_env : runGit;
+    import sparkles.build_graph.fetch : Fetcher, fetchLockedSources;
+    import sparkles.event_horizon.sys : BlockingVfs;
+    import std.file : mkdirRecurse;
+    import std.process : execute;
+
+    const sourcesPath = buildPath(cache, "build", "v1", "sources");
+    mkdirRecurse(sourcesPath);
+    auto tree = systemTree();
+    const locked = readDubLocks([root.buildPath("nix", "dub-lock.json"), root.buildPath("nix", "ci-dub-lock.json")],
+        tree);
+    if (locked.hasError)
+    {
+        stderr.writeln("plan-graph: ", locked.error);
+        return null;
+    }
+    auto vfs = new BlockingVfs;
+    auto sources = openRoot!(Rights.all)(vfs, sourcesPath, ambientAuthority(),
+        ResolvePolicy(SymlinkPolicy.beneath, DotDotPolicy.reject));
+    if (sources.hasError)
+    {
+        stderr.writeln("plan-graph: cannot open ", sourcesPath);
+        return null;
+    }
+    const curl = onPath("curl");
+    auto fetcher = Fetcher(
+        (string url, string destination) => curl !is null
+            && execute([curl, "-sSfL", "--retry", "2", "-o", destination, url]).status == 0,
+        (string url, string commit, string destination) {
+            mkdirRecurse(destination);
+            return runGit(["init", "-q"], destination).status == 0
+                && runGit(["fetch", "-q", "--depth", "1", url, commit], destination).status == 0
+                && runGit(["-c", "advice.detachedHead=false", "checkout", "-q", "FETCH_HEAD"], destination).status == 0;
+        },
+        // As nixpkgs' `importDubLock` does: `dub fetch` from a registry of
+        // the one archive, which places the package as dub holds it.
+        (string name, string version_, string archive, string destination) {
+            import std.file : copy, exists, rename, rmdirRecurse;
+
+            const dub = onPath("dub");
+            const registry = destination ~ ".registry/" ~ name;
+            const home = destination ~ ".home";
+            mkdirRecurse(registry);
+            scope (exit)
+                foreach (dir; [destination ~ ".registry", home])
+                    if (dir.exists)
+                        rmdirRecurse(dir);
+            copy(archive, buildPath(registry, name ~ "-" ~ version_ ~ ".zip"));
+            if (dub is null || execute([dub, "fetch", name ~ "@" ~ version_, "--cache=user", "--skip-registry=standard",
+                    "--registry=file://" ~ registry], ["DUB_HOME": home]).status != 0)
+                return false;
+            const placed = buildPath(home, "packages", name, version_, name);
+            if (!placed.exists)
+                return false;
+            rename(placed, destination);
+            return true;
+        });
+    if (const why = fetchLockedSources(locked.value, sources.value, sourcesPath, fetcher))
+    {
+        stderr.writeln("plan-graph: ", why);
+        return null;
+    }
+    return sourcesPath;
 }
