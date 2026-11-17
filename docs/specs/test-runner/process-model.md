@@ -414,7 +414,17 @@ the worker has died, and may write to them for as long as it lives.
 **TRS1: Workers.** For a runtime run, the runner **must** start at most `T`
 workers, where `T` is the `-t` count, or the hardware thread count when `-t`
 is absent or zero. It **must not** start more workers than there are tests to
-run.
+run. It **must** start them on demand: one at first, then, as the run goes,
+as many more as leave each worker at least one worker's cost of the remaining
+work at the pace kept so far, and twice as many while no test has finished for
+longer than that cost and tests wait to be taken
+([TRD14](./decisions.md#trd14-workers-start-on-demand-accepted)).
+
+_Rationale:_ a worker is a process, and in a coverage build it writes a
+listing of every module when it ends. Started all at once, 25 workers ran
+`versions`' 167 tests, 33 ms of work, in 2.0 s instead of 0.3 s. A stall
+is the one sign of slow work the pace cannot give: `ui` finishes 700 quick
+tests on one worker, then one test holds it for seconds while 87 wait.
 
 **TRS2: Phases.** The runner **must** run every non-serial test before any
 `@serial` test. It **must** then run the serial tests one at a time, on one
@@ -696,7 +706,7 @@ unverified.
 | TRP5       | partial    | `sparkles.test_runner.entry.installHarnessHandlers`; the macOS handler unverified                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | TRP6–TRP28 | partial    | `sparkles.test_runner.session` transcript tests; `sparkles.test_runner.client` scripted-worker tests, which drive `run` and `exit` themselves (TRP22: a late abort; TRP27: a write to closed commands, an end before `started`; TRP28: a descendant holding the pipes); `sparkles.test_runner.scenarios_test` (mismatch, output, crash, abort on exit at once and late, a malformed frame piped and on a terminal, a test reading standard input, a crash while a child holds the pipes); TRP16's `usage` is not sent yet |
 | TRL1–TRL5  | partial    | `sparkles.test_runner.scenarios_test` (a bad `SPARKLES_TEST_RUNNER`, the launcher)                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| TRS1–TRS4  | partial    | `sparkles.test_runner.pool.startTestWorkers`; `-t 1` and `-t N` legs of `ci --test`                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| TRS1–TRS4  | partial    | `sparkles.test_runner.pool.startTestWorkers`, `sparkles.test_runner.pool.workersWanted`; `-t 1` and `-t N` legs of `ci --test`                                                                                                                                                                                                                                                                                                                                                                                            |
 | TRS5       | partial    | `sparkles.test_runner.pool.retire`; `ci --test` coverage listings; the covered-line comparison not run                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | TRX1–TRX4  | partial    | `sparkles.test_runner.driver.DriverOptions`; the `PATH`-without-dub scenario not run                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | TRF1–TRF4  | partial    | `sparkles.test_runner.scenarios_test` (`--no-runner` filters, `--bench` refused)                                                                                                                                                                                                                                                                                                                                                                                                                                          |
