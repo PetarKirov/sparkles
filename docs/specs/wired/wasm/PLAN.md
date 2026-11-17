@@ -29,7 +29,7 @@ new package builds for `wasm32-unknown-wasip1` with the flake's WASI LDC;
 
 ## W2 — The Nix module
 
-Done: `libs/dub-manifest/nix-wasm` (`dub-manifest-nix-wasm`), its oracle and
+Done: `libs/dub-manifest/dub-manifest-nix-wasm` (`dub-manifest-nix-wasm`), its oracle and
 `agreement.nix`; evidence in [SPEC §8](./SPEC.md#delivered-evidence).
 
 Obligations: WW2–WW6, WW15 for the module package. The entry layer of the

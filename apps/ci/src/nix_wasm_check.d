@@ -2,7 +2,7 @@
 `--check-nix-wasm`: the dub recipe module for Nix's `builtins.wasm`
 (docs/specs/wired/wasm) checked on an evaluator that has the builtin.
 
-Two Nix expressions in `libs/dub-manifest/nix-wasm` do the comparing, and
+Two Nix expressions in `libs/dub-manifest/dub-manifest-nix-wasm` do the comparing, and
 this mode runs them and judges their results:
 
 $(UL
@@ -163,7 +163,7 @@ int runCheckNixWasm(string root, string nix, string module_, string answers) @sy
     foreach (pair; modules)
     {
         const path = pair[0], m = pair[1];
-        const dir = root ~ "/libs/dub-manifest/nix-wasm";
+        const dir = root ~ "/libs/dub-manifest/dub-manifest-nix-wasm";
         verdicts ~= run(nix, "answers, " ~ m, &judgeAgreement, "import " ~ dir ~ "/agreement.nix { module = "
             ~ path ~ "; answers = " ~ answers ~ "; root = " ~ root ~ "; }");
         verdicts ~= run(nix, "recipe facts, " ~ m, &judgeFacts, "import " ~ dir

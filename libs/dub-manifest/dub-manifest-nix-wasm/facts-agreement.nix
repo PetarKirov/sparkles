@@ -4,7 +4,7 @@
 # the regular-expression reader's. Needs an evaluator with `builtins.wasm`:
 #
 #   nix eval --impure --json --extra-experimental-features wasm-builtin \
-#     --expr 'import ./libs/dub-manifest/nix-wasm/facts-agreement.nix {
+#     --expr 'import ./libs/dub-manifest/dub-manifest-nix-wasm/facts-agreement.nix {
 #       module = <dub-manifest-nix-wasm>/spk-dub-manifest.wasm; }'
 #
 # The seeded fixtures are recipes the readers manifest-graph.nix used before
