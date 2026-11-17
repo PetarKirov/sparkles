@@ -59,6 +59,11 @@ struct ProcessAction
     StdinPolicy stdin;     ///
     Duration timeout;      /// `Duration.zero` is no timeout
     SandboxPolicy sandbox; ///
+    /**
+    Whether `envDelta` is the whole environment: nothing is inherited from
+    the executor's (build-graph BGA4).
+    */
+    bool completeEnvironment;
 }
 
 /// An in-process action: a typed command handler, named by a stable id the
