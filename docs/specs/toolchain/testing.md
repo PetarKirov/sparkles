@@ -344,26 +344,29 @@ on aarch64-linux before the fix); **not run** = the test was read, not run again
 | `3e6235059b` tests: DefaultTraceInfo records traces with the unwinder                                        | (test-only: the test itself)                                                                                                                                                                                | n/a           | yes, with the commit it covers                                 |
 | `0a4e8b9a9f` tests: Bionic x86 scans TLS through `__tls_get_addr`                                            | (test-only: the test itself)                                                                                                                                                                                | n/a           | yes, with the commit it covers                                 |
 
-### LDC fork after the review (`0a4e8b9a9f..sparkles/main`, tip `8d5c3c8887`, 8 commits)
+### LDC fork after the review (`0a4e8b9a9f..sparkles/main`, tip `7bee3fbdeb`, 9 commits)
 
-dlang.nix `0b49f46` builds tip `8d5c3c8887`. The first three commits fix
-reproducibility, WASI linking and an ASan hang. The last five complete the
-compiler's dependency output for the
+dlang.nix `0b49f46` builds tip `7bee3fbdeb`, which the flake pins through its
+`ldc-sparkles` input. The first three commits fix reproducibility, WASI
+linking and an ASan hang. The last six complete the compiler's dependency
+output for the
 [build graph](../build-primitives/build-graph/SPEC.md):
 
 - the manifest of the files a compile read, with its absent candidates (BGK2);
+- the digest of the bytes the compile read from each of them (BGK2, BGK7);
 - relocatable coverage and ImportC paths (BGA5).
 
-| Commit                                                                                    | Regression test                                                                                                                                | Red on revert | Upstreamable            |
-| ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------- | ----------------------- |
-| `f62832cc17` WasmPointersSpill: spill and split in a deterministic order                  | `tests/codegen/wasm_spill_pointers_deterministic.d` (compiles Phobos' gammafunction five times, compares the objects)                          | not run       | yes                     |
-| `66e41cd8c9` phobos: no getprotobynumber() reference in std.socket on WASI                | none: a link fix (wasi-libc declares the function and does not define it), exercised by any wasip2 program that links `socket.o`               | not run       | Phobos commit yes       |
-| `5d81911f60` fix(druntime): keep collections out of createLowLevelThread's pthread_create | `tests/sanitizers/asan_gc_lowlevel_thread.d` (ASan, alarm as the hang check)                                                                   | yes           | yes                     |
-| `bd9396c726` Map the file name coverage registers a module under                          | `tests/codegen/file_prefix_map.d`, extended: `-cov` registers the remapped path                                                                | not run       | yes (with `3d8b19d533`) |
-| `ca5abb238f` List the headers an ImportC file includes in -makedeps                       | `tests/driver/makedeps_importc.c` (a header two includes deep)                                                                                 | not run       | yes                     |
-| `6ebdb35ffb` Add `-makedeps-absent=<file>`: the paths the import searches missed          | `tests/driver/makedeps_absent.d`: misses before an import, a string import and a `__traits(compiles, { import … })` probe resolved, and no hit | not run       | yes (a new option)      |
-| `10d6c6b987` List the config file lookup's misses in -makedeps-absent                     | `tests/driver/makedeps_absent.d`, extended: the `ldc2.conf` candidates searched before the one used                                            | not run       | yes, with `6ebdb35ffb`  |
-| `8d5c3c8887` Pass the macro prefix maps to the C preprocessor                             | `tests/codegen/file_prefix_map_importc.c`: `__FILE__` in an ImportC header is remapped                                                         | not run       | yes (with `3d8b19d533`) |
+| Commit                                                                                      | Regression test                                                                                                                                                          | Red on revert | Upstreamable            |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------- | ----------------------- |
+| `f62832cc17` WasmPointersSpill: spill and split in a deterministic order                    | `tests/codegen/wasm_spill_pointers_deterministic.d` (compiles Phobos' gammafunction five times, compares the objects)                                                    | not run       | yes                     |
+| `66e41cd8c9` phobos: no getprotobynumber() reference in std.socket on WASI                  | none: a link fix (wasi-libc declares the function and does not define it), exercised by any wasip2 program that links `socket.o`                                         | not run       | Phobos commit yes       |
+| `5d81911f60` fix(druntime): keep collections out of createLowLevelThread's pthread_create   | `tests/sanitizers/asan_gc_lowlevel_thread.d` (ASan, alarm as the hang check)                                                                                             | yes           | yes                     |
+| `bd9396c726` Map the file name coverage registers a module under                            | `tests/codegen/file_prefix_map.d`, extended: `-cov` registers the remapped path                                                                                          | not run       | yes (with `3d8b19d533`) |
+| `ca5abb238f` List the headers an ImportC file includes in -makedeps                         | `tests/driver/makedeps_importc.c` (a header two includes deep)                                                                                                           | not run       | yes                     |
+| `6ebdb35ffb` Add `-makedeps-absent=<file>`: the paths the import searches missed            | `tests/driver/makedeps_absent.d`: misses before an import, a string import and a `__traits(compiles, { import … })` probe resolved, and no hit                           | not run       | yes (a new option)      |
+| `10d6c6b987` List the config file lookup's misses in -makedeps-absent                       | `tests/driver/makedeps_absent.d`, extended: the `ldc2.conf` candidates searched before the one used                                                                      | not run       | yes, with `6ebdb35ffb`  |
+| `8d5c3c8887` Pass the macro prefix maps to the C preprocessor                               | `tests/codegen/file_prefix_map_importc.c`: `__FILE__` in an ImportC header is remapped                                                                                   | not run       | yes (with `3d8b19d533`) |
+| `7bee3fbdeb` Add `-makedeps-digests=<file>`: what the compilation read from each dependency | `tests/driver/makedeps_digests.d` (a module and a string import, each once) and `tests/driver/makedeps_digests_importc.c` (a header digested after the preprocessor ran) |
 
 ### LLVM fork (`upstream/main..sparkles/main`, tip `275dcf2887`, 31 commits)
 
