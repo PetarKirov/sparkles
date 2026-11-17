@@ -221,11 +221,17 @@ long-lived npm token in the repository's secrets. Its version follows
 
 ## 6. Portability
 
-**WW15: Tested on WebAssembly.** _(Owner: `sparkles:wired`.)_ The tests of
-the core (WW1) that need no file system, process or thread **must** run
-under the test runner's `--wasm` mode in CI, and the module packages of
-WW3, WW12 and WW13 **must** be built by `ci --build-each-commit`, like the
-modules of TCM2.
+**WW15: Tested on WebAssembly.** _(Owners: `sparkles:wired`,
+`sparkles:dub-manifest`.)_ For each format (JSON and SDL) the document
+reader and writer, the typed codec in both directions, and the reporting
+of malformed input, and for the recipe schema each recipe form and its
+rejections, **must** be exercised by `@wasm` tests that run under the test
+runner's `--wasm` mode in CI (`ci --test-extracted`). They are written
+against the public API, each importing what it uses, because an extracted
+test sees nothing of its module; the rest of the core's tests are not
+extracted, and a construct that only they reach is not covered.
+The module packages of WW3, WW12 and WW13 **must** be built by
+`ci --build-each-commit`, like the modules of TCM2.
 
 ## 7. Decisions and open questions
 
