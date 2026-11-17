@@ -852,8 +852,10 @@ every record before appending it: the run identifier's syntax, its schema
 version, its size (OBD10), the privacy scan (OBP4), and at most four records
 per job the API lists for the run. The invocation ordinal `<n>` is the one part
 of the identifier a record supplies; the appender checks that it is a small
-integer and drops a second record that claims the same identifier. A record
-that fails is dropped and reported in the job's summary, and the others are
+integer and drops a second record that claims the same identifier. The attempt
+is any of the run's, from 1 to the latest the API names: a re-run of a run's
+failed jobs keeps the artifacts its passed jobs uploaded in earlier attempts. A
+record that fails is dropped and reported in the job's summary, and the others are
 appended.
 
 _Rationale:_ a pull request's code writes its own records, so a record is
