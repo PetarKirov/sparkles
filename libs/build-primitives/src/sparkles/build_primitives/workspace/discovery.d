@@ -35,6 +35,14 @@ enum ReadKind : ubyte
     file,    /// a file's bytes were read
     probe,   /// only whether the path exists was asked
     listing, /// the files beneath a directory were listed (`names` says which)
+    /// a lookup crossed a symbolic link; `names` is its target (BGF3)
+    link,
+    /// a `pkg-config` query: `path` is `pkg-config`, `names` its arguments,
+    /// the digest that of its status and output
+    query,
+    /// an environment variable: `path` is its name, the digest that of its
+    /// value; not `found` when unset
+    environment,
 }
 
 /**
@@ -48,7 +56,7 @@ struct ReadEntry
     bool found;        /// whether it existed; an absent one is read as absent
     ubyte[32] digest;  /// BLAKE3 (D48); zero when absent, and for a probe
     ReadKind kind;     ///
-    string names;      /// a listing's name patterns, space-separated: `*.d *.di`
+    string names;      /// a listing's name patterns, space-separated: `*.d *.di`; a link's target; a query's arguments
 }
 
 /// The files a value was derived from (BGP1), sorted by path, each once.

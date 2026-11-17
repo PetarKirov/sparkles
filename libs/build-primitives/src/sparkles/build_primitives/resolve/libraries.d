@@ -230,6 +230,108 @@ final class SystemPkgConfig : PkgConfigDriver
     }
 }
 
+/**
+A driver that answers each query of `inner` once and records it, with its
+status and output, in a tree's read set (BGP1), with the environment
+variables `pkg-config` reads. Planning queries through it, so its plan
+records what the libraries resolved from.
+*/
+final class RecordingPkgConfig : PkgConfigDriver
+{
+    import sparkles.build_primitives.resolve.tree : ResolveTree;
+
+    private PkgConfigDriver inner;
+    private ResolveTree tree;
+    private string[string] environment;
+    private Answer[string] answers;
+
+    private static struct Answer
+    {
+        bool ok;
+        string output;
+    }
+
+    /// The variables `pkg-config` reads, besides its executable's.
+    static immutable string[] variables = ["PKG_CONFIG", "PKG_CONFIG_PATH", "PKG_CONFIG_LIBDIR",
+        "PKG_CONFIG_SYSROOT_DIR", "PKG_CONFIG_ALLOW_SYSTEM_CFLAGS", "PKG_CONFIG_ALLOW_SYSTEM_LIBS"];
+
+    /// Queries `inner`, recording in `tree`; `environment` holds the
+    /// values of `variables` that are set.
+    this(PkgConfigDriver inner, ResolveTree tree, string[string] environment) @safe
+    {
+        this.inner = inner;
+        this.tree = tree;
+        this.environment = environment;
+    }
+
+    bool exists(string name) @safe
+    {
+        string output;
+        return ask(["--exists", name], (out string o) => inner.exists(name), output);
+    }
+
+    bool libs(const string[] names, out string output) @safe
+        => ask(["--libs"] ~ names, (out string o) => inner.libs(names, o), output);
+
+    bool cflags(const string[] names, out string output) @safe
+        => ask(["--cflags"] ~ names, (out string o) => inner.cflags(names, o), output);
+
+    string pcFile(string name) @safe
+    {
+        string output;
+        return ask(["--path", name], (out string o) { o = inner.pcFile(name); return o !is null; }, output)
+            ? output : null;
+    }
+
+    private bool ask(const string[] arguments, scope bool delegate(out string) @safe query,
+        out string output) @safe
+    {
+        string key;
+        foreach (a; arguments)
+            key ~= a ~ "\0";
+        auto answer = key in answers;
+        if (answer is null)
+        {
+            if (answers.length == 0)
+                foreach (v; variables)
+                {
+                    auto value = v in environment;
+                    tree.noteEnvironment(v, value ? *value : null, value !is null);
+                }
+            Answer a;
+            a.ok = query(a.output);
+            answers[key] = a;
+            answer = key in answers;
+        }
+        tree.noteQuery(arguments, answer.ok ? 0 : 1, answer.output);
+        output = answer.output;
+        return answer.ok;
+    }
+}
+
+/// The recording driver answers each query once and records each in the
+/// tree's read set, with the variables `pkg-config` reads.
+@("build_primitives.resolve.libraries.RecordingPkgConfig")
+@safe
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.build_primitives.resolve.tree : memoryTree;
+    import sparkles.build_primitives.workspace.discovery : ReadKind;
+
+    auto tree = memoryTree(null);
+    auto driver = new RecordingPkgConfig(new MemoryPkgConfig(["z": "-lz"], ["z": "-I/z"]), tree,
+        ["PKG_CONFIG_PATH": "/pc"]);
+    string output;
+    assert(driver.libs(["z"], output) && output == "-lz");
+    assert(!driver.exists("absent"));
+    const reads = tree.reads.entries;
+    assert(reads.canFind!(e => e.kind == ReadKind.query && e.names == "--libs z" && e.found));
+    assert(reads.canFind!(e => e.kind == ReadKind.query && e.names == "--exists absent" && !e.found));
+    assert(reads.canFind!(e => e.kind == ReadKind.environment && e.path == "PKG_CONFIG_PATH" && e.found));
+    assert(reads.canFind!(e => e.kind == ReadKind.environment && e.path == "PKG_CONFIG_LIBDIR" && !e.found));
+}
+
 /// A driver over fixed answers: `.pc` names to their `--libs` and `--cflags`.
 final class MemoryPkgConfig : PkgConfigDriver
 {
