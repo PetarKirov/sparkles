@@ -126,7 +126,12 @@ int main(string[] args)
         const runDir = into.length ? absolutePath(into[0]["--into=".length .. $])
             : cache.length ? buildPath(cache, "runs", text(Clock.currTime.toUnixTime, "-", thisProcessID))
             : buildPath(root, "build", "graph-run");
-        return runPackage(root, runOnly[0]["--run=".length .. $], runDir, cache, args.canFind("--check-determinism"),
+        // `--run=all` runs every package's test root; `--jobs=N` caps the
+        // weight running at once (the default: one per processor).
+        const name = runOnly[0]["--run=".length .. $];
+        const jobs = args.filter!(a => a.startsWith("--jobs=")).array;
+        runJobs = jobs.length ? jobs[0]["--jobs=".length .. $].to!uint : 0;
+        return runPackage(root, name == "all" ? null : name, runDir, cache, args.canFind("--check-determinism"),
             args.canFind("--confine-tests") ? Confinement.tests : args.canFind("--confine") ? Confinement.builds
             : Confinement.none);
     }
@@ -1197,6 +1202,9 @@ actions into `into` on the task-DAG executor: compiles, archives and the
 link with the fixed environment, then the test. Prints each task's lines
 and its outcome; the exit status is the run's.
 */
+/// The weight a run admits at once; 0 for one per processor.
+__gshared uint runJobs;
+
 /// What a run confines (D39's spike).
 enum Confinement
 {
@@ -1296,7 +1304,7 @@ int runPackage(string root, string only, string into, string cache, bool checkDe
     import sparkles.build_graph.execute : RunStats;
 
     RunStats stats;
-    const r = runActions(nodes, p.graph, layout, w, cast(uint) totalCPUs, &stats);
+    const r = runActions(nodes, p.graph, layout, w, runJobs ? runJobs : cast(uint) totalCPUs, &stats);
     writeln(p.graph.actions.length, " actions; exit ", r.exitCode);
     if (cache.length)
         writeln("store ", cache, ": ", stats.summary);
