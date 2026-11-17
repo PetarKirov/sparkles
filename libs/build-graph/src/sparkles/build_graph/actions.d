@@ -19,7 +19,10 @@ $(LIST
 
 A compile reads its dependencies' sources through import paths and waits for
 no archive; a link waits for the archives it links (BGA2). Every edge is an
-`onSuccess` task edge.
+`onSuccess` task edge, but a coverage attempt's fallback (CIC7): the coverage
+build's actions are provisional, and the plain compile waits for the coverage
+link's failure on an `onFailure` edge. The plain compile's key is its
+variant's, whichever graph holds it (invariant 7).
 
 An action's argument vector names paths with placeholders, as its key will
 (BGA6): `$ROOT` for the repository root, `$OUT` for the action's private
@@ -87,13 +90,17 @@ struct Action
     TaskAction action;
     DeclaredOutput[] outputs; ///
     uint weight;              /// its claim (BGA8)
+    /// Part of a coverage build: its failure is classified by the plain
+    /// retry behind it, so it never fails the run (CIC7, TDC4).
+    bool provisional;
 }
 
 /// The actions and their edges.
 struct ActionGraph
 {
     Action[] actions; /// in the order planned
-    TaskEdge[] edges; /// every one `onSuccess`
+    /// `onSuccess`, but for a coverage fallback's `onFailure` edges
+    TaskEdge[] edges;
 
     /// The action with id `id`, or null.
     inout(Action)* find(TaskId id) inout @safe pure nothrow @nogc
@@ -110,6 +117,18 @@ struct Tools
 {
     string compiler = "ldc2"; /// by absolute path in a real plan (BGA4)
     string archiver = "llvm-ar"; ///
+}
+
+/**
+A coverage attempt (CIC7): request `coverage` builds a package's test binary
+with coverage, and request `plain` is the same package's plain test, its
+fallback. The coverage build's actions are provisional, and the plain
+compile waits on an `onFailure` edge from the coverage link.
+*/
+struct CoverageAttempt
+{
+    size_t coverage; /// the index of the coverage request
+    size_t plain;    /// the index of the plain one
 }
 
 /// Why the graph could not be made.
@@ -133,15 +152,19 @@ Params:
     resolutions = the requests, in the plan's order
     root = the repository root, which in-tree paths are made relative to
     tools = the compiler and the archiver
+    attempts = the coverage attempts among the requests
 */
 PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
-    const Resolution[] resolutions, string root, const Tools tools = Tools.init) @safe
+    const Resolution[] resolutions, string root, const Tools tools = Tools.init,
+    const CoverageAttempt[] attempts = null) @safe
 {
     ActionGraph g;
     bool[string] made;
     // Each variant's compile, by variant.
     TaskId[size_t] compileOf;
     TaskId[size_t] archiveOf;
+    // Each request's root compile and link.
+    TaskId[size_t] rootCompileOf, linkOf;
 
     TaskId add(Action a)
     {
@@ -232,6 +255,8 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
                 sandbox: SandboxPolicy.taskDirectory)),
             [DeclaredOutput(binaryName(*v))], weight);
         const linkId = add(l);
+        rootCompileOf[ri] = compileOf[rootVariant];
+        linkOf[ri] = linkId;
         edge(compileOf[rootVariant], linkId);
         foreach (a; archiveIds)
             edge(a, linkId);
@@ -239,12 +264,40 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
         if (v.role == Role.testRoot)
         {
             const testWeight = defaultWeight(ActionKind.test);
+            // A coverage test writes its listings to its own directory, recording
+            // root-relative paths (CIC7).
+            const coverage = (v.settings.options & BuildOption.coverage) != 0;
+            auto testArgv = [inputPath(linkId, binaryName(*v))];
+            if (coverage)
+                testArgv ~= "--DRT-covopt=dstpath:$OUT srcpath:$ROOT";
+            testArgv ~= ["-t", text(testWeight)];
             auto t = Action(ActionKind.test, actionId(ActionKind.test, *v), rootVariant,
-                TaskAction(ProcessAction(argv: [inputPath(linkId, binaryName(*v)), "-t", text(testWeight)],
-                    cwd: relative(v.directory, root), sandbox: SandboxPolicy.taskDirectory)),
-                null, testWeight);
+                TaskAction(ProcessAction(argv: testArgv, cwd: relative(v.directory, root),
+                    sandbox: SandboxPolicy.taskDirectory)),
+                coverage ? [DeclaredOutput(".", true)] : null, testWeight);
             edge(linkId, add(t));
         }
+    }
+
+    // CIC7: the coverage build is provisional, and the plain retry waits for
+    // its failure.
+    foreach (at; attempts)
+    {
+        if (at.coverage >= resolutions.length || at.plain >= resolutions.length
+            || at.coverage !in linkOf || at.plain !in rootCompileOf)
+            return planErr!ActionGraph(ActionError("a coverage attempt names a request with no test binary"));
+        // A variant another request also builds is not the attempt's alone.
+        bool[size_t] shared_;
+        foreach (ri, vs; plan.requests)
+            if (!attempts.canFind!(x => x.coverage == ri))
+                foreach (vi; vs)
+                    shared_[vi] = true;
+        foreach (vi; plan.requests[at.coverage])
+            foreach (ref a; g.actions)
+                if (a.variant == vi && a.kind != ActionKind.test && vi !in shared_)
+                    a.provisional = true;
+        g.edges ~= TaskEdge(linkOf[at.coverage], rootCompileOf[at.plain], EdgeCondition.onFailure,
+            EdgeReason.coverageFallback);
     }
     return planOk!ActionError(g);
 }
@@ -268,7 +321,7 @@ TaskNode[] taskNodes(ref const ActionGraph g) @safe
             order: PresentationKey(1, a.id.text, a.kind, 0),
             resources: ResourceClaim(jobsWeight: a.weight),
             action: copyOf(a.action),
-            failurePolicy: FailurePolicy.authoritative,
+            failurePolicy: a.provisional ? FailurePolicy.provisional : FailurePolicy.authoritative,
             outputPolicy: OutputPolicy.replay);
     }
     return nodes;
@@ -353,6 +406,9 @@ string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId
         argv ~= "-singleobj";
     argv ~= "-of=$OUT/" ~ objectName(v);
     argv ~= optionFlags(s.options, ldc);
+    // Tests run on several threads, so LDC counts coverage atomically (CIC7).
+    if (ldc && (s.options & BuildOption.coverage))
+        argv ~= "--cov-increment=atomic";
     foreach (f; s.dflags)
         argv ~= f;
     foreach (p; s.importPaths)
@@ -443,6 +499,15 @@ version (unittest)
     // Two test roots on `mid`, which uses `leaf`: as the variants' tests.
     private ActionGraph graphOf(string[] packages...) @safe
     {
+        string[2][] requests;
+        foreach (p; packages)
+            requests ~= [p, "unittest"];
+        return graphWith(requests);
+    }
+
+    // The same packages, each request a sub-package and a build type.
+    private ActionGraph graphWith(const string[2][] requests, const CoverageAttempt[] attempts = null) @safe
+    {
         auto tree = memoryTree([
             "/r/dub.sdl": "name \"r\"\nsubPackage \"t1\"\nsubPackage \"t2\"\nsubPackage \"mid\"\nsubPackage \"leaf\"\n",
             "/r/t1/dub.sdl": "name \"t1\"\ndependency \"r:mid\" path=\"..\"\n"
@@ -457,9 +522,9 @@ version (unittest)
             "/r/leaf/source/leaf.d": "module leaf;\n",
         ]);
         Resolution[] rs;
-        foreach (p; packages)
+        foreach (q; requests)
         {
-            auto r = resolve(ResolveRequest(directory: "/r", subPackage: p, buildType: "unittest",
+            auto r = resolve(ResolveRequest(directory: "/r", subPackage: q[0], buildType: q[1],
                 platform: BuildPlatform(["linux", "posix"], ["x86_64"], "ldc", "ldc2", 2111, "1.41.0"),
                 testRoot: true), tree);
             assert(r.hasValue, r.hasError ? r.error.message : null);
@@ -467,8 +532,8 @@ version (unittest)
         }
         const plan = planVariants(rs, PlanOptions(ToolchainIdentity("ldc", "toolchain-1")), tree);
         assert(plan.hasValue);
-        auto g = planActions(plan.value, rs, "/r");
-        assert(g.hasValue);
+        auto g = planActions(plan.value, rs, "/r", Tools.init, attempts);
+        assert(g.hasValue, g.hasError ? g.error.message : null);
         return g.value;
     }
 
@@ -561,3 +626,62 @@ version (unittest)
     v.toolchain = ToolchainIdentity("dmd", "two");
     assert(actionId(ActionKind.compile, v) != before);
 }
+
+@("build_graph.actions.planActions.coverageFallback")
+@safe unittest
+{
+    import sparkles.build_primitives.task.model : FailurePolicy;
+
+    // Oracle 14, invariant 7: a coverage attempt and its plain fallback,
+    // against the plain test alone. The plain compile behind the `onFailure`
+    // edge is the one the plain test compiles: one id and one argument
+    // vector, so one result serves both.
+    const attempt = graphWith([[":t1", "unittest-cov"], [":t1", "unittest"]], [CoverageAttempt(0, 1)]);
+    const plain = graphOf(":t1");
+
+    TaskId plainCompile;
+    foreach (ref a; plain.actions)
+        if (a.kind == ActionKind.compile && a.id.text.startsWith("compile:r.t1:"))
+            plainCompile = a.id;
+    const inAttempt = attempt.find(plainCompile);
+    assert(inAttempt !is null, "the plain compile is in the attempt's graph");
+    assert(inAttempt.action == plain.find(plainCompile).action && !inAttempt.provisional);
+
+    // The fallback edge: from the coverage link to the plain compile.
+    size_t fallbacks;
+    foreach (ref e; attempt.edges)
+        if (e.condition == EdgeCondition.onFailure)
+        {
+            ++fallbacks;
+            const from = attempt.find(e.prerequisite);
+            assert(from.kind == ActionKind.link && from.provisional && e.dependent == plainCompile);
+            assert(e.reason == EdgeReason.coverageFallback);
+        }
+    assert(fallbacks == 1);
+    foreach (ref e; plain.edges)
+        assert(e.condition == EdgeCondition.onSuccess);
+
+    // The coverage build is provisional; its test, and the plain chain, are
+    // not. The coverage compile counts atomically, and its test writes its
+    // listings to its own directory (CIC7).
+    foreach (n; taskNodes(attempt))
+    {
+        const a = attempt.find(n.id);
+        assert((n.failurePolicy == FailurePolicy.provisional) == a.provisional);
+        const argv = a.action.match!((ref const ProcessAction p) => p.argv.dup, (_) => string[].init);
+        if (a.provisional && a.kind == ActionKind.compile)
+            assert(argv.canFind("-cov") && argv.canFind("--cov-increment=atomic"));
+        if (a.kind == ActionKind.test && attempt.find(e(attempt, a.id)).provisional)
+            assert(argv.canFind("--DRT-covopt=dstpath:$OUT srcpath:$ROOT"));
+    }
+}
+
+version (unittest)
+    // The prerequisite of the edge into `to`.
+    private TaskId e(ref const ActionGraph g, TaskId to) @safe
+    {
+        foreach (ref x; g.edges)
+            if (x.dependent == to)
+                return x.prerequisite;
+        assert(0);
+    }
