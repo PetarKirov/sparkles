@@ -68,6 +68,47 @@ Status: Linux and macOS are met.
 - **Channels:** `CrossChannel` is the executor's production event channel.
 - **Pending:** Windows supervision is the remaining part of the gate.
 
+## M3a: Placements before the build graph
+
+CIC14's data path on the current test modes, with the slice of the
+observability plan that
+[OD21](../../build-primitives/observability/decisions.md#od21-test-wall-times-reach-the-history-before-the-build-graph-accepted)
+names:
+
+- **Records:** `--test`, `--test-sanitize` and `--test-extracted` write a run
+  record with one task per package run, task id
+  `test:<package>:<mode>:<leg>` (TDM1), where `<leg>` is `serial` or
+  `parallel` rather than a thread count that varies by host, its outcome and
+  `task.wall`.
+  `--record-task ID -- COMMAND` records any other command the same way. CI
+  uploads the records as artifacts.
+- **History:** `main-checks.yml` appends the validating run's records to
+  `refs/perf/data` (OBH3–OBH5), signed with the CI key (OBH8). `ci perf push`
+  publishes local records, and `ci perf import-github-run RUN` builds records
+  from an earlier run's job logs, to seed the history.
+- **Placements:** one data file, `ci/placements.json`, declares each placement:
+  its system, compiler, mode, runners per provider, shard count and time
+  limit. `ci --list-placements` prints them with their shards as JSON, and sets
+  it as a job output.
+- **Shards:** `--placement NAME --shard K/N` packs the placement's packages
+  longest first, by the median `task.wall` of each task's last five records on
+  that placement, and runs shard `K`. A package with no record takes the
+  median of the placement's recorded tasks.
+- **Workflows:** the test, sanitizer and extracted jobs take their matrix from
+  `--list-placements`, and name no package. The steps the first shard used to
+  run beside its tests move to jobs of their own. CircleCI runs the same
+  placements by `--shard ${CIRCLE_NODE_INDEX}/${CIRCLE_NODE_TOTAL}`.
+- **The toolchain's build plan** reads each pin's cost the same way, from the
+  `pin-build:<pin>` tasks its builds record; `nix/pin-build-costs.json` goes.
+
+Prerequisites from the owner: the CI signing key's environment and the
+allowed-signers file (OD21).
+
+Gate: two consecutive `main` landings append their records; a third run's
+shards are packed from them, with no package named in any workflow; every
+shard of a run packs identically, checked by a test that packs one placement
+from two `--history-tip` reads; a forged or unsigned record is not read.
+
 ## M7: Canonical CLI and the `ci test` cutover onto the build graph
 
 - Add `cli.d` with the core-cli nested command tree and the common execution
@@ -193,6 +234,7 @@ workflow or user-facing document uses a removed flag.
 | --------- | ------------------------------------ | ----------- |
 | M0        | Specifications                       | in review   |
 | M3        | Prerequisite gate                    | partial     |
+| M3a       | Placements before the build graph    | in progress |
 | M7        | CLI and `ci test` on the build graph | not started |
 | M8        | Coverage and special modes           | not started |
 | M9        | Examples                             | not started |
