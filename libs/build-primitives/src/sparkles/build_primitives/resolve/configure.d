@@ -907,6 +907,8 @@ private void processVars(ref BuildSettings dst, Package p, const ref BuildSettin
     dst.options |= settings.options;
     // Commands keep their variables: they expand when a generator runs (D8).
     dst.addPreGenerateCommands(settings.preGenerateCommands);
+    foreach (_; settings.preGenerateCommands)
+        dst.preGenerateDirectories ~= p.directory;
     dst.addPostGenerateCommands(settings.postGenerateCommands);
     dst.addPreBuildCommands(settings.preBuildCommands);
     dst.addPostBuildCommands(settings.postBuildCommands);
@@ -988,6 +990,7 @@ dflags "-win-flag" platform="windows"
             "/r/util/dub.sdl": `name "util"
 targetType "sourceLibrary"
 versions "UtilVersion"
+preGenerateCommands "gen $$PACKAGE_DIR"
 `,
             "/r/util/source/util.d": "",
             "/r/leaf/dub.sdl": `name "leaf"
@@ -1024,6 +1027,9 @@ importPaths "include"
     assert(app.packages == ["r:app", "r:util"] && lib.packages == ["r:lib", "r:util"]);
     assert(app.settings.sourceFiles.canFind("/r/util/source/util.d"));
     assert(lib.settings.sourceFiles.canFind("/r/util/source/util.d"));
+    // Its command runs in its own directory, whichever consumer folds it in (§7).
+    assert(app.settings.preGenerateCommands == ["gen $$PACKAGE_DIR"]);
+    assert(app.settings.preGenerateDirectories == ["/r/util"] && lib.settings.preGenerateDirectories == ["/r/util"]);
     assert(app.linkDependencies == ["r:lib", "r:leaf"] && app.dependencies == ["r:lib"]);
     assert(r.targets[0].package_ == "r:app");
 }
