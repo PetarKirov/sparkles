@@ -762,6 +762,12 @@ struct ActionDriver
                 if (a.kind == ActionKind.compile)
                     foreach (dir; cRoots(p.argv))
                         s ~= "c-root " ~ dir ~ " " ~ treeDigest(dir) ~ "\n";
+                // BGK9: a link keys on where each library it links resolved
+                // along its `-L` search order, and on the candidates absent
+                // before it, so a library created earlier on the path changes it.
+                if (a.kind == ActionKind.link)
+                    foreach (line; librarySearch(p.argv))
+                        s ~= line ~ "\n";
                 // BGK6: a compile without dependency output keys on every file
                 // beneath every worktree root it searches.
                 if (a.kind == ActionKind.compile && !withManifest(a))
@@ -841,6 +847,46 @@ struct ActionDriver
             if (!path.startsWith("/nix/store/") && present(path))
                 return ["manifest", path ~ " appeared"];
         return ["manifest", "no manifest matches"];
+    }
+
+    /*
+    BGK9: for each `-L-l<name>` a link passes, the first of `lib<name>.so`
+    and `lib<name>.a` along its `-L-L<dir>` directories, in order, as
+    `library <name> <path> after <n> absent`, or `library <name> unresolved`
+    when none holds it (the toolchain's own directories, which its identity
+    covers, then serve it).
+    */
+    private string[] librarySearch(const string[] argv)
+    {
+        string[] dirs, names, lines;
+        foreach (arg; argv)
+            if (arg.startsWith("-L-L") && arg.length > 4)
+                dirs ~= arg[4 .. $];
+            else if (arg.startsWith("-L-l") && arg.length > 4)
+                names ~= arg[4 .. $];
+        foreach (name; names)
+        {
+            size_t absentBefore;
+            string found;
+            foreach (dir; dirs)
+            {
+                foreach (file; ["lib" ~ name ~ ".so", "lib" ~ name ~ ".a"])
+                {
+                    const path = dir ~ "/" ~ file;
+                    if (present(path))
+                    {
+                        found = path;
+                        break;
+                    }
+                    ++absentBefore;
+                }
+                if (found.length)
+                    break;
+            }
+            lines ~= found.length ? text("library ", name, " ", found, " after ", absentBefore, " absent")
+                : "library " ~ name ~ " unresolved";
+        }
+        return lines;
     }
 
     // The worktree import roots of the device configuration a shader
