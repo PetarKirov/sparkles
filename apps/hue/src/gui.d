@@ -4955,18 +4955,6 @@ private enum fadeCfg = Timeline.Config(fadeInMs: 300, holdUntilDismissed: true);
 private int frameMs(float seconds) @safe pure nothrow @nogc
     => cast(int)(seconds * 1000);
 
-/// Decimal digit count (at least 1, for 0).
-private int digitCount(size_t n) pure nothrow @nogc @safe
-{
-    int d = 1;
-    while (n >= 10)
-    {
-        n /= 10;
-        ++d;
-    }
-    return d;
-}
-
 /// Formats `v` into a thread-local buffer as decimal digits (no allocation).
 private char[] uintToBuf(size_t v) @safe nothrow
 {

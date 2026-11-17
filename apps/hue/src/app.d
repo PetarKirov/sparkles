@@ -1584,7 +1584,8 @@ private auto staticGutter(B)(ref B b, uint docRoot, in Document doc,
     import sparkles.ui.geometry : Constraints;
     import sparkles.ui.layout : layout;
     import sparkles.ui.state : documentRows;
-    import sparkles.doc_view.viewer_model : digitCount, lineNumberCells, lineNumberChannelId,
+    import sparkles.ui.components.gutter : lineNumberWidth;
+    import sparkles.doc_view.viewer_model : lineNumberCells, lineNumberChannelId,
         srcLineOf;
 
     // Line numbers are opt-in here and on by default in a pane, which is the
@@ -1610,7 +1611,7 @@ private auto staticGutter(B)(ref B b, uint docRoot, in Document doc,
     GutterChannel[] chans;
     if (wantNumbers)
     {
-        const width = digitCount(lineCount(doc.source));
+        const width = lineNumberWidth(lineCount(doc.source));
         auto ch = GutterChannel(id: lineNumberChannelId, width: width);
         ch.cells = lineNumberCells(rows, width, &lineOf);
         chans ~= ch;

@@ -115,6 +115,38 @@ GutterCell blankCell(int width, Slot slot = Slot.gutter)
     @safe pure nothrow @nogc => cellOf(null, width, slot);
 
 /**
+The width in cells of a line-number strip over `lineCount` lines: the
+decimal digits of the last number, at least one. It comes from the line
+count, never from the lines on screen, so wrapping or scrolling never
+changes it (`NUM3`).
+*/
+int lineNumberWidth(size_t lineCount) @safe pure nothrow @nogc
+{
+    int digits = 1;
+    for (; lineCount >= 10; lineCount /= 10) ++digits;
+    return digits;
+}
+
+/// The line-number cell of 0-based `line`: its 1-based number, right-aligned to `width`.
+GutterCell lineNumberCell(size_t line, int width, Slot slot = Slot.gutter) @safe pure nothrow @nogc
+{
+    import sparkles.base.text.writers : writeInteger;
+    SharedBuffer!(char, 24) number;
+    writeInteger(number, line + 1);
+    return cellOf(number[], width, slot);
+}
+
+/// Numbers right-align on their last digit; the width follows the line count.
+@("gutter.lineNumbers")
+@safe pure nothrow @nogc unittest
+{
+    assert(lineNumberWidth(0) == 1 && lineNumberWidth(9) == 1 && lineNumberWidth(10) == 2);
+    assert(lineNumberWidth(1000) == 4);
+    assert(lineNumberCell(8, 2).text[] == " 9" && lineNumberCell(9, 2).text[] == "10");
+    assert(lineNumberCell(0, 3, Slot.textPrimary).slot == Slot.textPrimary);
+}
+
+/**
 One vertical strip of per-line chrome.
 
 A channel is data: the cells and how wide they are. What they $(I mean) —

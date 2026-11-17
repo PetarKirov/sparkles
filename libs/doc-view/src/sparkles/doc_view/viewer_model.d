@@ -34,7 +34,7 @@ import sparkles.source_view.markdown : FenceScroll, isWrap, OverflowPolicy,
 import sparkles.doc_view.preview_window : PreviewWindow, RawRowMap, SegmentIndex, widestLine;
 import core.time : Duration;
 import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell,
-    GutterChannel, gutterWidth, withGutterColumns, withinBudget;
+    GutterChannel, gutterWidth, lineNumberCell, lineNumberWidth, withGutterColumns, withinBudget;
 import sparkles.code_instrumentation : maxCountWidth;
 import sparkles.syntax.ts.highlighter : ParsedLayer;
 import sparkles.syntax.ts.injection : TsConfigCache;
@@ -622,7 +622,7 @@ struct ViewerModel
         // `NUM3`: from the source line count, so wrapping never changes it.
         if (lineNumbers && srcTotal > 0)
             chans ~= GutterChannel(id: lineNumberChannelId,
-                width: digitCount(srcTotal), priority: lineNumberChannelPriority);
+                width: lineNumberWidth(srcTotal), priority: lineNumberChannelPriority);
         if (coverageColumn && hasCoverage)
             chans ~= GutterChannel(id: coverageChannelId,
                 width: cast(int) maxCountWidth, priority: coverageChannelPriority);
@@ -5330,19 +5330,6 @@ GutterCell[] iconCells(in FoldMarker[] markers, size_t rowCount, int width,
     assert(cells[1].text[] == " " && cells[1].hitId == 0, "inert between them");
 }
 
-/// Decimal digits in `n`, so a channel's width comes from the line count
-/// (`NUM3`) rather than from whatever is on screen.
-int digitCount(size_t n) @safe pure nothrow @nogc
-{
-    int d = 1;
-    while (n >= 10)
-    {
-        n /= 10;
-        d++;
-    }
-    return d;
-}
-
 /// The source (physical) line containing byte `off` — a binary search over the
 /// line-start offsets. The gutter's row → line mapping.
 size_t srcLineOf(scope const size_t[] lineStarts, size_t off)
@@ -5371,9 +5358,6 @@ number nothing rather than repeat its neighbour.
 GutterCell[] lineNumberCells(in DocRow[] rows, int width,
     scope size_t delegate(size_t) @safe lineOf) @safe
 {
-    import sparkles.base.buffer : SharedBuffer;
-    import sparkles.base.text.writers : writeInteger;
-
     auto cells = new GutterCell[](rows.length);
     size_t prev = size_t.max;
     foreach (i, ref row; rows)
@@ -5391,9 +5375,7 @@ GutterCell[] lineNumberCells(in DocRow[] rows, int width,
             continue;
         }
         prev = line;
-        SharedBuffer!(char, 16) buf;
-        writeInteger(buf, line + 1);
-        cells[i] = cellOf(buf[], width);
+        cells[i] = lineNumberCell(line, width);
     }
     return cells;
 }

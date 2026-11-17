@@ -11,7 +11,7 @@ import sparkles.ui.command_palette_input : PaletteInput;
 import sparkles.ui.components.command_palette : PaletteViewOptions, viewCommandPalette;
 import sparkles.ui.components.scroll_body : ScrollBody, scrollSeconds;
 import sparkles.ui.components.editor : drawIndentGuides, editorLineSpans, editorView, EditorViewOptions, layoutColumn, markSpans, TextMark, VisualRow, visualRows;
-import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell, GutterChannel, withGutterCells;
+import sparkles.ui.components.gutter : blankCell, GutterCell, GutterChannel, lineNumberCell, lineNumberWidth, withGutterCells;
 import sparkles.ui.editor.presentation : CaretPosition, matchingBracket, trailingWhitespace;
 import find_bar : FindBar;
 import document_font : DocumentFontService;
@@ -470,17 +470,6 @@ private ref RowIndex rowIndex(Document document) @safe
 }
 
 private enum Dialog : ubyte { none, openPath, savePath, dirtyClose, recoveryClose, restoreOffer }
-
-/// The decimal digits of `value`, at least one: a line-number gutter's width.
-private size_t decimalDigits(size_t value) @safe pure nothrow @nogc
-{
-    size_t digits = 1;
-    for (; value >= 10; value /= 10) ++digits;
-    return digits;
-}
-
-/// A line number's text.
-private string lineLabel(size_t number) @safe pure nothrow => text(number);
 
 /// Thin shared-widget component, instantiated by recording, TUI and Vulkan hosts.
 struct EditorApp
@@ -2373,7 +2362,7 @@ struct EditorApp
             // Rows wrap at the field's width: the window less the root's padding
             // and the line-number gutter (EAP5). The caret is the host's cursor
             // (HST20) and takes no cell of its own.
-            const digits = decimalDigits(count);
+            const digits = cast(size_t) lineNumberWidth(count);
             const gutterCells = settings.view.lineNumbers ? digits + 1 : 0;
             const width = host.size.width > 10 + gutterCells ? cast(size_t) host.size.width - 2 - gutterCells : 8;
             auto context = &document.field.context;
@@ -2474,7 +2463,7 @@ struct EditorApp
                         {
                             auto cell = new GutterCell[1];
                             cell[0] = row.row == 0
-                                ? cellOf(lineLabel(line + 1), cast(int) digits,
+                                ? lineNumberCell(line, cast(int) digits,
                                     line == caretLine ? Slot.textPrimary : Slot.gutter)
                                 : blankCell(cast(int) digits);
                             rows ~= withGutterCells(b, channels, cell, node);
