@@ -33,6 +33,7 @@ import sparkles.build_primitives.resolve.libraries : PkgConfigDriver;
 import sparkles.build_primitives.resolve.settings : BuildSettings, TargetType, optionNames, requirementNames;
 import sparkles.build_primitives.resolve.tree : ResolveTree;
 import sparkles.build_primitives.task.model : PlanExpected, planErr, planOk;
+import sparkles.build_graph.generators : Generator, GeneratorError, GeneratorKind, recognizeGenerator;
 import sparkles.d_source.mentions : Mention, ScannedSource, StringConditionKind, isPredefinedVersion,
     isVersionUses, scanSource, scanText;
 
@@ -87,6 +88,9 @@ struct Variant
     BuildPlatform platform;         ///
     /// The `.pc` files its `libs` resolved through (BGR5).
     string[] pcFiles;
+    /// The generators its compile waits for, as indices into
+    /// `VariantPlan.generators` (§7), in the order its settings run them.
+    size_t[] generators;
     /// The SHA-256 of $(LREF Variant.keyText).
     ubyte[32] key;
 
@@ -140,6 +144,8 @@ struct VariantPlan
     /// Every layout finding, sorted; those in registry packages are all
     /// that a plan that succeeded can hold.
     LayoutFinding[] layout;
+    /// Every generator a variant runs, each once (§7).
+    Generator[] generators;
 }
 
 /// Why planning failed: a lint's finding, at a place in a file.
@@ -255,6 +261,9 @@ PlanExpected!(VariantPlan, PlanError) planVariants(const Resolution[] resolution
                 return planErr!VariantPlan(PlanError(e.message, e.file, e.line));
     }
 
+    if (auto e = planGenerators(plan, options, tree))
+        return planErr!VariantPlan(*e);
+
     if (auto e = treeFault(tree))
         return planErr!VariantPlan(*e);
     if (auto e = scans.firstLintError)
@@ -357,6 +366,94 @@ string rootName(string package_) @safe pure nothrow @nogc
         if (c == ':')
             return package_[0 .. i];
     return package_;
+}
+
+/*
+§7: recognizes each variant's pre-generate commands as generators, each
+command of each package once, and plans each single-file program's tool
+as an application variant (BGG6). The shader compiler's tool is an
+application of the repository's, planned by its own request; it stays
+unplanned here.
+*/
+PlanError* planGenerators(ref VariantPlan plan, const PlanOptions options, ResolveTree tree) @safe
+{
+    import std.digest.sha : sha256Of;
+    import sparkles.build_primitives.dub_manifest : parseDubRecipeText;
+    import sparkles.build_primitives.resolve.settings : BuildOption;
+
+    size_t[string] byCommand;
+    const planned = plan.variants.length;
+    foreach (vi; 0 .. planned)
+    {
+        const s = &plan.variants[vi].settings;
+        size_t[] uses;
+        foreach (n, command; s.preGenerateCommands)
+        {
+            const directory = n < s.preGenerateDirectories.length ? s.preGenerateDirectories[n]
+                : plan.variants[vi].directory;
+            const at = directory ~ "\0" ~ command;
+            if (auto existing = at in byCommand)
+            {
+                uses ~= *existing;
+                continue;
+            }
+            Generator g;
+            GeneratorError e;
+            if (!recognizeGenerator(directory, command, s.stringImportPaths, g, e))
+                return new PlanError(e.message, directory ~ "/dub.sdl");
+            if (g.kind == GeneratorKind.singleFile)
+            {
+                string source;
+                if (!tree.readText(g.program, source))
+                    return new PlanError("a single-file generator that cannot be read", g.program);
+                const manifest = parseDubRecipeText(source, g.program);
+                if (manifest.hasError)
+                    return new PlanError(text("its inline recipe: ", manifest.error), g.program);
+                if (manifest.value.dependencies.length)
+                    return new PlanError("a single-file generator with dependencies, which the graph does not "
+                        ~ "resolve", g.program);
+                // The declaring package's root names the tool, as `dmd:config`.
+                string owner = rootName(plan.variants[vi].package_);
+                foreach (ref other; plan.variants[0 .. planned])
+                    if (other.directory == directory)
+                    {
+                        owner = rootName(other.package_);
+                        break;
+                    }
+                Variant t;
+                t.package_ = owner ~ ":" ~ manifest.value.name;
+                t.configuration = "application";
+                t.role = Role.application;
+                t.directory = directoryOf(g.program);
+                t.packages = [t.package_];
+                t.settings.targetType = TargetType.executable;
+                t.settings.targetName = manifest.value.name;
+                t.settings.sourceFiles = [g.program];
+                t.settings.importPaths = [t.directory];
+                // dub's default build type for a single file, `debug`.
+                t.settings.options = BuildOption.debugMode | BuildOption.debugInfo;
+                t.toolchain = options.toolchain;
+                // BGG6: the host's; planning builds for the host alone.
+                t.platform = plan.variants[vi].platform.dup;
+                t.key = sha256Of(t.keyText);
+                g.tool = plan.variants.length;
+                plan.variants ~= t;
+            }
+            byCommand[at] = plan.generators.length;
+            uses ~= plan.generators.length;
+            plan.generators ~= g;
+        }
+        plan.variants[vi].generators = uses;
+    }
+    return null;
+}
+
+string directoryOf(string path) @safe pure nothrow @nogc
+{
+    size_t slash = path.length;
+    while (slash > 0 && path[slash - 1] != '/')
+        --slash;
+    return slash > 1 ? path[0 .. slash - 1] : "/";
 }
 
 PlanExpected!(Variant, PlanError) variantOf(ref const Resolution r, ref const ResolvedTarget t, bool isRoot,

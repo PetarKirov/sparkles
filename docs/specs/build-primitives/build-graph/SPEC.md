@@ -915,7 +915,9 @@ reads. There are three kinds:
 action with declared inputs and declared outputs. Its tool is built by the
 graph, except an in-process generator, which has none. A `preGenerateCommands`
 entry that the resolver does not recognize as one of these kinds is a
-resolution error, never a shell command.
+resolution error, never a shell command. An entry is read in the directory of the
+package that declares it, as dub runs it there, also when a source library
+folds into a dependent.
 
 **BGG2: Generated inputs replace in-tree paths.** A compile that reads generated
 files **must** read them from the generator's output directory and **must**
@@ -930,7 +932,9 @@ a recorded divergence from dub
 sources, import paths, output directory and tool paths as arguments, and it
 does not call dub or search `PATH`. The shader compiler gains a direct
 invocation mode for this, and its own specification
-([shaders build](../../shaders/build.md)) is amended with it.
+([shaders build](../../shaders/build.md)) is amended with it. A
+single-file program that searches `PATH` anyway finds there only tools that
+fail ([D60](./decisions.md#d60-a-single-file-generator-runs-where-git-fails)).
 
 **BGG4: Generated sources have content-addressed paths.** A generated source
 that a compile names as a source file, such as an extracted documentation

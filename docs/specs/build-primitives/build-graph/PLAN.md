@@ -117,10 +117,10 @@ over BGF2's roots, records the links it crosses and its `pkg-config`
 queries, and resolves libraries (D59).
 
 The test-only planner is `apps/ci/tools/plan-graph.d`; `--check` runs the
-gate over this repository's test selection: 167 variants, 167 compiles and
-500 actions. Oracle 8's planning scenarios, oracle 14's two scenarios,
+gate over this repository's test selection: 168 variants (one a generator's
+tool), 168 compiles and 488 actions. Oracle 8's planning scenarios, oracle 14's two scenarios,
 oracle 20's three steps (a trace of about 196,000 lookups, 20 edits, and
-2,364 reads against `ci`'s invalidators) and oracle 24's planning steps
+2,372 reads against `ci`'s invalidators) and oracle 24's planning steps
 (1–4) pass. What the gate leaves to E3: oracle 8's revert check, oracle 24's
 store step, and a stored result serving both graphs of invariant 7.
 
@@ -187,8 +187,11 @@ and their tools by absolute path, the root mapped to `.` (BGA5), and the
 test-root module generated in process. `plan-graph --run=versions` builds
 and tests `sparkles:versions` in 16 actions; two runs in different
 directories produce byte-identical objects, archives and test binary, none
-naming the worktree or the run directory. Next: typed generators (BGG1),
-which `dmd:lexer`'s `config.d` needs.
+naming the worktree or the run directory. Typed generators (BGG1–BGG3,
+BGG6): `dmd`'s `config.d` is built as `dmd:config` and run with its output
+as `$OUT` (D60), so `plan-graph --run=build-primitives` builds its 44
+actions, `dmd:lexer` included, and runs its tests from the repository root
+(BGX1). Next: the shader compiler's direct invocation.
 
 ## E4: The Nix backend
 
