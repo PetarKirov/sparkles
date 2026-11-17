@@ -405,17 +405,8 @@ size_t layoutColumn(in VisualRow row, in ParagraphLayout layout, size_t column) 
     return result < 0 ? 0 : cast(size_t) result;
 }
 
-/**
-A source range painted over a line's text (`EAP5`): a search match, a
-matched bracket, trailing whitespace. Producers give grapheme-aligned bytes.
-*/
-struct TextMark
-{
-    /// The marked bytes, `[start, end)`.
-    size_t start, end;
-    /// The slot whose background fills the marked text.
-    Slot slot = Slot.highlight;
-}
+/// A source range painted over a line's text; see `sparkles.ui.editor.presentation`.
+public import sparkles.ui.editor.presentation : TextMark;
 
 /**
 `logical` with `marks` painted: text spans are cut at mark edges and the

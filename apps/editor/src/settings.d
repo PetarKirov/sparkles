@@ -1,24 +1,10 @@
-/** The editor's presentation settings (`EAP5`): what the document pane draws. */
+/** The editor's settings subject (`EAP5`, `EAP7`, `EAP15`): what the pane draws, how it indents, its font. */
 module settings;
 
 import sparkles.ui.property_tree : Doc, Label, Range;
 import sparkles.font.families : DocumentFont;
 import session_record : SessionSettings;
-
-/// Each part of the code-editor presentation, every one of which can be hidden.
-struct PresentationSettings
-{
-    /// A line-number gutter beside the text.
-    @Label("Line numbers") bool lineNumbers = true;
-    /// The caret's line on a raised background.
-    @Label("Current line") bool currentLine = true;
-    /// Guides at each indentation stop of a line's leading spaces.
-    @Label("Indentation guides") bool indentGuides = true;
-    /// The bracket at the caret and its partner, or an unmatched one.
-    @Label("Bracket matching") bool bracketMatching = true;
-    /// Trailing spaces and tabs, except where the caret is typing them.
-    @Label("Trailing whitespace") bool trailingWhitespace = true;
-}
+public import sparkles.ui.editor.presentation : PresentationSettings;
 
 /// One presentation switch, as a command argument.
 enum PresentationToggle : ubyte { lineNumbers, currentLine, indentGuides, bracketMatching, trailingWhitespace }

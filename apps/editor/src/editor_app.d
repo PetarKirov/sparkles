@@ -12,7 +12,8 @@ import sparkles.ui.components.command_palette : PaletteViewOptions, viewCommandP
 import sparkles.ui.components.scroll_body : ScrollBody, scrollSeconds;
 import sparkles.ui.components.editor : drawIndentGuides, editorLineSpans, editorView, EditorViewOptions, layoutColumn, markSpans, TextMark, VisualRow, visualRows;
 import sparkles.ui.components.gutter : blankCell, GutterCell, GutterChannel, lineNumberCell, lineNumberWidth, withGutterCells;
-import sparkles.ui.editor.presentation : CaretPosition, matchingBracket, trailingWhitespace;
+import sparkles.ui.editor.presentation : bracketMarks, CaretPosition, matchMarks, trailingWhitespaceMarks;
+import std.array : Appender, appender;
 import find_bar : FindBar;
 import document_font : DocumentFontService;
 import sparkles.ui_app.specimen_font : SpecimenFontRequest;
@@ -1157,19 +1158,9 @@ struct EditorApp
     }
 
     /// The find bar's matches on `[start, end]`, painted as marks (`EAP5`).
-    private void findMarks(size_t start, size_t end, ref TextMark[] marks) @safe
+    private void findMarks(size_t start, size_t end, ref Appender!(TextMark[]) marks) @safe
     {
-        if (!finder.open || !finder.pattern.valid) return;
-        const matches = finder.result.matches;
-        size_t lo = 0, hi = matches.length;
-        while (lo < hi)
-        {
-            const mid = (lo + hi) / 2;
-            if (matches[mid].end <= start) lo = mid + 1;
-            else hi = mid;
-        }
-        for (size_t i = lo; i < matches.length && matches[i].start <= end; ++i)
-            if (!matches[i].empty) marks ~= TextMark(matches[i].start, matches[i].end, Slot.highlight);
+        if (finder.open && finder.pattern.valid) matchMarks(marks, finder.result.matches, start, end);
     }
 
     /**
@@ -1250,19 +1241,9 @@ struct EditorApp
     */
     private TextMark[] documentMarks() @safe
     {
-        TextMark[] marks;
-        const state = &document.field.state;
-        if (settings.view.bracketMatching && !state.composition.active && state.selection.primary.empty)
-        {
-            const match = matchingBracket(state.text, state.selection.primary.head);
-            if (match.found)
-            {
-                const slot = match.matched || match.undecided ? Slot.highlight : Slot.error;
-                marks ~= TextMark(match.bracket, match.bracket + 1, slot);
-                if (match.matched) marks ~= TextMark(match.partner, match.partner + 1, slot);
-            }
-        }
-        return marks;
+        auto marks = appender!(TextMark[]);
+        if (settings.view.bracketMatching) bracketMarks(marks, document.field.state);
+        return marks[];
     }
 
     /**
@@ -2434,16 +2415,11 @@ struct EditorApp
                         ? highlightedEditorLine(document.field.state, line,
                             syntaxWindow(syntax.source, syntax.spans, start, end, syntaxTheme, theme.pageFg), options)
                         : editorLineSpans(document.field.state, line, options);
-                    auto marks = globalMarks.dup;
+                    auto marks = appender(globalMarks.dup);
                     findMarks(start, end, marks);
                     if (settings.view.trailingWhitespace)
-                    {
-                        const blank = trailingWhitespace(text, line);
-                        // Whitespace being typed at the caret is not yet a mistake.
-                        if (blank[0] < blank[1] && !(line == caretLine && selection.primary.head == blank[1]))
-                            marks ~= TextMark(blank[0], blank[1], Slot.diffRemoved);
-                    }
-                    const logical = marks.length ? markSpans(plain, marks) : plain;
+                        trailingWhitespaceMarks(marks, document.field.state, line);
+                    const logical = marks[].length ? markSpans(plain, marks[]) : plain;
                     const layout = context.paragraph(text, line);
                     const current = settings.view.currentLine && line == caretLine && !composing
                         && selection.ranges.length == 1 && selection.primary.empty;

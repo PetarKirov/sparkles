@@ -12,6 +12,10 @@ whole text was scanned.
 module sparkles.ui.editor.presentation;
 
 import sparkles.text_buffer.text : Text;
+import sparkles.ui.editor.search : MatchRange;
+import sparkles.ui.editor.state : EditorState;
+import sparkles.ui.property_tree : Label;
+import sparkles.ui.style : Slot;
 
 @safe:
 
@@ -184,4 +188,111 @@ struct CaretPosition
     assert(position.line == 2 && position.column == 2, "e + combining acute is one cluster");
     position.refresh(text, 7);
     assert(position.column == 3);
+}
+
+/**
+A source range painted over a line's text: a search match, a matched
+bracket, trailing whitespace. Producers give grapheme-aligned bytes.
+*/
+struct TextMark
+{
+    /// The marked bytes, `[start, end)`.
+    size_t start, end;
+    /// The slot whose background fills the marked text.
+    Slot slot = Slot.highlight;
+}
+
+/**
+Each part of a code view's presentation, every one of which can be hidden.
+`.init` draws them all. The labels make it a settings-pane subject.
+*/
+struct PresentationSettings
+{
+    /// A line-number gutter beside the text.
+    @Label("Line numbers") bool lineNumbers = true;
+    /// The caret's line on a raised background.
+    @Label("Current line") bool currentLine = true;
+    /// Guides at each indentation stop of a line's leading spaces.
+    @Label("Indentation guides") bool indentGuides = true;
+    /// The bracket at the caret and its partner, or an unmatched one.
+    @Label("Bracket matching") bool bracketMatching = true;
+    /// Trailing spaces and tabs, except where the caret is typing them.
+    @Label("Trailing whitespace") bool trailingWhitespace = true;
+}
+
+/**
+Put the marks of the bracket at the primary caret into `sink`: the bracket
+and its partner in `Slot.highlight`, or an unmatched bracket in `Slot.error`.
+Nothing while composing or with a non-empty selection. Every visible line
+shares these, so a view asks once per frame.
+*/
+void bracketMarks(W)(ref W sink, in EditorState state)
+{
+    import std.range.primitives : put;
+    if (state.composition.active || !state.selection.primary.empty) return;
+    const match = matchingBracket(state.text, state.selection.primary.head);
+    if (!match.found) return;
+    const slot = match.matched || match.undecided ? Slot.highlight : Slot.error;
+    put(sink, TextMark(match.bracket, match.bracket + 1, slot));
+    if (match.matched) put(sink, TextMark(match.partner, match.partner + 1, slot));
+}
+
+/**
+Put the mark of `line`'s trailing whitespace into `sink`, in
+`Slot.diffRemoved`, unless the primary caret stands at its end: whitespace
+being typed is not yet a mistake.
+*/
+void trailingWhitespaceMarks(W)(ref W sink, in EditorState state, size_t line)
+{
+    import std.range.primitives : put;
+    const blank = trailingWhitespace(state.text, line);
+    if (blank[0] >= blank[1]) return;
+    const caret = state.selection.primary.head;
+    if (state.text.lineOf(caret) == line && caret == blank[1]) return;
+    put(sink, TextMark(blank[0], blank[1], Slot.diffRemoved));
+}
+
+/**
+Put the non-empty matches among `matches` (sorted by start, not
+overlapping) that touch `[start, end]` into `sink`, in `Slot.highlight`.
+The first one is found by binary search, so a line asks in `O(log n)`.
+*/
+void matchMarks(W)(ref W sink, scope const(MatchRange)[] matches, size_t start, size_t end)
+{
+    import std.range.primitives : put;
+    size_t lo = 0, hi = matches.length;
+    while (lo < hi)
+    {
+        const mid = (lo + hi) / 2;
+        if (matches[mid].end <= start) lo = mid + 1;
+        else hi = mid;
+    }
+    for (size_t i = lo; i < matches.length && matches[i].start <= end; ++i)
+        if (!matches[i].empty) put(sink, TextMark(matches[i].start, matches[i].end, Slot.highlight));
+}
+
+/// Brackets, trailing blanks and matches become marks in their slots.
+@("editor.presentation.marks")
+@safe pure nothrow unittest
+{
+    import sparkles.base.buffer : UniqueBuffer;
+    import sparkles.ui.editor.selection : SelectionSet;
+    auto state = EditorState.create(Text("f(x)  \ny"));
+    state.selection = SelectionSet.caret(1);
+    UniqueBuffer!(TextMark, 8) marks;
+    bracketMarks(marks, state);
+    assert(marks[] == [TextMark(1, 2), TextMark(3, 4)]);
+    marks.clear();
+    trailingWhitespaceMarks(marks, state, 0);
+    assert(marks[] == [TextMark(4, 6, Slot.diffRemoved)]);
+    marks.clear();
+    state.selection = SelectionSet.caret(6);
+    trailingWhitespaceMarks(marks, state, 0);
+    assert(!marks.length, "the caret is typing them");
+    const matches = [MatchRange(0, 1), MatchRange(2, 2), MatchRange(7, 8)];
+    matchMarks(marks, matches, 7, 8);
+    assert(marks[] == [TextMark(7, 8)]);
+    marks.clear();
+    matchMarks(marks, matches, 0, 6);
+    assert(marks[] == [TextMark(0, 1)], "the empty match is skipped");
 }
