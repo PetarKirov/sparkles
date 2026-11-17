@@ -149,7 +149,7 @@
       # WW3): a WASI command module, not a reactor.
       packages.dub-manifest-nix-wasm = buildWasmModule {
         pname = "dub-manifest-nix-wasm";
-        appDir = "libs/dub-manifest/nix-wasm";
+        appDir = "libs/dub-manifest/dub-manifest-nix-wasm";
         targetName = "spk-dub-manifest";
         description = "The dub recipe schema as a Nix builtins.wasm module";
       };
@@ -158,7 +158,7 @@
       packages.dub-manifest-nix-oracle = config.legacyPackages.buildSparklesApp {
         pname = "dub-manifest-nix-oracle";
         version = "0.1.0";
-        appDir = "libs/dub-manifest/nix-wasm";
+        appDir = "libs/dub-manifest/dub-manifest-nix-wasm";
         dubBuildFlags = [ "--config=oracle" ];
         installPhase = ''
           runHook preInstall
@@ -189,7 +189,7 @@
           cd ${recipes}
           find . -name dub.sdl -o -name dub.json | sed 's|^\./||' | LC_ALL=C sort > $out/recipes.txt
           ${oracle} . $(cat $out/recipes.txt) > $out/recipes.json
-          ${oracle} --fixtures ${../../libs/dub-manifest/nix-wasm/fixtures.json} > $out/fixtures.json
+          ${oracle} --fixtures ${../../libs/dub-manifest/dub-manifest-nix-wasm/fixtures.json} > $out/fixtures.json
         '';
 
       # `nix run .#check-nix-wasm` from a checkout, on an evaluator with

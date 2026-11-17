@@ -4,7 +4,7 @@
 # same conversion computes natively. Needs an evaluator with the builtin:
 #
 #   nix eval --impure --json --extra-experimental-features wasm-builtin \
-#     --expr 'import ./libs/dub-manifest/nix-wasm/agreement.nix {
+#     --expr 'import ./libs/dub-manifest/dub-manifest-nix-wasm/agreement.nix {
 #       module = <dub-manifest-nix-wasm>/spk-dub-manifest.wasm;
 #       answers = <dub-manifest-nix-answers>; }'
 #
