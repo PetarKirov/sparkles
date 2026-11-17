@@ -39,7 +39,7 @@ import std.algorithm.searching : startsWith;
 import std.array : array;
 import std.conv : text;
 
-import sparkles.base.vfs.types : Access, Disposition, EntryKind, OpenMode, Rights;
+import sparkles.base.vfs.types : Access, Disposition, EntryKind, OpenMode, Rights, Stat, StatMask;
 
 /// The store's layout version: the name of its directory, `v1` (BGS1, BGS10).
 enum uint layoutVersion = 1;
@@ -294,7 +294,7 @@ struct Store(D)
         auto v = dir.walkAll("v" ~ layoutVersion.text);
         if (v.hasError)
             return false;
-        foreach (sub; ["results", "manifests", "leases", "staging", "trash", "preimages", "recency", "records"])
+        foreach (sub; ["results", "manifests", "leases", "staging", "trash", "preimages", "recency", "records", "digests"])
             if (v.value.walkAll(sub).hasError)
                 return false;
         s.v = move(v.value);
@@ -430,6 +430,82 @@ struct Store(D)
             return null;
         const header = "format " ~ formatVersion.text ~ "\ntask " ~ task ~ "\n";
         return source.startsWith(header) ? source[header.length .. $] : null;
+    }
+
+    /**
+    BGK5: the file system's clock, as the store's directory holds it: the
+    modification time of a probe file written now, and the device it lies
+    on. False when no probe can be written.
+    */
+    bool probeClock(out long nowNs, out ulong device)
+    {
+        import sparkles.base.vfs.types : StatMask;
+
+        if (v.writeFileAtomic("clock-probe", holder).hasError)
+            return false;
+        auto st = v.statAt("clock-probe", StatMask.mtime);
+        if (st.hasError || !st.value.hasMtime)
+            return false;
+        nowNs = st.value.mtimeNs;
+        device = st.value.device;
+        return true;
+    }
+
+    /**
+    BGK5: the digest cached for `path`, if its identity tuple (`st`: device,
+    inode, size, modification and change times) is the one recorded with it
+    and neither time is later than the recording time minus two seconds,
+    git's rule for racily clean entries. A file whose times are not old
+    enough is rehashed by the caller.
+    */
+    bool cachedDigest(string path, const ref Stat st, out ubyte[32] digest)
+    {
+        import std.conv : ConvException, to;
+        import std.string : lineSplitter;
+
+        string source;
+        if (!readAll(v, "digests/" ~ taskFileName(path), source))
+            return false;
+        long[string] n;
+        string hex, recordedPath;
+        foreach (line; source.lineSplitter)
+        {
+            string rest;
+            foreach (field; ["dev", "ino", "size", "mtime", "ctime", "recorded"])
+                if (word(line, field, rest))
+                {
+                    try
+                        n[field] = rest.to!long;
+                    catch (ConvException)
+                        return false;
+                }
+            if (word(line, "digest", rest))
+                hex = rest;
+            if (word(line, "path", rest))
+                recordedPath = rest;
+        }
+        if (recordedPath != path || "recorded" !in n || !source.startsWith("format " ~ formatVersion.text ~ "\n"))
+            return false;
+        enum long margin = 2_000_000_000;
+        const recorded = n["recorded"];
+        if (n.get("dev", -1) != cast(long) st.device || n.get("ino", -1) != cast(long) st.inode
+            || n.get("size", -1) != cast(long) st.size || n.get("mtime", -1) != st.mtimeNs
+            || n.get("ctime", -1) != st.ctimeNs)
+            return false;
+        if (st.mtimeNs >= recorded - margin || st.ctimeNs >= recorded - margin)
+            return false;
+        return parseHex(hex, digest);
+    }
+
+    /// Records `digest` for `path` with its identity tuple and the
+    /// recording time `recordedNs`, the probe's (BGK5).
+    void cacheDigest(string path, const ref Stat st, long recordedNs, const ref ubyte[32] digest)
+    {
+        auto dir = v.walkAll("digests");
+        if (!dir.hasError)
+            cast(void) dir.value.writeFileAtomic(taskFileName(path), text("format ", formatVersion, "\npath ", path,
+                "\ndev ", st.device, "\nino ", st.inode, "\nsize ", st.size, "\nmtime ", st.mtimeNs, "\nctime ",
+                st.ctimeNs, "\nrecorded ", recordedNs, "\ndigest ", hexOf(digest), "\n"));
     }
 
     /// Whether `resultKey`'s result is published.
@@ -925,7 +1001,8 @@ bool readBytes(D)(ref D dir, scope const(char)[] path, out ubyte[] bytes)
 
 /// Stats the `/`-separated `path` beneath `dir`, the entry itself, never a
 /// link's target.
-auto statPath(D)(ref D dir, scope const(char)[] path)
+auto statPath(D)(ref D dir, scope const(char)[] path,
+    StatMask mask = StatMask.basic)
 {
     import sparkles.base.vfs.types : StatMask;
 
@@ -933,12 +1010,12 @@ auto statPath(D)(ref D dir, scope const(char)[] path)
     while (slash > 0 && path[slash - 1] != '/')
         --slash;
     if (slash == 0)
-        return dir.statAt(path, StatMask.basic);
+        return dir.statAt(path, mask);
     auto sub = dir.walk(path[0 .. slash - 1]);
-    alias R = typeof(dir.statAt(path, StatMask.basic));
+    alias R = typeof(dir.statAt(path, mask));
     if (sub.hasError)
         return R(sub.error);
-    return sub.value.statAt(path[slash .. $], StatMask.basic);
+    return sub.value.statAt(path[slash .. $], mask);
 }
 
 private bool word(scope const(char)[] line, string keyword, out string rest) @safe pure
