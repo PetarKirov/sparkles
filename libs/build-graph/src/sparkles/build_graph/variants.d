@@ -29,6 +29,7 @@ import std.conv : text;
 
 import sparkles.build_primitives.resolve.configure : Resolution, ResolvedTarget, VersionInheritance;
 import sparkles.build_primitives.resolve.platform : BuildPlatform;
+import sparkles.build_primitives.resolve.libraries : PkgConfigDriver;
 import sparkles.build_primitives.resolve.settings : BuildSettings, TargetType, optionNames, requirementNames;
 import sparkles.build_primitives.resolve.tree : ResolveTree;
 import sparkles.build_primitives.task.model : PlanExpected, planErr, planOk;
@@ -84,6 +85,8 @@ struct Variant
     VersionInheritance inheritance; ///
     ToolchainIdentity toolchain;    ///
     BuildPlatform platform;         ///
+    /// The `.pc` files its `libs` resolved through (BGR5).
+    string[] pcFiles;
     /// The SHA-256 of $(LREF Variant.keyText).
     ubyte[32] key;
 
@@ -198,6 +201,10 @@ struct PlanOptions
     /// The root names of the registry packages, whose findings are
     /// reported without failing the plan.
     const(string)[] registry;
+    /// Resolves each target's `libs` (BGR5); null leaves them as resolved.
+    /// Planning's own goes through a `RecordingPkgConfig`, so the read set
+    /// holds its queries (BGP1).
+    PkgConfigDriver pkgConfig;
 }
 
 /**
@@ -213,9 +220,12 @@ Params:
 Returns: the plan, or the first lint finding, by file and line.
 */
 PlanExpected!(VariantPlan, PlanError) planVariants(const Resolution[] resolutions,
-    const PlanOptions options, ResolveTree tree) @safe
+    PlanOptions options, ResolveTree tree) @safe
 {
     auto scans = SourceScans(tree);
+    // BGF3: a link the resolutions met that leaves its root.
+    if (auto e = treeFault(tree))
+        return planErr!VariantPlan(*e);
     VariantPlan plan;
     size_t[string] byKey;
 
@@ -224,7 +234,7 @@ PlanExpected!(VariantPlan, PlanError) planVariants(const Resolution[] resolution
         size_t[] indices;
         foreach (i, ref t; r.targets)
         {
-            auto v = variantOf(r, t, i == 0, options, scans);
+            auto v = variantOf(r, t, i == 0, options, options.pkgConfig, scans);
             if (v.hasError)
                 return planErr!VariantPlan(v.error);
             auto variant = v.value;
@@ -245,6 +255,8 @@ PlanExpected!(VariantPlan, PlanError) planVariants(const Resolution[] resolution
                 return planErr!VariantPlan(PlanError(e.message, e.file, e.line));
     }
 
+    if (auto e = treeFault(tree))
+        return planErr!VariantPlan(*e);
     if (auto e = scans.firstLintError)
         return planErr!VariantPlan(*e);
     if (options.layoutCheck !is null)
@@ -259,6 +271,18 @@ PlanExpected!(VariantPlan, PlanError) planVariants(const Resolution[] resolution
 }
 
 private:
+
+// The first lookup the tree refused (BGF3), as a planning error naming the
+// link or path.
+PlanError* treeFault(ResolveTree tree) @safe
+{
+    const faults = tree.faults;
+    if (faults.length == 0)
+        return null;
+    const f = faults[0];
+    return new PlanError(f.target.length ? text(f.reason, ": `", f.path, " -> ", f.target, "`")
+        : text(f.reason, ": `", f.path, "`"), f.path);
+}
 
 // The layout lint over every dependency library's own files (BGV5), once per
 // file and set of versions: the lint skips the imports of branches a variant
@@ -336,14 +360,18 @@ string rootName(string package_) @safe pure nothrow @nogc
 }
 
 PlanExpected!(Variant, PlanError) variantOf(ref const Resolution r, ref const ResolvedTarget t, bool isRoot,
-    const PlanOptions options, ref SourceScans scans) @safe
+    const PlanOptions options, PkgConfigDriver pkgConfig, ref SourceScans scans) @safe
 {
+    import sparkles.build_primitives.resolve.libraries : resolveLibraries;
+
     Variant v;
     v.package_ = t.package_;
     v.configuration = t.configuration;
     v.directory = t.directory;
     v.packages = t.packages.dup;
     v.settings = t.settings.dup;
+    if (pkgConfig !is null)
+        v.pcFiles = resolveLibraries(v.settings, r.platform, pkgConfig).pcFiles;
     v.inheritance = r.inheritance;
     v.toolchain = options.toolchain;
     v.platform = r.platform.dup;
