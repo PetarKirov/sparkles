@@ -126,7 +126,9 @@ int main(string[] args)
         const runDir = into.length ? absolutePath(into[0]["--into=".length .. $])
             : cache.length ? buildPath(cache, "runs", text(Clock.currTime.toUnixTime, "-", thisProcessID))
             : buildPath(root, "build", "graph-run");
-        return runPackage(root, runOnly[0]["--run=".length .. $], runDir, cache, args.canFind("--check-determinism"));
+        return runPackage(root, runOnly[0]["--run=".length .. $], runDir, cache, args.canFind("--check-determinism"),
+            args.canFind("--confine-tests") ? Confinement.tests : args.canFind("--confine") ? Confinement.builds
+            : Confinement.none);
     }
 
     auto first = planRepository(root);
@@ -1195,7 +1197,16 @@ actions into `into` on the task-DAG executor: compiles, archives and the
 link with the fixed environment, then the test. Prints each task's lines
 and its outcome; the exit status is the run's.
 */
-int runPackage(string root, string only, string into, string cache, bool checkDeterminism = false)
+/// What a run confines (D39's spike).
+enum Confinement
+{
+    none,   ///
+    builds, /// compiles, archives, links and generators
+    tests,  /// those and the tests
+}
+
+int runPackage(string root, string only, string into, string cache, bool checkDeterminism = false,
+    Confinement confine = Confinement.none)
 {
     import std.file : mkdirRecurse;
     import std.parallelism : totalCPUs;
@@ -1238,6 +1249,33 @@ int runPackage(string root, string only, string into, string cache, bool checkDe
         return 2;
     }
     mkdirRecurse(into);
+    // D39's spike: every build action confined to its own directories and
+    // without a network; tests too with `--confine-tests`, which may also
+    // write their temporary directory.
+    if (confine != Confinement.none)
+    {
+        import std.process : execute;
+
+        const wrapper = buildPath(into, "confine");
+        const built = execute([tools.compiler, "-O", "-of=" ~ wrapper, buildPath(root, "apps/ci/tools/confine.d")]);
+        if (built.status != 0)
+        {
+            stderr.writeln("plan-graph: cannot build the confinement wrapper: ", built.output);
+            return 2;
+        }
+        foreach (ref a; p.graph.actions)
+        {
+            if (a.kind == ActionKind.test && confine != Confinement.tests)
+                continue;
+            string[] prefix = [wrapper, "--write=$OUT", "--write=$MEASURE", "--no-network"];
+            if (a.kind == ActionKind.test)
+                prefix ~= "--write=" ~ environment.get("TMPDIR", "/tmp");
+            prefix ~= "--";
+            a.action.match!(
+                (ref ProcessAction pa) { pa.argv = prefix ~ pa.argv; },
+                (ref _) {});
+        }
+    }
     // Generators and tests run with the environment they are given here,
     // declared whole (BGX1): the driver's own.
     // Oracle 11 step 1 (BGX1): a `dub` first on their `PATH` that records

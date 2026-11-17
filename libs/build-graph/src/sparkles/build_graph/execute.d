@@ -87,6 +87,9 @@ EnvEntry[] buildEnvironment() @safe pure nothrow
         EnvEntry("TERM", "dumb"),
         EnvEntry("NO_COLOR", "1"),
         EnvEntry("PATH", ""),
+        // Temporary files go to the action's own directory: the C driver
+        // an LDC link runs writes them, and `/tmp` is no action's (D39).
+        EnvEntry("TMPDIR", "$MEASURE"),
     ];
     version (OSX)
         env ~= EnvEntry("MACOSX_DEPLOYMENT_TARGET", "11.0");
@@ -118,7 +121,7 @@ TaskNode[] executionNodes(ref const ActionGraph g, const RunLayout layout, const
                 if (q.cwd.length && !q.cwd.startsWith("/"))
                     q.cwd = layout.root ~ "/" ~ q.cwd;
                 // A typed generator states its environment over a build's (§7).
-                q.envDelta = build ? buildEnvironment()
+                q.envDelta = build ? plannedEnvironment(null, layout, id)
                     : a.kind == ActionKind.generate && p.envDelta.length ? plannedEnvironment(p.envDelta, layout, id)
                     : declared.dup;
                 q.completeEnvironment = true;
@@ -146,7 +149,7 @@ private EnvEntry[] plannedEnvironment(const EnvEntry[] planned, const RunLayout 
     EnvEntry[] env;
     foreach (e; buildEnvironment())
         if (!planned.canFind!(p => p.name == e.name))
-            env ~= e;
+            env ~= EnvEntry(e.name, expand(e.value, layout, self));
     foreach (e; planned)
         env ~= EnvEntry(e.name, expand(e.value, layout, self));
     return env;

@@ -1036,6 +1036,32 @@ Manifests remain the record of what an action read.
   it, local build actions run confined and a violation fails the action;
   otherwise the spike's measurements are recorded and the lint is used.
 
+**Result (2026-11-17, partial).** `apps/ci/tools/confine.d` confines a
+process with Landlock (writes beneath the directories it names, and `/dev`)
+and an unprivileged user and network namespace, and `plan-graph --run
+--confine` wraps every compile, archive, link and generate action with it
+(`--confine-tests` wraps tests too, with their `TMPDIR` writable).
+
+- **Kernel:** Linux 6.18 (Landlock ABI 3 or later, unprivileged user
+  namespaces) confines without privileges. A kernel that refuses exits 125,
+  apart from the program's own failures.
+- **Cost:** `sparkles:build-primitives`' graph without the store, 26 actions:
+  65.0 and 67.9 s plain, 69.6 and 65.1 s with the build actions confined,
+  64.1 and 65.0 s with the tests too, on a host that ran another build at
+  the same time. The cost is within the noise.
+- **Build actions:** one violation, now fixed: the C driver an LDC link runs
+  wrote its temporary files to `/tmp`, since a build action's complete
+  environment set no `TMPDIR` (BGA4 now sets it to the action's measurement
+  directory). Every build action of the graph then ran confined.
+- **Tests:** `sparkles:build-primitives`' 352 tests pass confined to their
+  task directories and `TMPDIR`; one, `fileset.driver.FSD7.realMount`, skips,
+  since it creates files in `/dev/shm`. The list over the repository's whole
+  test selection is still to be made.
+
+The decision criterion holds for build actions; confining them by default,
+with the wrapper keyed as a tool (BGT1), waits for the whole selection's
+run.
+
 **Revisit when** the spike's result is recorded here.
 
 ## D40: Toolchain store paths are remapped (accepted)
