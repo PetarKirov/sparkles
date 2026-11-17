@@ -754,6 +754,12 @@ struct ActionDriver
                     if (arg.length && arg[0] != '-' && arg[0] != '$' && arg[0] != '/' && arg.canFind('/'))
                         input(arg);
                 }
+                // BGK2: the C preprocessor reports no failed lookup, so a compile
+                // with ImportC sources keys on every file under its C include
+                // roots and its C sources' own directories (as BGK6 does).
+                if (a.kind == ActionKind.compile)
+                    foreach (dir; cRoots(p.argv))
+                        s ~= "c-root " ~ dir ~ " " ~ treeDigest(dir) ~ "\n";
                 const env = a.kind == ActionKind.generate && p.envDelta.length ? p.envDelta : buildEnvironment();
                 foreach (e; env)
                     s ~= "env " ~ e.name ~ "=" ~ e.value ~ "\n";
@@ -820,6 +826,76 @@ struct ActionDriver
             if (!path.startsWith("/nix/store/") && present(path))
                 return ["manifest", path ~ " appeared"];
         return ["manifest", "no manifest matches"];
+    }
+
+    // The worktree directories a compile's C preprocessor searches: each C
+    // source's own and each C include root (`-P-I`) in the worktree.
+    private static string[] cRoots(const string[] argv) @safe pure
+    {
+        string[] dirs;
+        void add(string d)
+        {
+            if (d.length && !d.startsWith("/") && !d.startsWith("$") && !dirs.canFind(d))
+                dirs ~= d;
+        }
+        foreach (arg; argv)
+        {
+            if (arg.startsWith("-P-I"))
+                add(arg[4 .. $]);
+            else if (arg.length > 2 && arg[0] != '-' && (arg[$ - 2 .. $] == ".c" || arg[$ - 2 .. $] == ".i"))
+                add(parentOf(arg));
+        }
+        // LDC hands the preprocessor its D import roots too.
+        if (dirs.length)
+            foreach (arg; argv)
+                if (arg.startsWith("-I="))
+                    add(arg[3 .. $]);
+        return dirs;
+    }
+
+    // The digest of every regular file beneath the worktree directory `dir`,
+    // by path and content, in path order (BGK6's reading of a root).
+    private string treeDigest(string dir)
+    {
+        import std.algorithm.sorting : sort;
+        import sparkles.base.hash.blake3 : blake3;
+        import sparkles.base.vfs.types : EntryKind;
+
+        string[] lines;
+        void walk(string path)
+        {
+            auto d = worktree.walk(path);
+            if (d.hasError)
+                return;
+            auto listing = d.value.list();
+            if (listing.hasError)
+                return;
+            string[] names;
+            while (true)
+            {
+                auto more = listing.value.next();
+                if (more.hasError || !more.value)
+                    break;
+                names ~= listing.value.front.name.idup;
+            }
+            foreach (n; names)
+            {
+                const child = path ~ "/" ~ n;
+                auto st = d.value.statAt(n);
+                if (st.hasError)
+                    continue;
+                if (st.value.kind == EntryKind.directory)
+                    walk(child);
+                else if (st.value.kind == EntryKind.regular)
+                {
+                    ubyte[32] digest;
+                    if (digestOf(child, digest))
+                        lines ~= child ~ " " ~ hexOf(digest);
+                }
+            }
+        }
+        walk(dir);
+        return hexOf(blake3(lines.sort.release.join("\n")));
     }
 
     // The result `a`'s declared key leads to, if the store holds one: for a
