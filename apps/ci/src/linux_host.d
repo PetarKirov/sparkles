@@ -49,6 +49,8 @@ import std.string : lineSplitter, strip;
 
 import sparkles.base.hw_caps : describe, hwMemoryBytes, hwWorkerBudget, ResourceCap;
 import sparkles.base.logger : error, info, warning;
+import std.conv : text;
+import sparkles.core_cli.args : failRun, ranOk, RunExpected;
 
 /// Nix systems this dispatcher can target from macOS.
 immutable linuxHostSystems = ["aarch64-linux", "x86_64-linux"];
@@ -559,7 +561,7 @@ string shellQuote(string s) @safe pure
 
 /// Probe every backend we know about and print a report. Returns 0 always:
 /// a missing backend is information, not a failure of the probe itself.
-int runLinuxHostProbe()
+RunExpected!void runLinuxHostProbe()
 {
     foreach (r; collectBackendReports())
     {
@@ -568,7 +570,7 @@ int runLinuxHostProbe()
         if (r.detail.length)
             writeln("  ", r.detail);
     }
-    return 0;
+    return ranOk();
 }
 
 // === Dispatch ===
@@ -583,33 +585,24 @@ Params:
     ciRev = a git revision to instantiate the Linux shell at, or empty to try
         `HEAD`, the merge-base with `origin/main`, then `origin/main`
 */
-int runOnLinuxHost(string hostSystem, string[] args, string ciRev = null)
+RunExpected!void runOnLinuxHost(string hostSystem, string[] args, string ciRev = null)
 {
     LinuxHostTarget target;
     try
         target = parseLinuxHostTarget(hostSystem);
     catch (Exception e)
-    {
-        error(i"$(e.msg)");
-        return 1;
-    }
+    return failRun(e.msg);
 
     const repoTop = gitOutput(["rev-parse", "--show-toplevel"]);
     if (repoTop.length == 0)
-    {
-        error(i"--host-system needs a git checkout: the Linux dev shell is instantiated at a revision");
-        return 1;
-    }
+    return failRun("--host-system needs a git checkout: the Linux dev shell is instantiated at a revision");
 
     LinuxCiRevision[] candidates;
     if (ciRev.length)
     {
         const full = gitOutput(["rev-parse", "--verify", ciRev ~ "^{commit}"]);
         if (full.length == 0)
-        {
-            error(i"--host-ci-rev $(ciRev) is not a commit in this repository");
-            return 1;
-        }
+        return failRun(text(i"--host-ci-rev $(ciRev) is not a commit in this repository"));
         candidates = [LinuxCiRevision(full, "--host-ci-rev " ~ ciRev)];
     }
     else
@@ -620,14 +613,11 @@ int runOnLinuxHost(string hostSystem, string[] args, string ciRev = null)
     try
         env = realizeLinuxHostEnv(hostSystem, repoTop, candidates);
     catch (Exception e)
-    {
-        error(i"could not realize devShells.$(hostSystem).ci: $(e.msg)");
-        return 1;
-    }
+    return failRun(text(i"could not realize devShells.$(hostSystem).ci: $(e.msg)"));
     info(i"Linux dev shell from $(env.from.label) ($(env.from.rev[0 .. 12])): $(env.shell.drvPath)");
 
     if (ensureContainerRunning() != 0)
-        return 1;
+        return failRun("could not start the Linux container");
 
     import std.file : getcwd, mkdirRecurse, rmdirRecurse, write;
     import std.path : buildPath;
@@ -662,7 +652,8 @@ int runOnLinuxHost(string hostSystem, string[] args, string ciRev = null)
         ? "every allowed CPU" : describe(budget.cap);
     info(i"container run $(hostSystem): $(size.cpus) vCPUs (host workers=$(budget.workers) of $(budget.cpus) CPUs, $(why)), $(size.memoryGiB) GiB (half of $(hostMemoryText[]) host RAM)");
     auto pid = spawnProcess(cmd);
-    return wait(pid);
+    const status = wait(pid);
+    return status == 0 ? ranOk() : failRun(text("the Linux host's ci exited with status ", status), status);
 }
 
 /// A host directory under `/private/tmp` (a path both sides can name; macOS'
