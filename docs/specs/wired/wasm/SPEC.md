@@ -145,9 +145,10 @@ builtin enabled; removing it is a decision of its own, made after that.
 
 **WW8: No import-from-derivation.** _(Owner: Sparkles' Nix code.)_ The
 module an evaluation calls **must not** be an output of that evaluation's
-own derivations, so evaluation never waits for a build. How it arrives is
-[D2](#d2-how-the-module-reaches-evaluation): until that is decided, the Nix
-path is enabled only where the module is supplied explicitly.
+own derivations, so evaluation never waits for a build. It arrives as a
+pinned module fetched by hash ([D2](#d2-how-the-module-reaches-evaluation));
+until the pin exists, the Nix path is enabled only where the module is
+supplied explicitly.
 
 ## 3. The recipe table
 
@@ -230,9 +231,14 @@ Revisit if a consumer needs a module much smaller than about 1.1 MB.
 
 ### D2: How the module reaches evaluation
 
-**Open; blocks enabling WW7's Nix path in the flake.** The module is a
-build output, and WW8 forbids building it during the evaluation that uses
-it. Options:
+**Accepted: option 1, a pinned module** (owner, 2026-11-17). The module is
+a build output, and WW8 forbids building it during the evaluation that
+uses it. A pinned module is not only slower when stale: one built before a
+schema change rejects a recipe that uses the change, and the evaluation
+throws (WW5). So WW10's check **must** run with the pinned module as well
+as with the tree's, and a change that makes the pinned module reject or
+disagree on a repository recipe **must** move the pin in the same pull
+request. The options considered:
 
 1. **A pinned module**, like `nix/test-runner-pin.json`: a revision's
    module, published (a GitHub release asset or the Cachix cache) and
@@ -248,19 +254,22 @@ it. Options:
    ([editing §7](../sdl/editing.md#7-migration-coverage)); evaluation would
    build the module and its toolchain before it can finish.
 
-Recommendation: option 1. The pin's lag is the cost, and the fallback
-already makes a stale pin safe: it changes speed, never answers, as long
-as WW10 passes.
+Option 1 was chosen for evaluation that never waits for a build and a
+tree that carries no binary; its cost is the pin's lag, bounded by the
+check above. Where the module is published and how the pin is moved are
+W4's to settle.
 
 ### D3: Where the recipe schema lives
 
-**Open; blocks WW1's completion.** `dub_manifest.d` depends only on
-`sparkles:wired` and Phobos, but its package, `sparkles:build-primitives`,
-depends on event-horizon, which does not build for WebAssembly; the
-prototype compiles the one file directly. Options: a sub-package of its
-own (`sparkles:dub-manifest`) that `build-primitives` depends on, keeping
-the module name; or moving it into `sparkles:wired`. Recommendation: its
-own sub-package, so `wired` stays free of dub's vocabulary.
+**Accepted: a sub-package of its own** (owner, 2026-11-17).
+`dub_manifest.d` depends only on `sparkles:wired` and Phobos, but its
+package, `sparkles:build-primitives`, depends on event-horizon, which does
+not build for WebAssembly; the prototype compiles the one file directly.
+The schema moves to a sub-package, `sparkles:dub-manifest`, depending on
+`sparkles:wired` and `sparkles:base` alone, and `build-primitives` depends
+on it. The alternative, moving it into `sparkles:wired`, was declined to
+keep `wired` free of dub's vocabulary. Whether the module keeps its name
+`sparkles.build_primitives.dub_manifest` is W1's to settle.
 
 ### D4: The Nix attribute names
 
