@@ -261,7 +261,8 @@ void marker(string name) @trusted
     cast(void) access(("/.plan-graph-" ~ name).toStringz, F_OK);
 }
 
-Planned planRepository(string root, bool markers = false, string only = null, Tools tools = Tools.init)
+Planned planRepository(string root, bool markers = false, string only = null, Tools tools = Tools.init,
+    string toolchain = "dev-shell")
 {
     const d = driverEnvironment();
     if (d.sources is null)
@@ -333,7 +334,7 @@ Planned planRepository(string root, bool markers = false, string only = null, To
             }
         return planErr!Resolution(PlanError("a generator names a directory that holds no package", directory));
     }
-    auto options = PlanOptions(ToolchainIdentity("ldc", "dev-shell"), layoutLint(), registry.value.keys, pkgConfig);
+    auto options = PlanOptions(ToolchainIdentity("ldc", toolchain), layoutLint(), registry.value.keys, pkgConfig);
     options.resolveTool = &resolveTool;
     options.root = root;
     auto planned = planVariants(rs, options, tree);
@@ -1210,7 +1211,13 @@ int runPackage(string root, string only, string into, string cache)
         stderr.writeln("plan-graph: ldc2, ar, cc and ld.lld must be on PATH");
         return 2;
     }
-    auto p = planRepository(root, false, only, tools);
+    // §8: the identity every key covers, the configuration passed, the
+    // compiler's own tree remapped (BGA11).
+    const toolchain = toolchainOf(tools);
+    tools.config = toolchain.config;
+    if (toolchain.root.length)
+        tools.prefixMaps = [toolchain.root ~ "=/ldc"];
+    auto p = planRepository(root, false, only, tools, toolchain.identity);
     if (p.error.length)
     {
         stderr.writeln("plan-graph: ", p.error);
@@ -1236,7 +1243,7 @@ int runPackage(string root, string only, string into, string cache)
     foreach (name, value; environment.toAA)
         declared ~= EnvEntry(name, name == "PATH" ? trap ~ ":" ~ value : value);
     declared.sort!((a, b) => a.name < b.name);
-    const layout = RunLayout(root, into, cache);
+    const layout = RunLayout(root, into, cache, toolchain.identity);
     auto nodes = executionNodes(p.graph, layout, declared);
     auto w = stdout.lockingTextWriter;
     import sparkles.build_graph.execute : RunStats;
@@ -1253,4 +1260,58 @@ int runPackage(string root, string only, string into, string cache)
     }
     writeln("BGX1: no test ran dub");
     return r.exitCode;
+}
+
+/// The toolchain as a run names it (§8).
+struct Toolchain
+{
+    string identity; /// the digest of every tool's store-path closure (BGT2)
+    string config;   /// the compiler's configuration file (BGT1)
+    string root;     /// the compiler's own tree, holding druntime's and Phobos' sources
+}
+
+/*
+§8: the compiler reports its configuration file and where `object` lies,
+so the run passes the one explicitly and remaps the other's tree (BGA11);
+the identity is the SHA-256 of the sorted store-path closure of every tool
+the run names, the test runner included (BGT1, BGT2).
+*/
+Toolchain toolchainOf(const Tools tools)
+{
+    import std.digest.sha : sha256Of;
+    import std.file : tempDir, write;
+    import std.process : execute;
+    import std.string : indexOf, lineSplitter, strip;
+    import sparkles.build_graph.store : hexOf;
+
+    Toolchain t;
+    const probe = buildPath(tempDir, "plan-graph-toolchain-probe.d");
+    write(probe, "module probe;\n");
+    foreach (line; execute([tools.compiler, "-v", "-o-", probe]).output.lineSplitter)
+    {
+        if (line.startsWith("config "))
+        {
+            auto rest = line["config ".length .. $].strip;
+            const space = rest.indexOf(' ');
+            t.config = (space < 0 ? rest : rest[0 .. space]).idup;
+        }
+        else if (line.startsWith("import") && line.canFind("object\t("))
+        {
+            const open = line.indexOf('(');
+            const at = line.indexOf("/include/");
+            if (open >= 0 && at > open)
+                t.root = line[open + 1 .. at].idup;
+        }
+    }
+    string[] paths = [tools.compiler, t.config, tools.cc, tools.linker, tools.archiver, tools.fail,
+        tools.deviceCompiler, environment.get("SPARKLES_TEST_RUNNER", "")];
+    foreach (tool; tools.shaderTools)
+        paths ~= tool[1];
+    paths = paths.filter!(p => p.length).array;
+    const closure = execute(["nix-store", "--query", "--requisites"] ~ paths);
+    // A toolchain outside the store is named by its paths alone (BGT3 is E3's).
+    const listing = closure.status == 0 ? closure.output.lineSplitter.map!(l => l.idup).array.sort.release.join("\n")
+        : paths.join("\n");
+    t.identity = hexOf(sha256Of(listing));
+    return t;
 }
