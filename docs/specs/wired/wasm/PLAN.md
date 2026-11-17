@@ -18,9 +18,10 @@ once). The prototype is not the production module: W1 replaces it.
 
 ## W1 — The recipe schema, buildable
 
-Obligations: WW1, D3. Move the recipe schema into a package whose
-dependencies build for WebAssembly, as D3 decides, without changing the
-schema or its module name; `build-primitives` depends on it.
+Obligations: WW1, D3. Move the recipe schema, unchanged, into
+`sparkles:dub-manifest`, which depends on `sparkles:wired` and
+`sparkles:base` alone; `build-primitives` depends on it. This slice
+settles whether the module keeps its name.
 
 Gate: `dub test` of the new package and of `build-primitives` pass; the
 new package builds for `wasm32-unknown-wasip1` with the flake's WASI LDC;
@@ -53,14 +54,23 @@ Gate: the flake's outputs evaluate to the same derivations before and after
 measurement recorded for both paths; the agreement check passes and is
 seen to fail on its seeded divergences.
 
-Prerequisite for turning the Nix path on in the flake: D2. Before it, W3
-lands with the module supplied explicitly (WW8), which CI exercises in the
-agreement check only.
+Prerequisite for turning the Nix path on in the flake: W4's pin. Before
+it, W3 lands with the module supplied explicitly (WW8), which CI exercises
+in the agreement check only.
 
-## W4 — Delivery to evaluation
+## W4 — The pinned module
 
-Obligations: WW8, D2. Implement the chosen delivery, and switch the
-flake's default to the Nix path where `builtins ? wasm` holds. Then record,
+Obligations: WW8, D2. A pin file names a revision and the module's hash;
+the module built at that revision is published and fetched by hash during
+evaluation; a check rebuilds the pinned revision and requires a
+byte-identical module; WW10's check runs with the pinned module too, so a
+schema change that the pin would reject cannot merge without moving it.
+Then switch the flake's default to the Nix path where `builtins ? wasm`
+holds.
+
+Gate: an evaluation with the builtin fetches the pinned module and builds
+nothing before it finishes; the rebuild check passes; a recipe using a
+directive the pinned module rejects fails the agreement check. Then record,
 in [editing §7](../sdl/editing.md#7-migration-coverage), that the
 exception's readers are now the fallback of WW7.
 
