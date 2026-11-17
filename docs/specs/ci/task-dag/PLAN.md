@@ -118,11 +118,42 @@ and `--shard`, the workflows (`ci.yml`'s `placements`, `test` and `platform`
 jobs, `main-checks.yml`'s `perf-append`, CircleCI's parallelism) and the
 toolchain's recorded costs (`--write-pin-costs`).
 
-## M7: Canonical CLI and the `ci test` cutover onto the build graph
+## M7a: The canonical command line over the current implementations
 
-- Add `cli.d` with the core-cli nested command tree and the common execution
-  options.
-- Add `ci test` with its modes, focused selectors and closures (SPEC §1.2,
+The command surface of SPEC §1.1 replaces the flags before any command runs on
+the build graph
+([T16](../../build-primitives/task-dag/decisions.md#t16-the-command-line-changes-before-the-executor)).
+It changes the command line, not what a command does, so it is not a cutover
+and needs none of the prerequisites above.
+
+- Add `cli.d` with the core-cli command tree, dispatched by `runCli`. Each
+  command is a struct whose `run()` returns `RunExpected` (CIC16), and each
+  command's options are its own fields. `CliParams`, `ProgramMode` and the
+  cross-mode validation they needed are removed.
+- Every current mode gets the command SPEC §1.1 names. Until M7b:
+  - `ci test --build-only` runs each package's `dub build`, as `--build` did;
+  - `--from` takes package names only;
+  - `--since`, `--dependencies`, `--dependents`, `--backend`,
+    `--require-cached` and the common `--jobs`, `--interlaced` and `--dry-run`
+    are not accepted yet, since nothing could honour them.
+- `ci pipeline` does not exist yet; `ci placements list` and
+  `ci test --placement NAME --shard K/N` carry M3a's placements.
+- Reject every removed flag with its replacement (CIC4).
+- Change every workflow, hook, script, Nix package and document that runs
+  `ci` in the same change, so the repository never runs a removed flag.
+
+Gate:
+
+- `ci`'s tests pass, and a test rejects every flag of SPEC §2's first column
+  with its replacement named.
+- Repository CI is green on the canonical commands, on GitHub Actions and
+  CircleCI.
+- No script, hook, workflow or user-facing document uses a removed flag.
+
+## M7b: The `ci test` cutover onto the build graph
+
+- Add the common execution options to `ci test`.
+- Add `ci test`'s focused selectors and closures (SPEC §1.2,
   §4). Plan ordinary tests and build-only runs as the build graph's actions:
   test-root compiles, dependency-library builds, test binary links and test
   runs, with no ordering edges between tests.
@@ -130,11 +161,11 @@ toolchain's recorded costs (`--write-pin-costs`).
   nodes whose events are the nodes' output (CIC11). It needs the core that
   the test runner's
   [P1 slice 6](../../test-runner/PLAN.md#p1--the-out-of-process-runner)
-  delivers, so M7 closes only after it.
+  delivers, so M7b closes only after it.
 - Add the CI-provider grouping to the plain reporter (task DAG M6b), and switch
   workflows to `--interlaced`. Workflows that set `SPARKLES_CI_JOBS` convert it to
   weighted units (CIC1).
-- Remove `--test`, `--build` and their loops in the same change.
+- Remove the current serial test and build loops in the same change.
 - Add `--require-cached` (CIC12), `ci cache explain` and
   `ci cache verify --rerun`, and run the determinism check on every CI run
   from the first workflow that builds on the shared store (CIC13).
@@ -239,15 +270,16 @@ workflow or user-facing document uses a removed flag.
 
 ## Progress
 
-| Milestone | Deliverable                          | State       |
-| --------- | ------------------------------------ | ----------- |
-| M0        | Specifications                       | in review   |
-| M3        | Prerequisite gate                    | partial     |
-| M3a       | Placements before the build graph    | in progress |
-| M7        | CLI and `ci test` on the build graph | not started |
-| M8        | Coverage and special modes           | not started |
-| M9        | Examples                             | not started |
-| M10       | Docs commands                        | not started |
-| M11       | Stats, commits, maintenance          | not started |
-| M12       | `ci pipeline`, legacy removal        | not started |
-| M13       | Consumer migration                   | not started |
+| Milestone | Deliverable                       | State       |
+| --------- | --------------------------------- | ----------- |
+| M0        | Specifications                    | in review   |
+| M3        | Prerequisite gate                 | partial     |
+| M3a       | Placements before the build graph | in progress |
+| M7a       | Canonical command line            | in progress |
+| M7b       | `ci test` on the build graph      | not started |
+| M8        | Coverage and special modes        | not started |
+| M9        | Examples                          | not started |
+| M10       | Docs commands                     | not started |
+| M11       | Stats, commits, maintenance       | not started |
+| M12       | `ci pipeline`, legacy removal     | not started |
+| M13       | Consumer migration                | not started |

@@ -145,7 +145,7 @@ Slices, each a green commit series:
    machine that performs no I/O (§9, TRM1–TRM4, TRD7, TRD8). The standalone runner
    becomes a `main`, its pool and its reporter over it. `ci` drives the core
    in its own milestone, the task DAG's
-   [M7](../ci/task-dag/PLAN.md#m7-canonical-cli-and-the-ci-test-cutover-onto-the-build-graph)
+   [M7b](../ci/task-dag/PLAN.md#m7b-the-ci-test-cutover-onto-the-build-graph)
    (TRM5–TRM8).
 
 Until a revision of `main` carries the runner, the pin file names no

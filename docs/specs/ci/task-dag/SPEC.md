@@ -50,15 +50,18 @@ criteria. Delivery order is in [PLAN.md](./PLAN.md).
 ```text
 ci pipeline [--from SELECTOR...] [--since REF] [--dependencies] [--dependents]
             [--backend local|nix] [--require-cached KIND...]
-            [--determinism-sample N]
-            [--placement NAME | --list-placements]
+            [--determinism-sample N] [--placement NAME]
+ci placements list [--provider github|circleci] [--github-output FILE]
+                   [--history-remote URL]
 
 ci test [--build-only | --special-modes betterc|wasm|all]
         [--from SELECTOR...] [--since REF]
         [--dependencies] [--dependents]
         [--coverage | --no-coverage] [--sanitize address]
         [--slow [--tests NAME...]] [--backend local|nix]
-        [--require-cached KIND...]
+        [--require-cached KIND...] [--watch]
+        [--placement NAME --shard K/N [--history-tip COMMIT]]
+        [--history-remote URL]
 
 ci docs examples [--include-files SELECTOR...] [--exclude-files SELECTOR...]
 ci docs run|verify|update [--include-files SELECTOR...] [--exclude-files SELECTOR...]
@@ -72,19 +75,31 @@ ci docs blob-paths check [--clone-root DIR] [--include-files SELECTOR...]
 ci docs fences audit [--root DIR] [--audit-scope site|all|excluded] [--json FILE]
 ci docs wasm check|stage [module options]
 
+ci audit adhoc-sdl
+ci audit opaque-recipes
+ci nix-wasm check [module options]
+ci gc-report RECORDING [--baseline RECORDING] [--top N]
+
 ci commits build-each [--base REF] [--packages NAME...]
 ci commit-scope [COMMIT_MESSAGE_FILE|-]
 ci cache seed-dub | check-pins | stats | list | gc
+ci cache pin-costs FILE [--history-remote URL]
+ci cache gc-r2 [--keep-commits N] [--grace-days N] [--no-delete]
 ci cache verify [--rerun [--determinism-sample N]] [--key KEY...] [--task TASK...]
 ci cache remove --key KEY... | --task TASK... | --package NAME... | --toolchain ID
 ci cache replace TASK...
 ci cache explain TASK
 ci host probe
 ci checks mirror [--repo R] [--sha SHA] [--skip-check NAME...] [--no-write]
-ci stats [statistics options]
+ci stats [--merges] [statistics options]
 ci link-rot report [report options]
 ci slow-tests list
-ci perf show|compare|history|push|fetch [options]
+ci perf record TASK -- COMMAND...
+ci perf push [--allow-dirty] [--signing-key KEY] [--history-remote URL]
+ci perf import RUN --repo R
+ci perf append --records DIR --run-id ID [--run-attempt N] --run-date DATE
+               --landed-commit COMMIT [--signing-key KEY] [--history-remote URL]
+ci perf show|compare|history|fetch [options]
 ```
 
 Every command that executes a graph accepts:
@@ -122,7 +137,15 @@ a Linux VM from macOS, as the old flags did.
 
 `ci checks mirror` reads the GitHub API even when it writes nothing. So its
 rehearsal option is `--no-write`, not the common `--dry-run`, which forbids
-network access.
+network access. `ci cache gc-r2 --no-delete` lists the bucket for the same
+reason.
+
+**CIC16: Commands report through `Expected`.** Each command's handler
+**must** return its outcome as an `Expected` value: success, a failure with
+its message and exit status, or a skip. The program's entry point turns that
+value into the exit status and the diagnostic. No handler calls `exit` or
+returns a bare status integer. A command that runs a child process, such as
+`ci perf record`, fails with the child's exit status.
 
 ### 1.2 `ci test` modes
 
@@ -217,9 +240,11 @@ one data file:
 - **Running one:** `ci pipeline --placement NAME` runs that placement's tasks
   and the build actions they need. Every other task ends `Skipped(placement)`,
   a skip reason beside `platform`; none is dropped from the graph.
-- **Listing them:** `ci pipeline --list-placements` prints the placements and
-  their shards as JSON, and sets it as an output through the CI-provider
-  module (TDO6). The repository's workflows are generated from that output.
+- **Listing them:** `ci placements list` prints the placements and their
+  shards as JSON, and sets it as an output through the CI-provider module
+  (TDO6). The repository's workflows are generated from that output. Listing
+  is its own command, not an option of `ci pipeline`, because it plans nothing
+  and runs on the API-only build of `ci`.
 - **Shards:** a placement's tasks are packed into its shards longest first, by
   the `task.wall` that the
   [run records](../../build-primitives/observability/SPEC.md#_11-run-records)
@@ -231,9 +256,10 @@ one data file:
   commit of the ref whose committer time is not later than the measured
   commit's, so CI providers with no planning job agree too.
 
-Before `ci pipeline` exists, the same placements serve the current
-`--test`, `--test-sanitize` and `--test-extracted` modes, and the toolchain's
-build plan: `--placement NAME --shard K/N` runs a shard's packages
+Before `ci pipeline` exists, the same placements serve `ci test` in its
+ordinary, `--sanitize address` and `--special-modes all` forms, and the
+toolchain's build plan: `ci test --placement NAME --shard K/N` runs a shard's
+packages
 ([PLAN M3a](./PLAN.md#m3a-placements-before-the-build-graph),
 [OD21](../../build-primitives/observability/decisions.md#od21-test-wall-times-reach-the-history-before-the-build-graph-accepted)).
 
@@ -258,6 +284,7 @@ no legacy parser, alias, precedence table, or fallback dispatch.
 | `--test-sanitize`                 | `ci test --sanitize address`           |
 | `--test-slow`                     | `ci test --slow`                       |
 | `--packages` (with `--test-slow`) | `ci test --slow --from`                |
+| `--packages` (with `--test`)      | `ci test --from`                       |
 | `--files`                         | `--include-files`                      |
 | `--list-slow-tests`               | `ci slow-tests list`                   |
 | `--coverage`                      | `ci test --coverage`                   |
@@ -286,6 +313,23 @@ no legacy parser, alias, precedence table, or fallback dispatch.
 | `--mirror-checks --dry-run`       | `ci checks mirror --no-write`          |
 | `--ci-stats`, `-C`                | `ci stats`                             |
 | `--report-link-rot`               | `ci link-rot report`                   |
+| `--watch` (with `--test`)         | `ci test --watch`                      |
+| `--watch` (with `--build`)        | `ci test --build-only --watch`         |
+| `--list-placements`               | `ci placements list`                   |
+| `--check-adhoc-sdl`               | `ci audit adhoc-sdl`                   |
+| `--check-opaque-recipes`          | `ci audit opaque-recipes`              |
+| `--check-nix-wasm`                | `ci nix-wasm check`                    |
+| `--gc-report`                     | `ci gc-report`                         |
+| `--write-pin-costs`               | `ci cache pin-costs`                   |
+| `--gc-r2`                         | `ci cache gc-r2`                       |
+| `--gc-r2 --dry-run`               | `ci cache gc-r2 --no-delete`           |
+| `--record-task`                   | `ci perf record`                       |
+| `--perf-push`                     | `ci perf push`                         |
+| `--perf-import-github-run`        | `ci perf import`                       |
+| `--perf-append`                   | `ci perf append`                       |
+| `--perf-records`, `--perf-run-*`  | `ci perf append --records`, `--run-*`  |
+| `--ci-stats --merges`             | `ci stats --merges`                    |
+| `--skip-packages`                 | `ci test --placement --shard`          |
 
 **CIC4: No removed flag survives.** The parser **must** reject every flag in the
 table's first column, with a diagnostic naming its replacement. Option-only

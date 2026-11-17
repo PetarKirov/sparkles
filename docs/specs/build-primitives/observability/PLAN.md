@@ -12,7 +12,7 @@ its gate names the oracles in [testing.md](./testing.md) it must pass._
 Observation is delivered beside the work it measures. Its first slice is built
 alongside the [build graph](../build-graph/PLAN.md)'s E3, whose actions and
 store it instruments, and its first records come with
-[`apps/ci`](../../ci/task-dag/PLAN.md) M7, the `ci test` cutover. Comparison
+[`apps/ci`](../../ci/task-dag/PLAN.md) M7b, the `ci test` cutover. Comparison
 and the gate come last, once history exists to calibrate them.
 
 ## O0: Specification and spikes
