@@ -28,7 +28,7 @@ let
 
   # --- the same answers from the typed recipe ---
   rootRecipe = parse (builtins.readFile (root + "/dub.sdl"));
-  wasmSubPackages = map (s: s.path) (builtins.filter (s: s.path != "") rootRecipe.subPackages);
+  wasmSubPackages = map (s: s.path) (builtins.filter (s: s ? path) (rootRecipe.subPackages or [ ]));
 
   concatMap = f: l: builtins.concatLists (map f l);
   unique = l: builtins.foldl' (acc: x: if builtins.elem x acc then acc else acc ++ [ x ]) [ ] l;
@@ -58,12 +58,12 @@ let
         m = builtins.match "sparkles:([a-z-]+)" d.name;
       in
       if m == null then [ ] else m
-    ) s.dependencies
-    ++ pathRefsIn (concatMap (e: e.values) (s.importPaths ++ s.sourcePaths));
+    ) (s.dependencies or [ ])
+    ++ pathRefsIn (concatMap (e: e.values or [ ]) ((s.importPaths or [ ]) ++ (s.sourcePaths or [ ])));
   wasmRefsOf =
     recipe:
     refsOfSettings recipe
-    ++ concatMap refsOfSettings (takeWhile (c: c.name != "unittest") recipe.configurations);
+    ++ concatMap refsOfSettings (takeWhile (c: c.name != "unittest") (recipe.configurations or [ ]));
   takeWhile =
     p: l:
     if l == [ ] || !p (builtins.head l) then
