@@ -15,7 +15,9 @@ $(UL
         wrong.)
 )
 
-With `--nix-wasm-pinned`, both run again with the pinned module, so a change
+When nix/nix-wasm-pin.json pins a module, it is fetched as evaluation fetches
+it, compared byte for byte with a rebuild of the pinned revision, and both
+expressions run again with it, so a change
 the pin would reject cannot pass without moving it (D2). An evaluator without
 the builtin fails the mode: a check that did not run is not a pass.
 +/
@@ -81,10 +83,40 @@ private string names(const(JSONValue)[] values) @safe
         == "the seeded fixtures did not all catch the older reader: caught f of f, g");
 }
 
-/// Runs the checks with `nix` (an evaluator with `builtins.wasm`) from the
-/// checkout at `root`; returns the process status.
-int runCheckNixWasm(string root, string nix, string module_, string answers, string pinned) @system
+/// The pin of nix/nix-wasm-pin.json (D2): the revision the module was built
+/// at, the flake it was built from, and where and with what hash it is
+/// published. An empty `rev` means no module is pinned yet.
+struct NixWasmPin
 {
+    string flake; ///
+    string rev; ///
+    string url; ///
+    string hash; ///
+
+    /// Reads `json`, the pin file's text.
+    static NixWasmPin parse(string json) @safe
+    {
+        const v = parseJSON(json);
+        string field(string k) => v[k].type == JSONType.string ? v[k].str : null;
+        return NixWasmPin(field("flake"), field("rev"), field("url"), field("hash"));
+    }
+}
+
+///
+@("nix_wasm_check.NixWasmPin.parse")
+@safe unittest
+{
+    assert(NixWasmPin.parse(`{"flake": "github:o/r", "rev": null, "url": null, "hash": null}`).rev is null);
+    const p = NixWasmPin.parse(`{"flake": "github:o/r", "rev": "abc", "url": "u", "hash": "sha256-x"}`);
+    assert(p.flake == "github:o/r" && p.rev == "abc" && p.url == "u" && p.hash == "sha256-x");
+}
+
+/// Runs the checks with `nix` (an evaluator with `builtins.wasm`) from the
+/// checkout at `root`, for the tree's module and, when nix/nix-wasm-pin.json
+/// pins one, for the pinned module; returns the process status.
+int runCheckNixWasm(string root, string nix, string module_, string answers) @system
+{
+    import std.file : read, readText;
     import std.stdio : stderr, writeln;
 
     if (!module_.length || !answers.length)
@@ -103,16 +135,39 @@ int runCheckNixWasm(string root, string nix, string module_, string answers, str
 
     Verdict[] verdicts;
     string[2][] modules = [[module_, "the tree's module"]];
-    if (pinned.length)
-        modules ~= [pinned, "the pinned module"];
+
+    const pin = NixWasmPin.parse(readText(root ~ "/nix/nix-wasm-pin.json"));
+    if (pin.rev.length)
+    {
+        // The pinned module, fetched as evaluation fetches it, and the same
+        // revision rebuilt: they must be the same bytes (D2).
+        auto rebuild = Verdict("the pinned module rebuilt at " ~ pin.rev, true);
+        const fetched = evaluate(nix, `builtins.fetchurl { url = "` ~ pin.url ~ `"; sha256 = "`
+            ~ pin.hash ~ `"; }`);
+        const built = buildOutput(nix, pin.flake ~ "/" ~ pin.rev ~ "#dub-manifest-nix-wasm");
+        if (fetched.failure !is null)
+            rebuild.failure = "the pinned module did not fetch:\n" ~ fetched.failure;
+        else if (built.failure !is null)
+            rebuild.failure = "the pinned revision did not build:\n" ~ built.failure;
+        else if (read(fetched.value.str) != read(built.value.str ~ "/spk-dub-manifest.wasm"))
+            rebuild.failure = "the published module differs from the revision's build";
+        else
+            rebuild.checked = 1;
+        verdicts ~= rebuild;
+        if (fetched.failure is null)
+            modules ~= [fetched.value.str, "the pinned module"];
+    }
+    else
+        writeln(" - no module is pinned (nix/nix-wasm-pin.json): the pinned module's checks did not run");
+
     foreach (pair; modules)
     {
-        const label = pair[0], m = pair[1];
+        const path = pair[0], m = pair[1];
         const dir = root ~ "/libs/dub-manifest/nix-wasm";
         verdicts ~= run(nix, "answers, " ~ m, &judgeAgreement, "import " ~ dir ~ "/agreement.nix { module = "
-            ~ label ~ "; answers = " ~ answers ~ "; root = " ~ root ~ "; }");
+            ~ path ~ "; answers = " ~ answers ~ "; root = " ~ root ~ "; }");
         verdicts ~= run(nix, "recipe facts, " ~ m, &judgeFacts, "import " ~ dir
-            ~ "/facts-agreement.nix { module = " ~ label ~ "; root = " ~ root ~ "; }");
+            ~ "/facts-agreement.nix { module = " ~ path ~ "; root = " ~ root ~ "; }");
     }
 
     int status;
@@ -124,6 +179,19 @@ int runCheckNixWasm(string root, string nix, string module_, string answers, str
             status = 1;
     }
     return status;
+}
+
+// `nix build`'s output path for `installable`, as a JSON string.
+private Evaluated buildOutput(string nix, string installable) @safe
+{
+    import std.process : Config, execute;
+    import std.string : strip;
+
+    const r = execute([nix, "build", "--no-link", "--print-out-paths", installable], null,
+        Config.stderrPassThrough);
+    if (r.status != 0)
+        return Evaluated(JSONValue.init, r.output);
+    return Evaluated(JSONValue(r.output.strip));
 }
 
 private Verdict run(string nix, string what, Verdict function(string, const JSONValue) @safe judge,

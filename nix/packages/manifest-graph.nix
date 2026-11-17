@@ -13,9 +13,20 @@
       fromRoot = lib.path.append root;
 
       # The dub recipe module the recipe table reads through where the
-      # evaluator has `builtins.wasm` (docs/specs/wired/wasm WW7, WW8); null
-      # keeps every evaluation on the regular-expression reader.
-      nixWasmModule = null;
+      # evaluator has `builtins.wasm` (docs/specs/wired/wasm WW7, WW8): the
+      # pinned module of nix/nix-wasm-pin.json, built at the pin's revision and
+      # fetched by hash, so evaluation builds nothing. An evaluator without the
+      # builtin never fetches it, and an empty pin keeps every evaluation on the
+      # regular-expression reader.
+      nixWasmPin = lib.importJSON ../nix-wasm-pin.json;
+      nixWasmModule =
+        if builtins ? wasm && nixWasmPin.rev != null then
+          builtins.fetchurl {
+            inherit (nixWasmPin) url;
+            sha256 = nixWasmPin.hash;
+          }
+        else
+          null;
 
       # Compute the source closure of an app from its dub manifests, so the
       # fileset stays in sync with the actual dependency graph instead of a

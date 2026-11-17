@@ -35,7 +35,7 @@ nix run .#ci -- --check-adhoc-sdl
 nix run .#ci -- --check-opaque-recipes
 nix run .#ci -- --check-credits
 nix run .#ci -- --check-wasm-modules --text-module FILE --table-module FILE --wasi-loader FILE --wasi-shim DIR
-nix run .#ci -- --check-nix-wasm --nix-wasm-module FILE --nix-wasm-answers DIR [--nix-wasm-pinned FILE] [--nix-wasm-evaluator NIX]
+nix run .#ci -- --check-nix-wasm --nix-wasm-module FILE --nix-wasm-answers DIR [--nix-wasm-evaluator NIX]
 nix run .#ci -- --stage-docs-wasm
 nix run .#ci -- --check-blob-paths [--clone-root DIR] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --gc-report FILE [--gc-baseline FILE] [--gc-top N]
@@ -71,7 +71,7 @@ $(LIST
     $(ITEM `--check-adhoc-sdl` — verify no D source reads, edits or detects SDL by matching text: a text-matching call whose arguments hold an SDL marker fails unless `apps/ci/sdl-audit-allowlist.txt` lists it with a reason (lossless editing SDE9; see the `sdl_audit` module))
     $(ITEM `--check-credits` — verify the credits document (`docs/credits/`) against the build inputs: every dub package, native library, static archive, bundled font and grammar bundle the applications link or ship has a part, every part names something shipped, and each application page includes exactly its own parts (see the `credits` module))
     $(ITEM `--check-wasm-modules` — run a fixed corpus through the documentation site's WebAssembly modules under `node` and through the same D functions natively, and fail on any difference (docs/specs/toolchain/wasm-modules.md, TCM9; see `wasm_modules_check`))
-    $(ITEM `--check-nix-wasm` — on an evaluator with `builtins.wasm`, compare the dub recipe module's answers with the native oracle's and the recipe table's facts from the module with the regular-expression reader's, for the tree's module and the pinned one (docs/specs/wired/wasm, WW10; see `nix_wasm_check`))
+    $(ITEM `--check-nix-wasm` — on an evaluator with `builtins.wasm`, compare the dub recipe module's answers with the native oracle's and the recipe table's facts from the module with the regular-expression reader's, for the tree's module and the one nix/nix-wasm-pin.json pins, which must also equal a rebuild of its revision (docs/specs/wired/wasm, WW10; see `nix_wasm_check`))
     $(ITEM `--stage-docs-wasm` — build the documentation site's WebAssembly modules (`nix build .#docs-wasm`) and copy them into `docs/public/` (TCM3; see `docs_wasm`))
     $(ITEM `--check-blob-paths` — verify every SHA-pinned GitHub blob citation names a path that exists at that commit, using local clones under `--clone-root` (default `$REPOS`). Complements `--check-vcs-urls`, which only checks the ref; a wrong path is a 404 no ref check can see. $(B Local only) — a citation whose repository is not cloned is reported as unchecked, never failed, so this is not wired into CI or a pre-commit hook)
     $(ITEM `--gc-report FILE` — summarize a GC recording (`sparkles.profiling.gc_sampler`; a run with `SPARKLES_GC_SAMPLES=FILE` and `--DRT-gcopt=gc:sampler`): bytes allocated by site and inclusively by function, the collections' pauses, and what stayed live after the last one, scanned or not. `--gc-baseline` subtracts a shorter run of the same scenario, leaving the steady cost)
@@ -544,10 +544,6 @@ struct CliParams
         description: "With --check-nix-wasm: the oracle's answers (the dub-manifest-nix-answers package)."))
     string nixWasmAnswers;
 
-    @(Option(`nix-wasm-pinned`,
-        description: "With --check-nix-wasm: the pinned module, checked as well."))
-    string nixWasmPinned;
-
     @(Option(`nix-wasm-evaluator`,
         description: "With --check-nix-wasm: the evaluator to run (default: nix)."))
     string nixWasmEvaluator = "nix";
@@ -897,7 +893,7 @@ int ciMain(string[] args)
     {
         import nix_wasm_check : runCheckNixWasm;
         return runCheckNixWasm(detectRepoRoot(), cli.nixWasmEvaluator, cli.nixWasmModule,
-            cli.nixWasmAnswers, cli.nixWasmPinned);
+            cli.nixWasmAnswers);
     }
     if (mode == ProgramMode.stageDocsWasm)
         return stageDocsWasm(detectRepoRoot());
