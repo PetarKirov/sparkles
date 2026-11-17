@@ -276,8 +276,10 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
             if (coverage)
                 testArgv ~= "--DRT-covopt=dstpath:$OUT srcpath:$ROOT";
             testArgv ~= ["-t", text(testWeight)];
+            // BGX1: a test runs in the repository root, whatever the recipe's
+            // `workingDirectory`.
             auto t = Action(ActionKind.test, actionId(ActionKind.test, *v), rootVariant,
-                TaskAction(ProcessAction(argv: testArgv, cwd: relative(v.directory, root),
+                TaskAction(ProcessAction(argv: testArgv,
                     sandbox: SandboxPolicy.taskDirectory)),
                 coverage ? [DeclaredOutput(".", true)] : null, testWeight);
             edge(linkId, add(t));
