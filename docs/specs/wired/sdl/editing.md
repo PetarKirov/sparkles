@@ -762,6 +762,15 @@ was judged not worth its cost. A recipe construct those readers misread is a
 Nix bug to fix in Nix, and this table is the record that the exception
 exists.
 
+Since then the `dub.sdl` files the manifest walks read go through one
+recipe table per evaluation (`nix/lib/recipe-facts.nix`, which
+`nix/packages/manifest-graph.nix` now holds the walks of). Where the evaluator
+has `builtins.wasm`, the table reads them with this layer itself, the dub
+recipe schema compiled to WebAssembly and fetched as a pinned module; the
+regular expressions are its fallback, and a check holds the two to the same
+answers on every recipe ([wired/wasm](../wasm/SPEC.md), WW7–WW10). The
+readers of single-file examples' embedded recipes remain as described above.
+
 Not SDL work, and so outside SDE9: byte hashing of recipes (shader-compile
 stamps, CI cache keys), existence checks, path-pattern hook filters, and the
 syntax highlighter's injection of the SDL grammar.

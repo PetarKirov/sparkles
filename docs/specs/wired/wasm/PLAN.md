@@ -69,7 +69,7 @@ in the agreement check only.
 
 ## W4 — The pinned module
 
-Done, the pin last: `nix/nix-wasm-pin.json`, the fetch in
+Done. The pin names `64433fcf7`, the branch tip it was built from: `nix/nix-wasm-pin.json`, the fetch in
 `manifest-graph.nix`, `apps/ci/tools/pin-nix-wasm.d` (builds a revision's module,
 commits it to the orphan branch `nix-wasm-modules` and writes the pin), and
 `ci --check-nix-wasm` rebuilding the pinned revision and running both
