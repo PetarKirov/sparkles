@@ -8,13 +8,11 @@ targetPath "build"
 targetType "executable"
 targetName "spk-dub-manifest"
 
+dependency "sparkles:dub-manifest" path="../../.."
 dependency "sparkles:wired" path="../../.."
 
-// Prototype only: the recipe schema is compiled straight from
-// build-primitives, whose other modules (event-horizon) do not build for wasm.
-importPaths "src" "../src"
+importPaths "src"
 sourcePaths "src"
-sourceFiles "../src/sparkles/build_primitives/dub_manifest.d"
 
 dflags "-preview=in" "-preview=dip1000"
 // The `env` host functions are imports the Nix evaluator provides.
@@ -25,3 +23,60 @@ buildType "wasm-lto" {
     dflags "-flto=full" "-defaultlib=phobos2-ldc-lto,druntime-ldc-lto" platform="wasi"
     lflags "--gc-sections" platform="wasi"
 }
+
+// BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
+dflags "--linker=lld" platform="linux-ldc"
+dflags "-L-fuse-ld=lld" platform="linux-dmd"
+
+buildType "unittest" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-debug" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov" {
+    buildOptions "unittests" "coverage" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov-ctfe" {
+    buildOptions "unittests" "coverageCTFE" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
+buildType "bench" {
+    buildOptions "unittests" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-unchecked" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-static" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "--link-defaultlib-shared=false" platform="linux-ldc"
+    dflags "-defaultlib=libphobos2.a" platform="linux-dmd"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+// END managed build types

@@ -480,4 +480,4 @@ system guide][zig-buildsys]; Bazel [repository rules][bazel-repo],
 [sparkles-ui-dub]: ../../../libs/ui/dub.sdl
 [sparkles-ui-app-dub]: ../../../libs/ui-app/dub.sdl
 [sparkles-ctfe]: ../../../libs/dql/test/sparkles/dql/schema_ctfe_test.d
-[sparkles-manifest]: ../../../libs/build-primitives/src/sparkles/build_primitives/dub_manifest.d
+[sparkles-manifest]: ../../../libs/dub-manifest/src/sparkles/build_primitives/dub_manifest.d

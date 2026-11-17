@@ -109,7 +109,7 @@ unittest
         // The planner: build-primitives' closure, and ci's own sources.
         "libs/build-primitives/src/sparkles/build_primitives/task/graph.d",
         "libs/build-primitives/src/sparkles/build_primitives/workspace/select.d",
-        "libs/build-primitives/src/sparkles/build_primitives/dub_manifest.d",
+        "libs/dub-manifest/src/sparkles/build_primitives/dub_manifest.d",
         "libs/base/src/sparkles/base/buffer.d",
         "apps/ci/src/app.d", "apps/ci/src/ci_main.d", "apps/ci/dub.sdl",
         // A top-level directory a module could be found in.

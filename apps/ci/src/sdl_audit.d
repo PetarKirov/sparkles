@@ -64,7 +64,7 @@ immutable string[] decodedAccessors = ["name", "localName", "qualifiedName", "na
 /// Sources that implement SDL, and so match its text by design, and this
 /// audit, whose markers are SDL text by design.
 immutable string[] sdlImplementations = ["libs/wired/src/sparkles/wired/sdl/",
-    "libs/build-primitives/src/sparkles/build_primitives/dub_manifest.d",
+    "libs/dub-manifest/src/sparkles/build_primitives/dub_manifest.d",
     "apps/ci/src/sdl_audit.d"];
 
 /// One ad-hoc SDL match.

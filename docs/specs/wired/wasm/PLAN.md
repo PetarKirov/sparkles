@@ -20,8 +20,8 @@ once). The prototype is not the production module: W1 replaces it.
 
 Obligations: WW1, D3. Move the recipe schema, unchanged, into
 `sparkles:dub-manifest`, which depends on `sparkles:wired` and
-`sparkles:base` alone; `build-primitives` depends on it. This slice
-settles whether the module keeps its name.
+`sparkles:base` alone; `build-primitives` depends on it. The module keeps
+its name (D3).
 
 Gate: `dub test` of the new package and of `build-primitives` pass; the
 new package builds for `wasm32-unknown-wasip1` with the flake's WASI LDC;
