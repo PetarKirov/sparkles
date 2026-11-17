@@ -268,8 +268,11 @@ not build for WebAssembly; the prototype compiles the one file directly.
 The schema moves to a sub-package, `sparkles:dub-manifest`, depending on
 `sparkles:wired` and `sparkles:base` alone, and `build-primitives` depends
 on it. The alternative, moving it into `sparkles:wired`, was declined to
-keep `wired` free of dub's vocabulary. Whether the module keeps its name
-`sparkles.build_primitives.dub_manifest` is W1's to settle.
+keep `wired` free of dub's vocabulary. The module keeps its name,
+`sparkles.build_primitives.dub_manifest`: its importers across
+`build-primitives` and `apps/ci` read it unchanged, and so does the build
+graph's work in progress. The tests that list the repository's recipes
+with `runGit` stay in `build-primitives`, in `dub_manifest_corpus.d`.
 
 ### D4: The Nix attribute names
 

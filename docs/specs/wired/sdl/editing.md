@@ -464,7 +464,7 @@ hashing and existence checks are not SDL work. The oracle has two parts:
   reviewer, recording the result in §7.
 - **Regression:** an `apps/ci` audit (`ci --check-adhoc-sdl`) reads D
   sources outside `libs/wired/src/sparkles/wired/sdl/`,
-  `libs/build-primitives/src/sparkles/build_primitives/dub_manifest.d`, the
+  `libs/dub-manifest/src/sparkles/build_primitives/dub_manifest.d`, the
   audit itself, and test code (`unittest` blocks and `version (unittest)`
   code). A string literal, or a string constant (`enum`, `immutable`,
   `const` or `static`, at any scope, initialized from literals, other names,

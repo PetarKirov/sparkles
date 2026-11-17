@@ -109,7 +109,7 @@ recipe would.
 ## In this repository
 
 Do not declare your own recipe types: the
-`sparkles.build_primitives.dub_manifest` module (in `sparkles:build-primitives`)
+`sparkles.build_primitives.dub_manifest` module (in `sparkles:dub-manifest`)
 is the shared schema, with `DubManifest`, its configurations and build types,
 and `readDubManifest`, which also reads the recipe a single-file package
 embeds.
