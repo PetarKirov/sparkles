@@ -210,7 +210,8 @@ verdict ([BGX4](../../build-primitives/build-graph/SPEC.md#_9-test-actions-and-r
 or any other memo of an earlier run.
 
 **CIC14: Placements.** `ci pipeline` **must** partition its graph into named
-**placements**, each a host system, a runner class and a capacity, declared in
+**placements**, each a host system, a runner class, a capacity, the test legs it
+runs and whether it collects coverage, declared in
 one data file:
 
 - **Running one:** `ci pipeline --placement NAME` runs that placement's tasks
@@ -382,9 +383,15 @@ dependency-library archives it links. No test waits for another package's test.
 A dependency whose library fails to build blocks the link of each test binary
 that needs it.
 
-An ordinary test runs in two legs, `-t 1` and then `-t N`, both with
-`--skip-slow`, so a test that overflows a worker's stack cannot hide on the main
-thread. A sanitizer test runs one `-t N` leg on 4 MiB workers.
+An ordinary test runs in the legs its placement names (CIC14): `-t N` on
+every placement, and `-t 1`, on each worker's main thread, on the one
+placement that also collects coverage. Both run with `--skip-slow`. The `-t N`
+leg runs tests on worker threads under the stack watermark, so a test that
+overflows a worker's stack cannot hide on the main thread, and a test that
+needs the main thread is marked `@serial(threadAffinity: mainThread)` and runs
+there in the same leg (TRS2). A sanitizer test runs one `-t N` leg on 4 MiB
+workers. Without a placement, as on a developer's machine, both legs run
+([OD22](../../build-primitives/observability/decisions.md#od22-one-placement-runs-the-serial-leg-and-collects-coverage-accepted)).
 
 **CIC11: Tests through the runner core.** ci **must** run a test binary through
 the test runner's core library, never through the standalone runner or dub

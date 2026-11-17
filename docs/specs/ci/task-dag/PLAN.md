@@ -87,7 +87,7 @@ names:
   publishes local records, and `ci perf import-github-run RUN` builds records
   from an earlier run's job logs, to seed the history.
 - **Placements:** one data file, `ci/placements.json`, declares each placement:
-  its system, compiler, mode, runners per provider, shard count and time
+  its system, compiler, mode, legs, coverage, runners per provider, shard count and time
   limit. `ci --list-placements` prints them with their shards as JSON, and sets
   it as a job output.
 - **Shards:** `--placement NAME --shard K/N` packs the placement's packages
