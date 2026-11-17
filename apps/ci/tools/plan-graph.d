@@ -1375,7 +1375,10 @@ int runPackage(string root, string only, string into, string cache, bool checkDe
         {
             if (a.kind == ActionKind.test && confine != Confinement.tests)
                 continue;
-            string[] prefix = [wrapper, "--write=$OUT", "--write=$MEASURE", "--no-network"];
+            // The dub trap below records its calls beside itself, so a
+            // confined action that runs dub is still seen (BGX1).
+            string[] prefix = [wrapper, "--write=$OUT", "--write=$MEASURE", "--no-network",
+                "--write=" ~ buildPath(into, "dub-trap")];
             if (a.kind == ActionKind.test)
                 prefix ~= "--write=" ~ environment.get("TMPDIR", "/tmp");
             prefix ~= "--";
