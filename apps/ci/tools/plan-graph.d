@@ -142,6 +142,7 @@ int main(string[] args)
         const jobs = args.filter!(a => a.startsWith("--jobs=")).array;
         runJobs = jobs.length ? jobs[0]["--jobs=".length .. $].to!uint : 0;
         traceCompiles = args.canFind("--trace-compiles");
+        noDependencyOutput = args.canFind("--no-dependency-output");
         oracle3Only = args.canFind("--oracle3-only");
         return runPackage(root, name == "all" ? null : name, runDir, cache, args.canFind("--check-determinism"),
             args.canFind("--confine-tests") ? Confinement.tests : args.canFind("--confine") ? Confinement.builds
@@ -1220,6 +1221,9 @@ and its outcome; the exit status is the run's.
 */
 /// Oracle 3: whether a run traces its compiles (`--trace-compiles`).
 __gshared bool traceCompiles;
+/// BGK6 by hand: compiles run as with a compiler without the fork's
+/// dependency output (`--no-dependency-output`).
+__gshared bool noDependencyOutput;
 /// Oracle 3 over an earlier traced run, running nothing (`--oracle3-only`).
 __gshared bool oracle3Only;
 
@@ -1253,7 +1257,7 @@ int runPackage(string root, string only, string into, string cache, bool checkDe
         import std.process : execute;
 
         const help = execute([tools.compiler, "--help-hidden"]);
-        tools.dependencyOutput = help.output.canFind("makedeps-digests");
+        tools.dependencyOutput = help.output.canFind("makedeps-digests") && !noDependencyOutput;
     }
     if (tools.compiler is null || tools.archiver is null || tools.cc is null || tools.linker is null)
     {
