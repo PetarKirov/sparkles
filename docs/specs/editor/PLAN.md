@@ -146,6 +146,36 @@ Desktop native clipboard,
 storage and recovery evidence already recorded in testing.md does not replace
 the remaining Wayland/Android, layout, IME or device-performance gates.
 
+## Library extraction
+
+The app keeps the wiring: `EditorApp`, the command catalog, the CLI, the
+examples, the session record's schema and its scenario tests. Code that any
+editing surface needs moves to the library that owns its concern, extending
+what is already there rather than adding a second copy. Each step moves its
+tests with it, keeps the app's scenario tests green, and updates the specs
+and evidence citations that name the moved code. Branch
+`refactor/editor-lift-libs`, stacked on `feat/editor-showcase`.
+
+| Step | From (`apps/editor/src`)                                                                                             | To                                                                                                                                                                                      | Status  |
+| ---- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| X1   | `document_text.d`: BOM, line-ending detection, Enter's ending                                                        | `sparkles.base.text.envelope`: `TextEnvelope`, `LineEnding`; `enterEnding` generic over any text with `lineOf`/`lineEnd`/`byteAt`                                                       | planned |
+| X2   | `document_files.d`: atomic create-only save, durability receipt, no-follow regular read                              | `sparkles.base.vfs.write` (VFO9 gains a create-only disposition and a directory-sync receipt) and the VFS's no-follow read                                                              | planned |
+| X3   | `document_io.d`, `session_checkpoint.d`, `session_runtime.d`: ticketed `RawCpuPool` jobs                             | `sparkles.event_horizon.job_queue`: bounded submit, ticket, in-order completion, shutdown; `DocumentIo` stays in the app over it                                                        | planned |
+| X4   | `rowPrefix`, `visualRowIndex`, `totalVisualRows` and `Document`'s cache fields                                       | `sparkles.ui.editor.layout`: a row index beside `LayoutContext`                                                                                                                         | planned |
+| X5   | `statusPosition`'s cached grapheme column                                                                            | `sparkles.ui.editor.presentation`: the caret's line and column, cached per text and head                                                                                                | planned |
+| X6   | `decimalDigits`, `lineLabel`, the numbering loop                                                                     | `sparkles.ui.components.gutter`: a line-number channel                                                                                                                                  | planned |
+| X7   | `session_directory`, `session_archive`, the generic half of `session_checkpoint`/`session_runtime`, `tools/*-fault*` | a new `sparkles:recovery`: leased private directories, numbered immutable generations, a coalescing background writer over opaque bytes; record, snapshot and discovery stay in the app | planned |
+| X8   | `ClipboardRead`, `routeClipboard`, `receivePaste`, `clipboardOwnerValid`                                             | `sparkles.ui_app`: a clipboard router that joins paste chunks and delivers each reply only to the owner that asked                                                                      | planned |
+| X9   | `RowHit`, `DisplayedFrame`'s rows, `placeCaretAt`, `drawnCaretArea`                                                  | `sparkles.ui.components.editor`: hit testing and drag selection over the painted rows                                                                                                   | planned |
+| X10  | `find_bar.d` and the find bar's view                                                                                 | `sparkles.ui.editor.search` (state, `FindOption`) and a find-bar component                                                                                                              | planned |
+| X11  | `undoRows`, `travelTo`                                                                                               | a history component over `sparkles.text_buffer.history`                                                                                                                                 | planned |
+| X12  | `documentMarks`, `findMarks`, trailing-whitespace marks; `PresentationSettings`, `EditingSettings`                   | `sparkles.ui.editor.presentation`; toggle enums and command identities stay in the app                                                                                                  | planned |
+| X13  | `pointer()`: pixel-to-cell conversion, touch slop, the palette's touch panning                                       | `sparkles.ui_app` (pointer cells, slop) and `sparkles.ui.components.command_palette` (touch panning)                                                                                    | planned |
+
+X2 precedes X3 and X7 (the archive writes through the VFS). The rest are
+independent. Modal dialogs and hit identities, the document font service and
+the document/tab model need design first and are not on this list.
+
 ## Bounded feasibility experiments
 
 Each experiment records its checked revision, command or procedure, result,
