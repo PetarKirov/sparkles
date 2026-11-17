@@ -97,15 +97,45 @@ struct History
     string gitDir;
     string signersFile;
     string[] degradations; /// What the reader could not do, such as fetching.
+    bool unreachable; /// The remote did not answer; the history is the cached one, if any.
 }
 
-/// The cached partial clone's location (OBH9).
-string historyCacheDir() @safe
+/// The cached partial clone of `remote` (OBH9): `cache.git` for Sparkles' own
+/// history, and one clone per other remote, so that a ref cached from one
+/// remote is never read, or appended to, as another's.
+string historyCacheDir(string remote = canonicalRemote) @safe
 {
     import std.path : expandTilde;
+    import perf_record : sha256Hex;
 
     const cache = environment.get("XDG_CACHE_HOME", expandTilde("~/.cache"));
-    return buildPath(cache, "sparkles", "perf", "cache.git");
+    const name = remote == canonicalRemote ? "cache.git" : "cache-" ~ sha256Hex(remote)[0 .. 12] ~ ".git";
+    return buildPath(cache, "sparkles", "perf", name);
+}
+
+/// What fetching the ref found.
+private enum Sync : ubyte
+{
+    fetched, /// The remote has the ref, and the clone now has its tip.
+    absent, /// The remote has no history: the clone's ref, if any, is removed.
+    unreachable, /// The remote did not answer.
+}
+
+/// Ask the remote whether it has the ref before fetching it, so that a remote
+/// with no history is told apart from one that cannot be reached.
+private Sync syncRef(string gitDir) @trusted
+{
+    const listed = git(gitDir, ["ls-remote", "origin", historyRef]);
+    if (!listed.ok)
+        return Sync.unreachable;
+    if (listed.output.strip.length == 0)
+    {
+        git(gitDir, ["update-ref", "-d", historyRef]);
+        return Sync.absent;
+    }
+    const fetched = git(gitDir, ["fetch", "--quiet", "--no-tags", "--filter=blob:none", "origin",
+        "+" ~ historyRef ~ ":" ~ historyRef]);
+    return fetched.ok ? Sync.fetched : Sync.unreachable;
 }
 
 /**
@@ -127,19 +157,21 @@ Expected!(History, string) openHistory(string gitDir, string remote, string sign
     git(gitDir, ["config", "remote.origin.promisor", "true"]);
     git(gitDir, ["config", "remote.origin.partialclonefilter", "blob:none"]);
     History h = History(gitDir, signersFile);
-    const fetched = git(gitDir, ["fetch", "--quiet", "--no-tags", "--filter=blob:none", "origin",
-        "+" ~ historyRef ~ ":" ~ historyRef]);
-    if (!fetched.ok)
+    final switch (syncRef(gitDir))
     {
-        if (!git(gitDir, ["rev-parse", "--verify", "--quiet", historyRef]).ok)
-        {
-            // No history yet anywhere: a fresh ref is not an error for a reader.
-            h.degradations ~= "no " ~ historyRef ~ " at " ~ remote ~ " or in the cache";
-            return ok(h);
-        }
-        const age = git(gitDir, ["log", "-1", "--format=%cr", historyRef]);
-        h.degradations ~= "cannot fetch " ~ historyRef ~ "; using the cached history, last appended "
-            ~ age.output.strip;
+        case Sync.fetched:
+            break;
+        case Sync.absent:
+            h.degradations ~= "no " ~ historyRef ~ " at " ~ remote;
+            break;
+        case Sync.unreachable:
+            h.unreachable = true;
+            if (!git(gitDir, ["rev-parse", "--verify", "--quiet", historyRef]).ok)
+                h.degradations ~= "cannot reach " ~ remote ~ ", and no cached " ~ historyRef;
+            else
+                h.degradations ~= "cannot reach " ~ remote ~ "; using the cached history, last appended "
+                    ~ git(gitDir, ["log", "-1", "--format=%cr", historyRef]).output.strip;
+            break;
     }
     return ok(h);
 }
@@ -558,14 +590,16 @@ Expected!(string[], string) appendRecords(string gitDir, string remote, string s
     auto opened = openHistory(gitDir, remote, signersFile);
     if (opened.hasError)
         return err!(string[])(opened.error);
+    // An appender builds only on the remote's own tip, never on a cached one (OBH3).
+    if (opened.value.unreachable)
+        return err!(string[])("cannot reach " ~ remote ~ "; nothing appended");
     const start = MonoTime.currTime;
     uint attempt;
     while (true)
     {
         ++attempt;
-        if (attempt > 1)
-            git(gitDir, ["fetch", "--quiet", "--no-tags", "--filter=blob:none", "origin",
-                "+" ~ historyRef ~ ":" ~ historyRef]);
+        if (attempt > 1 && syncRef(gitDir) == Sync.unreachable)
+            return err!(string[])("lost " ~ remote ~ " while retrying; nothing appended");
         string parent, baseTree;
         if (hasTip(opened.value))
         {
@@ -682,6 +716,23 @@ unittest
 
     const author = git(h.gitDir, ["log", "-1", "--format=%an <%ae> %cn <%ce>", tip]).output.strip;
     assert(author == "perf-data <perf-data@users.noreply.invalid> perf-data <perf-data@users.noreply.invalid>");
+
+    // A clone that cached one remote's ref, appending to another remote with no
+    // history, starts that remote's history afresh rather than building on the
+    // cached tip (whose blobs the new remote cannot serve).
+    const fresh = buildPath(root, "fresh.git");
+    mkdirRecurse(fresh);
+    assert(git(fresh, ["init", "--quiet", "--bare"]).ok);
+    const moved = appendRecords(appender, fresh, signers, [rec("gh-5-1-0123456789ab-1", "p", 7)],
+        buildPath(root, "good"), "a new remote");
+    assert(moved.hasValue && moved.value.length == 1, moved.hasError ? moved.error : "");
+    assert(git(fresh, ["rev-list", "--count", historyRef]).output.strip == "1", "a root commit");
+    assert(git(fresh, ["cat-file", "-e", historyRef ~ ":README.md"]).ok);
+
+    // An unreachable remote: the appender refuses instead of using its cache.
+    const gone = appendRecords(appender, buildPath(root, "missing.git"), signers,
+        [rec("gh-6-1-0123456789ab-1", "p", 7)], buildPath(root, "good"), "nowhere");
+    assert(gone.hasError && gone.error.canFind("cannot reach"));
 }
 
 private long MonoTimeNow() @safe nothrow

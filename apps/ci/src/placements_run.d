@@ -62,7 +62,8 @@ Expected!(ShardChoice, string) chooseShard(string repoRoot, string[] allPackages
 
     ShardChoice choice;
     ulong[string][] records;
-    auto history = openHistory(historyCacheDir(), remote.length ? remote : canonicalRemote,
+    const from = remote.length ? remote : canonicalRemote;
+    auto history = openHistory(historyCacheDir(from), from,
         buildPath(repoRoot, "nix", "perf-data-signers"));
     if (history.hasError)
         choice.degradations ~= history.error ~ "; packing on equal weights";
@@ -187,7 +188,8 @@ Expected!(string, string) pinCostsJson(string repoRoot, string remote, out strin
     if (loaded.hasError)
         return err!string(loaded.error);
     JSONValue costs = JSONValue(string[string].init);
-    auto history = openHistory(historyCacheDir(), remote.length ? remote : canonicalRemote,
+    const from = remote.length ? remote : canonicalRemote;
+    auto history = openHistory(historyCacheDir(from), from,
         buildPath(repoRoot, "nix", "perf-data-signers"));
     if (history.hasError)
         degradations ~= history.error;

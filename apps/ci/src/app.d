@@ -7062,7 +7062,8 @@ private int runListPlacements(string provider, string githubOutput, string histo
         return 1;
     }
     string tip;
-    auto history = openHistory(historyCacheDir(), historyRemote.length ? historyRemote : canonicalRemote,
+    auto history = openHistory(historyCacheDir(historyRemote.length ? historyRemote : canonicalRemote),
+        historyRemote.length ? historyRemote : canonicalRemote,
         buildPath(repoRoot, "nix", "perf-data-signers"));
     if (history.hasError)
         warning(i"$(history.error)");
