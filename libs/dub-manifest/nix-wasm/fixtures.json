@@ -1,0 +1,46 @@
+[
+  {
+    "name": "lex/dub.sdl",
+    "text": "name \"unterminated\n"
+  },
+  {
+    "name": "parse/dub.sdl",
+    "text": "name \"x\"\nconfiguration \"a\" {\n    targetType \"library\"\n"
+  },
+  {
+    "name": "schema/dub.sdl",
+    "text": "name \"x\"\ntargetTyp \"library\"\n"
+  },
+  {
+    "name": "value/dub.sdl",
+    "text": "name 42\n"
+  },
+  {
+    "name": "empty/dub.sdl",
+    "text": ""
+  },
+  {
+    "name": "escapes/dub.sdl",
+    "text": "name \"x\"\ndescription \"quote \\\" backslash \\\\ tab \\t \u2014 \u00fcn\u00efc\u00f8d\u00e9, \u6f22\u5b57\"\nauthors \"a\" \"b\"\n"
+  },
+  {
+    "name": "json/dub.json",
+    "text": "{\"name\": \"j\", \"dependencies\": {\"sparkles:base\": {\"path\": \"../..\"}, \"x\": \"~>1.2\"}, \"configurations\": [{\"name\": \"library\", \"targetType\": \"library\"}], \"dflags-ldc\": [\"-O\"]}"
+  },
+  {
+    "name": "json-syntax/dub.json",
+    "text": "{\"name\": \"j\","
+  },
+  {
+    "name": "json-schema/dub.json",
+    "text": "{\"name\": \"j\", \"targetTyp\": \"library\"}"
+  },
+  {
+    "name": "embedded/example.d",
+    "text": "#!/usr/bin/env dub\n/+ dub.sdl:\n    name \"example\"\n    dependency \"sparkles:base\" path=\"../..\"\n+/\nvoid main() {}\n"
+  },
+  {
+    "name": "embedded-none/example.d",
+    "text": "void main() {}\n"
+  }
+]

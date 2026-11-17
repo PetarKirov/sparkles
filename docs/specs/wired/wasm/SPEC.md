@@ -107,8 +107,9 @@ through `return_to_nix`. It **must** import only `env` host functions and
 `wasi_snapshot_preview1`. Its argument is the recipe's text as a Nix string
 and, optionally, its file name for diagnostics, as
 `{ text; name ? "dub.sdl"; }`; a bare string **must** be accepted as
-`{ text = s; }`. The format follows the name: `dub.json` decodes JSON,
-anything else SDL.
+`{ text = s; }`. The format follows the name, as the schema's `parseDubRecipeText`
+reads it: a name ending `.json` is JSON, one ending `.d` a single-file
+package's embedded recipe, anything else SDL.
 
 **WW4: Result shape.** _(Owner: the Nix entry layer.)_ A recipe decodes to
 `{ recipe = <attrs>; }`, where `<attrs>` mirrors the schema's D aggregates:
@@ -122,9 +123,11 @@ rejects what it does not name (WW5).
 
 **WW5: Errors are values.** _(Owner: the Nix entry layer.)_ For text the
 SDL or JSON reader rejects, or a recipe the schema rejects, the module
-**must** return `{ error = { name; line; column; message; }; }`, positions
-1-based as the native reader reports them, and **must not** call `panic` or
-trap. `panic` is reserved for a broken calling convention: a missing or
+**must** return `{ error = { name; line; column; code; message; }; }`:
+positions 1-based as the native reader reports them, `code` the
+`SdlErrorCode` member's name, and `message` the native rendering without
+the `name(line:column): ` prefix the other fields carry. It **must not**
+call `panic` or trap. `panic` is reserved for a broken calling convention: a missing or
 non-string argument. A caller turns an error into `throw` with the name and
 position in the message, so a recipe that dub would reject stops the
 evaluation where it is read.
