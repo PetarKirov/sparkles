@@ -428,6 +428,31 @@ struct ActionDriver
         return TaskOutcome(Succeeded());
     }
 
+    /*
+    A file the graph writes for a generator (§7): its arguments are the
+    path, beneath the action's output directory, and the contents.
+    */
+    TaskOutcome generateFile(ref TaskContext!Sched ctx, const ref InProcessAction a) @system
+    {
+        import sparkles.build_primitives.task.model : FailureReason, Failed, OutputStream, Succeeded;
+
+        TaskOutcome fail(string why)
+        {
+            ctx.output(OutputStream.stderr, "generate:file: " ~ why);
+            return TaskOutcome(Failed(FailureReason.exitStatus, 1));
+        }
+        if (a.arguments.length != 2 || !a.arguments[0].startsWith(layout.runDirectory ~ "/"))
+            return fail("takes a path in the run directory and the contents");
+        const path = a.arguments[0][layout.runDirectory.length + 1 .. $];
+        size_t slash = path.length;
+        while (slash > 0 && path[slash - 1] != '/')
+            --slash;
+        auto dir = run_.walkAll(path[0 .. slash - 1]);
+        if (dir.hasError || dir.value.writeFileAtomic(path[slash .. $], a.arguments[1]).hasError)
+            return fail("cannot write " ~ a.arguments[0]);
+        return TaskOutcome(Succeeded());
+    }
+
     private bool readWorktree(string path, out string text_) @safe
     {
         import sparkles.base.vfs.types : OpenMode;
@@ -498,6 +523,8 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
         return RunResult(exitCode: 2);
     driver.processes.register("generate:test-root-module",
         (ref TaskContext!Sched ctx, const ref InProcessAction a) => driver.generateTestRoot(ctx, a));
+    driver.processes.register("generate:file",
+        (ref TaskContext!Sched ctx, const ref InProcessAction a) => driver.generateFile(ctx, a));
     driver.processes.register("generate:failing-tools",
         (ref TaskContext!Sched ctx, const ref InProcessAction a) => driver.generateFailingTools(ctx, a));
     auto reporter = PlainReporter!W(&writer, &graph, PlainOptions(timings: false));

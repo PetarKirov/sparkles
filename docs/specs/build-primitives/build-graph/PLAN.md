@@ -191,7 +191,11 @@ naming the worktree or the run directory. Typed generators (BGG1–BGG3,
 BGG6): `dmd`'s `config.d` is built as `dmd:config` and run with its output
 as `$OUT` (D60), so `plan-graph --run=build-primitives` builds its 44
 actions, `dmd:lexer` included, and runs its tests from the repository root
-(BGX1). Next: the shader compiler's direct invocation.
+(BGX1). The shader compiler is built from its own request and run in its
+direct invocation (shader build SHP11), with the fork naming its `spirv-opt`;
+`--run=ui-app` builds and tests through it. A dependency library's compile
+writes its archive itself (`-lib`), one member per module as dub's does, so a
+source library folded into a library and its dependent links once.
 
 ## E4: The Nix backend
 

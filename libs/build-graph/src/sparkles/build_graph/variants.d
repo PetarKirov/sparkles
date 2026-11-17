@@ -146,6 +146,10 @@ struct VariantPlan
     LayoutFinding[] layout;
     /// Every generator a variant runs, each once (§7).
     Generator[] generators;
+    /// The resolutions of the generators' tools that are applications of
+    /// their own (the shader compiler's), each a request after the given
+    /// ones: `requests` holds their variants at the same indices.
+    Resolution[] toolResolutions;
 }
 
 /// Why planning failed: a lint's finding, at a place in a file.
@@ -211,7 +215,18 @@ struct PlanOptions
     /// Planning's own goes through a `RecordingPkgConfig`, so the read set
     /// holds its queries (BGP1).
     PkgConfigDriver pkgConfig;
+    /// Resolves a generator's requests (§7, D53): the shader compiler's
+    /// application (`configuration` null) and the device configuration of
+    /// the package it compiles, by package directory. Null leaves the
+    /// shader compiler dub's command, unplanned.
+    ToolResolver resolveTool;
+    /// The worktree, beneath which a generator's description names paths as
+    /// `$ROOT/…`.
+    string root;
 }
+
+/// Resolves a request for a generator (see `PlanOptions.resolveTool`).
+alias ToolResolver = PlanExpected!(Resolution, PlanError) delegate(string directory, string configuration) @safe;
 
 /**
 Gives each target of each resolution its variant, deduplicated across all of
@@ -261,7 +276,7 @@ PlanExpected!(VariantPlan, PlanError) planVariants(const Resolution[] resolution
                 return planErr!VariantPlan(PlanError(e.message, e.file, e.line));
     }
 
-    if (auto e = planGenerators(plan, options, tree))
+    if (auto e = planGenerators(plan, options, tree, scans))
         return planErr!VariantPlan(*e);
 
     if (auto e = treeFault(tree))
@@ -375,7 +390,8 @@ as an application variant (BGG6). The shader compiler's tool is an
 application of the repository's, planned by its own request; it stays
 unplanned here.
 */
-PlanError* planGenerators(ref VariantPlan plan, const PlanOptions options, ResolveTree tree) @safe
+PlanError* planGenerators(ref VariantPlan plan, PlanOptions options, ResolveTree tree,
+    ref SourceScans scans) @safe
 {
     import std.digest.sha : sha256Of;
     import sparkles.build_primitives.dub_manifest : parseDubRecipeText;
@@ -439,6 +455,35 @@ PlanError* planGenerators(ref VariantPlan plan, const PlanOptions options, Resol
                 g.tool = plan.variants.length;
                 plan.variants ~= t;
             }
+            else if (options.resolveTool !is null)
+            {
+                // D53: the tool is the shader compiler's application, a
+                // request of its own; the unit is the package's device
+                // configuration, which the tool reads as a description.
+                auto tool = options.resolveTool(g.program, null);
+                if (tool.hasError)
+                    return new PlanError(tool.error.message, tool.error.file, tool.error.line);
+                size_t[] indices;
+                foreach (i, ref target; tool.value.targets)
+                {
+                    auto v = variantOf(tool.value, target, i == 0, options, options.pkgConfig, scans);
+                    if (v.hasError)
+                        return new PlanError(v.error.message, v.error.file, v.error.line);
+                    indices ~= addVariant(plan, v.value);
+                }
+                g.tool = indices[0];
+                plan.requests ~= indices;
+                plan.toolResolutions ~= tool.value;
+
+                string configuration = "shaders";
+                foreach (a; g.arguments)
+                    if (a.length > "--config=".length && a[0 .. "--config=".length] == "--config=")
+                        configuration = a["--config=".length .. $];
+                auto device = options.resolveTool(directory, configuration);
+                if (device.hasError)
+                    return new PlanError(device.error.message, device.error.file, device.error.line);
+                g.described = describeDevice(device.value, options.root);
+            }
             byCommand[at] = plan.generators.length;
             uses ~= plan.generators.length;
             plan.generators ~= g;
@@ -446,6 +491,71 @@ PlanError* planGenerators(ref VariantPlan plan, const PlanOptions options, Resol
         plan.variants[vi].generators = uses;
     }
     return null;
+}
+
+// `v`'s index in the plan, added unless a variant with its key is there.
+size_t addVariant(ref VariantPlan plan, Variant v) @safe
+{
+    foreach (i, ref existing; plan.variants)
+        if (existing.key == v.key)
+            return i;
+    plan.variants ~= v;
+    return plan.variants.length - 1;
+}
+
+/*
+The device configuration `r` as `dub describe` reports what the shader
+compiler reads of it: the root package, each target's directory, and each
+target's import paths, versions, dflags and source files (shader build
+SHP1). Paths beneath `root` are written `$ROOT/…`, so the description is
+the same in every worktree.
+*/
+string describeDevice(ref const Resolution r, string root) @safe
+{
+    import std.json : JSONValue;
+
+    string place(string path)
+    {
+        if (root.length && path == root)
+            return "$ROOT";
+        if (root.length && path.startsWith(root ~ "/"))
+            return "$ROOT/" ~ path[root.length + 1 .. $];
+        return path;
+    }
+    JSONValue[] places(const string[] paths)
+    {
+        JSONValue[] values;
+        foreach (p; paths)
+            values ~= JSONValue(place(p));
+        return values;
+    }
+    JSONValue[] strings(const string[] values)
+    {
+        JSONValue[] result;
+        foreach (s; values)
+            result ~= JSONValue(s);
+        return result;
+    }
+
+    JSONValue[] packages, targets;
+    foreach (ref t; r.targets)
+    {
+        packages ~= JSONValue(["name": JSONValue(t.package_), "path": JSONValue(place(t.directory))]);
+        targets ~= JSONValue([
+            "rootPackage": JSONValue(t.package_),
+            "buildSettings": JSONValue([
+                "importPaths": JSONValue(places(t.settings.importPaths)),
+                "versions": JSONValue(strings(t.settings.versions)),
+                "dflags": JSONValue(strings(t.settings.dflags)),
+                "sourceFiles": JSONValue(places(t.settings.sourceFiles)),
+            ]),
+        ]);
+    }
+    return JSONValue([
+        "rootPackage": JSONValue(r.rootPackage),
+        "packages": JSONValue(packages),
+        "targets": JSONValue(targets),
+    ]).toString;
 }
 
 string directoryOf(string path) @safe pure nothrow @nogc
