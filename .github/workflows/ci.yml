@@ -920,7 +920,9 @@ jobs:
         run: |
           # The pre-commit shell exposes the packaged verifier, not DUB.
           nix develop .#ci --command dub run --single apps/ci/tools/prepare-event-horizon-comparisons.d --temp-build -b checked
-          nix run .#ci -- examples verify --fail-fast --include-files '**.md' --exclude-files 'libs/syntax/test/data/**' 'libs/source-view/test/data/**'
+          # Inside the CI shell, so examples over a C library (tree-sitter,
+          # through pkg-config) find its headers.
+          nix develop .#ci --command ci examples verify --fail-fast --include-files '**.md' --exclude-files 'libs/syntax/test/data/**' 'libs/source-view/test/data/**'
 
       - name: Save lychee cache
         if: always()
