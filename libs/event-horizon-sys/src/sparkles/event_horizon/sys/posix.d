@@ -21,6 +21,49 @@ public import core.sys.posix.sys.stat : fstat, fstatat, mkdirat, stat_t, S_IFMT,
     S_IFREG, S_IFLNK;
 public import core.sys.posix.unistd : close, fsync, read, readlinkat, symlinkat, unlinkat, write;
 public import core.sys.posix.stdio : renameat;
+public import core.sys.posix.fcntl : O_NONBLOCK;
+public import core.sys.posix.sys.stat : fchmod;
+public import core.sys.posix.unistd : linkat;
+
+/**
+A rename that fails with `EEXIST` rather than replace its destination:
+`renameat2(…, RENAME_NOREPLACE)` on Linux, `renameatx_np(…, RENAME_EXCL)` on
+Darwin. Elsewhere, or on a Linux architecture this does not know, `-1` with
+`ENOSYS`; a file system without the flag reports `EINVAL` (Linux) or `ENOTSUP`.
+*/
+int renameNoReplace(int fromDir, scope const(char)* from, int toDir, scope const(char)* to)
+    @system nothrow @nogc
+{
+    version (linux)
+    {
+        version (X86_64) enum long number = 316;
+        else version (AArch64) enum long number = 276;
+        else version (X86) enum long number = 353;
+        else version (ARM) enum long number = 382;
+        else version (RISCV64) enum long number = 276;
+        else enum long number = -1;
+        static if (number >= 0)
+        {
+            import core.sys.linux.unistd : syscall;
+
+            enum uint RENAME_NOREPLACE = 1;
+            return cast(int) syscall(number, fromDir, from, toDir, to, RENAME_NOREPLACE);
+        }
+    }
+    else version (Darwin)
+    {
+        enum uint RENAME_EXCL = 4;
+        return renameatx_np(fromDir, from, toDir, to, RENAME_EXCL);
+    }
+    import core.stdc.errno : errno, ENOSYS;
+
+    errno = ENOSYS;
+    return -1;
+}
+
+version (Darwin)
+    private extern (C) int renameatx_np(int fromfd, scope const(char)* from, int tofd,
+        scope const(char)* to, uint flags) nothrow @nogc;
 
 version (linux)
 {

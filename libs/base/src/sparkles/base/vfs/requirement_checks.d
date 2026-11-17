@@ -276,6 +276,115 @@ auto rootOf(Rights R = Rights.all)(MemVfs* v, string path = "r",
     assert(!l.value.next().value, "no temporary entry is left behind");
 }
 
+@("vfs.check.VFO9.createNewNeverReplaces")
+@safe unittest
+{
+    auto v = testVfs();
+    auto root = rootOf(v);
+    const made = root.value.writeFileAtomic!(AtomicMode.createNew)("f", "first");
+    assert(!made.hasError && !made.value.directorySynced && !made.value.temporaryLeft);
+    assert(v.contents("r/f") == "first");
+    const refused = root.value.writeFileAtomic!(AtomicMode.createNew)("f", "second");
+    assert(refused.error.kind == ErrorKind.exists);
+    assert(v.contents("r/f") == "first");
+    auto l = root.value.list();
+    size_t entries;
+    while (l.value.next().value)
+        ++entries;
+    assert(entries == 1, "the refused write's temporary is removed");
+}
+
+@("vfs.check.VFO9.createNewLosesARace")
+@safe unittest
+{
+    // An entry that appears while the temporary is written is not replaced.
+    auto v = testVfs();
+    auto root = rootOf(v);
+    v.hook = (size_t, ref MemVfs vfs) @safe nothrow @nogc {
+        if (!vfs.exists("r/f"))
+            vfs.writeFile("r/f", cast(const(ubyte)[]) "raced");
+    };
+    const lost = root.value.writeFileAtomic!(AtomicMode.createNew)("f", "mine");
+    v.hook = null;
+    assert(lost.error.kind == ErrorKind.exists);
+    assert(v.contents("r/f") == "raced");
+}
+
+version (Posix)
+@("vfs.check.VFO9.keepPermissionsAndSyncDirectory")
+@safe unittest
+{
+    enum keep = AtomicMode(AtomicDisposition.replace, keepPermissions: true, syncDirectory: true);
+    auto v = testVfs();
+    auto root = rootOf(v);
+    assert(!root.value.writeFileAtomic("f", "old", PosixMode(416)).hasError); // 0640
+    const replaced = root.value.writeFileAtomic!keep("f", "new");
+    assert(!replaced.hasError && replaced.value.directorySynced);
+    assert(v.contents("r/f") == "new");
+    assert(root.value.statAt("f").value.permissions == 416);
+    // A missing target is created with the requested sharing.
+    assert(!root.value.writeFileAtomic!keep("g", "fresh", OwnerOnly()).hasError);
+    assert(root.value.statAt("g").value.permissions == 384);
+    // Anything but a regular file is refused before a temporary exists.
+    v.mkdirs("r/d");
+    v.symlink("r/l", "f");
+    assert(root.value.writeFileAtomic!keep("d", "x").error.kind == ErrorKind.isADirectory);
+    assert(root.value.writeFileAtomic!keep("l", "x").error.kind == ErrorKind.symlinkRefused);
+    assert(v.contents("r/f") == "new");
+    // keepPermissions needs stat.
+    auto blind = root.value.attenuate!(cast(Rights)(Rights.create | Rights.write | Rights.rename));
+    static assert(!__traits(compiles, blind.writeFileAtomic!keep("f", "x")));
+    static assert(__traits(compiles, blind.writeFileAtomic!(AtomicMode.createNew)("f", "x")));
+}
+
+@("vfs.check.VFO12.readFileWhole")
+@safe unittest
+{
+    import std.array : appender;
+
+    auto v = testVfs();
+    v.writeFile("r/f", cast(const(ubyte)[]) "\xef\xbb\xbfa\r\nb\n");
+    v.mkdirs("r/d");
+    v.symlink("r/l", "f");
+    auto root = rootOf(v);
+    auto sink = appender!(ubyte[]);
+    assert(root.value.readFile("f", sink).value == 8);
+    assert(sink[] == cast(const(ubyte)[]) "\xef\xbb\xbfa\r\nb\n");
+    auto small = appender!(ubyte[]);
+    assert(root.value.readFile("f", small, 2).error.kind == ErrorKind.bufferTooSmall);
+    assert(small[].length == 0, "nothing is read past the limit");
+    auto other = appender!(ubyte[]);
+    assert(root.value.readFile("d", other).error.kind == ErrorKind.isADirectory);
+    assert(root.value.readFile("l", other).error.kind == ErrorKind.symlinkRefused);
+    assert(root.value.readFile("missing", other).error.kind == ErrorKind.notFound);
+    auto blind = root.value.attenuate!(Rights.lookup);
+    static assert(!__traits(compiles, blind.readFile("f", other)));
+}
+
+@("vfs.check.VFO12.readFileSeesAChange")
+@safe unittest
+{
+    import std.array : appender;
+
+    // A write between the open and the end of the read fails the read.
+    auto v = testVfs();
+    v.writeFile("r/f", cast(const(ubyte)[]) "four");
+    auto root = rootOf(v);
+    bool grown;
+    v.hook = (size_t, ref MemVfs vfs) @safe nothrow @nogc {
+        if (!grown && vfs.totalCalls > 2)
+        {
+            grown = true;
+            vfs.clockNs += 1;
+            vfs.writeFile("r/f", cast(const(ubyte)[]) "longer now");
+        }
+    };
+    auto sink = appender!(ubyte[]);
+    const r = root.value.readFile("f", sink);
+    v.hook = null;
+    assert(grown && r.hasError && r.error.context == "the file changed while it was read");
+}
+
 @("vfs.check.VFO10.linkTargets")
 @safe unittest
 {

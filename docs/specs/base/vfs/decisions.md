@@ -159,9 +159,21 @@ A runtime-erased handle is deferred until a plug-in boundary needs one.
 ### DV13: Rename and atomic write are in v1
 
 Atomic replacement is how files should be written, and io_uring and NT both
-support a handle-relative rename. Exchange and no-replace flags are deferred
+support a handle-relative rename. Exchange is deferred
 ([`VFO8`](./SPEC.md#vfo8-rename-stays-in-one-root),
 [`VFO9`](./SPEC.md#vfo9-atomic-write)).
+
+No-replace joined when the editor's saves and its recovery archive moved onto
+the VFS: a create-only atomic write is the one commit an existence check cannot
+emulate. It is an `AtomicMode` disposition over optional backend primitives
+([`VFB8`](./backends.md#vfb8-atomic-commit-primitives)) rather than a flag on
+`renameAt`, because a caller wants the whole write to refuse, temporary
+included, and a backend that has only hard links (an old Linux file system)
+can still provide it. The same mode carries `keepPermissions`, reversing the
+earlier choice that a caller re-applies bits through `PosixMode`: the umask
+clears bits a user set deliberately, so only `fchmod` keeps them; and
+`syncDirectory`, reported in a receipt rather than failing the call, because
+the content is already committed when the sync fails.
 
 ### DV14: Windows directory handles allow delete sharing
 
@@ -276,9 +288,11 @@ with an explicit access control list, refused as `unsupported`, or ignored.
   a silent downgrade of the kind [`VFR4`](./SPEC.md#vfr4-never-downgrade-a-lookup)
   forbids for links.
 - An atomic write's replacement takes the requested sharing, not the replaced
-  file's permissions ([`VFO9`](./SPEC.md#vfo9-atomic-write)); preserving them
-  would make the result depend on history and could not cover Windows access
-  control. A caller who wants the old bits reads them from `Stat`.
+  file's permissions, unless its mode asks for `keepPermissions`
+  ([`VFO9`](./SPEC.md#vfo9-atomic-write)); preserving them by default would
+  make the result depend on history and could not cover Windows access
+  control, so keeping them is POSIX-only and explicit
+  ([DV13](#dv13-rename-and-atomic-write-are-in-v1)).
 - No operation changes the umask, because it is process-wide and racy across
   threads. `MemVfs` records each entry's sharing so the differential can
   compare it ([`VFM5`](./backends.md#vfm5-sharing-is-recorded)).

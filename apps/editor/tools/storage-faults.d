@@ -27,32 +27,36 @@ int main(string[] args) @system
     auto fixture = TmpFS.create();
     const baselinePath = buildPath(fixture.dir, "baseline.trace");
     const baseline = execute(["strace", "-qq", "-yy", "-o", baselinePath,
-        "-e", "trace=close,fsync,write,renameat,linkat", probe, "baseline"]);
+        "-e", "trace=close,fsync,write,renameat,renameat2,linkat", probe, "baseline"]);
     enforce(baseline.status == 0, baseline.output);
     size_t ordinal, temporaryClose;
     foreach (line; readText(baselinePath).splitLines)
         if (line.startsWith("close("))
         {
             ++ordinal;
-            if (line.canFind(".sparkles-editor-")) temporaryClose = ordinal;
+            if (line.canFind(".tmp-")) temporaryClose = ordinal;
         }
     enforce(temporaryClose != 0, "The baseline did not close a save temporary.");
-    struct Case { string name, injection, mode; }
-    Case[8] cases = [
-        Case("write", "write:error=ENOSPC:when=2", "precommit"),
-        Case("temporary-sync", "fsync:error=EIO:when=1", "precommit"),
-        Case("temporary-close", text("close:error=EIO:when=", temporaryClose), "precommit"),
-        Case("replacement", "renameat:error=EACCES:when=1", "precommit"),
-        Case("atomic-create", "linkat:error=EEXIST:when=1", "create-failure"),
-        Case("directory-sync", "fsync:error=EIO:when=2", "directory-sync-failure"),
-        Case("recovery-temporary-sync", "fsync:error=EIO:when=3", "recovery-precommit"),
-        Case("recovery-directory-sync", "fsync:error=EIO:when=4", "recovery-directory-sync-failure"),
+    struct Case { string name; string[] injections; string mode; }
+    Case[9] cases = [
+        Case("write", ["write:error=ENOSPC:when=2"], "precommit"),
+        Case("temporary-sync", ["fsync:error=EIO:when=1"], "precommit"),
+        Case("temporary-close", [text("close:error=EIO:when=", temporaryClose)], "precommit"),
+        Case("replacement", ["renameat:error=EACCES:when=1"], "precommit"),
+        Case("atomic-create", ["renameat2:error=EEXIST:when=1"], "create-failure"),
+        // A file system without RENAME_NOREPLACE commits a new file with a hard link.
+        Case("atomic-create-link", ["renameat2:error=EINVAL:when=1", "linkat:error=EEXIST:when=1"],
+            "create-failure"),
+        Case("directory-sync", ["fsync:error=EIO:when=2"], "directory-sync-failure"),
+        Case("recovery-temporary-sync", ["fsync:error=EIO:when=3"], "recovery-precommit"),
+        Case("recovery-directory-sync", ["fsync:error=EIO:when=4"], "recovery-directory-sync-failure"),
     ];
     foreach (case_; cases)
     {
         const tracePath = buildPath(fixture.dir, case_.name ~ ".trace");
-        const result = execute(["strace", "-qq", "-yy", "-o", tracePath,
-            "-e", "inject=" ~ case_.injection, probe, case_.mode]);
+        string[] command = ["strace", "-qq", "-yy", "-o", tracePath];
+        foreach (injection; case_.injections) command ~= ["-e", "inject=" ~ injection];
+        const result = execute(command ~ [probe, case_.mode]);
         enforce(result.status == 0, case_.name ~ ": " ~ result.output);
         const trace = readText(tracePath);
         enforce(trace.canFind("INJECTED"), case_.name ~ ": no syscall fault was injected");
@@ -60,7 +64,7 @@ int main(string[] args) @system
         {
             bool reached;
             foreach (line; trace.splitLines)
-                reached |= line.startsWith("close(") && line.canFind(".sparkles-editor-")
+                reached |= line.startsWith("close(") && line.canFind(".tmp-")
                     && line.canFind("INJECTED");
             enforce(reached, "The close fault missed the save temporary.");
         }

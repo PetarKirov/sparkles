@@ -35,6 +35,13 @@ Optional: `bool wholePathFor(ResolvePolicy)` with
 carry their own access, a trailing `Rights` argument to `openRootDir`,
 `openDirAt`, `reopen` and `resolveWhole`, which opens the directory with only
 the operating-system access those rights need (VFN11).
+
+Optional, for an atomic write that must not replace or must keep a mode
+(VFO9, VFB8): `renameNoReplaceAt(dir, name, dstDir, dstName)`, a rename that
+fails with `exists` rather than replace, and with `unsupported` where the
+file system cannot; `linkAt(dir, name, dstDir, dstName)`, a hard link,
+`exists` if the name is taken; and `setPermissions(file, bits)`, which sets an
+open file's permission bits exactly, regardless of the umask.
 */
 module sparkles.base.vfs.concept;
 
@@ -159,3 +166,18 @@ bool resolverWithdrawn(V)(ref V vfs)
     else
         return false;
 }
+
+/// Whether `V` offers a rename that never replaces its destination (VFB8).
+enum hasRenameNoReplace(V) = __traits(compiles, (ref V v, V.Handle h, scope const(char)[] n) {
+    IoResult!void r = v.renameNoReplaceAt(h, n, h, n);
+});
+
+/// Whether `V` offers a hard link from one name to another (VFB8).
+enum hasLinkAt(V) = __traits(compiles, (ref V v, V.Handle h, scope const(char)[] n) {
+    IoResult!void r = v.linkAt(h, n, h, n);
+});
+
+/// Whether `V` can set an open file's permission bits exactly (VFB8).
+enum hasSetPermissions(V) = __traits(compiles, (ref V v, V.Handle h, uint bits) {
+    IoResult!void r = v.setPermissions(h, bits);
+});

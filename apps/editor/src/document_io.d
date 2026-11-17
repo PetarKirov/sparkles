@@ -4,7 +4,7 @@ module document_io;
 import sparkles.base.expected : Expected, err, ok;
 import sparkles.event_horizon.raw_pool : CpuJob, RawCompletion, RawCpuPool, RawPoolResult;
 import sparkles.text_buffer.text : Text;
-import document_files : readRegularBytes, saveAtomic, SaveAuthorization, SaveReceipt;
+import document_files : FinalLink, readRegularBytes, saveAtomic, SaveAuthorization, SaveReceipt;
 import sparkles.base.text.envelope : decodeEnvelope, encodeEnvelope, LineEnding, TextEnvelope;
 
 enum FileOperation : ubyte { open, probe, save }
@@ -138,14 +138,14 @@ class DocumentIo
                 import std.file : exists;
                 job.destinationExists = (() @trusted => exists(job.path))();
                 if (!job.destinationExists) return;
-                const read = readRegularBytes(job.path);
+                const read = readRegularBytes(job.path, 512UL << 20, FinalLink.follow);
                 if (read.hasError) { job.error = read.error; return; }
                 job.bytes = read.value;
                 job.externalChange = !job.baselineKnown || read.value != job.baseline;
             }
             else if (job.operation == FileOperation.open)
             {
-                const read = readRegularBytes(job.path);
+                const read = readRegularBytes(job.path, 512UL << 20, FinalLink.follow);
                 if (read.hasError) { job.error = read.error; return; }
                 const decoded = decodeEnvelope(read.value);
                 if (decoded.hasError) { job.error = decoded.error; return; }

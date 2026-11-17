@@ -94,6 +94,8 @@ enum OpKind : ubyte
     waitid,          /// child-process reap
     pollAdd,         /// foreign-descriptor readiness
     readMultishot,   /// armed read stream into kernel-selected buffers
+    linkAt,          /// create a hard link relative to a directory
+    setPermissions,  /// set an open file's permission bits
 }
 
 /// Which stage of an operation's life produced the failure.

@@ -228,6 +228,23 @@ struct RingVfs
     /// See `BlockingVfs.close`.
     IoResult!void close(Handle h) => offload(() => inner.close(h));
 
+    // ------------------------------------------- the optional members (VFB8)
+
+    static if (__traits(hasMember, BlockingVfs, "renameNoReplaceAt"))
+        /// See `BlockingVfs.renameNoReplaceAt`.
+        IoResult!void renameNoReplaceAt(Handle dir, scope const(char)[] name, Handle dstDir,
+            scope const(char)[] dstName)
+            => offload(() => inner.renameNoReplaceAt(dir, name, dstDir, dstName));
+    static if (__traits(hasMember, BlockingVfs, "linkAt"))
+        /// See `BlockingVfs.linkAt`.
+        IoResult!void linkAt(Handle dir, scope const(char)[] name, Handle dstDir,
+            scope const(char)[] dstName)
+            => offload(() => inner.linkAt(dir, name, dstDir, dstName));
+    static if (__traits(hasMember, BlockingVfs, "setPermissions"))
+        /// See `BlockingVfs.setPermissions`.
+        IoResult!void setPermissions(Handle h, uint bits)
+            => offload(() => inner.setPermissions(h, bits));
+
     // ------------------------------------------- the optional members (VFB3)
 
     static if (__traits(hasMember, BlockingVfs, "wholePathFor"))

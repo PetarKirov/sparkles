@@ -1255,3 +1255,28 @@ in portrait the header chips truncate ("C…"); one tap right after launch
 was lost on the tablet and did not reproduce; and Gboard committed text
 directly, so live Android preedit remains unverified. Launch arguments in
 `files/next-launch.args` are one per line.
+
+### Native storage on the shared VFS — 2026-11-17
+
+Saves and regular-file reads moved from the app's own system calls onto the
+capability VFS (`PLAN.md` step X2). `saveAtomic` is now an adapter: it opens
+the destination's directory as a root and calls `writeFileAtomic` with a
+`createNew` or a `replace` mode that keeps permissions, both syncing the
+directory ([VFO9](../base/vfs/SPEC.md#vfo9-atomic-write)), and maps the
+VFS's errors to the editor's messages; `readRegularBytes` calls `readFile`
+([VFO12](../base/vfs/SPEC.md#vfo12-reading-a-whole-regular-file)). The
+commit order is unchanged: `renameat2(RENAME_NOREPLACE)` first, `linkat` only
+where the flag is unsupported, so the Android sandbox's link denial stays
+out of the path. A replacement keeps the replaced file's bits through
+`fchmod`, as before. A document opened by path still follows a link in the
+last component; recovery files are read without following one.
+
+The competing-creator and FIFO tests moved to the VFS
+(`vfs.blocking.VFO9.concurrentCreateHasOneWinner`,
+`vfs.blocking.VFO12.fifoIsRefusedWithoutWaiting`); the editor keeps its
+adapter tests (`editor.documentFiles.atomicCreateAndAuthorizedReplace`,
+`editor.documentFiles.permissionsAndSymlinkDestination`,
+`editor.documentFiles.regularBytesFollowOnlyForDocuments`). The fault runner
+now traces `renameat2`, injects `EEXIST` there, and adds a case that fails
+`renameat2` with `EINVAL` and the fallback `linkat` with `EEXIST`; all nine
+cases passed on Linux x86_64 6.18, and `dub test :editor` passed 81 tests.

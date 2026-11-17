@@ -333,6 +333,16 @@ struct BlockingVfs
     /// Renames `name` in `dir` to `dstName` in `dstDir`, replacing a file there.
     IoResult!void renameAt(Handle dir, scope const(char)[] name, Handle dstDir,
         scope const(char)[] dstName) @safe nothrow @nogc
+        => rename(dir, name, dstDir, dstName, true);
+
+    /// Renames `name` in `dir` to `dstName` in `dstDir`, failing with
+    /// `exists` if `dstName` is taken (VFB8): `ReplaceIfExists` clear.
+    IoResult!void renameNoReplaceAt(Handle dir, scope const(char)[] name, Handle dstDir,
+        scope const(char)[] dstName) @safe nothrow @nogc
+        => rename(dir, name, dstDir, dstName, false);
+
+    private IoResult!void rename(Handle dir, scope const(char)[] name, Handle dstDir,
+        scope const(char)[] dstName, bool replace) @safe nothrow @nogc
     {
         size_t h;
         const s = ntOpenName(dir.raw, name, DELETE | SYNCHRONIZE, FILE_OPEN_REPARSE_POINT
@@ -341,7 +351,7 @@ struct BlockingVfs
             return ioErr!void(ntError(s, OpKind.renameAt));
         scope (exit) close(Handle(h));
         FILE_RENAME_INFORMATION info;
-        info.ReplaceIfExists = 1;
+        info.ReplaceIfExists = replace;
         info.RootDirectory = (() @trusted => cast(HANDLE) dstDir.raw)();
         const n = wide(dstName, info.FileName[]);
         if (n == size_t.max)

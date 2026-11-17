@@ -224,6 +224,10 @@ struct OpenMode
     Access access;                                ///
     Disposition disposition = Disposition.existing; ///
     bool executable;                              /// only for a creating mode
+    /// Open only a regular file, never waiting for one that is not (VFO12):
+    /// a FIFO without a writer, say. Anything else fails, a directory with
+    /// `isADirectory`.
+    bool regularOnly;
 
     /// Common modes.
     enum read = OpenMode(Access.read);
@@ -237,6 +241,8 @@ struct OpenMode
     enum createNew = OpenMode(Access.write, Disposition.createNew);
     /// ditto
     enum createOrTruncate = OpenMode(Access.write, Disposition.createOrTruncate);
+    /// ditto
+    enum regularRead = OpenMode(Access.read, Disposition.existing, false, true);
 
     /// Whether this mode may create the file.
     bool creates() const @safe pure nothrow @nogc => disposition != Disposition.existing;
@@ -263,6 +269,61 @@ struct OpenMode
     static assert(OpenMode.read.rights == Rights.read);
     static assert(OpenMode.createNew.rights == (Rights.write | Rights.create));
     static assert(!OpenMode.append.creates);
+    static assert(OpenMode.regularRead.regularOnly && OpenMode.regularRead.rights == Rights.read);
+}
+
+/// What `writeFileAtomic` does about an entry already at the name (VFO9).
+enum AtomicDisposition : ubyte
+{
+    replace,   /// replace it
+    createNew, /// fail with `exists`, also when the entry appears during the write
+}
+
+/**
+An atomic write's mode (VFO9). Like `OpenMode`, a template argument of
+`writeFileAtomic`, so the rights it needs are checked at compile time.
+*/
+struct AtomicMode
+{
+    AtomicDisposition disposition; ///
+    /// Give the new file the replaced file's permission bits exactly, and
+    /// refuse to replace anything but a regular file. Needs the `stat` right
+    /// and a backend that can set permissions (VFB8).
+    bool keepPermissions;
+    /// Sync the directory after the commit; the receipt says whether it
+    /// held (VFO9).
+    bool syncDirectory;
+    bool executable; ///
+
+    /// Common modes.
+    enum replace = AtomicMode(AtomicDisposition.replace);
+    /// ditto
+    enum createNew = AtomicMode(AtomicDisposition.createNew);
+
+    /// The rights this mode needs.
+    Rights rights() const @safe pure nothrow @nogc
+        => cast(Rights)(Rights.create | Rights.write | Rights.rename
+            | (keepPermissions ? Rights.stat : Rights.none));
+}
+
+/// What a committed atomic write reports beyond the commit itself (VFO9).
+struct AtomicReceipt
+{
+    /// The directory was synced after the commit, so the new name survives a
+    /// crash. False when the mode did not ask, or the sync failed.
+    bool directorySynced;
+    /// The temporary name could not be removed after a link commit; the file
+    /// is complete under both names.
+    bool temporaryLeft;
+}
+
+///
+@("vfs.types.atomicMode")
+@safe pure nothrow @nogc unittest
+{
+    static assert(AtomicMode.replace.rights == (Rights.create | Rights.write | Rights.rename));
+    enum keeping = AtomicMode(AtomicDisposition.replace, keepPermissions: true);
+    static assert(hasRights(keeping.rights, Rights.stat));
 }
 
 /// The kind of a directory entry (VFO6, VFO7).

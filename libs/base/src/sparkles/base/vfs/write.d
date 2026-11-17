@@ -1,36 +1,83 @@
 /**
-Atomic replacement of a file's contents (VFO9).
+Atomic writes of a file's contents (VFO9).
 
 The new contents go to a fresh temporary entry in the same directory, created
-with `createNew`, written, synced and closed, and then renamed over the
-target, so a concurrent reader sees the complete old or the complete new
-contents. Any failure removes the temporary entry.
+with `createNew`, written, synced and closed, and then committed under the
+target's name, so a concurrent reader sees the complete old or the complete
+new contents, or, for a new file, nothing. Any failure before the commit
+removes the temporary entry.
+
+A replacing write commits with a rename. A creating write commits with a
+rename that cannot replace, where the backend has one (VFB8), and otherwise
+with a hard link followed by removing the temporary name: both fail with
+`exists` if the name is taken, even by an entry that appeared during the
+write. Android's application sandbox refuses hard links, so the no-replace
+rename comes first.
 */
 module sparkles.base.vfs.write;
 
 import sparkles.base.io.errors : ErrorKind, IoError, IoErrorStage, IoResult, OpKind, ioErr, ioOk;
-import sparkles.base.vfs.concept : isVfs;
-import sparkles.base.vfs.types : Access, Disposition, OpenMode, Sharing, maxNameLength;
+import sparkles.base.vfs.concept : hasLinkAt, hasRenameNoReplace, hasSetPermissions, isVfs;
+import sparkles.base.vfs.types : Access, AtomicDisposition, AtomicMode, AtomicReceipt, Disposition,
+    EntryKind, OpenMode, Sharing, StatMask, maxNameLength;
 
 /// How many fresh temporary names are tried before giving up with `exists`.
 enum size_t temporaryNameAttempts = 16;
 
-/// Replaces `name` in `dir` with `bytes`, atomically.
-IoResult!void writeFileAtomicAt(V, H)(ref V vfs, H dir, scope const(char)[] name,
-    scope const(ubyte)[] bytes, Sharing sharing, bool executable)
+/// Writes `bytes` to `name` in `dir` atomically, as `mode` says (VFO9).
+IoResult!AtomicReceipt writeFileAtomicAt(AtomicMode mode, V, H)(ref V vfs, H dir,
+    scope const(char)[] name, scope const(ubyte)[] bytes, Sharing sharing)
 if (isVfs!V && is(H == V.Handle))
 {
+    static assert(!mode.keepPermissions || mode.disposition == AtomicDisposition.replace,
+        "keepPermissions applies only to a replacing write");
+    static assert(!mode.keepPermissions || hasSetPermissions!V,
+        V.stringof ~ " cannot set permissions, so it cannot keep them");
+    static assert(mode.disposition != AtomicDisposition.createNew
+        || hasRenameNoReplace!V || hasLinkAt!V,
+        V.stringof ~ " has neither a no-replace rename nor a hard link, so it cannot create atomically");
+
+    bool keep;
+    uint keptBits;
+    static if (mode.keepPermissions)
+    {
+        auto existing = vfs.statAt(dir, name, StatMask.basic);
+        if (existing.hasError)
+        {
+            if (existing.error.kind != ErrorKind.notFound)
+                return ioErr!AtomicReceipt(existing);
+        }
+        else
+        {
+            final switch (existing.value.kind)
+            {
+                case EntryKind.regular: break;
+                case EntryKind.directory:
+                    return ioErr!AtomicReceipt(ErrorKind.isADirectory, OpKind.statAt);
+                case EntryKind.symlink:
+                    return ioErr!AtomicReceipt(ErrorKind.symlinkRefused, OpKind.statAt);
+                case EntryKind.unknown:
+                case EntryKind.other:
+                    return ioErr!AtomicReceipt(ErrorKind.other, OpKind.statAt, 0,
+                        IoErrorStage.completion, "only a regular file can be replaced");
+            }
+            keep = true;
+            version (Posix)
+                keptBits = existing.value.permissions;
+        }
+    }
+
     char[maxNameLength] temp;
-    const mode = OpenMode(Access.write, Disposition.createNew, executable);
+    const open = OpenMode(Access.write, Disposition.createNew, mode.executable);
     foreach (attempt; 0 .. temporaryNameAttempts)
     {
         const t = temporaryName(temp, name, attempt);
-        auto file = vfs.openFileAt(dir, t, mode, sharing);
+        auto file = vfs.openFileAt(dir, t, open, sharing);
         if (file.hasError)
         {
             if (file.error.kind == ErrorKind.exists)
                 continue;
-            return ioErr!void(file);
+            return ioErr!AtomicReceipt(file);
         }
 
         IoError failure;
@@ -46,6 +93,13 @@ if (isVfs!V && is(H == V.Handle))
             else
                 done += w.value;
         }
+        static if (mode.keepPermissions)
+            if (!failed && keep)
+            {
+                auto p = vfs.setPermissions(file.value, keptBits);
+                if (p.hasError)
+                    failure = p.error, failed = true;
+            }
         if (!failed)
         {
             auto s = vfs.sync(file.value);
@@ -55,18 +109,57 @@ if (isVfs!V && is(H == V.Handle))
         auto c = vfs.close(file.value);
         if (!failed && c.hasError)
             failure = c.error, failed = true;
+        AtomicReceipt receipt;
         if (!failed)
         {
-            auto r = vfs.renameAt(dir, t, dir, name);
-            if (!r.hasError)
-                return ioOk();
-            failure = r.error;
+            auto committed = commit!mode(vfs, dir, t, name, receipt);
+            if (!committed.hasError)
+            {
+                static if (mode.syncDirectory)
+                    receipt.directorySynced = !vfs.sync(dir).hasError;
+                return ioOk(receipt);
+            }
+            failure = committed.error;
         }
         vfs.unlinkAt(dir, t);
-        return ioErr!void(failure);
+        return ioErr!AtomicReceipt(failure);
     }
-    return ioErr!void(ErrorKind.exists, OpKind.openAt, 0,
+    return ioErr!AtomicReceipt(ErrorKind.exists, OpKind.openAt, 0,
         IoErrorStage.completion, "no fresh temporary name");
+}
+
+/*
+Installs the closed temporary `t` as `name`. A creating commit's error leaves
+the temporary in place for the caller to remove; a link commit removes it
+itself and reports a removal it could not make in the receipt.
+*/
+private IoResult!void commit(AtomicMode mode, V, H)(ref V vfs, H dir, scope const(char)[] t,
+    scope const(char)[] name, ref AtomicReceipt receipt)
+{
+    static if (mode.disposition == AtomicDisposition.replace)
+        return vfs.renameAt(dir, t, dir, name);
+    else
+    {
+        static if (hasRenameNoReplace!V)
+        {
+            auto r = vfs.renameNoReplaceAt(dir, t, dir, name);
+            static if (hasLinkAt!V)
+            {
+                if (!r.hasError || r.error.kind != ErrorKind.unsupported)
+                    return r;
+            }
+            else
+                return r;
+        }
+        static if (hasLinkAt!V)
+        {
+            auto l = vfs.linkAt(dir, t, dir, name);
+            if (l.hasError)
+                return l;
+            receipt.temporaryLeft = vfs.unlinkAt(dir, t).hasError;
+            return ioOk();
+        }
+    }
 }
 
 private size_t nextTemporary;

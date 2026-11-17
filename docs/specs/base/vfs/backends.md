@@ -98,6 +98,24 @@ file larger than the address space fails with `other` and the context
 inline, as a mapping has no ring operation and does not wait on the file's
 contents.
 
+<a id="vfb8-atomic-commit-primitives"></a>
+**VFB8: Atomic commit primitives.** A backend **may** offer
+`renameNoReplaceAt(dir, name, dstDir, dstName)`, a rename that fails with
+`exists` if `dstName` is taken and with `unsupported` where the platform or
+file system cannot refuse to replace; `linkAt(dir, name, dstDir, dstName)`, a
+hard link to the entry itself, failing with `exists` if `dstName` is taken;
+and `setPermissions(file, bits)`, which sets an open file's permission bits
+exactly. `hasRenameNoReplace!V`, `hasLinkAt!V` and `hasSetPermissions!V` are
+true exactly then; [`VFO9`](./SPEC.md#vfo9-atomic-write) chooses its commit by
+them. On POSIX `BlockingVfs` **must** offer all three: `renameat2` with
+`RENAME_NOREPLACE` on Linux and `renameatx_np` with `RENAME_EXCL` on Darwin,
+reporting `ENOSYS`, `EINVAL` and `ENOTSUP` as `unsupported`; `linkat` without
+`AT_SYMLINK_FOLLOW`; and `fchmod`. On Windows it **must** offer
+`renameNoReplaceAt`, a `FileRenameInformation` with `ReplaceIfExists` clear.
+`RingVfs` offers what the `BlockingVfs` it wraps offers, on the pool.
+`MemVfs` offers `renameNoReplaceAt` and `setPermissions`, which it records
+as a `PosixMode` sharing; it has no hard links.
+
 ## 2. Native results
 
 A native backend classifies every failure once, where the system call

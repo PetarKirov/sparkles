@@ -361,6 +361,51 @@ struct MemVfs
         return ioOk();
     }
 
+    /// Renames `name` in `dir` to `dstName` in `dstDir`, failing with
+    /// `exists` if `dstName` is taken (VFB8).
+    IoResult!void renameNoReplaceAt(Handle dir, scope const(char)[] name, Handle dstDir,
+        scope const(char)[] dstName) @safe nothrow @nogc
+    {
+        enter(OpKind.renameAt);
+        const c = child(dir, name, OpKind.renameAt);
+        if (c.hasError)
+            return ioErr!void(c);
+        const d = dirNode(dstDir, OpKind.renameAt);
+        if (d.hasError)
+            return ioErr!void(d);
+        const existing = find(d.value, dstName);
+        if (existing != none)
+        {
+            touch(existing);
+            return ioErr!void(ErrorKind.exists, OpKind.renameAt);
+        }
+        const src = c.value;
+        for (uint p = d.value; p != none; p = nodes[p].parent)
+            if (p == src)
+                return ioErr!void(ErrorKind.other, OpKind.renameAt, 22, // EINVAL
+                    IoErrorStage.completion, "rename into its own subtree");
+        if (deviceOf(d.value) != deviceOf(nodes[src].parent))
+            return ioErr!void(ErrorKind.other, OpKind.renameAt, 18, // EXDEV
+                IoErrorStage.completion, "rename across devices");
+        unlink(src);
+        setName(src, dstName);
+        nodes[src].ctimeNs = clockNs;
+        link(d.value, src);
+        return ioOk();
+    }
+
+    /// Sets an open file's permission bits, recorded as its sharing (VFB8).
+    IoResult!void setPermissions(Handle h, uint bits) @safe nothrow @nogc
+    {
+        enter(OpKind.setPermissions);
+        const n = nodeOf(h, OpKind.setPermissions);
+        if (n.hasError)
+            return ioErr!void(n);
+        nodes[n.value].sharing = Sharing(Sharing.Kind.posixMode, bits);
+        nodes[n.value].ctimeNs = clockNs;
+        return ioOk();
+    }
+
     /// Starts a listing of `dir`, independent of every other listing.
     IoResult!Listing openListing(Handle dir) @safe nothrow @nogc
     {

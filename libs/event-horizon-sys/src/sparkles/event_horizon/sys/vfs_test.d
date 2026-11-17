@@ -494,3 +494,105 @@ version (linux)
     auto empty = root.value.openFile!(OpenMode.read)("empty");
     assert(empty.value.map().value.bytes.length == 0);
 }
+
+@("vfs.blocking.VFB8.optionalPrimitives")
+@system unittest
+{
+    static assert(hasRenameNoReplace!BlockingVfs && hasLinkAt!BlockingVfs
+        && hasSetPermissions!BlockingVfs);
+    auto dir = scratchDir("vfb8");
+    scope (exit) rmdirRecurse(dir);
+    write(buildPath(dir, "a"), "a");
+    write(buildPath(dir, "b"), "b");
+    auto v = new BlockingVfs;
+    auto root = openRoot!(Rights.all)(v, dir, ambientAuthority());
+    const h = root.value.backendHandle;
+    const taken = v.renameNoReplaceAt(h, "a", h, "b");
+    // A file system without the flag says unsupported; an atomic create then links.
+    assert(taken.hasError);
+    assert(taken.error.kind == ErrorKind.exists || taken.error.kind == ErrorKind.unsupported);
+    assert(cast(string) read(buildPath(dir, "b")) == "b");
+    if (taken.error.kind == ErrorKind.exists)
+    {
+        assert(!v.renameNoReplaceAt(h, "a", h, "c").hasError);
+        assert(!exists(buildPath(dir, "a")) && cast(string) read(buildPath(dir, "c")) == "a");
+    }
+    assert(!v.linkAt(h, "b", h, "d").hasError && cast(string) read(buildPath(dir, "d")) == "b");
+    assert(v.linkAt(h, "b", h, "d").error.kind == ErrorKind.exists);
+}
+
+/// Two competing creators produce exactly one complete winner, never a silent replacement.
+@("vfs.blocking.VFO9.concurrentCreateHasOneWinner")
+@system unittest
+{
+    import core.thread : Thread;
+
+    auto dir = scratchDir("race");
+    scope (exit) rmdirRecurse(dir);
+    static immutable string[2] bytes = ["first complete document", "second complete document"];
+    foreach (round; 0 .. 8)
+    {
+        const name = "race-" ~ round.to!string;
+        bool[2] committed;
+        Thread[2] threads;
+        foreach (i; 0 .. 2)
+        {
+            // One backend and root per thread, as two processes would have.
+            threads[i] = new Thread(((size_t me) => () {
+                auto v = new BlockingVfs;
+                auto root = openRoot!(Rights.all)(v, dir, ambientAuthority());
+                committed[me] = !root.value.writeFileAtomic!(AtomicMode.createNew)(name,
+                    bytes[me]).hasError;
+            })(i));
+        }
+        foreach (t; threads)
+            t.start();
+        foreach (t; threads)
+            t.join();
+        assert(committed[0] != committed[1]);
+        assert(cast(string) read(buildPath(dir, name)) == bytes[committed[0] ? 0 : 1]);
+    }
+}
+
+@("vfs.blocking.VFO9.keepPermissionsIgnoresTheUmask")
+@system unittest
+{
+    import core.sys.posix.sys.stat : chmod;
+    import core.sys.posix.unistd : symlink;
+
+    enum keep = AtomicMode(AtomicDisposition.replace, keepPermissions: true, syncDirectory: true);
+    auto dir = scratchDir("keep");
+    scope (exit) rmdirRecurse(dir);
+    const path = buildPath(dir, "f");
+    write(path, "original");
+    assert(chmod(path.toStringz, octal666) == 0); // bits a common umask clears
+    auto v = new BlockingVfs;
+    auto root = openRoot!(Rights.all)(v, dir, ambientAuthority());
+    const replaced = root.value.writeFileAtomic!keep("f", "replacement");
+    assert(!replaced.hasError && replaced.value.directorySynced);
+    assert(root.value.statAt("f").value.permissions == octal666);
+    assert(cast(string) read(path) == "replacement");
+    assert(symlink("f".toStringz, buildPath(dir, "l").toStringz) == 0);
+    assert(root.value.writeFileAtomic!keep("l", "through").error.kind == ErrorKind.symlinkRefused);
+    assert(cast(string) read(path) == "replacement");
+}
+
+@("vfs.blocking.VFO12.fifoIsRefusedWithoutWaiting")
+@system unittest
+{
+    import core.sys.posix.sys.stat : mkfifo;
+    import std.array : appender;
+
+    auto dir = scratchDir("fifo");
+    scope (exit) rmdirRecurse(dir);
+    write(buildPath(dir, "f"), "\xef\xbb\xbfa\r\nb\n");
+    assert(mkfifo(buildPath(dir, "pipe").toStringz, octal600) == 0);
+    auto v = new BlockingVfs;
+    auto root = openRoot!(Rights.readOnly)(v, dir, ambientAuthority());
+    auto sink = appender!(ubyte[]);
+    assert(root.value.readFile("f", sink).value == 8);
+    assert(sink[] == cast(const(ubyte)[]) "\xef\xbb\xbfa\r\nb\n");
+    const fifo = root.value.readFile("pipe", sink);
+    assert(fifo.hasError && fifo.error.context == "not a regular file");
+    assert(root.value.readFile("f", sink, 2).error.kind == ErrorKind.bufferTooSmall);
+}

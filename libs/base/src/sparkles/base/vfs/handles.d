@@ -25,6 +25,7 @@ import sparkles.base.vfs.names : checkLinkTarget, checkName, lexicalError;
 import sparkles.base.vfs.remove : removeTreeAt;
 import sparkles.base.vfs.types;
 import sparkles.base.vfs.walk : walkFrom;
+import sparkles.base.vfs.read : readFileAt;
 import sparkles.base.vfs.write : writeFileAtomicAt;
 
 /**
@@ -445,24 +446,40 @@ mixin template DirOperations(V, Rights R)
         return removeTreeAt(*self.vfs, self.handle, name, self.root.policy.crossMounts);
     }
 
-    /// Replaces the contents of `name` atomically (VFO9).
-    IoResult!void writeFileAtomic(S...)(scope const(char)[] name,
-        scope const(ubyte)[] bytes, S sharing) scope
+    /// Writes `bytes` to `name` atomically, as `mode` says (VFO9).
+    IoResult!AtomicReceipt writeFileAtomic(AtomicMode mode = AtomicMode.replace, S...)(
+        scope const(char)[] name, scope const(ubyte)[] bytes, S sharing) scope
     {
-        need!(cast(Rights)(Rights.create | Rights.write | Rights.rename), "writeFileAtomic");
+        enum Rights needed = mode.rights;
+        need!(needed, "writeFileAtomic");
         if (!alive)
-            return emptyHandle!(void)();
+            return emptyHandle!AtomicReceipt();
         const k = checkName(name);
         if (k != ErrorKind.other)
-            return ioErr!void(lexicalError(k, OpKind.openAt));
-        return writeFileAtomicAt(*self.vfs, self.handle, name, bytes,
-            resolveSharing(sharing), false);
+            return ioErr!AtomicReceipt(lexicalError(k, OpKind.openAt));
+        return writeFileAtomicAt!mode(*self.vfs, self.handle, name, bytes,
+            resolveSharing(sharing));
     }
 
     /// ditto, from text.
-    IoResult!void writeFileAtomic(S...)(scope const(char)[] name,
-        scope const(char)[] text, S sharing) scope
-        => writeFileAtomic(name, cast(const(ubyte)[]) text, sharing);
+    IoResult!AtomicReceipt writeFileAtomic(AtomicMode mode = AtomicMode.replace, S...)(
+        scope const(char)[] name, scope const(char)[] text, S sharing) scope
+        => writeFileAtomic!mode(name, cast(const(ubyte)[]) text, sharing);
+
+    /// Puts the contents of the regular file `name` into `sink`, an output
+    /// range of `const(ubyte)[]`, refusing anything else without waiting on
+    /// it, and at most `maximum` bytes (VFO12).
+    IoResult!size_t readFile(W)(scope const(char)[] name, ref W sink,
+        size_t maximum = size_t.max) scope
+    {
+        need!(Rights.read, "readFile");
+        if (!alive)
+            return emptyHandle!size_t();
+        const k = checkName(name);
+        if (k != ErrorKind.other)
+            return ioErr!size_t(lexicalError(k, OpKind.openAt));
+        return readFileAt(*self.vfs, self.handle, name, sink, maximum);
+    }
 
     /// The rights of this handle's type.
     enum Rights rights = R;

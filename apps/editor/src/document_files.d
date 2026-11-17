@@ -1,22 +1,24 @@
-/** Native regular-file storage; provider URIs use a separate adapter. */
+/**
+Native regular-file storage over the capability VFS; provider URIs use a
+separate adapter.
+
+A path becomes a root on its directory and a name in it. The atomic write,
+its create-only disposition and directory durability are
+`sparkles.base.vfs.write`'s (VFO9); the regular-file read is the VFS's
+`readFile` (VFO12). This module keeps the editor's vocabulary: the save
+authorization the UI grants, the receipt it shows, and the messages.
+*/
 module document_files;
 
 import sparkles.base.expected : Expected, err, ok;
-import sparkles.base.text.cstring : hasInteriorNul, toTempStringz;
-import sparkles.event_horizon.sys.descriptor : OwnedFd;
+import sparkles.base.text.cstring : hasInteriorNul;
 
 version (Posix)
 {
-    import core.stdc.errno : errno, EINTR, ENOENT;
-    import core.sys.posix.sys.stat : fchmod, fstat, stat_t, S_IFMT, S_IFREG;
-    import core.sys.posix.fcntl : O_NONBLOCK;
-    import core.sys.posix.unistd : linkat, read;
-    import sparkles.event_horizon.sys.posix : openat, AT_FDCWD, AT_SYMLINK_NOFOLLOW,
-        O_RDONLY, O_WRONLY, O_CREAT, O_EXCL, O_CLOEXEC, O_DIRECTORY,
-        close, fstatat, fsync, renameat, unlinkat, write;
+    import sparkles.base.vfs : AtomicDisposition, AtomicMode, CreateDefault, ErrorKind, IoError,
+        OpKind, ResolvePolicy, Rights, ambientAuthority, openRoot;
+    import sparkles.event_horizon.sys.vfs : BlockingVfs;
 }
-
-version (linux) private extern (C) long syscall(long number, ...) nothrow @nogc;
 
 /// Existing files may be replaced only after the UI explains the nonconditional commit.
 enum SaveAuthorization : ubyte { createOnly, replaceConfirmed }
@@ -29,31 +31,11 @@ struct SaveReceipt
 }
 
 /**
-`renameat2(dir, from, dir, to, RENAME_NOREPLACE)`: an atomic rename that fails
-with `EEXIST` rather than replace. `-1` with `ENOSYS` where the platform has
-no such call; `EINVAL` where the file system does not support the flag.
+Write `bytes` to `path` atomically, durably acknowledging the directory.
+`createOnly` never replaces an entry, including one that appears during the
+write; `replaceConfirmed` replaces only a regular file and keeps its
+permission bits. A new file is private to its owner.
 */
-private int renameNoReplace(int dir, const(char)* from, const(char)* to) @system nothrow @nogc
-{
-    version (linux)
-    {
-        version (X86_64) enum long number = 316;
-        else version (AArch64) enum long number = 276;
-        else version (X86) enum long number = 353;
-        else version (ARM) enum long number = 382;
-        else enum long number = -1;
-        enum uint renameNoReplaceFlag = 1;
-        static if (number >= 0)
-            return cast(int) syscall(number, dir, from, dir, to, renameNoReplaceFlag);
-    }
-    import core.stdc.errno : ENOSYS, errno;
-    errno = ENOSYS;
-    return -1;
-}
-
-/// Sync a private temporary, then install it in one directory-relative atomic operation.
-/// createOnly commits with a no-replace rename (or, where that is unsupported, a
-/// hard link), which cannot replace an existing entry, including races.
 Expected!SaveReceipt saveAtomic(string path, string bytes,
     SaveAuthorization authorization = SaveAuthorization.createOnly) @safe
 {
@@ -62,83 +44,25 @@ Expected!SaveReceipt saveAtomic(string path, string bytes,
     version (Posix)
     {
         import std.path : baseName, dirName;
-        import std.uuid : randomUUID;
+
         if (!path.length || hasInteriorNul(path)) return err!SaveReceipt("Invalid destination path.");
         const name = baseName(path);
         if (!name.length || name == "." || name == ".." || name == "/")
             return err!SaveReceipt("The destination must name a regular file.");
-        auto directory = OwnedFd((() @trusted => openat(AT_FDCWD, dirName(path).toTempStringz.ptr,
-            O_RDONLY | O_DIRECTORY | O_CLOEXEC))());
-        if (!directory.valid) return err!SaveReceipt("The destination directory could not be opened.");
-        const parent = directory.borrowFd.fd;
-        stat_t existing;
-        const found = (() @trusted => fstatat(parent, name.toTempStringz.ptr,
-            &existing, AT_SYMLINK_NOFOLLOW))() == 0;
-        if (!found && errno != ENOENT)
-            return err!SaveReceipt("The destination metadata could not be checked.");
-        if (found)
-        {
-            if (authorization != SaveAuthorization.replaceConfirmed)
-                return err!SaveReceipt("The destination already exists; replacement needs confirmation.");
-            if ((existing.st_mode & S_IFMT) != S_IFREG)
-                return err!SaveReceipt("Only a regular file can be replaced; choose another destination.");
-        }
-        const temporary = ".sparkles-editor-" ~ randomUUID().toString();
-        auto file = OwnedFd((() @trusted => openat(parent, temporary.toTempStringz.ptr,
-            O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 384))());
-        if (!file.valid) return err!SaveReceipt("A private save temporary could not be created.");
-        bool cleanup = true;
-        scope (exit) if (cleanup) (() @trusted => unlinkat(parent, temporary.toTempStringz.ptr, 0))();
-        const fd = file.borrowFd.fd;
-        size_t done;
-        while (done < bytes.length)
-        {
-            const count = (() @trusted => write(fd, bytes.ptr + done, bytes.length - done))();
-            if (count < 0 && errno == EINTR) continue;
-            if (count <= 0) return err!SaveReceipt("Writing the save temporary failed.");
-            done += cast(size_t) count;
-        }
-        if (found && (() @trusted => fchmod(fd, existing.st_mode & 511))() != 0)
-            return err!SaveReceipt("The destination permissions could not be preserved.");
-        int synced;
-        do synced = (() @trusted => fsync(fd))();
-        while (synced != 0 && errno == EINTR);
-        if (synced != 0) return err!SaveReceipt("The save temporary could not be synced.");
-        const closing = file.release();
-        if ((() @trusted => close(closing))() != 0)
-            return err!SaveReceipt("Closing the save temporary failed before commit.");
+        enum Rights rights = cast(Rights)(Rights.create | Rights.write | Rights.rename | Rights.stat);
+        auto dir = openRoot!rights(new BlockingVfs, dirName(path), ambientAuthority(),
+            ResolvePolicy.init, CreateDefault.ownerOnly);
+        if (dir.hasError) return err!SaveReceipt("The destination directory could not be opened.");
+        enum create = AtomicMode(AtomicDisposition.createNew, syncDirectory: true);
+        enum replace = AtomicMode(AtomicDisposition.replace, keepPermissions: true, syncDirectory: true);
+        const creating = authorization == SaveAuthorization.createOnly;
+        auto written = creating ? dir.value.writeFileAtomic!create(name, bytes)
+            : dir.value.writeFileAtomic!replace(name, bytes);
+        if (written.hasError) return err!SaveReceipt(saveFailure(written.error, creating));
         SaveReceipt receipt;
-        if (authorization == SaveAuthorization.createOnly)
-        {
-            // A no-replace rename commits in one step; Android's app sandbox
-            // denies hard links, so the link commit is only the fallback for
-            // a file system without RENAME_NOREPLACE.
-            const renamed = (() @trusted => renameNoReplace(parent, temporary.toTempStringz.ptr,
-                name.toTempStringz.ptr))();
-            if (renamed == 0)
-                cleanup = false;
-            else
-            {
-                import core.stdc.errno : EEXIST;
-                if (errno == EEXIST)
-                    return err!SaveReceipt("The destination already exists; replacement needs confirmation.");
-                if ((() @trusted => linkat(parent, temporary.toTempStringz.ptr,
-                        parent, name.toTempStringz.ptr, 0))() != 0)
-                    return err!SaveReceipt("The destination was not created; it may already exist or disallow atomic creation.");
-                if ((() @trusted => unlinkat(parent, temporary.toTempStringz.ptr, 0))() == 0) cleanup = false;
-                else receipt.warning = "The document was saved, but its private temporary could not be removed.";
-            }
-        }
-        else
-        {
-            if ((() @trusted => renameat(parent, temporary.toTempStringz.ptr,
-                    parent, name.toTempStringz.ptr))() != 0)
-                return err!SaveReceipt("The destination could not be replaced.");
-            cleanup = false;
-        }
-        do synced = (() @trusted => fsync(parent))();
-        while (synced != 0 && errno == EINTR);
-        receipt.durable = synced == 0;
+        receipt.durable = written.value.directorySynced;
+        if (written.value.temporaryLeft)
+            receipt.warning = "The document was saved, but its private temporary could not be removed.";
         if (!receipt.durable)
             receipt.warning = "The document was saved, but directory durability could not be acknowledged.";
         return ok(receipt);
@@ -146,123 +70,115 @@ Expected!SaveReceipt saveAtomic(string path, string bytes,
     else return err!SaveReceipt("The native file-save adapter is unavailable on this platform.");
 }
 
-/// Two competing atomic creators produce exactly one complete winner, never a silent replacement.
-@("editor.documentFiles.concurrentCreateHasOneWinner")
-@system unittest
+version (Posix)
+private string saveFailure(in IoError error, bool creating) @safe pure nothrow @nogc
 {
-    version (Posix)
+    if (error.kind == ErrorKind.exists && error.op != OpKind.openAt)
+        return "The destination already exists; replacement needs confirmation.";
+    if (error.kind == ErrorKind.isADirectory || error.kind == ErrorKind.symlinkRefused
+        || (error.op == OpKind.statAt && error.kind == ErrorKind.other))
+        return "Only a regular file can be replaced; choose another destination.";
+    switch (error.op)
     {
-        import core.thread : Thread;
-        import sparkles.test_utils.tmpfs : TmpFS;
-        import std.file : readText;
-        import std.path : buildPath;
-        import std.conv : text;
-        struct Attempt
-        {
-            string path, bytes;
-            bool committed;
-            void run() { committed = saveAtomic(path, bytes).hasValue; }
-        }
-        auto fixture = TmpFS.create();
-        foreach (round; 0 .. 8)
-        {
-            const path = buildPath(fixture.dir, text("race-", round));
-            Attempt first = Attempt(path, "first complete document");
-            Attempt second = Attempt(path, "second complete document");
-            auto a = new Thread(&first.run);
-            auto b = new Thread(&second.run);
-            a.start(); b.start();
-            a.join(); b.join();
-            assert(first.committed != second.committed);
-            assert(readText(path) == (first.committed ? first.bytes : second.bytes));
-        }
-    }
-    else
-    {
-        import sparkles.test_runner.skip : skipTest;
-        skipTest("The native POSIX file adapter is not available.");
+        case OpKind.statAt: return "The destination metadata could not be checked.";
+        case OpKind.openAt: return "A private save temporary could not be created.";
+        case OpKind.write: return "Writing the save temporary failed.";
+        case OpKind.setPermissions: return "The destination permissions could not be preserved.";
+        case OpKind.fsync: return "The save temporary could not be synced.";
+        case OpKind.close: return "Closing the save temporary failed before commit.";
+        default:
+            return creating
+                ? "The destination was not created; it may already exist or disallow atomic creation."
+                : "The destination could not be replaced.";
     }
 }
 
-/// Read only a regular descriptor. O_NONBLOCK prevents a raced FIFO from trapping the worker.
-/// Byte/UTF-8 admission is separate; the maximum bounds allocation without truncating input.
-Expected!string readRegularBytes(string path, size_t maximum = 512UL << 20) @safe nothrow
+/// Whether a read follows a symbolic link in the path's last component.
+enum FinalLink : ubyte { refuse, follow }
+
+/**
+Read only a regular file, never waiting on one that is not (a raced FIFO, say).
+Byte/UTF-8 admission is separate; the maximum bounds allocation without
+truncating input. A document named through a link is read through it
+(`FinalLink.follow`); recovery files are not.
+*/
+Expected!string readRegularBytes(string path, size_t maximum = 512UL << 20,
+    FinalLink link = FinalLink.refuse) @safe nothrow
 {
     version (Posix)
     {
+        import std.array : appender;
+        import std.path : baseName, dirName;
+
         if (!path.length || hasInteriorNul(path)) return err!string("Invalid document path.");
-        auto file = OwnedFd((() @trusted => openat(AT_FDCWD, path.toTempStringz.ptr,
-            O_RDONLY | O_NONBLOCK | O_CLOEXEC))());
-        if (!file.valid) return err!string("The document could not be opened.");
-        const fd = file.borrowFd.fd;
-        stat_t before;
-        if ((() @trusted => fstat(fd, &before))() != 0)
-            return err!string("The document metadata could not be read.");
-        if ((before.st_mode & S_IFMT) != S_IFREG)
+        if (link == FinalLink.follow) path = resolvedPath(path);
+        const name = baseName(path);
+        if (!name.length || name == "." || name == ".." || name == "/")
             return err!string("Only regular files can be opened as documents.");
-        if (before.st_size < 0 || cast(ulong) before.st_size > maximum)
-            return err!string("The document exceeds the configured byte limit.");
-        auto bytes = new char[cast(size_t) before.st_size];
-        size_t done;
-        while (done < bytes.length)
+        auto dir = openRoot!(Rights.read)(new BlockingVfs, dirName(path), ambientAuthority());
+        if (dir.hasError) return err!string("The document could not be opened.");
+        auto sink = appender!(ubyte[]);
+        const read = dir.value.readFile(name, sink, maximum);
+        if (read.hasError)
         {
-            const count = (() @trusted => read(fd, bytes.ptr + done, bytes.length - done))();
-            if (count < 0)
-            {
-                if (errno == EINTR) continue;
-                return err!string("The document could not be read.");
-            }
-            if (!count) return err!string("The document changed while it was being opened.");
-            done += cast(size_t) count;
-        }
-        char extra;
-        ptrdiff_t trailing;
-        do trailing = (() @trusted => read(fd, &extra, 1))();
-        while (trailing < 0 && errno == EINTR);
-        if (trailing < 0) return err!string("The document could not be read.");
-        stat_t after;
-        if (trailing || (() @trusted => fstat(fd, &after))() != 0 || before.st_size != after.st_size)
-            return err!string("The document changed while it was being opened.");
-        static if (__traits(compiles, before.st_mtim))
-        {
-            if (before.st_mtim != after.st_mtim || before.st_ctim != after.st_ctim)
+            const e = read.error;
+            if (e.kind == ErrorKind.bufferTooSmall)
+                return err!string("The document exceeds the configured byte limit.");
+            if (e.kind == ErrorKind.isADirectory || e.kind == ErrorKind.symlinkRefused
+                || e.context == "not a regular file")
+                return err!string("Only regular files can be opened as documents.");
+            if (e.context == "the file changed while it was read")
                 return err!string("The document changed while it was being opened.");
+            if (e.op == OpKind.read) return err!string("The document could not be read.");
+            return err!string("The document could not be opened.");
         }
-        else static if (__traits(compiles, before.st_mtimespec))
-        {
-            if (before.st_mtimespec != after.st_mtimespec || before.st_ctimespec != after.st_ctimespec)
-                return err!string("The document changed while it was being opened.");
-        }
-        return ok((() @trusted => cast(string) bytes)());
+        // The appender's array is this call's alone.
+        return ok((() @trusted => cast(string) sink[])());
     }
     else return err!string("The regular-file adapter is unavailable on this platform.");
 }
 
-/// Byte reads preserve the envelope and refuse nonregular inputs without waiting for a writer.
-@("editor.documentFiles.regularBytesAndFifo")
+/// The path with every link resolved, or the path itself when it does not resolve.
+version (Posix)
+private string resolvedPath(string path) @trusted nothrow
+{
+    import core.stdc.stdlib : free;
+    import core.sys.posix.stdlib : realpath;
+    import sparkles.base.text.cstring : toTempStringz;
+    import std.string : fromStringz;
+
+    auto resolved = realpath(path.toTempStringz.ptr, null);
+    if (resolved is null) return path;
+    scope (exit) free(resolved);
+    return resolved.fromStringz.idup;
+}
+
+/// A document opened through a link reads its target; recovery reads refuse the link.
+@("editor.documentFiles.regularBytesFollowOnlyForDocuments")
 @system unittest
 {
-    version (Posix) {}
+    version (Posix)
+    {
+        import core.sys.posix.unistd : symlink;
+        import sparkles.base.text.cstring : toTempStringz;
+        import sparkles.test_utils.tmpfs : TmpFS;
+        import std.path : buildPath;
+        auto fixture = TmpFS.create();
+        const path = fixture.writeFile("\xef\xbb\xbfa\r\nb\n");
+        const loaded = readRegularBytes(path);
+        assert(loaded.hasValue && loaded.value == "\xef\xbb\xbfa\r\nb\n");
+        assert(readRegularBytes(path, 2).error == "The document exceeds the configured byte limit.");
+        assert(readRegularBytes(fixture.dir).hasError);
+        const link = buildPath(fixture.dir, "link.txt");
+        assert(symlink(path.toTempStringz.ptr, link.toTempStringz.ptr) == 0);
+        assert(readRegularBytes(link).hasError);
+        const followed = readRegularBytes(link, 512, FinalLink.follow);
+        assert(followed.hasValue && followed.value == loaded.value);
+    }
     else
     {
         import sparkles.test_runner.skip : skipTest;
         skipTest("The native POSIX file adapter is not available.");
-    }
-    import sparkles.test_utils.tmpfs : TmpFS;
-    import std.path : buildPath;
-    auto fixture = TmpFS.create();
-    const path = fixture.writeFile("\xef\xbb\xbfa\r\nb\n");
-    const loaded = readRegularBytes(path);
-    assert(loaded.hasValue && loaded.value == "\xef\xbb\xbfa\r\nb\n");
-    assert(readRegularBytes(path, 2).hasError);
-    assert(readRegularBytes(fixture.dir).hasError);
-    version (Posix)
-    {
-        import core.sys.posix.sys.stat : mkfifo;
-        import sparkles.base.text.cstring : toTempStringz;
-        const fifo = buildPath(fixture.dir, "pipe");
-        assert(mkfifo(fifo.toTempStringz.ptr, 384) == 0);
-        assert(readRegularBytes(fifo).hasError);
     }
 }
 
@@ -285,7 +201,8 @@ Expected!string readRegularBytes(string path, size_t maximum = 512UL << 20) @saf
     assert(created.hasValue && readText(path) == "first\r\n");
     assert(created.value.durable || created.value.warning.length);
     const refused = saveAtomic(path, "must not replace");
-    assert(refused.hasError && readText(path) == "first\r\n");
+    assert(refused.error == "The destination already exists; replacement needs confirmation.");
+    assert(readText(path) == "first\r\n");
     const replaced = saveAtomic(path, "second\n", SaveAuthorization.replaceConfirmed);
     assert(replaced.hasValue && readText(path) == "second\n");
     assert(saveAtomic(fixture.dir, "must not replace directory",
@@ -300,6 +217,7 @@ Expected!string readRegularBytes(string path, size_t maximum = 512UL << 20) @saf
     {
         import core.sys.posix.sys.stat : chmod, stat_t, stat;
         import core.sys.posix.unistd : symlink;
+        import sparkles.base.text.cstring : toTempStringz;
         import sparkles.test_utils.tmpfs : TmpFS;
         import std.path : buildPath;
         import std.file : readText;
@@ -312,8 +230,13 @@ Expected!string readRegularBytes(string path, size_t maximum = 512UL << 20) @saf
         assert(stat(path.toTempStringz.ptr, &info) == 0 && (info.st_mode & 511) == 416);
         const link = buildPath(fixture.dir, "link.txt");
         assert(symlink(path.toTempStringz.ptr, link.toTempStringz.ptr) == 0);
-        assert(saveAtomic(link, "must not write through the link", SaveAuthorization.replaceConfirmed).hasError);
+        const refused = saveAtomic(link, "must not write through the link", SaveAuthorization.replaceConfirmed);
+        assert(refused.error == "Only a regular file can be replaced; choose another destination.");
         assert(readText(path) == "replacement");
+        const fresh = saveAtomic(buildPath(fixture.dir, "fresh.txt"), "new");
+        assert(fresh.hasValue);
+        assert(stat(buildPath(fixture.dir, "fresh.txt").toTempStringz.ptr, &info) == 0
+            && (info.st_mode & 511) == 384, "a new document is private to its owner");
     }
     else
     {

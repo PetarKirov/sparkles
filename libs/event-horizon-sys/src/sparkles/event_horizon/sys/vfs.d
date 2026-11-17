@@ -16,6 +16,7 @@ module sparkles.event_horizon.sys.vfs;
 version (Posix):
 
 import core.atomic : atomicLoad, atomicStore;
+import core.sys.posix.sys.types : mode_t;
 import core.stdc.errno : errno, EACCES, EAGAIN, EBUSY, EEXIST, EINTR, EINVAL, EISDIR, ELOOP,
     ENAMETOOLONG, ENOENT, ENOSYS, ENOTDIR, ENOTEMPTY, EPERM, EXDEV;
 
@@ -106,6 +107,10 @@ struct BlockingVfs
             case Disposition.createNew: flags |= O_CREAT | O_EXCL; break;
             case Disposition.createOrTruncate: flags |= O_CREAT | O_TRUNC; break;
         }
+        // VFO12: a FIFO without a writer must not block the open; a regular
+        // file ignores the flag.
+        if (mode.regularOnly)
+            flags |= O_NONBLOCK;
         const bits = sharing.modeBits(false, mode.executable);
         const fd = (() @trusted => retry(() => openat(dir.fd, z.ptr, flags, bits)))();
         if (fd < 0)
@@ -119,10 +124,17 @@ struct BlockingVfs
         }
         // A read-only open of a directory succeeds on POSIX; a File is never one.
         stat_t st;
-        if ((() @trusted => .fstat(fd, &st))() == 0 && (st.st_mode & S_IFMT) == S_IFDIR)
+        const statted = (() @trusted => .fstat(fd, &st))() == 0;
+        if (statted && (st.st_mode & S_IFMT) == S_IFDIR)
         {
             (() @trusted => .close(fd))();
             return ioErr!Handle(ErrorKind.isADirectory, OpKind.openAt, EISDIR);
+        }
+        if (mode.regularOnly && (!statted || (st.st_mode & S_IFMT) != S_IFREG))
+        {
+            (() @trusted => .close(fd))();
+            return ioErr!Handle(ErrorKind.other, OpKind.openAt, 0, IoErrorStage.completion,
+                "not a regular file");
         }
         return ioOk(Handle(fd));
     }
@@ -230,6 +242,39 @@ struct BlockingVfs
         return renameOutcome(r < 0 ? errno : 0);
     }
 
+    /// Renames `name` in `dir` to `dstName` in `dstDir` unless `dstName`
+    /// exists (VFB8): `renameat2` with `RENAME_NOREPLACE` on Linux,
+    /// `renameatx_np` with `RENAME_EXCL` on Darwin, `unsupported` elsewhere
+    /// and on a file system without the flag.
+    IoResult!void renameNoReplaceAt(Handle dir, scope const(char)[] name, Handle dstDir,
+        scope const(char)[] dstName) @safe nothrow @nogc
+    {
+        char[maxNameLength + 1] z, d;
+        if (!terminate(name, z) || !terminate(dstName, d))
+            return ioErr!void(ErrorKind.nameTooLong, OpKind.renameAt);
+        const r = (() @trusted => retry(() => renameNoReplace(dir.fd, z.ptr, dstDir.fd, d.ptr)))();
+        return renameNoReplaceOutcome(r < 0 ? errno : 0);
+    }
+
+    /// Links `dstName` in `dstDir` to the entry `name` in `dir`, without
+    /// following it (VFB8).
+    IoResult!void linkAt(Handle dir, scope const(char)[] name, Handle dstDir,
+        scope const(char)[] dstName) @safe nothrow @nogc
+    {
+        char[maxNameLength + 1] z, d;
+        if (!terminate(name, z) || !terminate(dstName, d))
+            return ioErr!void(ErrorKind.nameTooLong, OpKind.linkAt);
+        const r = (() @trusted => retry(() => linkat(dir.fd, z.ptr, dstDir.fd, d.ptr, 0)))();
+        return r < 0 ? ioErr!void(failure(OpKind.linkAt)) : ioOk();
+    }
+
+    /// Sets an open file's permission bits exactly, regardless of the umask (VFB8).
+    IoResult!void setPermissions(Handle h, uint bits) @safe nothrow @nogc
+    {
+        const r = (() @trusted => retry(() => fchmod(h.fd, cast(mode_t)(bits & octal7777))))();
+        return r < 0 ? ioErr!void(failure(OpKind.setPermissions)) : ioOk();
+    }
+
     // The errno classification of each mutation, shared with `RingVfs`, which
     // submits the same calls to the ring: the same errno, the same result.
     // `e` is 0 for success.
@@ -267,6 +312,20 @@ package(sparkles.event_horizon):
             return ioOk();
         if (e == ENOTEMPTY || e == EEXIST)
             return ioErr!void(ErrorKind.notEmpty, OpKind.renameAt, e);
+        return ioErr!void(failure(OpKind.renameAt, e));
+    }
+
+    IoResult!void renameNoReplaceOutcome(int e) const @safe nothrow @nogc
+    {
+        import core.stdc.errno : ENOTSUP;
+
+        if (e == 0)
+            return ioOk();
+        if (e == EEXIST)
+            return ioErr!void(ErrorKind.exists, OpKind.renameAt, e);
+        // No such call, or a file system without the flag.
+        if (e == ENOSYS || e == EINVAL || e == ENOTSUP)
+            return ioErr!void(ErrorKind.unsupported, OpKind.renameAt, e);
         return ioErr!void(failure(OpKind.renameAt, e));
     }
 

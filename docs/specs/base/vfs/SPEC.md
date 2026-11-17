@@ -343,23 +343,24 @@ operations, each gated by the rights shown
 optional argument of [`VFO5`](#vfo5-sharing-of-created-entries); passing
 `Shared()` or `PosixMode` additionally needs `createShared`.
 
-| Operation                               | Right(s)                                            | Result                                                       |
-| --------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------ |
-| `openDir(name)`                         | `lookup`                                            | a child `Dir` with the same rights                           |
-| `openFile!mode(name, sharing)`          | `read` and/or `write`; `create` for a creating mode | a `File`                                                     |
-| `mkdirAt(name, sharing)`                | `create`                                            | nothing; `exists` if present                                 |
-| `statAt(name, mask)`                    | `stat`                                              | a `Stat` of the entry itself                                 |
-| `stat(mask)`                            | `stat`                                              | a `Stat` of the directory the handle holds                   |
-| `readlinkAt(name, buffer)`              | `stat`                                              | the target bytes, as a slice of `buffer`                     |
-| `symlinkAt(name, target)`               | `create`                                            | nothing; see [`VFO10`](#vfo10-symbolic-link-targets)         |
-| `unlinkAt(name)`                        | `remove`                                            | nothing; `isADirectory` for a directory                      |
-| `rmdirAt(name)`                         | `remove`                                            | nothing; `notEmpty` if it has entries                        |
-| `renameAt(name, dst, dstName)`          | `rename` on both                                    | nothing; replaces a non-directory target                     |
-| `list()`                                | `list`                                              | a `Listing` over the entries                                 |
-| `walk(path)`                            | `lookup`                                            | a `Dir` for the directory `path` names                       |
-| `walkAll(path, sharing)`                | `lookup`, `create`                                  | as `walk`, creating missing directories                      |
-| `removeTree(name)`                      | `lookup`, `list`, `remove`                          | nothing; see [§9](#_9-deletion-vfd)                          |
-| `writeFileAtomic(name, bytes, sharing)` | `create`, `write`, `rename`                         | nothing; readers see the old or the new content, never a mix |
+| Operation                                    | Right(s)                                                | Result                                                                                                    |
+| -------------------------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `openDir(name)`                              | `lookup`                                                | a child `Dir` with the same rights                                                                        |
+| `openFile!mode(name, sharing)`               | `read` and/or `write`; `create` for a creating mode     | a `File`                                                                                                  |
+| `mkdirAt(name, sharing)`                     | `create`                                                | nothing; `exists` if present                                                                              |
+| `statAt(name, mask)`                         | `stat`                                                  | a `Stat` of the entry itself                                                                              |
+| `stat(mask)`                                 | `stat`                                                  | a `Stat` of the directory the handle holds                                                                |
+| `readlinkAt(name, buffer)`                   | `stat`                                                  | the target bytes, as a slice of `buffer`                                                                  |
+| `symlinkAt(name, target)`                    | `create`                                                | nothing; see [`VFO10`](#vfo10-symbolic-link-targets)                                                      |
+| `unlinkAt(name)`                             | `remove`                                                | nothing; `isADirectory` for a directory                                                                   |
+| `rmdirAt(name)`                              | `remove`                                                | nothing; `notEmpty` if it has entries                                                                     |
+| `renameAt(name, dst, dstName)`               | `rename` on both                                        | nothing; replaces a non-directory target                                                                  |
+| `list()`                                     | `list`                                                  | a `Listing` over the entries                                                                              |
+| `walk(path)`                                 | `lookup`                                                | a `Dir` for the directory `path` names                                                                    |
+| `walkAll(path, sharing)`                     | `lookup`, `create`                                      | as `walk`, creating missing directories                                                                   |
+| `removeTree(name)`                           | `lookup`, `list`, `remove`                              | nothing; see [§9](#_9-deletion-vfd)                                                                       |
+| `writeFileAtomic!mode(name, bytes, sharing)` | `create`, `write`, `rename`; `stat` to keep permissions | an `AtomicReceipt`; readers see the old or the new content, never a mix; see [`VFO9`](#vfo9-atomic-write) |
+| `readFile(name, sink, maximum)`              | `read`                                                  | the length put into `sink`; see [`VFO12`](#vfo12-reading-a-whole-regular-file)                            |
 
 A `File` **must** provide `read(buffer)`, `write(bytes)`, `stat(mask)`,
 `sync()` and `close()`, gated by the rights it was opened with, and `map()`
@@ -372,7 +373,9 @@ argument, so the rights the mode needs are checked at compile time
 `write`, `readWrite` or `append` access combined with `existing` (fail with `notFound` if
 absent), `createNew` (fail with `exists` if present) or `createOrTruncate`. A
 creating mode **may** add `executable`, which marks the created file
-executable for everyone its sharing admits.
+executable for everyone its sharing admits. Any mode **may** add
+`regularOnly`, which opens only a regular file and never waits on anything
+else ([`VFO12`](#vfo12-reading-a-whole-regular-file)).
 
 <a id="vfo5-sharing-of-created-entries"></a>
 **VFO5: Sharing of created entries.** Every operation that creates a file or
@@ -436,11 +439,49 @@ same root as the source directory.
 <a id="vfo9-atomic-write"></a>
 **VFO9: Atomic write.** `writeFileAtomic` **must** create a file under a fresh
 temporary name in the same directory, with `createNew` and the requested
-sharing, write and sync it, and rename it over `name`. On any failure it
-**must** remove the temporary entry. A concurrent reader of `name` observes
-either the complete old content or the complete new content. The replacement
-does not take the replaced file's permissions; a caller who wants them reads
-them with `statAt` and passes them as `PosixMode`.
+sharing, write, sync and close it, and then commit it under `name`. On any
+failure before the commit it **must** remove the temporary entry. A
+concurrent reader of `name` observes either the complete old content or the
+complete new content, and, for a name that did not exist, nothing or the
+complete new content. Its mode, an `AtomicMode` template argument, chooses:
+
+- **Disposition.** `replace`, the default, commits with a rename over `name`.
+  `createNew` **must** fail with `exists` and leave the entry untouched if
+  `name` exists when the commit runs, including an entry created during the
+  write; it commits with the backend's no-replace rename and, where that
+  reports `unsupported`, with a hard link to `name` followed by removing the
+  temporary name ([`VFB8`](./backends.md#vfb8-atomic-commit-primitives)). A
+  backend with neither **must not** compile a `createNew` write.
+- **`keepPermissions`.** Before writing, the call stats `name` without
+  following it. An existing entry that is not a regular file fails the call
+  before any temporary exists: `isADirectory`, `symlinkRefused`, or `other`
+  with the context `"only a regular file can be replaced"`. An existing
+  regular file's permission bits are set on the temporary exactly, regardless
+  of the umask, before it is synced. A missing entry is created with the
+  requested sharing. The mode needs the `stat` right, applies only to
+  `replace`, and **must not** compile on a backend that cannot set
+  permissions.
+- **`syncDirectory`.** After the commit, the call syncs the directory. A
+  failed sync does not fail the call: the content is committed, and the
+  receipt says it may not survive a crash.
+
+The result is an `AtomicReceipt`: `directorySynced` is true only when the
+mode asked for the directory sync and it succeeded, and `temporaryLeft` is
+true when a link commit could not remove the temporary name, so the content
+is reachable under both. Without `keepPermissions` the replacement does not
+take the replaced file's permissions; it has the requested sharing.
+
+_Rationale:_ An editor saving a new document, or an archive appending an
+immutable generation, must not replace a file another program created in
+the meantime, and an existence check before a replacing rename cannot rule
+that out. `renameat2(RENAME_NOREPLACE)` commits in one step; Android's
+application sandbox refuses hard links, so the link is the fallback for a
+file system without the flag rather than the first choice. Keeping the
+replaced file's bits through the umask is what an editor's user expects of a
+group-writable file, which `PosixMode` cannot reproduce once the umask clears
+the bit. A commit is not durable until its directory is synced, and a caller
+acknowledging durability to its user needs to know which of the two it got
+([DV13](./decisions.md#dv13-rename-and-atomic-write-are-in-v1)).
 
 <a id="vfo10-symbolic-link-targets"></a>
 **VFO10: Symbolic link targets.** `symlinkAt` **must** fail with `escapesRoot`,
@@ -473,6 +514,28 @@ yet read show a later in-place write, and another process that truncates a
 mapped file makes later reads of the lost pages fault. Mapping suits files
 that are replaced, not rewritten in place, as installed fonts are; a caller
 that cannot rule out truncation reads instead.
+
+<a id="vfo12-reading-a-whole-regular-file"></a>
+**VFO12: Reading a whole regular file.** `readFile(name, sink, maximum)`
+**must** open `name` with an `OpenMode` whose `regularOnly` is set, which
+refuses anything but a regular file without waiting on it: a directory with
+`isADirectory`, a link with `symlinkRefused` ([`VFO2`](#vfo2-the-named-entry-is-never-followed)),
+and anything else, such as a FIFO without a writer, with `other` and the
+context `"not a regular file"`. On POSIX the open passes `O_NONBLOCK`. A file
+larger than `maximum` bytes **must** fail with `bufferTooSmall` before any byte
+is put into `sink`. Otherwise the call puts the contents into `sink`, an
+output range of `const(ubyte)[]`, first calling `sink.reserve(size)` where the
+sink has it, and returns their length. A file whose size, modification time
+or change time differs after the read from before it, or that yields more or
+fewer bytes than its size, **must** fail with `other` and the context
+`"the file changed while it was read"`.
+
+_Rationale:_ An editor opening a document, or recovery reading an archived
+generation, must never hang on a FIFO raced into the file's place, and must
+not take a half-rewritten file for a whole one. Comparing the times catches
+an in-place rewrite of the same size that a size check alone misses; it does
+not make the read a snapshot against a writer that keeps both the size and
+the times.
 
 ## 7. Paths and resolution policy (`VFP`)
 
