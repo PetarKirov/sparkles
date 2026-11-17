@@ -70,8 +70,9 @@ import std.sumtype : match;
 
 import sparkles.build_graph.actions : ActionGraph, ActionKind, CoverageAttempt, Tools, planActions,
     taskNodes;
-import sparkles.build_graph.variants : LayoutCheck, PlanOptions, Role, ToolchainIdentity,
+import sparkles.build_graph.variants : LayoutCheck, PlanError, PlanOptions, Role, ToolchainIdentity,
     VariantPlan, planVariants;
+import sparkles.build_primitives.task.model : PlanExpected, planErr, planOk;
 import sparkles.build_primitives.resolve.configure : Resolution, ResolveRequest, resolve;
 import sparkles.build_primitives.resolve.libraries : PkgConfigDriver, RecordingPkgConfig, SystemPkgConfig;
 import sparkles.build_primitives.resolve.platform : BuildPlatform;
@@ -299,8 +300,28 @@ Planned planRepository(string root, bool markers = false, string only = null, To
             tree.noteEnvironment(name, null, false);
 
     auto pkgConfig = new RecordingPkgConfig(answers(d.pkgConfig), tree, d.pkgConfigVariables.dup);
-    auto planned = planVariants(rs, PlanOptions(ToolchainIdentity("ldc", "dev-shell"), layoutLint(),
-        registry.value.keys, pkgConfig), tree);
+    // A generator's requests (§7): the shader compiler's application and a
+    // package's device configuration, by the package's directory.
+    PlanExpected!(Resolution, PlanError) resolveTool(string directory, string configuration) @safe
+    {
+        foreach (ref pkg; graph.value.packages)
+            if (root ~ "/" ~ pkg.path == directory)
+            {
+                auto request = ResolveRequest(directory: root, subPackage: pkg.shortName,
+                    configuration: configuration, platform: platform);
+                foreach (n, s; registry.value)
+                    request.registry[n] = s;
+                auto r = resolve(request, tree);
+                if (r.hasError)
+                    return planErr!Resolution(PlanError(text(pkg.shortName, ": ", r.error.message)));
+                return planOk!PlanError(r.value);
+            }
+        return planErr!Resolution(PlanError("a generator names a directory that holds no package", directory));
+    }
+    auto options = PlanOptions(ToolchainIdentity("ldc", "dev-shell"), layoutLint(), registry.value.keys, pkgConfig);
+    options.resolveTool = &resolveTool;
+    options.root = root;
+    auto planned = planVariants(rs, options, tree);
     if (planned.hasError)
         return Planned(text(planned.error));
     p.plan = planned.value;
@@ -1157,8 +1178,10 @@ int runPackage(string root, string only, string into)
     import sparkles.build_graph.execute : RunLayout, executionNodes, runActions;
     import sparkles.build_primitives.task.action : EnvEntry;
 
-    const tools = Tools(compiler: onPath("ldc2"), archiver: onPath("ar"), cc: onPath("cc"), linker: onPath("ld.lld"),
-        fail: onPath("false"));
+    auto tools = Tools(compiler: onPath("ldc2"), archiver: onPath("ar"), cc: onPath("cc"), linker: onPath("ld.lld"),
+        fail: onPath("false"), deviceCompiler: onPath("ldc2-vulkan"));
+    foreach (name; ["spirv-val", "spirv-opt", "spirv-dis", "spirv-as", "spirv-cross", "glslangValidator"])
+        tools.shaderTools ~= [name, onPath(name)];
     if (tools.compiler is null || tools.archiver is null || tools.cc is null || tools.linker is null)
     {
         stderr.writeln("plan-graph: ldc2, ar, cc and ld.lld must be on PATH");

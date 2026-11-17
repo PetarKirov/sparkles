@@ -15,8 +15,8 @@ $(LIST
         * a `generate` before a compile that needs one: the test-root module, in
         process, and a recognized pre-generate command (§7), whose tool is
         built first and whose output the compile reads in place of the
-        string import root it fills. The shader compiler stays dub's command,
-        in its package, until its direct invocation is planned.
+        string import root it fills. The shader compiler runs in its direct
+        invocation, its device configuration written for it (BGG3).
 )
 
 A compile reads its dependencies' sources through import paths and waits for
@@ -45,6 +45,7 @@ import std.array : array, join;
 import std.conv : text;
 
 import sparkles.build_graph.variants : Role, Variant, VariantPlan;
+import sparkles.build_graph.generators : GeneratorKind;
 import sparkles.build_primitives.resolve.configure : Resolution;
 import sparkles.build_primitives.resolve.settings : BuildOption, BuildSettings, TargetType;
 import sparkles.build_primitives.task.action : EnvEntry, InProcessAction, ProcessAction, SandboxPolicy,
@@ -129,6 +130,10 @@ struct Tools
     /// finds under each of `failingTools` on its `PATH` (§7). Empty gives
     /// generators an empty `PATH`.
     string fail;
+    /// The shader compiler's device compiler (`ldc2-vulkan`) and the SPIR-V
+    /// and GLSL tools it runs, by name and absolute path (BGG3).
+    string deviceCompiler;
+    string[2][] shaderTools; /// ditto
 }
 
 /**
@@ -218,6 +223,37 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
         foreach (arg; gen.arguments)
             arguments ~= relative(arg, root);
         TaskId id;
+        if (gen.kind == GeneratorKind.shaderCompiler && gen.tool != size_t.max)
+        {
+            // BGG3: the tool's direct invocation, its device configuration
+            // written for it by the graph rather than read through dub.
+            const t = &plan.variants[gen.tool];
+            const toolLink = actionId(ActionKind.link, *t);
+            const vendor = t.toolchain.vendor;
+            const description = taskId("generate", "device-build", "generator", vendor, d).value;
+            add(Action(ActionKind.generate, description, size_t.max,
+                TaskAction(InProcessAction("generate:file", ["$OUT/device.json", gen.described])),
+                [DeclaredOutput("device.json")], defaultWeight(ActionKind.generate)));
+            string[] argv = [inputPath(toolLink, binaryName(*t))];
+            foreach (arg; gen.arguments)
+                argv ~= relativeOption(arg, root);
+            argv ~= "--described=" ~ inputPath(description, "device.json");
+            if (tools.deviceCompiler.length)
+                argv ~= "--ldc=" ~ tools.deviceCompiler;
+            foreach (tool; tools.shaderTools)
+                argv ~= "--tool=" ~ tool[0] ~ "=" ~ tool[1];
+            argv ~= "--quiet";
+            id = taskId("generate", "shader-compile", "generator", vendor, d).value;
+            add(Action(ActionKind.generate, id, gen.tool,
+                TaskAction(ProcessAction(argv: argv,
+                    envDelta: [EnvEntry("PATH", ""), EnvEntry("TMPDIR", "$MEASURE")],
+                    sandbox: SandboxPolicy.taskDirectory)),
+                [DeclaredOutput(".", true)], defaultWeight(ActionKind.generate)));
+            edge(toolLink, id);
+            edge(description, id);
+            generatorOf[gi] = id;
+            return id;
+        }
         if (gen.tool == size_t.max)
         {
             // The shader compiler, until its direct invocation is planned
@@ -268,7 +304,9 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
         return id;
     }
 
-    foreach (ri, ref r; resolutions)
+    // The given requests, then the generators' tools (§7).
+    const requested = resolutions ~ plan.toolResolutions;
+    foreach (ri, ref r; requested)
     {
         if (ri >= plan.requests.length)
             return planErr!ActionGraph(ActionError("a resolution the plan does not cover"));
@@ -300,12 +338,15 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
             auto c = Action(ActionKind.compile, actionId(ActionKind.compile, *v), vi,
                 TaskAction(ProcessAction(argv: compileArgv(*v, root, tools, generatedRoot, generated),
                     sandbox: SandboxPolicy.taskDirectory)),
-                [DeclaredOutput(objectName(*v))], defaultWeight(ActionKind.compile));
+                [DeclaredOutput(archivesItself(*v) ? archiveName(*v) : objectName(*v))],
+                defaultWeight(ActionKind.compile));
             compileOf[vi] = add(c);
             foreach (b; before)
                 edge(b, compileOf[vi]);
 
-            if (v.role == Role.dependencyLibrary && v.settings.targetType != TargetType.none)
+            if (archivesItself(*v))
+                archiveOf[vi] = compileOf[vi];
+            else if (v.role == Role.dependencyLibrary && v.settings.targetType != TargetType.none)
             {
                 auto a = Action(ActionKind.archive, actionId(ActionKind.archive, *v), vi,
                     TaskAction(ProcessAction(argv: [tools.archiver, "rcsD", "$OUT/" ~ archiveName(*v),
@@ -467,6 +508,16 @@ string baseName(ref const Variant v) @safe pure nothrow
 }
 
 string objectName(ref const Variant v) @safe pure nothrow => baseName(v) ~ ".o";
+
+/*
+Whether `v`'s compile writes its archive itself: a dependency library built
+by LDC, with one member per module, as dub's `-lib` build makes it. A link
+then pulls only the members it needs, so a source library folded into both a
+dependency library and its dependent links once; a single-object archive
+would bring its modules in a second time.
+*/
+bool archivesItself(ref const Variant v) @safe pure nothrow @nogc
+    => v.platform.compiler == "ldc" && v.role == Role.dependencyLibrary && v.settings.targetType != TargetType.none;
 string archiveName(ref const Variant v) @safe pure nothrow => "lib" ~ baseName(v) ~ ".a";
 string binaryName(ref const Variant v) @safe pure nothrow => baseName(v);
 
@@ -532,10 +583,13 @@ string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId
 {
     const s = &v.settings;
     const ldc = v.platform.compiler == "ldc";
-    string[] argv = [tools.compiler, "-c"];
-    if (ldc)
-        argv ~= "-singleobj";
-    argv ~= "-of=$OUT/" ~ objectName(v);
+    string[] argv = [tools.compiler];
+    if (archivesItself(v))
+        // One member per module, each named by its module, written through
+        // a scratch directory the compiler empties again.
+        argv ~= ["-lib", "-oq", "-od=$MEASURE/objects", "-cleanup-obj", "-of=$OUT/" ~ archiveName(v)];
+    else
+        argv ~= ["-c"] ~ (ldc ? ["-singleobj"] : null) ~ ["-of=$OUT/" ~ objectName(v)];
     // BGA5: the root maps to `.` in what the outputs record.
     if (ldc)
         argv ~= "--ffile-prefix-map=$ROOT=.";
@@ -610,6 +664,16 @@ string[] linkArgv(ref const Variant v, string root, const Tools tools, TaskId co
         argv ~= "-L" ~ f;
     argv ~= "-L--threads=" ~ text(threads);
     return argv;
+}
+
+// An argument `--name=<path>` with the path made relative to the root,
+// as BGA5 passes paths; any other argument as given.
+string relativeOption(string arg, string root) @safe pure nothrow
+{
+    foreach (i, c; arg)
+        if (c == '=')
+            return arg[0 .. i + 1] ~ relative(arg[i + 1 .. $], root);
+    return relative(arg, root);
 }
 
 string trimmed(string path) @safe pure nothrow @nogc
@@ -723,10 +787,12 @@ version (unittest)
 {
     const g = graphOf(":t1", ":t2");
     // Two test roots, one `mid` and one `leaf` (neither mentions a root's
-    // version): four compiles, two archives, two links, two tests, and the
-    // two test-root modules.
+    // version): four compiles, the libraries' two writing their archives
+    // with LDC, two links, two tests, and the two test-root modules.
     assert(count(g, ActionKind.compile) == 4);
-    assert(count(g, ActionKind.archive) == 2);
+    assert(count(g, ActionKind.archive) == 0);
+    import std.algorithm.searching : algoCount = count;
+    assert(g.actions.algoCount!(a => a.outputs.length && a.outputs[0].path.endsWith(".a")) == 2);
     assert(count(g, ActionKind.link) == 2);
     assert(count(g, ActionKind.test) == 2);
     assert(count(g, ActionKind.generate) == 2);

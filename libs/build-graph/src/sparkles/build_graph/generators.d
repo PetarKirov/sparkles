@@ -54,6 +54,10 @@ struct Generator
     string[] arguments;
     /// The tool's variant in the plan; `size_t.max` until planned.
     size_t tool = size_t.max;
+    /// For the shader compiler: the device configuration it compiles, as
+    /// `dub describe` reports it, its worktree paths under `$ROOT`; empty
+    /// for a single-file program (§7, BGG3).
+    string described;
 }
 
 /// Why an entry is not a generator the graph can run.
