@@ -623,7 +623,18 @@ struct ActionDriver
                 if (adopt(id, *hit))
                 {
                     stats.count(kind, true);
-                    return TaskOutcome(Succeeded());
+                    if (hit.status == 0)
+                        return TaskOutcome(Succeeded());
+                    // BGA9: a deterministic failure is replayed, not recompiled.
+                    string log;
+                    if (readAll(cacheRoot, inCache(relativeToRun(layout.outOf(id))) ~ "/output.log", log))
+                    {
+                        import std.string : lineSplitter;
+
+                        foreach (l; log.lineSplitter)
+                            ctx.output(OutputStream.stderr, l);
+                    }
+                    return TaskOutcome(Failed(FailureReason.exitStatus, hit.status));
                 }
             // BGS5: a result only its digest record holds serves its
             // consumers' keys; its bytes are made when one that misses needs
@@ -652,14 +663,46 @@ struct ActionDriver
             return TaskOutcome(Failed(FailureReason.contract));
         auto outcome = process.run(ctx);
         stats.count(kind, false);
-        const succeeded = outcome.match!((ref Succeeded _) => true, (ref _) => false);
-        if (!succeeded || !stored)
+        // BGA9: what an ending publishes. A success; a compile, archive or
+        // link that exited on its own with any status; never an action ended
+        // by a signal, a timeout or a cancellation.
+        int status = -1;
+        outcome.match!(
+            (ref Succeeded _) { status = 0; },
+            (ref Failed f) { if (f.reason == FailureReason.exitStatus) status = f.status; },
+            (ref _) {});
+        if (status == 0 && a !is null)
+            // BGA3: exiting zero without a declared output is a failure.
+            foreach (ref o; (*a).outputs)
+                if (!o.tree && statPath(run_, relativeToRun(layout.outOf(id)) ~ "/" ~ o.path).hasError)
+                {
+                    ctx.output(OutputStream.stderr, "exited zero without its declared output " ~ o.path);
+                    return TaskOutcome(Failed(FailureReason.contract));
+                }
+        const buildKind = a !is null && ((*a).kind == ActionKind.compile || (*a).kind == ActionKind.archive
+            || (*a).kind == ActionKind.link);
+        if (!stored || status < 0 || (status > 0 && !buildKind))
             return outcome;
+        // The diagnostics a hit replays (BGA7): output the driver kept in
+        // memory, unspilled, goes to the result's `output.log`.
+        {
+            const log = relativeToRun(layout.outOf(id)) ~ "/output.log";
+            if (statPath(run_, log).hasError)
+            {
+                string text_;
+                foreach (ref l; process.record(ctx.task).output.tail)
+                    text_ ~= l.text ~ (l.unterminated ? "" : "\n");
+                auto dir = run_.walk(relativeToRun(layout.outOf(id)));
+                if (text_.length && !dir.hasError)
+                    cast(void) dir.value.writeFileAtomic("output.log", text_);
+            }
+        }
 
         ResultRecord record;
         record.task = id.text;
         record.toolchain = layout.toolchain;
         record.declaredKey = declared;
+        record.status = status;
         record.outputs = outputsOf(id);
         outputsDigestOf[id.text] = record.outputsDigest;
         if (layout.check)
@@ -698,17 +741,25 @@ struct ActionDriver
         ref ResultRecord record, scope void delegate(string) note)
     {
         Manifest manifest;
-        const hasManifest = withManifest(a);
+        bool hasManifest = withManifest(a);
         if (a.kind == ActionKind.compile && !hasManifest)
             note("conservatively keyed: no dependency output (BGK6)");
-        if (hasManifest)
+        string why;
+        if (hasManifest && !readManifest(id, manifest, why))
         {
-            string why;
-            if (!readManifest(id, manifest, why))
+            // BGA9: a failed compile the compiler wrote no dependency output
+            // for is keyed conservatively (BGK6), so its failure replays too.
+            if (record.status == 0)
             {
                 note("not published: " ~ why);
                 return true;
             }
+            hasManifest = false;
+            record.resultKey = failureKey(a, declared);
+            note("a failure keyed conservatively: the compiler wrote no dependency output (BGK6)");
+        }
+        else if (hasManifest)
+        {
             // BGK8: a read outside the declared roots fails the compile.
             if (const outside = outsideRoots(a, manifest))
             {
@@ -717,7 +768,7 @@ struct ActionDriver
             }
             record.resultKey = resultKey(declared, manifest);
         }
-        else
+        else if (!record.resultKey.length)
             record.resultKey = declared;
         const name = layout.outOf(id);
         auto parent = run_.walk(relativeToRun(parentOf(name)));
@@ -784,7 +835,11 @@ struct ActionDriver
                 env[e.name] = e.value;
             const ran = (() @trusted => execute(concrete.argv, env, Config.newEnv, size_t.max,
                 concrete.cwd))();
-            cast(void) run_.writeFileAtomic(relativeToRun(layout.outOf(id)) ~ "/output.log", ran.output);
+            {
+                auto dir = run_.walk(relativeToRun(layout.outOf(id)));
+                if (!dir.hasError)
+                    cast(void) dir.value.writeFileAtomic("output.log", ran.output);
+            }
             if (ran.status != 0)
                 return "cannot make " ~ producer ~ ": it exited " ~ text(ran.status);
             stats.count(text((**pa).kind), false);
@@ -1155,7 +1210,29 @@ struct ActionDriver
                     store.useManifest(declared, m);
                     return r;
                 }
+        // A failure published without a manifest (BGA9), under the
+        // conservative key of the roots it searched.
+        if (auto r = store.find(failureKey(a, declared)))
+            if (r.status != 0)
+                return r;
         return null;
+    }
+
+    // The conservative key of a compile's failure (BGA9, BGK6): its declared
+    // key and the digest of every file beneath each worktree root it searches.
+    private string failureKey(ref const Action a, string declared)
+    {
+        string s = "failure " ~ declared ~ "\n";
+        a.action.match!(
+            (ref const ProcessAction p) {
+                foreach (arg; p.argv)
+                    foreach (prefix; ["-I=", "-J="])
+                        if (arg.startsWith(prefix) && !arg[prefix.length .. $].startsWith("/")
+                                && !arg[prefix.length .. $].startsWith("$"))
+                            s ~= "root " ~ arg[prefix.length .. $] ~ " " ~ treeDigest(arg[prefix.length .. $]) ~ "\n";
+            },
+            (ref const _) {});
+        return declaredKeyOf(s);
     }
 
     private bool holds(const ref Manifest m)
