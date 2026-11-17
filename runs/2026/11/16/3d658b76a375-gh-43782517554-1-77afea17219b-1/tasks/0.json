@@ -1,0 +1,1 @@
+{"tasks":[{"id":"test:table-wasm:wasm:serial","series":"0d41ec901cab1a6792b0e94491ff582b1975fec268de75c12b3d8fb18ee3add2","outcome":"passed","start":129453999999,"end":134953999999,"metrics":{"task.wall":5500000000}}]}
