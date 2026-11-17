@@ -113,6 +113,11 @@ struct BuildSettings
     string[] importFiles;          ///
     string[] stringImportFiles;    ///
     string[] preGenerateCommands;  ///
+    /// The directory of the package that declared each pre-generate
+    /// command, in the same order: dub runs a command in its own package's
+    /// context, which folding a source library into a dependent does not
+    /// change (§7).
+    string[] preGenerateDirectories;
     string[] postGenerateCommands; ///
     string[] preBuildCommands;     ///
     string[] postBuildCommands;    ///
@@ -146,6 +151,7 @@ struct BuildSettings
         addImportFiles(other.importFiles);
         addStringImportFiles(other.stringImportFiles);
         addPreGenerateCommands(other.preGenerateCommands);
+        preGenerateDirectories ~= other.preGenerateDirectories;
         addPostGenerateCommands(other.postGenerateCommands);
         addPreBuildCommands(other.preBuildCommands);
         addPostBuildCommands(other.postBuildCommands);
