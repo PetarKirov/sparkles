@@ -142,6 +142,7 @@ int main(string[] args)
         const jobs = args.filter!(a => a.startsWith("--jobs=")).array;
         runJobs = jobs.length ? jobs[0]["--jobs=".length .. $].to!uint : 0;
         traceCompiles = args.canFind("--trace-compiles");
+        oracle3Only = args.canFind("--oracle3-only");
         return runPackage(root, name == "all" ? null : name, runDir, cache, args.canFind("--check-determinism"),
             args.canFind("--confine-tests") ? Confinement.tests : args.canFind("--confine") ? Confinement.builds
             : Confinement.none);
@@ -1219,6 +1220,8 @@ and its outcome; the exit status is the run's.
 */
 /// Oracle 3: whether a run traces its compiles (`--trace-compiles`).
 __gshared bool traceCompiles;
+/// Oracle 3 over an earlier traced run, running nothing (`--oracle3-only`).
+__gshared bool oracle3Only;
 
 /// The weight a run admits at once; 0 for one per processor.
 __gshared uint runJobs;
@@ -1275,6 +1278,17 @@ int runPackage(string root, string only, string into, string cache, bool checkDe
         return 2;
     }
     mkdirRecurse(into);
+    // Oracle 3 over an earlier traced run's directory, running nothing.
+    if (oracle3Only)
+    {
+        size_t compiles, opened, lookups;
+        const failures = manifestCompleteness(p.graph, root, into, compiles, opened, lookups);
+        foreach (f; failures[0 .. failures.length < 40 ? $ : 40])
+            writeln("oracle 3: ", f);
+        writeln(failures.length ? "fail" : "pass", " oracle 3 (manifest completeness): ", compiles, " compiles, ",
+            opened, " files opened, ", lookups, " failed lookups under their roots; ", failures.length, " failures");
+        return failures.length ? 1 : 0;
+    }
     // Oracle 3: every compile under `strace`, its trace beside its manifest.
     if (traceCompiles)
     {
@@ -1633,13 +1647,24 @@ string[] manifestCompleteness(const ActionGraph g, string root, string runDirect
                 files[buildNormalizedPath(absolute(line[66 .. $]))] = true;
         foreach (p; makeRulePrerequisites(readText(buildPath(measure, "absent"))))
             absent[buildNormalizedPath(absolute(p))] = true;
-        string[] roots;
+        string[] roots, cRoots;
         a.action.match!(
             (ref const ProcessAction p) {
                 foreach (arg; p.argv)
                     foreach (prefix; ["-I=", "-J="])
                         if (arg.startsWith(prefix) && !arg[prefix.length .. $].startsWith("$"))
                             roots ~= buildNormalizedPath(absolute(arg[prefix.length .. $]));
+                // The C roots the key covers whole (BGK2): a C source's own
+                // directory and each C include root in the worktree.
+                foreach (arg; p.argv)
+                    if (arg.startsWith("-P-I") && !arg[4 .. $].startsWith("/"))
+                        cRoots ~= buildNormalizedPath(absolute(arg[4 .. $]));
+                    else if (arg.length > 2 && arg[0] != '-' && !arg.startsWith("/")
+                            && (arg.endsWith(".c") || arg.endsWith(".i")))
+                        cRoots ~= buildNormalizedPath(absolute(arg)).dirName;
+                // LDC hands the preprocessor the D import roots too.
+                if (cRoots.length)
+                    cRoots ~= roots;
             },
             (ref const _) {});
         bool underAbsent(string path)
@@ -1680,7 +1705,7 @@ string[] manifestCompleteness(const ActionGraph g, string root, string runDirect
             if (!e.ok && e.ret.canFind("ENOENT") && roots.canFind!(r => e.path.startsWith(r ~ "/")))
             {
                 ++failedLookups;
-                if (!underAbsent(e.path))
+                if (!underAbsent(e.path) && !cRoots.canFind!(r => e.path.startsWith(r ~ "/")))
                     failures ~= text(a.id.text, ": a failed lookup that is no absent candidate: ", e.path);
             }
         }
