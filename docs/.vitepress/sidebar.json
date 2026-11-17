@@ -2419,6 +2419,20 @@
             ]
           },
           {
+            "text": "WebAssembly Builds (draft)",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Specification",
+                "link": "/specs/wired/wasm/SPEC"
+              },
+              {
+                "text": "Delivery Plan",
+                "link": "/specs/wired/wasm/PLAN"
+              }
+            ]
+          },
+          {
             "text": "Runtime JSON benchmark baseline",
             "link": "/specs/wired/bench-baseline"
           },
