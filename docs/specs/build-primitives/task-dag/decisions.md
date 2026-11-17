@@ -213,3 +213,27 @@ mistake is found at the plan that makes it.
 
 **Revisit when** a planner can only know an order from claims, with no other
 way to state the edge.
+
+## T16: The command line changes before the executor
+
+**Question.** `apps/ci`'s command surface (its SPEC §1) was to arrive with
+the cutover of `ci test` onto the build graph, which waits for build graph E3
+and the test runner's core library. Must the two arrive together?
+
+**Alternatives.**
+
+- Together, as planned: one migration of every caller, but `ci` keeps
+  growing flat flags until then, and the cutover carries the rewrite of the
+  whole command line besides the executor.
+- The command line first, over the current implementations: callers migrate
+  once, now, and each later cutover swaps one command's implementation behind
+  a command that no longer changes.
+
+**Choice.** The command line first, accepted by the owner on 2026-11-18. The
+commands of SPEC §1.1 replace every flag in one change (`apps/ci` PLAN M7a),
+each returning its outcome as an `Expected` (CIC16). An option whose meaning
+needs the build graph, such as `--since` or `--require-cached`, is not
+accepted until the command that honours it exists, so no option is parsed and
+ignored.
+
+**Revisit when** never: the flags it removes do not return (CIC4).
