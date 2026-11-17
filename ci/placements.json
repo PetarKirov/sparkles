@@ -1,4 +1,5 @@
 {
+  "pinBuildBudgetMinutes": 300,
   "placements": [
     {
       "compiler": "ldc2",

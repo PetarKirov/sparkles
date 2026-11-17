@@ -49,6 +49,9 @@ struct Placement
 struct Placements
 {
     Placement[] placements;
+    /// The minutes a toolchain pin build may take in a CI job before the build
+    /// plan leaves it to a developer host (toolchain TC23).
+    uint pinBuildBudgetMinutes = 300;
 
     /// The placement called `name`, or null.
     const(Placement)* find(string name) const @safe pure nothrow
@@ -130,6 +133,13 @@ Expected!(Placements, string) parsePlacements(string json) @safe
             return err!Placements("two placements are called " ~ name);
         parsed.placements ~= Placement(name, entry["system"].str, entry["compiler"].str, mode,
             cast(uint) entry["shards"].integer, cast(uint) entry["timeoutMinutes"].integer, runners);
+    }
+    if ("pinBuildBudgetMinutes" in root)
+    {
+        const budget = root["pinBuildBudgetMinutes"];
+        if (budget.type != JSONType.integer || budget.integer <= 0 || budget.integer >= 360)
+            return err!Placements("pinBuildBudgetMinutes must be between 1 and 359");
+        parsed.pinBuildBudgetMinutes = cast(uint) budget.integer;
     }
     if (parsed.placements.length == 0)
         return err!Placements("the placements file declares no placement");
