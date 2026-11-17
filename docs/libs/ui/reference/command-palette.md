@@ -69,6 +69,16 @@ context with `shortcut(command, target)` to display effective shortcuts.
 by checking the real key resolver, including shadowing and ranged arguments.
 Format the returned path for the target; depth zero means no effective binding.
 
+`paletteHitAt(hit, choiceCount, options, dismissHit)` resolves a hit ID
+under the pointer to a `PaletteHit`. A visible row is `choose` with its index
+into the returned choices. The close box, an optional `dismissHit` (such as
+the control that opened the palette) and empty space (`0`) are `dismiss`.
+Anything else is `none`. On a pointer that cannot hover, `PaletteTouch`
+captures a press without acting. A vertical drag past the slop pans the
+palette's `ScrollBody` and flings on release. Only a release within the slop
+returns the resolved hit. The scroll body stays the host's, shared with the
+wheel and the view.
+
 Run the [display-independent example](../../../../libs/ui/examples/command-palette.d):
 
 ```bash

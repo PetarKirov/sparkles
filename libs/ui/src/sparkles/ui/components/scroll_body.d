@@ -2,7 +2,7 @@
 module sparkles.ui.components.scroll_body;
 
 import std.math : exp, isFinite;
-import sparkles.input : WheelEvent;
+import sparkles.input : PointerAction, PointerEvent, WheelEvent;
 import sparkles.ui.components.scroll_view : OverlayBar;
 import sparkles.ui.scroll_motion : ScrollMotion;
 
@@ -174,6 +174,124 @@ struct ScrollBody
         bar.anim.stepFade(moving || dragging || bar.grabbed, dt);
         return moving || bar.anim.fading;
     }
+}
+
+/// What one pointer event did to a $(LREF TouchPan).
+enum TouchStep : ubyte
+{
+    ignored,   /// Not the captured touch, or none is captured.
+    holding,   /// Still undecided: within the slop, or travelling sideways.
+    panning,   /// The drag scrolls the body.
+    tapped,    /// Released within the slop: the press was a tap.
+    cancelled, /// Left the surface, or lifted after travelling too far sideways.
+}
+
+/**
+One finger on a $(LREF ScrollBody): the press captures it, a drag that travels
+`slop` vertically (and more vertically than sideways) pans the body under the
+finger and flings on release, and a release that stayed within `slop` on both
+axes is a tap. Positions are the pointer's own units; `rowUnits` of them make
+one of the body's content units.
+*/
+struct TouchPan
+{
+    private PointerEvent press_;
+    private bool active_, panning_;
+
+    /// A touch is captured.
+    bool active() const @safe pure nothrow @nogc => active_;
+
+    /// The captured touch pans the body.
+    bool panning() const @safe pure nothrow @nogc => panning_;
+
+    /// The press that started the captured touch.
+    PointerEvent press() const @safe pure nothrow @nogc => press_;
+
+    /// Whether `event` belongs to the captured touch.
+    bool captures(in PointerEvent event) const @safe pure nothrow @nogc
+        => active_ && event.pointerId == press_.pointerId;
+
+    /// Capture the touch `press` and begin dragging `body` (touch fading, smooth motion).
+    void begin(ref ScrollBody body, in PointerEvent press, int rowUnits, double seconds)
+        @safe pure nothrow @nogc
+    {
+        active_ = true;
+        panning_ = false;
+        press_ = press;
+        body.touch = true;
+        body.motion.instant = false;
+        body.beginDrag(press.pos.y / cast(double) unit(rowUnits), seconds);
+    }
+
+    /// Release the captured touch without a fling or a tap.
+    void cancel(ref ScrollBody body) @safe pure nothrow @nogc
+    {
+        active_ = panning_ = false;
+        body.cancelDrag();
+    }
+
+    /// Feed a later event; only the captured touch's events are taken.
+    TouchStep track(ref ScrollBody body, in PointerEvent event, int rowUnits, int slop, double seconds)
+        @safe pure nothrow @nogc
+    {
+        if (!captures(event)) return TouchStep.ignored;
+        if (event.action == PointerAction.leave)
+        {
+            cancel(body);
+            return TouchStep.cancelled;
+        }
+        const dx = event.pos.x - press_.pos.x, dy = event.pos.y - press_.pos.y;
+        const ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
+        if (!panning_ && ay >= slop && ay > ax) panning_ = true;
+        if (panning_)
+        {
+            body.dragTo(event.pos.y / cast(double) unit(rowUnits), seconds);
+            if (event.action == PointerAction.release)
+            {
+                body.endDrag(seconds);
+                active_ = panning_ = false;
+            }
+            return TouchStep.panning;
+        }
+        if (event.action != PointerAction.release) return TouchStep.holding;
+        cancel(body);
+        return ax < slop && ay < slop ? TouchStep.tapped : TouchStep.cancelled;
+    }
+
+    private static int unit(int rowUnits) @safe pure nothrow @nogc => rowUnits > 0 ? rowUnits : 1;
+}
+
+/// A short touch taps, a vertical drag pans and flings, a sideways one does neither.
+@("ui.scroll_body.touchPan")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.input : Point;
+    ScrollBody body;
+    body.content = 100;
+    body.viewport = 10;
+    TouchPan pan;
+    static PointerEvent at(PointerAction action, int x, int y, ubyte id = 0)
+        => PointerEvent(action, pos: Point(x, y), pointerId: id);
+
+    pan.begin(body, at(PointerAction.press, 50, 100), 10, 0);
+    assert(pan.active && body.touch);
+    assert(pan.track(body, at(PointerAction.drag, 52, 102, 7), 10, 4, 0.01) == TouchStep.ignored);
+    assert(pan.track(body, at(PointerAction.drag, 52, 102), 10, 4, 0.01) == TouchStep.holding);
+    assert(pan.track(body, at(PointerAction.release, 52, 102), 10, 4, 0.02) == TouchStep.tapped);
+    assert(!pan.active && body.motion.pos == 0);
+
+    pan.begin(body, at(PointerAction.press, 50, 100), 10, 1);
+    assert(pan.track(body, at(PointerAction.drag, 50, 80), 10, 4, 1.01) == TouchStep.panning);
+    assert(pan.panning && body.motion.pos == 2);
+    assert(pan.track(body, at(PointerAction.release, 50, 70), 10, 4, 1.02) == TouchStep.panning);
+    assert(!pan.active && body.motion.active, "a moving release flings");
+
+    pan.begin(body, at(PointerAction.press, 50, 100), 10, 2);
+    assert(pan.track(body, at(PointerAction.drag, 80, 103), 10, 4, 2.01) == TouchStep.holding);
+    assert(pan.track(body, at(PointerAction.release, 80, 103), 10, 4, 2.02) == TouchStep.cancelled);
+    pan.begin(body, at(PointerAction.press, 50, 100), 10, 3);
+    assert(pan.track(body, at(PointerAction.leave, 50, 100), 10, 4, 3.01) == TouchStep.cancelled);
+    assert(!pan.active);
 }
 
 /// Fractional contact motion, release inertia, interruption and bounds share

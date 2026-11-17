@@ -4,6 +4,8 @@ module sparkles.ui.components.command_palette;
 import sparkles.ui.command_palette : CommandPalette, PaletteChoice;
 import sparkles.ui.editor.state : EditorState;
 import sparkles.ui.components.editor : editorView, EditorViewOptions;
+import sparkles.ui.components.scroll_body : ScrollBody, TouchPan, TouchStep;
+import sparkles.input : PointerEvent;
 import sparkles.ui.geometry : Insets, Point, SizeSpec;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind;
@@ -126,6 +128,110 @@ PaletteView!Cmd viewCommandPalette(Cmd, size_t Capacity, size_t QueryBytes, Cont
     result.root = b.add(Widget(kind: WidgetKind.column, children: children, gap: 0,
         slot: Slot.surface, paintBackground: true, padding: rootPadding, width: rootWidth));
     return result;
+}
+
+/// What a press or a tap on an open palette asks for.
+struct PaletteHit
+{
+    /// ditto
+    enum Kind : ubyte
+    {
+        none,    /// Nothing: the query, the title, or no tap.
+        choose,  /// A row: `choice` indexes the view's `choices`.
+        dismiss, /// The close box, a dismissing control, or outside every target.
+    }
+
+    Kind kind; /// ditto
+    size_t choice; /// The chosen row, for `choose`.
+}
+
+/**
+`hit`, a hit id under the pointer, against a palette drawn with `options`
+showing `choiceCount` rows: a row chooses it; the close box, `dismissHit`
+(the control that opened the palette, say) or no target at all (`0`)
+dismisses.
+*/
+PaletteHit paletteHitAt(size_t hit, size_t choiceCount, in PaletteViewOptions options = PaletteViewOptions.init,
+    size_t dismissHit = 0) @safe pure nothrow @nogc
+{
+    if (hit >= options.hitBase && hit - options.hitBase < choiceCount)
+        return PaletteHit(PaletteHit.Kind.choose, hit - options.hitBase);
+    if (hit == 0 || (options.closeHit && hit == options.closeHit) || (dismissHit && hit == dismissHit))
+        return PaletteHit(PaletteHit.Kind.dismiss);
+    return PaletteHit.init;
+}
+
+/// Rows choose, the close box and empty space dismiss, the query does nothing.
+@("ui.command_palette_view.hitAt")
+@safe pure nothrow @nogc unittest
+{
+    const options = PaletteViewOptions(closeHit: 9);
+    assert(paletteHitAt(options.hitBase + 2, 3, options) == PaletteHit(PaletteHit.Kind.choose, 2));
+    assert(paletteHitAt(options.hitBase + 3, 3, options).kind == PaletteHit.Kind.none);
+    assert(paletteHitAt(9, 3, options).kind == PaletteHit.Kind.dismiss);
+    assert(paletteHitAt(0, 3, options).kind == PaletteHit.Kind.dismiss);
+    assert(paletteHitAt(77, 3, options, 77).kind == PaletteHit.Kind.dismiss);
+    assert(paletteHitAt(options.queryHit, 3, options).kind == PaletteHit.Kind.none);
+}
+
+/**
+Touch on an open palette: the list pans under the finger, and only a tap
+(a release within the slop) chooses or dismisses — a press alone never
+does, so a scroll that starts on a row cannot run it. The palette's
+`ScrollBody` stays the caller's, shared with the wheel and the view.
+*/
+struct PaletteTouch
+{
+    /// The gesture over the palette's scroll body.
+    TouchPan pan;
+
+    /// Whether `event` belongs to the touch this palette captured.
+    bool captures(in PointerEvent event) const @safe pure nothrow @nogc => pan.captures(event);
+
+    /// A touch press on the palette: capture it; nothing is chosen until it lifts.
+    void press(ref ScrollBody scroll, in PointerEvent event, int rowUnits, double seconds)
+        @safe pure nothrow @nogc
+    {
+        pan.begin(scroll, event, rowUnits, seconds);
+    }
+
+    /**
+    A later event of the captured touch. A tap answers `resolve()` — typically
+    $(LREF paletteHitAt) of the target under the tap; panning, holding and
+    cancelling answer nothing.
+    */
+    PaletteHit track(Resolve)(ref ScrollBody scroll, in PointerEvent event, int rowUnits, int slop,
+        double seconds, scope Resolve resolve)
+    {
+        if (pan.track(scroll, event, rowUnits, slop, seconds) != TouchStep.tapped) return PaletteHit.init;
+        return resolve();
+    }
+}
+
+/// A tap chooses the row under it; a drag pans the list and chooses nothing.
+@("ui.command_palette_view.touchTapsAndPans")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.input : Point, PointerAction;
+    ScrollBody scroll;
+    scroll.content = 30;
+    scroll.viewport = 9;
+    PaletteTouch touch;
+    const options = PaletteViewOptions.init;
+    const at = (PointerAction action, int y) => PointerEvent(action, pos: Point(5, y));
+    scope row = () => paletteHitAt(options.hitBase + 1, 4, options);
+
+    touch.press(scroll, at(PointerAction.press, 40), 20, 0);
+    assert(touch.captures(at(PointerAction.drag, 41)));
+    assert(touch.track(scroll, at(PointerAction.drag, 41), 20, 6, 0.01, row).kind == PaletteHit.Kind.none);
+    assert(touch.track(scroll, at(PointerAction.release, 42), 20, 6, 0.02, row)
+        == PaletteHit(PaletteHit.Kind.choose, 1));
+
+    touch.press(scroll, at(PointerAction.press, 100), 20, 1);
+    assert(touch.track(scroll, at(PointerAction.drag, 60), 20, 6, 1.01, row).kind == PaletteHit.Kind.none);
+    assert(scroll.motion.pos == 2, "the list follows the finger");
+    assert(touch.track(scroll, at(PointerAction.release, 60), 20, 6, 1.5, row).kind == PaletteHit.Kind.none);
+    assert(!touch.captures(at(PointerAction.drag, 60)));
 }
 
 /// The shared view renders query carets and fuzzy witnesses, with stamped row actions.

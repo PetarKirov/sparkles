@@ -106,6 +106,12 @@ when available, otherwise select a valid result. Empty-result acceptance
 **must** emit no command. Successful acceptance **must** close the opening and
 emit exactly one command identity and invocation target.
 
+**PAL6: Touch activation.** On a pointer that cannot hover, a press on a
+row **must not** activate it. A drag that travels the slop vertically, and
+more vertically than sideways, **must** pan the result list and activate
+nothing. Only a release within the slop of its press **may** activate the
+row under it, or dismiss the palette on its close box or outside it.
+
 ## 3. Verification boundaries
 
 Lifecycle tests observe opening/closing, tickets and effects; discovery tests
