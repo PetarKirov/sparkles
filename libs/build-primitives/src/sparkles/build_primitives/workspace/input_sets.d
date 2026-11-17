@@ -1630,7 +1630,7 @@ unittest
 unittest
 {
     import std.algorithm.searching : canFind;
-    import std.path : buildNormalizedPath, buildPath;
+    import std.path : absolutePath, buildNormalizedPath, buildPath;
     import std.process : environment;
 
     import sparkles.build_primitives.dub_manifest : hostPlatformTokens;
@@ -1646,8 +1646,9 @@ unittest
     if (sources is null)
         skipTest("SPARKLES_DUB_SOURCES is not set");
 
-    // This file is libs/build-primitives/src/sparkles/build_primitives/workspace/input_sets.d.
-    const root = buildNormalizedPath(__FILE_FULL_PATH__, "../../../../../../..");
+    // This file is libs/build-primitives/src/sparkles/build_primitives/workspace/input_sets.d,
+    // relative to the working directory in a relocated build (D18).
+    const root = buildNormalizedPath(__FILE_FULL_PATH__.absolutePath, "../../../../../../..");
     const read = readWorkspaceAt(root).value;
     const host = ["linux", "posix"];
     auto platform = BuildPlatform(host.dup, ["x86_64"], "ldc", "ldc2", 2111, "1.41.0");
