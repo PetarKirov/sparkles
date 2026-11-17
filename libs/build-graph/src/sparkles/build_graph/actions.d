@@ -399,6 +399,7 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
             auto testArgv = [inputPath(linkId, binaryName(*v))];
             if (coverage)
                 testArgv ~= "--DRT-covopt=dstpath:$OUT srcpath:$ROOT";
+            testArgv ~= testRunnerArguments(*v, root, tools);
             testArgv ~= ["-t", text(testWeight)];
             // BGX1: a test runs in the repository root, whatever the recipe's
             // `workingDirectory`.
@@ -672,6 +673,30 @@ string[] linkArgv(ref const Variant v, string root, const Tools tools, TaskId co
         argv ~= "-L" ~ f;
     argv ~= "-L--threads=" ~ text(threads);
     return argv;
+}
+
+/*
+BGX1: what the test runner's compile-time and extracted modes need, from
+the variant's resolved settings, so the runner never runs dub (`--no-dub`,
+test runner TRX2): the compiler, the import and string import paths, the
+versions and dflags, and a probe directory in the action's measurement
+directory.
+*/
+string[] testRunnerArguments(ref const Variant v, string root, const Tools tools) @safe
+{
+    const s = &v.settings;
+    string[] args = ["--no-dub", "--probe-dir=$MEASURE/probe"];
+    if (tools.compiler.startsWith("/"))
+        args ~= "--compiler=" ~ tools.compiler;
+    foreach (p; s.importPaths)
+        args ~= "--import-path=" ~ relative(p, root);
+    foreach (p; s.stringImportPaths)
+        args ~= "--string-import-path=" ~ relative(p, root);
+    foreach (id; s.versions)
+        args ~= "--version=" ~ id;
+    foreach (f; s.dflags)
+        args ~= "--dflag=" ~ f;
+    return args;
 }
 
 // An argument `--name=<path>` with the path made relative to the root,
@@ -978,4 +1003,22 @@ version (unittest)
     assert(cargv.canFind("-J=$IN(" ~ gen.id.text ~ ")"), text(cargv));
     assert(g.value.edges.canFind!(e => e.prerequisite == gen.id && e.dependent == compile.id));
     assert(g.value.actions.count!(a => a.kind == ActionKind.generate && a.id.text.startsWith("generate:r.tool")) == 1);
+}
+
+/// BGX1: a test takes what the runner's compile-time modes need as
+/// arguments, and never runs dub.
+@("build_graph.actions.planActions.testRunnerArguments")
+@safe unittest
+{
+    const g = graphOf(":t1");
+    foreach (ref a; g.actions)
+        if (a.kind == ActionKind.test)
+        {
+            const argv = a.action.match!((ref const ProcessAction p) => p.argv, (_) => null);
+            assert(argv.canFind("--no-dub") && argv.canFind("--probe-dir=$MEASURE/probe"), text(argv));
+            assert(argv.canFind("--import-path=t1/source") && argv.canFind("--import-path=mid/source"), text(argv));
+            assert(argv.canFind("--version=T1Only"), text(argv));
+            return;
+        }
+    assert(false, "no test action");
 }
