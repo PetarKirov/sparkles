@@ -475,7 +475,10 @@ a subset of O2 and O5, and changes no requirement:
 **Prerequisites from the owner.** A CI signing key in a deployment environment
 whose deployment branches allow only `main`; `nix/perf-data-signers` with the
 `ci` principal and a maintainer's; a maintainer key, so that records imported
-from earlier runs' logs can seed the history through `ci perf push`.
+from earlier runs' logs can seed the history through `ci perf push`. Met on
+2026-11-17: the `perf-data` environment allows only `main` and holds
+`PERF_DATA_SIGNING_KEY`, and `nix/perf-data-signers` lists the `ci` and
+`maintainer-1` principals.
 
 **Revisit when** `apps/ci` M7 replaces the test modes: the records' tasks then
 come from the executor's measurement table (OBA5) and keep their task ids, so
