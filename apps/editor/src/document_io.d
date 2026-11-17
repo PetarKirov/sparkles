@@ -2,7 +2,7 @@
 module document_io;
 
 import sparkles.base.expected : Expected, err, ok;
-import sparkles.event_horizon.raw_pool : CpuJob, RawCompletion, RawCpuPool, RawPoolResult;
+import sparkles.event_horizon.job_queue : Drain, JobQueue, SubmitRefusal;
 import sparkles.text_buffer.text : Text;
 import document_files : FinalLink, readRegularBytes, saveAtomic, SaveAuthorization, SaveReceipt;
 import sparkles.base.text.envelope : decodeEnvelope, encodeEnvelope, LineEnding, TextEnvelope;
@@ -23,20 +23,62 @@ class FileResult
     SaveReceipt receipt;
     string error;
     bool destinationExists, externalChange;
-    private bool bom, done;
+    private bool bom;
     private SaveAuthorization authorization;
     private string baseline;
     private bool baselineKnown;
+
+    /// The worker's half: validation and persistent-text construction happen here.
+    void run() @safe nothrow
+    {
+        try
+        {
+            if (operation == FileOperation.probe)
+            {
+                import std.file : exists;
+                destinationExists = (() @trusted => exists(path))();
+                if (!destinationExists) return;
+                const read = readRegularBytes(path, 512UL << 20, FinalLink.follow);
+                if (read.hasError) { error = read.error; return; }
+                bytes = read.value;
+                externalChange = !baselineKnown || read.value != baseline;
+            }
+            else if (operation == FileOperation.open)
+            {
+                const read = readRegularBytes(path, 512UL << 20, FinalLink.follow);
+                if (read.hasError) { error = read.error; return; }
+                const decoded = decodeEnvelope(read.value);
+                if (decoded.hasError) { error = decoded.error; return; }
+                this.decoded = decoded.value;
+                bytes = read.value;
+                revision = Text(decoded.value.content);
+            }
+            else
+            {
+                auto content = new char[revision.length];
+                revision.copyTo(0, content.length, content);
+                bytes = encodeEnvelope(TextEnvelope((() @trusted => cast(string) content)(), bom));
+                const saved = saveAtomic(path, bytes, authorization);
+                if (saved.hasError) { error = saved.error; return; }
+                receipt = saved.value;
+            }
+        }
+        catch (Exception)
+        {
+            error = "The document operation failed.";
+        }
+    }
+
+    /// Shutdown cancelled this job before it ran.
+    void cancelled() @safe nothrow { error = "The document operation was cancelled."; }
 }
 
 /// At most eight outstanding jobs. The caller owns this session through shutdown.
 class DocumentIo
 {
-    private alias Pool = RawCpuPool!(8, 8, CpuJob);
-    private Pool pool;
-    private FileResult[] jobs;
-    private bool started, stopped;
-    private ulong nextTicket;
+    private JobQueue!(FileResult, 8) queue;
+
+    this() @safe nothrow { queue = new JobQueue!(FileResult, 8); }
 
     /// Queue a read; validation and persistent-text construction happen on the worker.
     Expected!FileTicket open(string path) @safe
@@ -77,104 +119,28 @@ class DocumentIo
     }
 
     /// Drain and publish completed immutable results in submission order.
-    const(FileResult)[] poll() @safe
-    {
-        RawCompletion completion;
-        while (pool.pollCompletion(completion) == RawPoolResult.accepted) completion.dispatch();
-        const(FileResult)[] results;
-        foreach (job; jobs) if (job.done) results ~= job;
-        if (results.length)
-        {
-            size_t kept;
-            foreach (job; jobs) if (!job.done) jobs[kept++] = job;
-            jobs[kept .. $] = null;
-            jobs.length = kept;
-        }
-        return results;
-    }
+    const(FileResult)[] poll() @safe => queue.poll();
 
-    bool busy() const scope @safe pure nothrow @nogc => !stopped && jobs.length != 0;
+    bool busy() const scope @safe pure nothrow @nogc => !queue.stopped && queue.busy;
 
     /// Queued jobs cancel; running calls finish. Poll once afterwards to collect their receipts.
-    void shutdown() @safe nothrow
-    {
-        if (stopped) return;
-        stopped = true;
-        if (started)
-        {
-            pool.shutdown(false);
-            RawCompletion completion;
-            while (pool.pollCompletion(completion) == RawPoolResult.accepted) completion.dispatch();
-        }
-    }
+    void shutdown() @safe nothrow { queue.shutdown(Drain.cancel); }
 
     private Expected!FileTicket submit(FileResult job) @safe
     {
-        if (stopped) return err!FileTicket("The document worker is stopped.");
-        if (jobs.length == 8) return err!FileTicket("The document queue is full; try again after pending work completes.");
-        if (nextTicket == ulong.max) return err!FileTicket("Document request identities are exhausted.");
-        if (!started)
+        // The ticket is the queue's next one; the worker never reads it.
+        job.ticket = FileTicket(queue.nextTicket.value);
+        const queued = queue.submit(job);
+        if (queued.hasValue) return ok(job.ticket);
+        final switch (queued.error)
         {
-            if (Pool.start(pool, 1) != RawPoolResult.accepted)
-                return err!FileTicket("The document worker could not start.");
-            started = true;
+            case SubmitRefusal.stopped: return err!FileTicket("The document worker is stopped.");
+            case SubmitRefusal.full:
+                return err!FileTicket("The document queue is full; try again after pending work completes.");
+            case SubmitRefusal.exhausted: return err!FileTicket("Document request identities are exhausted.");
+            case SubmitRefusal.startFailed: return err!FileTicket("The document worker could not start.");
+            case SubmitRefusal.rejected: return err!FileTicket("The document request could not be queued.");
         }
-        job.ticket = FileTicket(++nextTicket);
-        const queued = pool.submit(CpuJob(&work, &completed,
-            (() @trusted => cast(void*) job)(), job.ticket.value));
-        if (queued != RawPoolResult.accepted)
-            return err!FileTicket("The document request could not be queued.");
-        jobs ~= job;
-        return ok(job.ticket);
-    }
-
-    private static void work(void* raw) @safe nothrow
-    {
-        auto job = (() @trusted => cast(FileResult) raw)();
-        try
-        {
-            if (job.operation == FileOperation.probe)
-            {
-                import std.file : exists;
-                job.destinationExists = (() @trusted => exists(job.path))();
-                if (!job.destinationExists) return;
-                const read = readRegularBytes(job.path, 512UL << 20, FinalLink.follow);
-                if (read.hasError) { job.error = read.error; return; }
-                job.bytes = read.value;
-                job.externalChange = !job.baselineKnown || read.value != job.baseline;
-            }
-            else if (job.operation == FileOperation.open)
-            {
-                const read = readRegularBytes(job.path, 512UL << 20, FinalLink.follow);
-                if (read.hasError) { job.error = read.error; return; }
-                const decoded = decodeEnvelope(read.value);
-                if (decoded.hasError) { job.error = decoded.error; return; }
-                job.decoded = decoded.value;
-                job.bytes = read.value;
-                job.revision = Text(decoded.value.content);
-            }
-            else
-            {
-                auto bytes = new char[job.revision.length];
-                job.revision.copyTo(0, bytes.length, bytes);
-                const content = (() @trusted => cast(string) bytes)();
-                job.bytes = encodeEnvelope(TextEnvelope(content, job.bom));
-                const saved = saveAtomic(job.path, job.bytes, job.authorization);
-                if (saved.hasError) { job.error = saved.error; return; }
-                job.receipt = saved.value;
-            }
-        }
-        catch (Exception)
-        {
-            job.error = "The document operation failed.";
-        }
-    }
-
-    private static void completed(void* raw, bool cancelled) @safe nothrow @nogc
-    {
-        auto job = (() @trusted => cast(FileResult) raw)();
-        if (cancelled) job.error = "The document operation was cancelled.";
-        job.done = true;
     }
 }
 

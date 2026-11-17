@@ -9,7 +9,7 @@ import session_directory : SessionDirectory;
 import session_record : SessionSettings;
 import session_snapshot : SessionSnapshot;
 import session_discovery : discoverSessions, RecoveryCatalog, RecoveryOffer;
-import sparkles.event_horizon.raw_pool : CpuJob, RawCompletion, RawCpuPool, RawPoolResult;
+import sparkles.event_horizon.job_queue : Drain, JobQueue;
 
 private enum Maintenance : ubyte { initialize, cleanup, discover, adopt }
 
@@ -29,7 +29,30 @@ private final class MaintenanceJob
     RecoveryCatalog catalog;
     Adoption[] adoptions;
     ulong through;
-    bool done;
+
+    void run() @safe nothrow
+    {
+        if (kind == Maintenance.initialize)
+        {
+            auto created = SessionDirectory.create(base, root);
+            if (created.hasError) error = created.error.message;
+            else directory = created.value;
+        }
+        else if (kind == Maintenance.discover) catalog = discoverSessions(base);
+        else if (kind == Maintenance.adopt)
+        {
+            foreach (adopted; adoptions)
+            {
+                const retired = adopted.offer.retire();
+                adopted.done = retired.hasValue && retired.value.durable;
+                if (!adopted.done) error = retired.hasError ? retired.error
+                    : "Recovery adoption durability could not be acknowledged.";
+            }
+        }
+        else cleanup = pruneSessionArchive(directory, through);
+    }
+
+    void cancelled() @safe nothrow { error = "Recovery maintenance was cancelled."; }
 }
 
 /// Restoring an offer retires it only after the new archive acknowledges its captured contents.
@@ -162,8 +185,7 @@ only after both workers stop; it does not promise to submit unflushed state.
 */
 final class RecoverySession
 {
-    private alias Pool = RawCpuPool!(2, 2, CpuJob);
-    private Pool pool;
+    private JobQueue!(MaintenanceJob, 2) queue;
     private MaintenanceJob job;
     private SessionDirectory directory;
     private CheckpointWriter writer;
@@ -173,7 +195,7 @@ final class RecoverySession
     private string base, root, initializationError, retirementError, cleanupNotice;
     private ulong revision, cleanedThrough, flushedRevision;
     private MonoTime firstObserved, retryAt, retirementRetryAt;
-    private bool started, stopped, flushing, haveFirstObserved;
+    private bool stopped, flushing, haveFirstObserved;
     private bool discovered;
 
     /// The platform supplies an existing durable namespace root enclosing the archive registry.
@@ -181,6 +203,7 @@ final class RecoverySession
     {
         this.base = base;
         this.root = root;
+        queue = new JobQueue!(MaintenanceJob, 2);
         poll();
     }
 
@@ -236,11 +259,10 @@ final class RecoverySession
     void poll(MonoTime now = MonoTime.currTime) @safe nothrow
     {
         if (stopped) return;
-        RawCompletion completion;
-        while (pool.pollCompletion(completion) == RawPoolResult.accepted) completion.dispatch();
-        if (job !is null && job.done)
+        MaintenanceJob finished;
+        foreach (published; queue.poll()) finished = published; // one at a time
+        if (finished !is null)
         {
-            auto finished = job;
             job = null;
             if (finished.kind == Maintenance.initialize)
             {
@@ -350,9 +372,7 @@ final class RecoverySession
     {
         if (stopped) return;
         stopped = true;
-        if (started) pool.shutdown(true);
-        RawCompletion completion;
-        while (pool.pollCompletion(completion) == RawPoolResult.accepted) completion.dispatch();
+        queue.shutdown(Drain.run);
         foreach (offered; offers) offered.close();
         foreach (adopted; adoptions) adopted.offer.close();
         if (job !is null) foreach (offered; job.catalog.offers) offered.close();
@@ -362,48 +382,18 @@ final class RecoverySession
 
     private bool submit(MaintenanceJob requested) @safe nothrow
     {
-        if (!started) started = Pool.start(pool, 1) == RawPoolResult.accepted;
-        if (!started)
+        if (!queue.start())
         {
             initializationError = "The recovery maintenance worker could not start.";
             return false;
         }
-        job = requested;
-        if (pool.submit(CpuJob(&work, &completed,
-            (() @trusted => cast(void*) requested)(), requested.through)) == RawPoolResult.accepted) return true;
-        job = null;
+        if (queue.submit(requested).hasValue)
+        {
+            job = requested;
+            return true;
+        }
         initializationError = "Recovery maintenance could not be queued.";
         return false;
-    }
-
-    private static void work(void* raw) @safe nothrow
-    {
-        auto requested = (() @trusted => cast(MaintenanceJob) raw)();
-        if (requested.kind == Maintenance.initialize)
-        {
-            auto created = SessionDirectory.create(requested.base, requested.root);
-            if (created.hasError) requested.error = created.error.message;
-            else requested.directory = created.value;
-        }
-        else if (requested.kind == Maintenance.discover) requested.catalog = discoverSessions(requested.base);
-        else if (requested.kind == Maintenance.adopt)
-        {
-            foreach (adopted; requested.adoptions)
-            {
-                const retired = adopted.offer.retire();
-                adopted.done = retired.hasValue && retired.value.durable;
-                if (!adopted.done) requested.error = retired.hasError ? retired.error
-                    : "Recovery adoption durability could not be acknowledged.";
-            }
-        }
-        else requested.cleanup = pruneSessionArchive(requested.directory, requested.through);
-    }
-
-    private static void completed(void* raw, bool cancelled) @safe nothrow @nogc
-    {
-        auto requested = (() @trusted => cast(MaintenanceJob) raw)();
-        if (cancelled) requested.error = "Recovery maintenance was cancelled.";
-        requested.done = true;
     }
 }
 

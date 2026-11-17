@@ -246,6 +246,7 @@ _Loop-side_ modules may import anything.
 | `signals`, `watch` | loop-side    | concrete ring-driven modules (M7): `SignalFd`, `Watcher`; concept seams follow demand (§10.3)                                                                           |
 | `group`            | loop-side    | `LoopGroup`, `LoopGroupConfig`, `Topology` (§11)                                                                                                                        |
 | `raw_pool`         | loop-side    | persistent fixed-capacity closure-free CPU jobs (`RawCpuPool`, §11.1)                                                                                                   |
+| `job_queue`        | loop-side    | ticketed, bounded jobs over `RawCpuPool`, published in submission order (`JobQueue`, §11.2)                                                                             |
 | `blocking_pool`    | loop-side    | scheduler-integrated pool for blocking host calls (`BlockingPool`, §13.8): public lane + termination-critical lane, shared pool                                         |
 | `cgroup`           | loop-side    | Linux cgroup v2 containment for supervised runs (§13.7): tier probe (`none`/`owned`/`accounted`), lane-assigned create / migrate / kill / cleanup, `populated` evidence |
 | `sampling`         | loop-side    | the bounded, tiered, transactional tree sampler (§13.8): fail-closed root anchor, bounded CPU ledger, per-sample work budget; the Darwin stub                           |
@@ -1690,6 +1691,38 @@ implicit generation or cancellation semantics.
 `submitBlocking`. It is available anywhere DRuntime threads are available; it
 does not require `io_uring`, kqueue, or IOCP. A consumer must retain a
 synchronous bounded fallback for thread-start failure and queue saturation.
+
+### 11.2 Ticketed job queues
+
+`job_queue.JobQueue!(Job, capacity, workers)` is the application-thread
+protocol hosts built over `RawCpuPool` by hand: a job is a class with
+`void run() @safe nothrow`, and the queue owns the pool, rooting and order.
+
+```d
+final class JobQueue(Job, size_t capacity = 8, uint workers = 1)
+if (isQueueJob!Job)
+{
+    bool start();                                            // idempotent
+    Expected!(JobTicket, SubmitRefusal) submit(Job job);
+    Job[] poll();                                            // finished, in submission order
+    JobTicket nextTicket() const;
+    size_t outstanding() const;
+    void shutdown(Drain drain);                              // run or cancel the unstarted
+}
+```
+
+`submit` **must** start the workers on first use, refuse with `stopped`,
+`full` (counting jobs until `poll` publishes them, not until they run),
+`exhausted`, `startFailed` or `rejected`, and otherwise return a ticket one
+greater than the last. `poll` **must** dispatch the pool's completions and
+return every finished job once, in submission order; a job whose `run`
+returned is visible with its writes. `shutdown(Drain.cancel)` cancels queued
+jobs, whose optional `cancelled()` member `poll` calls on the polling thread;
+`shutdown(Drain.run)` runs them; both wait for running jobs and leave the
+finished ones for the next `poll`. The checks are the module's tests
+(`jobQueue.submitPollInOrder`, `jobQueue.boundAndShutdown`,
+`jobQueue.cancelQueuedOnShutdown`), and the editor's document I/O, checkpoint
+writer and recovery maintenance run on it.
 
 ## 12. The `Effect!T` veneer (tier C — non-normative sketch)
 

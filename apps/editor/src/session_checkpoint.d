@@ -6,15 +6,24 @@ import session_archive : appendSessionGeneration;
 import session_directory : SessionDirectory;
 import session_snapshot : SessionSnapshot;
 import document_files : SaveReceipt;
-import sparkles.event_horizon.raw_pool : CpuJob, RawCompletion, RawCpuPool, RawPoolResult;
+import sparkles.event_horizon.job_queue : Drain, JobQueue;
 
-private class CheckpointJob
+private final class CheckpointJob
 {
     SessionSnapshot snapshot;
     string directory, error;
     ulong generation;
     SaveReceipt receipt;
-    bool done;
+
+    void run() @safe nothrow
+    {
+        const record = snapshot.record(generation);
+        const written = appendSessionGeneration(directory, record);
+        if (written.hasError) error = written.error;
+        else receipt = written.value;
+    }
+
+    void cancelled() @safe nothrow { error = "The recovery checkpoint was cancelled."; }
 }
 
 /**
@@ -25,15 +34,14 @@ commit. Observation revisions identify captured application state separately.
 */
 class CheckpointWriter
 {
-    private alias Pool = RawCpuPool!(2, 2, CpuJob);
-    private Pool pool;
+    private JobQueue!(CheckpointJob, 2) queue;
     private SessionDirectory directory;
     private SessionSnapshot wanted;
     private CheckpointJob job;
     private Duration interval;
     private ulong nextGeneration, durableGeneration_, durableRevision_, submittedRevision_;
     private string error_, notice_;
-    private bool started, stopped, scheduled, submitted, haveSince, haveAfterFlight;
+    private bool stopped, scheduled, submitted, haveSince, haveAfterFlight;
     private MonoTime due, lastSubmitted, since, afterFlight;
 
     /// Supply a freshly created archive, or the highest attempted generation in an existing one.
@@ -43,6 +51,7 @@ class CheckpointWriter
         this.directory = directory;
         this.interval = interval;
         nextGeneration = lastGeneration;
+        queue = new JobQueue!(CheckpointJob, 2);
         if (directory is null || !directory.owned) error_ = "The recovery archive lease is unavailable.";
         else startWorker();
     }
@@ -77,11 +86,9 @@ class CheckpointWriter
     /// Drain worker receipts, then submit the latest due state without flattening on this thread.
     void poll(MonoTime now = MonoTime.currTime) @safe nothrow
     {
-        RawCompletion completion;
-        while (pool.pollCompletion(completion) == RawPoolResult.accepted) completion.dispatch();
-        if (job !is null && job.done)
+        foreach (completed; queue.poll())
         {
-            auto completed = job;
+            assert(completed is job, "one checkpoint is in flight at a time");
             job = null;
             if (completed.error.length || !completed.receipt.durable)
             {
@@ -110,7 +117,7 @@ class CheckpointWriter
             scheduleRetry(now);
             return;
         }
-        if (!started && !startWorker()) { scheduleRetry(now); return; }
+        if (!queue.started && !startWorker()) { scheduleRetry(now); return; }
         if (nextGeneration == ulong.max)
         {
             error_ = "Recovery generation identities are exhausted.";
@@ -121,16 +128,13 @@ class CheckpointWriter
         requested.snapshot = wanted;
         requested.directory = directory.path;
         requested.generation = ++nextGeneration;
-        job = requested; // Root the raw worker context before submission.
-        const result = pool.submit(CpuJob(&work, &completed,
-            (() @trusted => cast(void*) requested)(), requested.generation));
-        if (result != RawPoolResult.accepted)
+        if (queue.submit(requested).hasError)
         {
-            job = null;
             error_ = "The recovery checkpoint could not be queued.";
             scheduleRetry(now);
             return;
         }
+        job = requested;
         submittedRevision_ = wanted.revision;
         submitted = true;
         lastSubmitted = now;
@@ -161,14 +165,14 @@ class CheckpointWriter
     {
         if (stopped) return;
         stopped = true;
-        if (started) pool.shutdown(true);
+        queue.shutdown(Drain.run);
         poll();
         if (directory !is null) directory.close();
     }
 
     private bool startWorker() @safe nothrow
     {
-        started = Pool.start(pool, 1) == RawPoolResult.accepted;
+        const started = queue.start();
         if (!started) error_ = "The recovery checkpoint worker could not start.";
         return started;
     }
@@ -178,23 +182,8 @@ class CheckpointWriter
         scheduled = true;
         due = now + 1.seconds;
     }
-
-    private static void work(void* raw) @safe nothrow
-    {
-        auto requested = (() @trusted => cast(CheckpointJob) raw)();
-        const record = requested.snapshot.record(requested.generation);
-        const written = appendSessionGeneration(requested.directory, record);
-        if (written.hasError) requested.error = written.error;
-        else requested.receipt = written.value;
-    }
-
-    private static void completed(void* raw, bool cancelled) @safe nothrow @nogc
-    {
-        auto requested = (() @trusted => cast(CheckpointJob) raw)();
-        if (cancelled) requested.error = "The recovery checkpoint was cancelled.";
-        requested.done = true;
-    }
 }
+
 
 /// A receipt acknowledges its captured revision while later input remains pending.
 @("editor.sessionCheckpoint.capturedRevisionAndFlush")

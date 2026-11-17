@@ -6,6 +6,9 @@ of closure-free jobs with completion delivery on the polling thread.
 pool template argument for allocating parsers. The caller owns each context
 through completion dispatch or shutdown/drain. Queue saturation is an explicit
 result; callbacks never disappear to make room for newer work.
+`job_queue.JobQueue` wraps that protocol for an application thread: submit a
+class with `run()`, get a ticket, and `poll` for finished jobs in submission
+order; shutdown runs or cancels what has not started.
 
 `sparkles:event-horizon` is a completion-first event loop for D: `io_uring` on
 Linux, `kqueue` on macOS and the BSDs, IOCP on Windows (in progress), driven
