@@ -9,6 +9,7 @@ The modules are built from the tree the site is built from (`nix build
 module docs_wasm;
 
 import std.conv : octal;
+import sparkles.core_cli.args : failRun, ranOk, RunExpected;
 
 /// The modules the site loads, as `.#docs-wasm` installs them.
 immutable string[] docsWasmModules = ["spk-text.wasm", "spk-table.wasm", "spk-wired.wasm"];
@@ -20,7 +21,7 @@ enum docsWasmDir = "docs/public";
 Builds `.#docs-wasm` from the repository at `repoRoot` and copies its modules
 into $(LREF docsWasmDir). Returns the process exit status.
 +/
-int stageDocsWasm(string repoRoot)
+RunExpected!void stageDocsWasm(string repoRoot)
 {
     import std.algorithm.searching : all;
     import std.file : copy, exists, getSize, setAttributes;
@@ -41,18 +42,18 @@ int stageDocsWasm(string repoRoot)
         if (docsWasmModules.all!(m => buildPath(outDir, m).exists))
         {
             stderr.writeln("--stage-docs-wasm: nix not found; reusing the modules in ", outDir);
-            return 0;
+            return ranOk();
         }
         stderr.writeln("--stage-docs-wasm: nix not found, and ", outDir, " lacks the modules: ",
             "copy those of `nix build .#docs-wasm` there");
-        return 1;
+        return failRun("nix not found, and " ~ outDir ~ " lacks the WebAssembly modules");
     }
 
     const build = execute(["nix", "build", repoRoot ~ "#docs-wasm", "--no-link", "--print-out-paths"]);
     if (build.status != 0)
     {
         stderr.writeln("--stage-docs-wasm: nix build .#docs-wasm failed:\n", build.output);
-        return 1;
+        return failRun("nix build .#docs-wasm failed");
     }
     // The store path is the last line; nix's warnings come before it.
     const store = build.output.strip.lineSplitter.array[$ - 1];
@@ -63,5 +64,5 @@ int stageDocsWasm(string repoRoot)
         setAttributes(target, octal!644);
         stderr.writeln("--stage-docs-wasm: wrote ", target, " (", getSize(target), " bytes)");
     }
-    return 0;
+    return ranOk();
 }

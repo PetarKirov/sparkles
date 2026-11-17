@@ -23,6 +23,7 @@ import std.array : array, split;
 import std.conv : to;
 import std.format : format;
 import std.string : indexOf, lastIndexOf, strip;
+import sparkles.core_cli.args : failRun, ranOk, RunExpected;
 
 /// One record of a recording: a sample (`S`), a collection (`C`) or a live
 /// block (`L`).
@@ -292,7 +293,7 @@ private string normalizeHex(string digits) @safe pure
 }
 
 /// `ci --gc-report`: prints the report; returns the exit status.
-int runGcReport(string path, string baselinePath, size_t top)
+RunExpected!void runGcReport(string path, string baselinePath, size_t top)
 {
     import std.file : getcwd, readText;
     import std.stdio : writefln, writeln;
@@ -351,5 +352,5 @@ int runGcReport(string path, string baselinePath, size_t top)
             mb(scanned.total).strip, mb(unscanned.total).strip);
         list("live and scanned (what each collection marks), by site:", scanned);
     }
-    return 0;
+    return ranOk();
 }

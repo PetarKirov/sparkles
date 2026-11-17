@@ -21,6 +21,7 @@ import sparkles.base.wasm : segmentInto;
 import spk_table_wasm : tableRender;
 import spk_text_wasm : visibleWidthOf;
 import spk_wired_wasm : wiredRun;
+import sparkles.core_cli.args : failRun, ranOk, RunExpected;
 
 /// A text for the text module: its width, and its units in `slots` triples.
 struct TextCase
@@ -289,7 +290,7 @@ Runs the corpus through the modules at `textModule` and `tableModule` under
 at `shim`, and compares with the native functions. Returns the process exit
 status: `0` when every case agrees.
 +/
-int runCheckWasmModules(string textModule, string tableModule, string wiredModule, string loader,
+RunExpected!void runCheckWasmModules(string textModule, string tableModule, string wiredModule, string loader,
     string shim)
 {
     import std.file : copy, exists, mkdirRecurse, readText, rmdirRecurse, symlink, tempDir, write;
@@ -303,7 +304,7 @@ int runCheckWasmModules(string textModule, string tableModule, string wiredModul
         {
             stderr.writeln("--check-wasm-modules: '", path, "' does not exist ",
                 "(pass --text-module, --table-module, --wired-module, --wasi-loader and --wasi-shim)");
-            return 1;
+            return failRun("'" ~ path ~ "' does not exist");
         }
 
     const dir = buildPath(tempDir, text("ci-wasm-modules-", thisProcessID));
@@ -323,7 +324,7 @@ int runCheckWasmModules(string textModule, string tableModule, string wiredModul
     if (run.status != 0)
     {
         stderr.writeln("--check-wasm-modules: the node host failed (", run.status, "):\n", run.output);
-        return 1;
+        return failRun(text("the node host failed (", run.status, ")"));
     }
 
     const found = compare(parseJSON(readText(reply)));
@@ -337,7 +338,7 @@ int runCheckWasmModules(string textModule, string tableModule, string wiredModul
         stderr.writeln(m.module_, ": ", m.name, "\n  native: ", m.native, "\n  wasm:   ", m.wasm);
     const cases = textCorpus.length + tableCorpus.length + wiredCorpus.length;
     writeln(cases - found.length, "/", cases, " cases agree");
-    return found.length ? 1 : 0;
+    return found.length ? failRun(text(found.length, " case(s) disagree")) : ranOk();
 }
 
 private bool canFindCase(in Mismatch[] found, string module_, string name) @safe pure nothrow @nogc

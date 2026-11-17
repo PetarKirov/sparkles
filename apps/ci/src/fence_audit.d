@@ -39,6 +39,8 @@ import sparkles.base.text.writers : formatted;
 import sparkles.docs.sidebar : docsConfigPath, loadDocsConfig;
 import sparkles.syntax.ts.registry : canonicalLanguage, GrammarRegistry, isPlainTextLabel;
 import sparkles.ui.components.table : TableBuilder;
+import std.conv : text;
+import sparkles.core_cli.args : failRun, ranOk, RunExpected;
 
 // === Fence scanning ===
 
@@ -1339,7 +1341,7 @@ Returns `0` on success, `1` when the grammar bundle is missing (every label
 would classify as uncovered, which is a wrong answer rather than a finding) or
 no markdown was found.
 */
-int runFenceAudit(in FenceAuditOptions opts)
+RunExpected!void runFenceAudit(in FenceAuditOptions opts)
 {
     import std.file : readText;
     import std.stdio : writeln;
@@ -1349,28 +1351,19 @@ int runFenceAudit(in FenceAuditOptions opts)
     auto registry = GrammarRegistry.fromEnvironment();
     auto bundled = bundledLanguages(registry);
     if (bundled.length == 0)
-    {
-        error(i"No tree-sitter grammars found. Set $SPARKLES_TS_GRAMMAR_PATH to the grammar bundle (nix build .#ts-grammars).");
-        return 1;
-    }
+    return failRun(text(i"No tree-sitter grammars found. Set $SPARKLES_TS_GRAMMAR_PATH to the grammar bundle (nix build .#ts-grammars)."));
 
     // The site-visibility split reads the same `srcExclude` VitePress does, so
     // the two can no longer disagree. A missing or malformed file is an error:
     // an empty pattern list would silently census excluded files as published.
     auto docsConfig = loadDocsConfig(opts.root.length ? opts.root : ".");
     if (docsConfig.hasError)
-    {
-        error(i"Could not read $(docsConfigPath): $(docsConfig.error)");
-        return 1;
-    }
+    return failRun(text(i"Could not read $(docsConfigPath): $(docsConfig.error)"));
     const srcExclude = docsConfig.value.srcExclude;
 
     auto paths = opts.files.length ? opts.files.dup : trackedDocMarkdown(opts.root);
     if (paths.length == 0)
-    {
-        error(i"No markdown files to audit.");
-        return 1;
-    }
+    return failRun("No markdown files to audit.");
 
     MarkdownFile[] files;
     foreach (path; paths)
@@ -1442,14 +1435,11 @@ int runFenceAudit(in FenceAuditOptions opts)
         auto report = toJsonReport(result, opts.auditScope, registry.dirs.dup, srcExclude);
         auto written = writeJSONFile(report, opts.jsonPath);
         if (written.hasError)
-        {
-            error(i"Failed to write $(opts.jsonPath): $(written.error)");
-            return 1;
-        }
+        return failRun(text(i"Failed to write $(opts.jsonPath): $(written.error)"));
         info(i"Wrote $(opts.jsonPath)");
     }
 
-    return 0;
+    return ranOk();
 }
 
 /// The tracked markdown the audit covers by default: everything under `docs/`

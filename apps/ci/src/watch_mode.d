@@ -30,6 +30,8 @@ import sparkles.build_primitives.workspace.package_graph : RecipeRole;
 import sparkles.build_primitives.workspace.select : ClaimPlan, FocusOptions, Selection;
 
 import watch_round : RoundAction;
+import std.conv : text;
+import sparkles.core_cli.args : failRun, ranOk, RunExpected;
 
 /// What each round runs over the packages a change selected.
 alias WatchAction = RoundAction;
@@ -46,7 +48,7 @@ Watches the repository and runs `action` over what each change selects,
 until interrupted; with `failFast`, a round stops at its first failure and
 the watch ends with it.
 */
-int runWatchMode(WatchAction action, bool failFast)
+RunExpected!void runWatchMode(WatchAction action, bool failFast)
 {
     import app : defaultTestThreads, detectRepoRoot;
     import sparkles.build_primitives.dub_manifest : hostPlatformTokens;
@@ -55,13 +57,10 @@ int runWatchMode(WatchAction action, bool failFast)
 
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
-    {
-        error(i"--watch: not inside a git work tree");
-        return 1;
-    }
+    return failRun("--watch: not inside a git work tree");
     auto platform = hostBuildPlatform();
     if (platform.compiler is null)
-        return 1;
+        return failRun("no D compiler found for this host");
     const options = repositoryFocus(platform, registrySources(repoRoot), processEnvironment());
     const host = hostPlatformTokens();
     const role = action == WatchAction.test ? RecipeRole.test : RecipeRole.build;
@@ -76,11 +75,11 @@ int runWatchMode(WatchAction action, bool failFast)
     {
         auto planned = planWatch(repoRoot, role, options, host);
         if (planned is null)
-            return 1;
+            return failRun("could not plan the watched packages");
         auto watch = Watch(repoRoot, planned, action, failFast, options, host, &passed, threads);
         const status = watch.run(pending);
         if (status != replanStatus)
-            return status;
+            return status == 0 ? ranOk() : failRun(text("the watched run failed (", status, ")"), status);
         pending = watch.replanWith;
         info(i"a workspace input changed: planning again");
     }

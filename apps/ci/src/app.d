@@ -160,7 +160,8 @@ import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight;
 import sparkles.base.text.case_text : asciiLower, unicodeLower;
 
 // sparkles packages
-import sparkles.core_cli.args : Argument, HelpInfo, Option, parseCli, reportCliError;
+import sparkles.core_cli.args : Argument, failRun, HelpInfo, Option, parseCli, ranOk, reportCliError,
+    RunExpected;
 import sparkles.base.logger :
     error, info, initLogger, LogDelta, LogLevel, takeLogDelta, trace, warning, writeLogDelta;
 import sparkles.core_cli.process_utils :
@@ -804,6 +805,22 @@ private auto refDefRegex() => regex(r"^\[([^\]]+)\]:\s+(https?://\S+)");
 /// noise filter: on success, only the program's stdout appears in the combined
 /// output; on failure, compiler errors are still reported.
 
+
+/// Reports a mode's outcome the way `runCli` reports a command's, and returns
+/// the exit status: a skip on standard output and 0, a failure on standard
+/// error with its status.
+private int exitStatus(RunExpected!void outcome)
+{
+    if (!outcome.hasError)
+        return 0;
+    if (outcome.error.skipped)
+    {
+        stdout.writeln("SKIP: ", outcome.error.message);
+        return 0;
+    }
+    stderr.writeln("Error: ", outcome.error.message);
+    return outcome.error.exitCode;
+}
 int ciMain(string[] args)
 {
     // Install the logger *before* parsing so a slow CLI parse still has a
@@ -856,52 +873,52 @@ int ciMain(string[] args)
         info(i"coverage is off under --test-sanitize (ASan and -cov instrumentation do not mix)");
 
     if (mode == ProgramMode.linuxHostProbe)
-        return runLinuxHostProbe();
+        return exitStatus(runLinuxHostProbe());
 
     if (cli.hostSystem.length && !alreadyOnHostSystem(cli.hostSystem))
-        return runOnLinuxHost(cli.hostSystem, args, cli.hostCiRev);
+        return exitStatus(runOnLinuxHost(cli.hostSystem, args, cli.hostCiRev));
 
     if (mode == ProgramMode.checkCommitScope)
     {
         string source = (positionalArgs.length > 0) ? positionalArgs[0] : "-";
-        return runCheckCommitScope(source);
+        return exitStatus(runCheckCommitScope(source));
     }
 
     if (mode == ProgramMode.checkDocsSidebar)
-        return runCheckDocsSidebar();
+        return exitStatus(runCheckDocsSidebar());
 
     if (mode == ProgramMode.checkSpecEvidence)
-        return runCheckSpecEvidence(cli.updateSpecEvidenceBacklog);
+        return exitStatus(runCheckSpecEvidence(cli.updateSpecEvidenceBacklog));
 
     if (mode == ProgramMode.checkGlossary)
-        return runCheckGlossary();
+        return exitStatus(runCheckGlossary());
     if (mode == ProgramMode.checkAdHocSdl)
-        return runCheckAdHocSdl();
+        return exitStatus(runCheckAdHocSdl());
     if (mode == ProgramMode.checkOpaqueRecipes)
-        return runCheckOpaqueRecipes();
+        return exitStatus(runCheckOpaqueRecipes());
     if (mode == ProgramMode.checkCredits)
-        return runCheckCredits();
+        return exitStatus(runCheckCredits());
     if (mode == ProgramMode.perfPush || mode == ProgramMode.perfImport || mode == ProgramMode.perfAppend)
-        return runPerfPublish(mode, cli);
+        return exitStatus(runPerfPublish(mode, cli));
     if (mode == ProgramMode.writePinCosts)
-        return runWritePinCosts(cli.writePinCosts, cli.historyRemote);
+        return exitStatus(runWritePinCosts(cli.writePinCosts, cli.historyRemote));
     if (mode == ProgramMode.listPlacements)
-        return runListPlacements(cli.provider, cli.githubOutput, cli.historyRemote);
+        return exitStatus(runListPlacements(cli.provider, cli.githubOutput, cli.historyRemote));
     if (mode == ProgramMode.recordTask)
-        return runRecordTask(cli.recordTask, cli.positionals, cli.placement, cli.shard);
+        return exitStatus(runRecordTask(cli.recordTask, cli.positionals, cli.placement, cli.shard));
     if (mode == ProgramMode.checkPinCache)
-        return runCheckPinCache();
+        return exitStatus(runCheckPinCache());
     if (mode == ProgramMode.checkWasmModules)
-        return runCheckWasmModules(cli.textModule, cli.tableModule, cli.wiredModule, cli.wasiLoader,
-            cli.wasiShim);
+        return exitStatus(runCheckWasmModules(cli.textModule, cli.tableModule, cli.wiredModule, cli.wasiLoader,
+            cli.wasiShim));
     if (mode == ProgramMode.checkNixWasm)
     {
         import nix_wasm_check : runCheckNixWasm;
-        return runCheckNixWasm(detectRepoRoot(), cli.nixWasmEvaluator, cli.nixWasmModule,
-            cli.nixWasmAnswers);
+        return exitStatus(runCheckNixWasm(detectRepoRoot(), cli.nixWasmEvaluator, cli.nixWasmModule,
+            cli.nixWasmAnswers));
     }
     if (mode == ProgramMode.stageDocsWasm)
-        return stageDocsWasm(detectRepoRoot());
+        return exitStatus(stageDocsWasm(detectRepoRoot()));
 
     // The audit resolves its own corpus (docs/**/*.md + README.md, or --files),
     // so it must not fall through to the shared "no input files" usage error.
@@ -919,54 +936,54 @@ int ciMain(string[] args)
     }
 
     if (mode == ProgramMode.auditFences)
-        return runAuditFencesMode(cli);
+        return exitStatus(runAuditFencesMode(cli));
 
     if (mode == ProgramMode.runDubBuild)
-        return cli.watch
+        return exitStatus(cli.watch
             ? runWatchMode(WatchAction.build, cli.failFast)
-            : runDubBuildMode(cli.failFast);
+            : runDubBuildMode(cli.failFast));
 
     if (mode == ProgramMode.buildEachCommit)
-        return runBuildEachCommitMode(cli.base, cli.packages, cli.failFast);
+        return exitStatus(runBuildEachCommitMode(cli.base, cli.packages, cli.failFast));
 
     if (mode == ProgramMode.runDubTests)
-        return cli.watch
+        return exitStatus(cli.watch
             ? runWatchMode(WatchAction.test, cli.failFast)
             : runDubTestsMode(cli.failFast, coverage, cli.packages, cli.skipPackages,
-                placementArgs(cli));
+                placementArgs(cli)));
 
     if (mode == ProgramMode.runSanitizeTests)
-        return runDubTestsMode(cli.failFast, coverage, cli.packages, cli.skipPackages,
+        return exitStatus(runDubTestsMode(cli.failFast, coverage, cli.packages, cli.skipPackages,
             placementArgs(cli),
-            sanitize: true);
+            sanitize: true));
 
     if (mode == ProgramMode.runExtractedTests)
-        return runExtractedTestsMode(cli.failFast, cli.packages, cli.skipPackages,
-            placementArgs(cli));
+        return exitStatus(runExtractedTestsMode(cli.failFast, cli.packages, cli.skipPackages,
+            placementArgs(cli)));
 
     if (mode == ProgramMode.listSlowTests)
-        return runListSlowTestsMode();
+        return exitStatus(runListSlowTestsMode());
 
     if (mode == ProgramMode.runSlowTests)
-        return runSlowTestsMode(cli.packages, cli.tests, cli.failFast);
+        return exitStatus(runSlowTestsMode(cli.packages, cli.tests, cli.failFast));
 
     if (mode == ProgramMode.gcReport)
     {
         import gc_report : runGcReport;
-        return runGcReport(cli.gcReport, cli.gcBaseline, cli.gcTop);
+        return exitStatus(runGcReport(cli.gcReport, cli.gcBaseline, cli.gcTop));
     }
 
     if (mode == ProgramMode.ciStats)
-        return runCiStatsMode(cli);
+        return exitStatus(runCiStatsMode(cli));
 
     if (mode == ProgramMode.mirrorChecks)
-        return runMirrorChecksMode(cli);
+        return exitStatus(runMirrorChecksMode(cli));
 
     if (mode == ProgramMode.reportLinkRot)
-        return runReportLinkRotMode(cli);
+        return exitStatus(runReportLinkRotMode(cli));
 
     if (mode == ProgramMode.gcR2)
-        return runGcR2Mode(cli);
+        return exitStatus(runGcR2Mode(cli));
 
 
     auto inputFiles = collectInputFiles(cli, mode);
@@ -997,21 +1014,21 @@ int ciMain(string[] args)
     }
 
     if (mode == ProgramMode.runExampleFiles)
-        return runExampleFilesMode(inputFiles, cli.failFast);
+        return exitStatus(runExampleFilesMode(inputFiles, cli.failFast));
 
     if (mode == ProgramMode.checkReferenceLinks)
-        return runReferenceLinkMode(inputFiles, false);
+        return exitStatus(runReferenceLinkMode(inputFiles, false));
 
     if (mode == ProgramMode.fixReferenceLinks)
-        return runReferenceLinkMode(inputFiles, true);
+        return exitStatus(runReferenceLinkMode(inputFiles, true));
 
     if (mode == ProgramMode.checkVcsUrls)
-        return runCheckVcsUrls(inputFiles);
+        return exitStatus(runCheckVcsUrls(inputFiles));
 
     if (mode == ProgramMode.checkBlobPaths)
-        return runCheckBlobPaths(inputFiles, cli.cloneRoot);
+        return exitStatus(runCheckBlobPaths(inputFiles, cli.cloneRoot));
 
-    return runExamplesForFiles(inputFiles, mode, cli.failFast);
+    return exitStatus(runExamplesForFiles(inputFiles, mode, cli.failFast));
 }
 
 private string validateCliMode(
@@ -1344,7 +1361,7 @@ private bool isReferenceMode(in ProgramMode mode)
 /// Returns 0 on success (allow commit), 1 on failure (block).
 /// Check the given commit message (file path or "-" / empty for stdin) for
 /// detailed scope compliance. Returns 0 on success (allow), 1 on violation (block).
-private int runCheckCommitScope(string msgSource)
+private RunExpected!void runCheckCommitScope(string msgSource)
 {
     import std.file : readText;
     import std.process : execute;
@@ -1382,7 +1399,7 @@ private int runCheckCommitScope(string msgSource)
         catch (Exception e)
         {
             stderr.writeln("✗ Failed to read commit message file: ", msgSource);
-            return 1;
+            return failRun("could not read the commit message file " ~ msgSource);
         }
     }
 
@@ -1397,17 +1414,17 @@ private int runCheckCommitScope(string msgSource)
     }
 
     if (subject.length == 0)
-        return 0; // nothing to check
+        return ranOk(); // nothing to check
 
     // Match conventional type(scope)?: or type:
     const subjectRe = regex(`^([a-zA-Z0-9_-]+)(?:\(([^)]*)\))?:\s*`);
     auto m = subject.matchFirst(subjectRe);
     if (m.empty)
-        return 0; // not a conventional subject we care about
+        return ranOk(); // not a conventional subject we care about
 
     string scopeText = m.captures.length > 2 ? m.captures[2].strip : "";
     if (scopeText.length == 0)
-        return 0; // no scope present — allowed
+        return ranOk(); // no scope present — allowed
 
     // Check useless scopes
     auto lowered = scopeText.asciiLower;
@@ -1428,7 +1445,7 @@ private int runCheckCommitScope(string msgSource)
         stderr.writeln("See docs/guidelines/AGENTS.md § \"Commit messages\".\n");
         stderr.writeln("Bypass (use sparingly): SKIP=detailed-scope git commit ...");
         stderr.writeln("or:                    git commit --no-verify");
-        return 1;
+        return failRun("useless commit scope `" ~ scopeText ~ "`");
     }
 
     // Heuristic for large bare package scopes
@@ -1436,7 +1453,7 @@ private int runCheckCommitScope(string msgSource)
     {
         auto diffRes = execute(["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"]);
         if (diffRes.status != 0)
-            return 0; // can't compute suggestion, allow
+            return ranOk(); // can't compute suggestion, allow
 
         auto changed = diffRes.output
             .lineSplitter
@@ -1455,11 +1472,11 @@ private int runCheckCommitScope(string msgSource)
             stderr.writeln("or cross-cutting commits.\n");
             stderr.writeln("See docs/guidelines/AGENTS.md.\n");
             stderr.writeln("Bypass: SKIP=detailed-scope git commit ...   or   git commit --no-verify");
-            return 1;
+            return failRun("commit scope `" ~ scopeText ~ "` could be " ~ suggestion);
         }
     }
 
-    return 0;
+    return ranOk();
 }
 
 /// Given a list of staged paths (from git diff --cached --name-only), returns
@@ -1684,7 +1701,7 @@ private string[] trackedFilesMatching(string pattern)
 /// default `docs/**/*.md` + `README.md` set; globs resolve through
 /// `git ls-files` in the current directory, so combine them with `--root` only
 /// when the two agree.
-private int runAuditFencesMode(in CliParams cli)
+private RunExpected!void runAuditFencesMode(in CliParams cli)
 {
     string[] selected;
     foreach (selector; cli.files)
@@ -1707,8 +1724,7 @@ private int runAuditFencesMode(in CliParams cli)
         case "all":      scope_ = AuditScope.all;      break;
         case "excluded": scope_ = AuditScope.excluded; break;
         default:
-            error(i"unknown --audit-scope `$(cli.auditScope)`; expected site, all or excluded");
-            return 1;
+            return failRun(text(i"unknown --audit-scope `$(cli.auditScope)`; expected site, all or excluded"));
     }
 
     return runFenceAudit(FenceAuditOptions(
@@ -1761,7 +1777,7 @@ private string[] collectInputFiles(
         .array;
 }
 
-private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool failFast)
+private RunExpected!void runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool failFast)
 {
     static struct FileExamples
     {
@@ -1822,7 +1838,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
     }
 
     if (gathered.length == 0)
-        return totalFailures > 0 ? 1 : 0;
+        return totalFailures > 0 ? failRun(text(totalFailures, " markdown file(s) failed")) : ranOk();
 
     const repoRoot = detectRepoRoot();
 
@@ -1879,7 +1895,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
         auto results = allResults[offset .. offset + g.examples.length];
         offset += g.examples.length;
 
-        int rc;
+        RunExpected!void rc;
         final switch (mode)
         {
             case ProgramMode.runExamples:
@@ -1899,7 +1915,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.runSanitizeTests:
             case ProgramMode.listSlowTests:
             case ProgramMode.runSlowTests:
-                rc = 1;
+                rc = failRun("not a markdown example mode");
                 break;
             case ProgramMode.checkReferenceLinks:
             case ProgramMode.fixReferenceLinks:
@@ -1922,7 +1938,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkWasmModules:
             case ProgramMode.checkNixWasm:
             case ProgramMode.stageDocsWasm:
-                rc = 1;
+                rc = failRun("not a markdown example mode");
                 break;
             case ProgramMode.gcReport:
             case ProgramMode.ciStats:
@@ -1932,19 +1948,19 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.auditFences:
             case ProgramMode.linuxHostProbe:
             case ProgramMode.seedDubCache:
-                rc = 1;   // handled earlier in main(); should never reach here
+                rc = failRun("not a markdown example mode");   // handled earlier in main(); should never reach here
                 break;
         }
 
-        if (rc != 0)
+        if (rc.hasError)
         {
             totalFailures++;
             if (failFast)
-                return 1;
+                return failRun(text(totalFailures, " markdown file(s) failed"));
         }
     }
 
-    return totalFailures > 0 ? 1 : 0;
+    return totalFailures > 0 ? failRun(text(totalFailures, " markdown file(s) failed")) : ranOk();
 }
 
 /// Number of example builds to run concurrently. Honors `SPARKLES_CI_JOBS`,
@@ -2162,7 +2178,7 @@ private ExecutionResult[] executeExamplesParallel(Example[] examples, string rep
     return results;
 }
 
-private int runReferenceLinkMode(string[] mdFiles, bool fix)
+private RunExpected!void runReferenceLinkMode(string[] mdFiles, bool fix)
 {
     const title = fix
         ? "Rewriting duplicate markdown reference links"
@@ -2188,13 +2204,13 @@ private int runReferenceLinkMode(string[] mdFiles, bool fix)
     if (duplicateGroups.length == 0)
     {
         info(i"{green ✓} No duplicate markdown reference URLs found.");
-        return missingFiles > 0 ? 1 : 0;
+        return missingFiles > 0 ? failRun(text(missingFiles, " file(s) not found")) : ranOk();
     }
 
     printDuplicateGroups(duplicateGroups);
 
     if (!fix)
-        return 1;
+        return failRun(text(duplicateGroups.length, " duplicate reference group(s)"));
 
     auto changedFiles = fixDuplicateGroups(existingFiles, duplicateGroups);
 
@@ -2203,10 +2219,10 @@ private int runReferenceLinkMode(string[] mdFiles, bool fix)
     foreach (filePath; changedFiles)
         writeln("  ", filePath);
 
-    return missingFiles > 0 ? 1 : 0;
+    return missingFiles > 0 ? failRun(text(missingFiles, " file(s) not found")) : ranOk();
 }
 
-private int runCheckVcsUrls(string[] files)
+private RunExpected!void runCheckVcsUrls(string[] files)
 {
     import std.file : readText;
     import std.regex : regex, matchAll, matchFirst;
@@ -2273,11 +2289,11 @@ private int runCheckVcsUrls(string[] files)
     {
         stderr.writefln("Found %d non-conforming GitHub URL(s).", totalErrors);
         stderr.writeln("Please pin all code/file reference URLs to a specific 40-character commit SHA.");
-        return 1;
+        return failRun(text(totalErrors, " unpinned GitHub URL(s)"));
     }
 
     info(i"{green ✓} All checked GitHub URLs refer to specific commit SHAs.");
-    return 0;
+    return ranOk();
 }
 
 /++
@@ -2395,7 +2411,7 @@ Complements `--check-vcs-urls`, which proves only that a citation carries a
 commit SHA rather than a moving ref. See `blob_paths` for why this is a local
 check and why an unclonable repository is reported rather than failed.
 +/
-private int runCheckBlobPaths(string[] files, string cloneRoot)
+private RunExpected!void runCheckBlobPaths(string[] files, string cloneRoot)
 {
     import std.array : array;
     import std.algorithm : map, sort, uniq;
@@ -2409,12 +2425,12 @@ private int runCheckBlobPaths(string[] files, string cloneRoot)
         stderr.writeln("✗ No clone root: pass --clone-root DIR or set REPOS.");
         stderr.writeln("  This check reads the upstream clones the citations were written from;");
         stderr.writeln("  without them there is nothing to verify against.");
-        return 1;
+        return failRun("no clone root: pass --clone-root DIR or set REPOS");
     }
     if (!root.exists || !root.isDir)
     {
         stderr.writefln("✗ Clone root is not a directory: %s", root);
-        return 1;
+        return failRun("clone root is not a directory: " ~ root);
     }
 
     "Checking pinned blob citations"
@@ -2434,7 +2450,7 @@ private int runCheckBlobPaths(string[] files, string cloneRoot)
             // Unreadable input is a failure, not a skip: staying silent here
             // would report a clean run over a file nobody looked at.
             stderr.writefln("✗ %s: could not read file (%s)", filePath, e.msg);
-            return 1;
+            return failRun(filePath ~ ": could not read file");
         }
     }
 
@@ -2526,11 +2542,11 @@ private int runCheckBlobPaths(string[] files, string cloneRoot)
         }
         stderr.writeln("These 404 upstream. --check-vcs-urls cannot catch them: it "
             ~ "verifies the ref, not the path.");
-        return 1;
+        return failRun("SHA-pinned citation(s) name paths that do not exist");
     }
 
     info(i"{green ✓} All $(report.okCount) verifiable blob citation(s) resolve at their pinned commit.");
-    return 0;
+    return ranOk();
 }
 
 /// Verify the VitePress sidebar is consistent with published docs pages
@@ -2545,7 +2561,7 @@ Whole-tree, like `--check-spec-evidence`: every tracked D source is read. A hit
 the allowlist does not name fails, and so does an allowlist entry that names
 no hit any more, so the list only shrinks.
 +/
-private int runCheckAdHocSdl()
+private RunExpected!void runCheckAdHocSdl()
 {
     import std.file : exists, readText;
     import std.path : buildPath, extension;
@@ -2555,19 +2571,13 @@ private int runCheckAdHocSdl()
     const repoRoot = detectRepoRoot();
     const listed = execute(["git", "-C", repoRoot, "ls-files", "--", "*.d"]);
     if (listed.status != 0)
-    {
-        error(i"Failed to enumerate D sources with git ls-files");
-        return 1;
-    }
+    return failRun("Failed to enumerate D sources with git ls-files");
 
     const allowlistPath = buildPath(repoRoot, "apps", "ci", "sdl-audit-allowlist.txt");
     size_t badLine;
     const allowed = allowlistPath.exists ? parseAllowlist(allowlistPath.readText, badLine) : null;
     if (badLine)
-    {
-        error(i"$(allowlistPath):$(badLine): expected `path | literal | reason`");
-        return 1;
-    }
+    return failRun(text(i"$(allowlistPath):$(badLine): expected `path | literal | reason`"));
     auto used = new bool[allowed.length];
 
     AdHocSdlHit[] unlisted;
@@ -2599,9 +2609,9 @@ private int runCheckAdHocSdl()
             stale++;
         }
     if (unlisted.length || stale)
-        return 1;
+        return failRun(text(unlisted.length + stale, " ad-hoc SDL match(es) or stale allowlist entries"));
     info(i"✓ No ad-hoc SDL: $(files) D sources checked, $(allowed.length) allowlisted matches reviewed.");
-    return 0;
+    return ranOk();
 }
 
 /++
@@ -2612,7 +2622,7 @@ Each is reported with what to write instead. One the allowlist does not name
 fails, and so does an allowlist entry that names none any more, so a new
 opaque entry is a reviewed decision and the list only shrinks.
 +/
-private int runCheckOpaqueRecipes()
+private RunExpected!void runCheckOpaqueRecipes()
 {
     import std.file : exists, readText;
     import std.path : buildPath;
@@ -2625,18 +2635,14 @@ private int runCheckOpaqueRecipes()
     if (workspace.hasError)
     {
         const detail = workspace.error.detail;
-        error(i"cannot read the workspace: $(detail)");
-        return 1;
+        return failRun(text(i"cannot read the workspace: $(detail)"));
     }
 
     const allowlistPath = buildPath(repoRoot, "apps", "ci", "opaque-recipe-allowlist.txt");
     size_t badLine;
     const allowed = allowlistPath.exists ? parseAllowlist(allowlistPath.readText, badLine) : null;
     if (badLine)
-    {
-        error(i"$(allowlistPath):$(badLine): expected `recipe | entry | reason`");
-        return 1;
-    }
+    return failRun(text(i"$(allowlistPath):$(badLine): expected `recipe | entry | reason`"));
     auto used = new bool[allowed.length];
 
     const entries = opaqueEntries(workspace.value.rootName, workspace.value.recipes, repositoryHosts);
@@ -2665,9 +2671,9 @@ private int runCheckOpaqueRecipes()
             stale++;
         }
     if (unlisted || stale)
-        return 1;
+        return failRun(text(unlisted + stale, " opaque recipe entr(ies) or stale allowlist entries"));
     info(i"✓ Opaque recipe entries: $(entries.length) found, each allowlisted with a reason.");
-    return 0;
+    return ranOk();
 }
 
 /++
@@ -2677,7 +2683,7 @@ Whole-tree, like `--check-docs-sidebar`: a requirement's traceability claim is
 not a property of the diff that touched it, and the rows that rot are precisely
 the ones nobody is editing.
 +/
-private int runCheckSpecEvidence(bool updateBacklog)
+private RunExpected!void runCheckSpecEvidence(bool updateBacklog)
 {
     import std.file : exists, readText, write;
     import std.path : buildPath, extension;
@@ -2687,17 +2693,11 @@ private int runCheckSpecEvidence(bool updateBacklog)
 
     const specs = execute(["git", "-C", repoRoot, "ls-files", "--", "docs/specs"]);
     if (specs.status != 0)
-    {
-        error(i"Failed to enumerate spec files with git ls-files");
-        return 1;
-    }
+    return failRun("Failed to enumerate spec files with git ls-files");
 
     const srcList = execute(["git", "-C", repoRoot, "ls-files"]);
     if (srcList.status != 0)
-    {
-        error(i"Failed to enumerate D sources with git ls-files");
-        return 1;
-    }
+    return failRun("Failed to enumerate D sources with git ls-files");
 
     // Paths resolve against every tracked file; identifiers only against D
     // sources, whose contents are the only ones worth reading for a symbol.
@@ -2740,7 +2740,7 @@ private int runCheckSpecEvidence(bool updateBacklog)
     {
         write(backlogFile, renderBacklog(bad));
         info(i"✓ Wrote $(backlogPath): $(bad.length) unresolved citation(s) of $(cites.length) in $(files) spec files.");
-        return 0;
+        return ranOk();
     }
 
     const r = ratchet(bad, backlogFile.exists ? readText(backlogFile) : "");
@@ -2754,15 +2754,14 @@ private int runCheckSpecEvidence(bool updateBacklog)
         if (r.fresh.length)
             error(i"✗ $(r.fresh.length) new unresolved citation(s) of $(cites.length) in $(files) spec files — an evidence column that names nothing turns the delivery gate into decoration.");
         if (r.stale.length)
-            error(i"✗ $(r.stale.length) line(s) in $(backlogPath) no longer apply — the backlog only shrinks.");
-        return 1;
+        return failRun(text(i"$(r.stale.length) line(s) in $(backlogPath) no longer apply — the backlog only shrinks."));
     }
 
     if (r.known)
         info(i"✓ Spec evidence: no new unresolved citations of $(cites.length) across $(files) spec files; $(r.known) known ones remain in $(backlogPath).");
     else
         info(i"✓ Spec evidence resolves: all $(cites.length) cited symbols across $(files) spec files name something in the tree.");
-    return 0;
+    return ranOk();
 }
 
 /++
@@ -2772,23 +2771,17 @@ it names an entry (`sparkles.docs.glossary.checkGlossary`).
 Whole-tree, like `--check-docs-sidebar`: deleting an entry breaks pages the
 change never touched.
 +/
-private int runCheckGlossary()
+private RunExpected!void runCheckGlossary()
 {
     const repoRoot = detectRepoRoot();
 
     auto entries = loadGlossary(repoRoot);
     if (entries.hasError)
-    {
-        error(i"Could not read the glossary $(glossaryDataPath): $(entries.error)");
-        return 1;
-    }
+    return failRun(text(i"Could not read the glossary $(glossaryDataPath): $(entries.error)"));
 
     const listed = execute(["git", "-C", repoRoot, "ls-files", "--", "docs"]);
     if (listed.status != 0)
-    {
-        error(i"Failed to enumerate docs files with git ls-files");
-        return 1;
-    }
+    return failRun("Failed to enumerate docs files with git ls-files");
 
     GlossaryReference[] refs;
     // A draft specification may own terms before its package exists, so an
@@ -2817,16 +2810,15 @@ private int runCheckGlossary()
     {
         foreach (e; report.errors)
             error(i"✗ $(e)");
-        error(i"$(report.errors.length) glossary problem(s); see docs/guidelines/spec-prose.md#link-terms-to-the-glossary.");
-        return 1;
+        return failRun(text(i"$(report.errors.length) glossary problem(s); see docs/guidelines/spec-prose.md#link-terms-to-the-glossary."));
     }
 
     info(i"✓ Glossary is consistent: $(entries.value.length) entries, $(refs.length) links from $(files) docs pages.");
-    return 0;
+    return ranOk();
 }
 
 /// TC23's gate; see `derivation_pin.checkToolchainCached`.
-private int runCheckPinCache()
+private RunExpected!void runCheckPinCache()
 {
     version (Posix)
     {
@@ -2834,19 +2826,15 @@ private int runCheckPinCache()
 
         auto checked = checkToolchainCached(environment.get("CACHIX_CACHE", "sparkles"));
         if (!checked.hasError)
-            return 0;
-        error(i"$(checked.error)");
-        return 1;
+            return ranOk();
+        return failRun(checked.error);
     }
     else
-    {
-        error(i"--check-pin-cache needs a POSIX host");
-        return 1;
-    }
+    return failRun("--check-pin-cache needs a POSIX host");
 }
 
 /// `--check-credits`: the credits document against the build inputs (`credits`).
-private int runCheckCredits()
+private RunExpected!void runCheckCredits()
 {
     import credits : checkCredits, creditsDir, partsDir;
     import std.file : dirEntries, isFile, SpanMode;
@@ -2874,7 +2862,7 @@ private int runCheckCredits()
     if (report.ok)
     {
         info(i"{green ✓} Credits are complete: $(report.partCount) parts cover the $(report.tokenCount) components the build inputs name, and every page includes exactly its own parts.");
-        return 0;
+        return ranOk();
     }
 
     void section(string title, in string[] lines)
@@ -2895,10 +2883,10 @@ private int runCheckCredits()
     section("Parts that name nothing the build ships — remove the part or fix its `Ships as`",
         report.unshipped.map!(s => partsDir ~ "/" ~ s ~ ".md").array);
     section("Pages that include the wrong parts", report.pageErrors);
-    return 1;
+    return failRun("the credits do not match the build inputs");
 }
 
-private int runCheckDocsSidebar()
+private RunExpected!void runCheckDocsSidebar()
 {
     import std.stdio : stderr;
 
@@ -2909,25 +2897,16 @@ private int runCheckDocsSidebar()
     // empty link set that would flag every page as unlinked.
     auto sidebar = loadSidebar(repoRoot);
     if (sidebar.hasError)
-    {
-        error(i"Could not read the docs sidebar: $(sidebar.error)");
-        return 1;
-    }
+    return failRun(text(i"Could not read the docs sidebar: $(sidebar.error)"));
 
     auto docsConfig = loadDocsConfig(repoRoot);
     if (docsConfig.hasError)
-    {
-        error(i"Could not read the docs config: $(docsConfig.error)");
-        return 1;
-    }
+    return failRun(text(i"Could not read the docs config: $(docsConfig.error)"));
 
     // Tracked docs markdown only (excludes untracked WIP and docs/public assets).
     const result = execute(["git", "-C", repoRoot, "ls-files", "--", "docs"]);
     if (result.status != 0)
-    {
-        error(i"Failed to enumerate docs files with git ls-files");
-        return 1;
-    }
+    return failRun("Failed to enumerate docs files with git ls-files");
 
     auto mdFiles = result.output
         .lineSplitter
@@ -2940,7 +2919,7 @@ private int runCheckDocsSidebar()
     if (report.ok)
     {
         info(i"{green ✓} Docs sidebar is consistent: every published page is linked, and every sidebar link resolves ($(mdFiles.length) markdown files checked).");
-        return 0;
+        return ranOk();
     }
 
     if (report.unlinkedPages.length != 0)
@@ -2981,7 +2960,7 @@ private int runCheckDocsSidebar()
         );
     }
 
-    return 1;
+    return failRun("the docs sidebar does not match the published pages");
 }
 
 // === Core Functions ===
@@ -3317,7 +3296,7 @@ private MonitoredResult executeLogged(
     return noteIfTimedOut(res, timeout);
 }
 
-private int runExampleFilesMode(string[] allExampleFiles, bool failFast)
+private RunExpected!void runExampleFilesMode(string[] allExampleFiles, bool failFast)
 {
     // Honor each example's dub `platforms` declaration: skip (don't build) the
     // ones this host can't satisfy — e.g. the Linux-only `io_uring` examples on
@@ -3411,7 +3390,7 @@ private int runExampleFilesMode(string[] allExampleFiles, bool failFast)
     displaySummary(stoppedEarly ? processed : exampleFiles.length, failures);
     if (stoppedEarly)
         displayFailureReplay(failureReplay);
-    return failures > 0 ? 1 : 0;
+    return failures > 0 ? failRun(text(failures, " example file(s) failed")) : ranOk();
 }
 
 private ExecutionResult executeStandaloneExampleFile(
@@ -3799,30 +3778,24 @@ bool findWasiCompiler(in string[] pkgPaths, out string compiler)
     return false;
 }
 
-private int runDubBuildMode(bool failFast)
+private RunExpected!void runDubBuildMode(bool failFast)
 {
     import each_commit : targetBuildArgs;
 
     info(i"resolving repository root");
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
-    {
-        error(i"Could not detect repository root");
-        return 1;
-    }
+    return failRun("Could not detect repository root");
     info(i"repository root: $(repoRoot)");
 
     info(i"parsing dub.sdl sub-packages");
     auto subPackages = subPackageDirectories(repoRoot);
     if (subPackages.length == 0)
-    {
-        error(i"No sub-packages found in dub.sdl");
-        return 1;
-    }
+    return failRun("No sub-packages found in dub.sdl");
     info(i"$(subPackages.length) sub-package(s) to build");
     string wasiCompiler;
     if (!findWasiCompiler(subPackages, wasiCompiler))
-        return 1;
+        return failRun("no WebAssembly-capable compiler for a package that needs one");
 
     i"Building $(subPackages.length) sub-package(s)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
@@ -3873,7 +3846,7 @@ private int runDubBuildMode(bool failFast)
     }
 
     displayTestRunSummary(monitor.finish(processed, subPackages.length, failedPackages));
-    return failures > 0 ? 1 : 0;
+    return failures > 0 ? failRun(text(failures, " sub-package(s) failed to build")) : ranOk();
 }
 
 /++
@@ -3881,7 +3854,7 @@ private int runDubBuildMode(bool failFast)
 `base` (exclusive) to `HEAD`, in one detached scratch worktree walked oldest
 first. See $(MREF each_commit) for why.
 +/
-private int runBuildEachCommitMode(string base, string[] requested, bool failFast)
+private RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool failFast)
 {
     import std.conv : to;
     import std.file : rmdirRecurse, tempDir;
@@ -3892,45 +3865,33 @@ private int runBuildEachCommitMode(string base, string[] requested, bool failFas
 
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
-    {
-        error(i"Could not detect repository root");
-        return 1;
-    }
+    return failRun("Could not detect repository root");
 
     string[] unknown;
     const pkgs = selectPackages(requested.length ? requested
         : defaultEachCommitPackages.dup, subPackageDirectories(repoRoot), unknown);
     if (unknown.length)
-    {
-        error(i"--packages: no sub-package named $(unknown.join(", "))");
-        return 1;
-    }
+    return failRun(text(i"--packages: no sub-package named $(unknown.join(", "))"));
     string wasiCompiler;
     if (!findWasiCompiler(pkgs, wasiCompiler))
-        return 1;
+        return failRun("no WebAssembly-capable compiler for a package that needs one");
 
     if (base.length == 0)
     {
         const mb = runGit(["-C", repoRoot, "merge-base", "HEAD", "origin/main"]);
         if (mb.status != 0)
-        {
-            error(i"--base not given and HEAD has no merge-base with origin/main: $(mb.output.strip)");
-            return 1;
-        }
+        return failRun(text(i"--base not given and HEAD has no merge-base with origin/main: $(mb.output.strip)"));
         base = mb.output.strip;
     }
     const log = runGit(["-C", repoRoot, "log", "--reverse", "--format=%h %s",
         base ~ "..HEAD"]);
     if (log.status != 0)
-    {
-        error(i"Could not list $(base)..HEAD: $(log.output.strip)");
-        return 1;
-    }
+    return failRun(text(i"Could not list $(base)..HEAD: $(log.output.strip)"));
     const commits = parseCommitRange(log.output);
     if (commits.length == 0)
     {
         info(i"no commits in $(base)..HEAD: nothing to build");
-        return 0;
+        return ranOk();
     }
 
     // One worktree for the whole walk, so each build is incremental on the
@@ -3939,10 +3900,7 @@ private int runBuildEachCommitMode(string base, string[] requested, bool failFas
     const add = runGit(["-C", repoRoot, "worktree", "add", "--detach", "--quiet",
         wt, commits[0].sha]);
     if (add.status != 0)
-    {
-        error(i"Could not create the scratch worktree: $(add.output.strip)");
-        return 1;
-    }
+    return failRun(text(i"Could not create the scratch worktree: $(add.output.strip)"));
     scope (exit)
     {
         runGit(["-C", repoRoot, "worktree", "remove", "--force", wt]);
@@ -3974,10 +3932,7 @@ private int runBuildEachCommitMode(string base, string[] requested, bool failFas
         runGit(["-C", wt, "clean", "-fdq"]);
         const co = runGit(["-C", wt, "checkout", "--quiet", "--detach", commit.sha]);
         if (co.status != 0)
-        {
-            error(i"Could not check out $(commit.sha): $(co.output.strip)");
-            return 1;
-        }
+        return failRun(text(i"Could not check out $(commit.sha): $(co.output.strip)"));
         foreach (pi, pkg; pkgs)
         {
             const pkgName = pkg.baseName;
@@ -4016,12 +3971,9 @@ private int runBuildEachCommitMode(string base, string[] requested, bool failFas
     displayTestRunSummary(monitor.finish(processed, total, failedLabels));
     const report = failureReport(failures, commits.length, pkgs.length);
     if (failures.length)
-    {
-        error(i"$(report)");
-        return 1;
-    }
+    return failRun(report);
     info(i"✓ $(report)");
-    return 0;
+    return ranOk();
 }
 
 /**
@@ -4106,38 +4058,29 @@ private bool requestedSubPackages(string repoRoot, in string[] requested,
     return true;
 }
 
-private int runDubTestsMode(bool failFast, bool coverage, in string[] requested,
+private RunExpected!void runDubTestsMode(bool failFast, bool coverage, in string[] requested,
     in string[] skipped, in PlacementArgs where, bool sanitize = false)
 {
     if (sanitize)
     {
         if (!compilerIsLdc(environment.get("DC", "")))
-        {
-            error(i"--test-sanitize requires LDC (set DC=ldc2)");
-            return 1;
-        }
+        return failRun("--test-sanitize requires LDC (set DC=ldc2)");
         if (!sanitizePlatformSupported())
-        {
-            error(i"--test-sanitize is Linux-only: nixpkgs LDC has no ASan runtime on Darwin");
-            return 1;
-        }
+        return failRun("--test-sanitize is Linux-only: nixpkgs LDC has no ASan runtime on Darwin");
     }
 
     info(i"resolving repository root");
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
-    {
-        error(i"Could not detect repository root");
-        return 1;
-    }
+    return failRun("Could not detect repository root");
     info(i"repository root: $(repoRoot)");
 
     info(i"parsing dub.sdl sub-packages");
     string[] subPackages;
     if (!requestedSubPackages(repoRoot, requested, skipped, subPackages))
-        return 1;
+        return failRun("could not resolve the requested sub-packages");
     if (where.shard.length && !narrowToShard(repoRoot, requested, skipped, where, subPackages))
-        return 1;
+        return failRun("could not narrow the sub-packages to shard " ~ where.shard);
     // A placement chooses its legs and whether it collects coverage (OD22).
     bool serialLeg = true, parallelLeg = true;
     if (where.placement.length && !sanitize)
@@ -4145,10 +4088,7 @@ private int runDubTestsMode(bool failFast, bool coverage, in string[] requested,
         auto loaded = loadPlacements(repoRoot);
         const p = loaded.hasError ? null : loaded.value.find(where.placement);
         if (p is null)
-        {
-            error(i"$(loaded.hasError ? loaded.error : "ci/placements.json has no placement " ~ where.placement)");
-            return 1;
-        }
+        return failRun(text(i"$(loaded.hasError ? loaded.error : "ci/placements.json has no placement " ~ where.placement)"));
         serialLeg = p.serialLeg;
         parallelLeg = p.parallelLeg;
         if (coverage && !p.coverage)
@@ -4260,7 +4200,7 @@ private int runDubTestsMode(bool failFast, bool coverage, in string[] requested,
 
     displayTestRunSummary(monitor.finish(processed, subPackages.length, failedPackages));
     reportCoverage(subPackages, cov, failedPackages, uncovered);
-    return failures > 0 ? 1 : 0;
+    return failures > 0 ? failRun(text(failures, " test package(s) failed")) : ranOk();
 }
 
 /**
@@ -4472,24 +4412,21 @@ private ExtractedModes extractedModesOf(string repoRoot, string packagePath)
 /// wasm-ld, no wasm runtime), which is right for a contributor's machine and
 /// exactly wrong here — without it a missing linker would leave this reporting
 /// success having run nothing.
-private int runExtractedTestsMode(bool failFast, in string[] requested, in string[] skipped,
+private RunExpected!void runExtractedTestsMode(bool failFast, in string[] requested, in string[] skipped,
     in PlacementArgs where)
 {
     info(i"resolving repository root");
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
-    {
-        error(i"Could not detect repository root");
-        return 1;
-    }
+    return failRun("Could not detect repository root");
     info(i"repository root: $(repoRoot)");
 
     info(i"scanning sub-packages for @betterC / @wasm");
     string[] subPackages;
     if (!requestedSubPackages(repoRoot, requested, skipped, subPackages))
-        return 1;
+        return failRun("could not resolve the requested sub-packages");
     if (where.shard.length && !narrowToShard(repoRoot, requested, skipped, where, subPackages))
-        return 1;
+        return failRun("could not narrow the sub-packages to shard " ~ where.shard);
 
     struct Job
     {
@@ -4512,8 +4449,7 @@ private int runExtractedTestsMode(bool failFast, in string[] requested, in strin
     {
         // Not a pass: the repo is supposed to have such tests, so an empty
         // sweep means the scan (or the attributes) regressed.
-        error(i"No sub-package uses @betterC or @wasm — nothing to run");
-        return 1;
+        return failRun("No sub-package uses @betterC or @wasm — nothing to run");
     }
 
     i"Running $(jobs.length) extracted-test mode(s)".text
@@ -4578,7 +4514,7 @@ private int runExtractedTestsMode(bool failFast, in string[] requested, in strin
     // After a fail-fast break the untried jobs never ran, so report what was
     // actually attempted rather than the full list.
     displayTestRunSummary(monitor.finish(processed, jobs.length, failedJobs));
-    return failures > 0 ? 1 : 0;
+    return failures > 0 ? failRun(text(failures, " special-mode run(s) failed")) : ranOk();
 }
 
 /// The `@slow` tests that the sources of each sub-package integrating the
@@ -4624,29 +4560,25 @@ private SlowTestJob[] collectSlowTests(string repoRoot, in string[] packageNames
 
 /// `--list-slow-tests`: the `slow-tests` CI job's matrix, on stdout and in
 /// `$GITHUB_OUTPUT`.
-private int runListSlowTestsMode()
+private RunExpected!void runListSlowTestsMode()
 {
     import std.stdio : File;
 
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
-    {
-        error(i"Could not detect repository root");
-        return 1;
-    }
+    return failRun("Could not detect repository root");
 
     string[] problems;
     const jobs = collectSlowTests(repoRoot, null, problems);
     foreach (problem; problems)
         error(i"$(problem)");
     if (problems.length)
-        return 1;
+        return failRun(text(problems.length, " problem(s) collecting the slow tests"));
     if (jobs.length == 0)
     {
         // As for `--test-extracted`: the job exists for these tests, so an
         // empty list means the scan (or the attribute) regressed.
-        error(i"No @slow test found — the slow-tests matrix would be empty");
-        return 1;
+        return failRun("No @slow test found — the slow-tests matrix would be empty");
     }
 
     const json = matrixJson(jobs);
@@ -4655,38 +4587,29 @@ private int runListSlowTestsMode()
     const output = environment.get("GITHUB_OUTPUT", "");
     if (output.length)
         File(output, "a").write("matrix=" ~ json ~ "\n");
-    return 0;
+    return ranOk();
 }
 
 /// `--test-slow`: run the `@slow` tests of each selected package, after
 /// checking that its test binary agrees with the source scan about which
 /// tests those are.
-private int runSlowTestsMode(in string[] packageNames, in string[] testNames, bool failFast)
+private RunExpected!void runSlowTestsMode(in string[] packageNames, in string[] testNames, bool failFast)
 {
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
-    {
-        error(i"Could not detect repository root");
-        return 1;
-    }
+    return failRun("Could not detect repository root");
 
     string[] problems;
     auto all = collectSlowTests(repoRoot, packageNames, problems);
     foreach (problem; problems)
         error(i"$(problem)");
     if (problems.length)
-        return 1;
+        return failRun(text(problems.length, " problem(s) collecting the slow tests"));
     foreach (name; testNames)
         if (!all.canFind!(job => job.test == name))
-        {
-            error(i"--tests: no @slow test is named $(name)");
-            return 1;
-        }
+        return failRun(text(i"--tests: no @slow test is named $(name)"));
     if (all.length == 0)
-    {
-        error(i"No @slow test found in the selected packages");
-        return 1;
-    }
+    return failRun("No @slow test found in the selected packages");
 
     string[] packages;
     foreach (job; all)
@@ -4767,14 +4690,14 @@ private int runSlowTestsMode(in string[] packageNames, in string[] testNames, bo
     }
 
     displayTestRunSummary(monitor.finish(processed, packages.length, failedPackages));
-    return failures > 0 ? 1 : 0;
+    return failures > 0 ? failRun(text(failures, " slow test(s) failed")) : ranOk();
 }
 
 // === Modes ===
 
 /// Default mode: run examples and display output in boxes.
 /// `results` holds the pre-computed execution result for each example.
-int runDefaultMode(Example[] examples, ExecutionResult[] results, string mdFile, bool failFast)
+RunExpected!void runDefaultMode(Example[] examples, ExecutionResult[] results, string mdFile, bool failFast)
 {
     i"Running $(examples.length) example(s) from $(mdFile)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
@@ -4819,7 +4742,7 @@ int runDefaultMode(Example[] examples, ExecutionResult[] results, string mdFile,
     displaySummary(stoppedEarly ? processed : examples.length, failures);
     if (stoppedEarly)
         displayFailureReplay(failureReplay);
-    return failures > 0 ? 1 : 0;
+    return failures > 0 ? failRun(text(failures, " example(s) failed")) : ranOk();
 }
 
 /// Verify mode: run examples, display output, and compare against expected output blocks.
@@ -4829,17 +4752,17 @@ int runDefaultMode(Example[] examples, ExecutionResult[] results, string mdFile,
     Example example = Example(sourcePath: "/docs/fixture.mjs", name: "fixture",
         outputFenceType: "ansi [fixture output]");
     ExecutionResult result = ExecutionResult(success: true, programOutput: "unexpected", rawOutput: "unexpected");
-    assert(runVerifyMode([example], [result], "fixture.md", false) == 1,
+    assert(runVerifyMode([example], [result], "fixture.md", false).hasError,
         "an empty imported output must not mean skip verification");
     example.expectedOutput = "...";
-    assert(runVerifyMode([example], [result], "fixture.md", false) == 1,
+    assert(runVerifyMode([example], [result], "fixture.md", false).hasError,
         "imported outputs are literal, not wildcard patterns");
     example.expectedOutput = null;
     result.programOutput = result.rawOutput = null;
-    assert(runVerifyMode([example], [result], "fixture.md", false) == 0);
+    assert(!runVerifyMode([example], [result], "fixture.md", false).hasError);
 }
 
-int runVerifyMode(Example[] examples, ExecutionResult[] results, string mdFile, bool failFast)
+RunExpected!void runVerifyMode(Example[] examples, ExecutionResult[] results, string mdFile, bool failFast)
 {
     i"Verifying $(examples.length) example(s) from $(mdFile)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
@@ -4955,13 +4878,13 @@ int runVerifyMode(Example[] examples, ExecutionResult[] results, string mdFile, 
     displaySummary(stoppedEarly ? processed : examples.length, failures);
     if (stoppedEarly)
         displayFailureReplay(failureReplay);
-    return failures > 0 ? 1 : 0;
+    return failures > 0 ? failRun(text(failures, " example(s) did not match their output")) : ranOk();
 }
 
 /// Update mode: rewrite the markdown file with actual output.
 /// Processes examples in reverse order so line indices remain valid.
 /// `results` holds the pre-computed execution result for each example.
-int runUpdateMode(Example[] examples, ExecutionResult[] results, string mdFile, bool failFast)
+RunExpected!void runUpdateMode(Example[] examples, ExecutionResult[] results, string mdFile, bool failFast)
 {
     i"Updating $(examples.length) example(s) in $(mdFile)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
@@ -5078,11 +5001,11 @@ int runUpdateMode(Example[] examples, ExecutionResult[] results, string mdFile, 
         displaySummary(stoppedEarly ? processed : examples.length, failures);
         if (stoppedEarly)
             displayFailureReplay(failureReplay);
-        return 1;
+        return failRun(text(failures, " example(s) failed to build"));
     }
 
     displaySummary(examples.length, 0);
-    return 0;
+    return ranOk();
 }
 
 // === Reference Link Deduplication ===
@@ -6677,7 +6600,7 @@ private void displaySummary(size_t total, size_t failures)
 // (see docs/specs/ci/stats/)
 // ---------------------------------------------------------------------------
 
-private int runCiStatsMode(in CliParams cli)
+private RunExpected!void runCiStatsMode(in CliParams cli)
 {
     import std.process : environment;
     import std.stdio : writeln;
@@ -6713,16 +6636,15 @@ private int runCiStatsMode(in CliParams cli)
     {
         import sparkles.base.logger : error;
         string errMsg = res.error;
-        error(i"ci-stats failed: $(errMsg)");
-        return 1;
+        return failRun(text(i"ci-stats failed: $(errMsg)"));
     }
 
-    return 0;
+    return ranOk();
 }
 
 /// `--ci-stats --merges`: what landed on the default branch, and what it would
 /// cost to verify the part the pull requests did not already prove.
-private int runMergeAudit(string repo, string token, int limit, string badgeDir)
+private RunExpected!void runMergeAudit(string repo, string token, int limit, string badgeDir)
 {
     import sparkles.base.logger : error, info;
 
@@ -6730,17 +6652,13 @@ private int runMergeAudit(string repo, string token, int limit, string badgeDir)
     import merge_audit : auditMerges, fetchMergedPrs, renderMergeAudit, writeBadges;
 
     if (repo.length == 0)
-    {
-        error(i"--merges needs --repo owner/repo");
-        return 1;
-    }
+    return failRun("--merges needs --repo owner/repo");
 
     auto prs = fetchMergedPrs!fetchAndDeserializeJson(repo, token, limit);
     if (prs.hasError)
     {
         string errMsg = prs.error;
-        error(i"merge audit failed: $(errMsg)");
-        return 1;
+        return failRun(text(i"merge audit failed: $(errMsg)"));
     }
 
     const audit = auditMerges(prs.value);
@@ -6754,12 +6672,12 @@ private int runMergeAudit(string repo, string token, int limit, string badgeDir)
         info(i"wrote badge endpoints to $(badgeDir)");
     }
 
-    return 0;
+    return ranOk();
 }
 
 /// `--mirror-checks`: attach a pull request's checks to the commit its work
 /// landed as, when the landed tree is the tree that pull request built.
-private int runMirrorChecksMode(in CliParams cli)
+private RunExpected!void runMirrorChecksMode(in CliParams cli)
 {
     import std.process : environment;
 
@@ -6777,8 +6695,7 @@ private int runMirrorChecksMode(in CliParams cli)
     if (res.hasError)
     {
         string errMsg = res.error;
-        error(i"mirror-checks failed: $(errMsg)");
-        return 1;
+        return failRun(text(i"mirror-checks failed: $(errMsg)"));
     }
 
     const outcome = res.value;
@@ -6788,12 +6705,12 @@ private int runMirrorChecksMode(in CliParams cli)
 
     // Not mirroring is a routine answer, not a failure: the caller reads
     // `mirrored` and builds the commit for real.
-    return 0;
+    return ranOk();
 }
 
 /// `--report-link-rot`: reconcile the standing link-rot issue with the sweep's
 /// verdict, so its presence means "links are broken" and nothing else does.
-private int runReportLinkRotMode(in CliParams cli)
+private RunExpected!void runReportLinkRotMode(in CliParams cli)
 {
     import std.file : exists, readText;
     import std.process : environment;
@@ -6816,17 +6733,16 @@ private int runReportLinkRotMode(in CliParams cli)
     if (res.hasError)
     {
         string errMsg = res.error;
-        error(i"report-link-rot failed: $(errMsg)");
-        return 1;
+        return failRun(text(i"report-link-rot failed: $(errMsg)"));
     }
 
     string action = res.value.action;
     info(i"$(action)");
-    return 0;
+    return ranOk();
 }
 
 /// `--gc-r2`: garbage-collect the R2 binary cache (see `r2_gc`).
-private int runGcR2Mode(in CliParams cli)
+private RunExpected!void runGcR2Mode(in CliParams cli)
 {
     import core.time : days;
     import std.algorithm.iteration : filter, map, sum;
@@ -6850,8 +6766,7 @@ private int runGcR2Mode(in CliParams cli)
     if (bucket.hasError)
     {
         string msg = bucket.error;
-        error(i"--gc-r2: $(msg)");
-        return 1;
+        return failRun(text(i"--gc-r2: $(msg)"));
     }
 
     const log = execute(["git", "log", "--first-parent", "--format=%T",
@@ -6859,8 +6774,7 @@ private int runGcR2Mode(in CliParams cli)
     if (log.status != 0)
     {
         string out_ = log.output;
-        error(i"--gc-r2: git log failed: $(out_)");
-        return 1;
+        return failRun(text(i"--gc-r2: git log failed: $(out_)"));
     }
     const string[] keepTrees = log.output.lineSplitter.map!(l => l.strip.idup).filter!(l => l.length).array;
 
@@ -6891,8 +6805,7 @@ private int runGcR2Mode(in CliParams cli)
     if (listed.hasError)
     {
         string msg = listed.error;
-        error(i"--gc-r2: $(msg)");
-        return 1;
+        return failRun(text(i"--gc-r2: $(msg)"));
     }
     auto objects = listed.value;
     const now = Clock.currTime(UTC());
@@ -6902,22 +6815,18 @@ private int runGcR2Mode(in CliParams cli)
 
     auto roots = keptRoots(objects, keepTrees, now, grace);
     if (roots.length == 0)
-    {
-        error(i"--gc-r2: no root survives (no gc-roots/ object for the last $(cli.keepCommits) trees, none younger than $(cli.graceDays) days); refusing to collect");
-        return 1;
-    }
+    return failRun(text(i"--gc-r2: no root survives (no gc-roots/ object for the last $(cli.keepCommits) trees, none younger than $(cli.graceDays) days); refusing to collect"));
 
     string[] seeds;
     auto rootTexts = getAll(roots.map!(o => o.key).array);
-    foreach (i, text; rootTexts)
+    foreach (i, got; rootTexts)
     {
-        if (text.hasError)
+        if (got.hasError)
         {
-            string msg = text.error;
-            error(i"--gc-r2: reading $(roots[i].key): $(msg)");
-            return 1;
+            string msg = got.error;
+            return failRun(text(i"--gc-r2: reading $(roots[i].key): $(msg)"));
         }
-        foreach (line; text.value.lineSplitter)
+        foreach (line; got.value.lineSplitter)
         {
             const hash = storeHash(line.strip.idup);
             if (hash.hasError)
@@ -6938,8 +6847,7 @@ private int runGcR2Mode(in CliParams cli)
     if (live.hasError)
     {
         string msg = live.error;
-        error(i"--gc-r2: $(msg); deleting nothing");
-        return 1;
+        return failRun(text(i"--gc-r2: $(msg); deleting nothing"));
     }
     if (live.value.missing.length)
         warning(i"--gc-r2: $(live.value.missing.length) live store paths have no narinfo in the bucket (they are served elsewhere, or were never pushed)");
@@ -6949,7 +6857,7 @@ private int runGcR2Mode(in CliParams cli)
         live.value.paths.length, p.keptObjects, gib(p.keptBytes), cli.dryRun ? "would delete" : "deleting",
         p.deleteNarinfos.length, p.deleteNars.length, p.deleteRoots.length, gib(p.freedBytes));
     if (cli.dryRun)
-        return 0;
+        return ranOk();
 
     // Narinfos before the NARs they name: a client then sees a missing path,
     // never a narinfo whose NAR is gone. Roots last.
@@ -6971,12 +6879,9 @@ private int runGcR2Mode(in CliParams cli)
             }
     }
     if (failures)
-    {
-        error(i"--gc-r2: $(failures) deletions failed; the next collection retries them");
-        return 1;
-    }
+    return failRun(text(i"--gc-r2: $(failures) deletions failed; the next collection retries them"));
     info(i"R2: collected $(gib(p.freedBytes)).");
-    return 0;
+    return ranOk();
 }
 
 /**
@@ -7027,15 +6932,12 @@ PackageCommand packageBuildCommand(string repoRoot, string pkgDir, string wasiCo
 /// standard streams, record it as task `ID` (its wall time and outcome) in a
 /// run record, and exit with its status. A record that cannot be written is a
 /// warning, never a change of status (observability OBD11).
-private int runRecordTask(string taskId, string[] command, string placement, string shard)
+private RunExpected!void runRecordTask(string taskId, string[] command, string placement, string shard)
 {
     import std.process : spawnProcess, wait;
 
     if (command.length == 0)
-    {
-        error(i"--record-task $(taskId) needs a command after --");
-        return 2;
-    }
+    return failRun(text(i"--record-task $(taskId) needs a command after --"), 2);
     const repoRoot = detectRepoRoot();
     auto recorder = RunRecorder.open(repoRoot is null ? "." : repoRoot, "--record-task", [taskId],
         placement, shard);
@@ -7051,7 +6953,7 @@ private int runRecordTask(string taskId, string[] command, string placement, str
     recorder.end(taskId, status == 0);
     if (const degradation = recorder.finish())
         warning(i"$(degradation)");
-    return status;
+    return status == 0 ? ranOk() : failRun(text(taskId, " exited with status ", status), status);
 }
 
 /// The placement options of `cli`, as the test modes take them.
@@ -7100,7 +7002,7 @@ private bool narrowToShard(string repoRoot, in string[] requested, in string[] s
 
 /// `--list-placements`: the placements' shards as a CI matrix, with the tip
 /// of `refs/perf/data` every shard reads.
-private int runListPlacements(string provider, string githubOutput, string historyRemote)
+private RunExpected!void runListPlacements(string provider, string githubOutput, string historyRemote)
 {
     import std.file : append;
     import std.path : buildPath;
@@ -7109,16 +7011,10 @@ private int runListPlacements(string provider, string githubOutput, string histo
 
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
-    {
-        error(i"Could not detect repository root");
-        return 1;
-    }
+    return failRun("Could not detect repository root");
     auto loaded = loadPlacements(repoRoot);
     if (loaded.hasError)
-    {
-        error(i"$(loaded.error)");
-        return 1;
-    }
+    return failRun(loaded.error);
     string tip;
     auto history = openHistory(historyCacheDir(historyRemote.length ? historyRemote : canonicalRemote),
         historyRemote.length ? historyRemote : canonicalRemote,
@@ -7141,11 +7037,11 @@ private int runListPlacements(string provider, string githubOutput, string histo
             lines ~= "matrix-" ~ m ~ "=" ~ placementMatrix(loaded.value, provider, null, m) ~ "\n";
         append(githubOutput, lines);
     }
-    return 0;
+    return ranOk();
 }
 
 /// `--perf-push`, `--perf-import-github-run` and `--perf-append`.
-private int runPerfPublish(ProgramMode mode, const ref CliParams cli)
+private RunExpected!void runPerfPublish(ProgramMode mode, const ref CliParams cli)
 {
     import std.path : buildPath;
     import perf_history : canonicalRemote;
@@ -7154,39 +7050,27 @@ private int runPerfPublish(ProgramMode mode, const ref CliParams cli)
 
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
-    {
-        error(i"Could not detect repository root");
-        return 1;
-    }
+    return failRun("Could not detect repository root");
     const signers = buildPath(repoRoot, "nix", "perf-data-signers");
     Expected!(string, string) done = ok("");
     final switch (mode)
     {
         case ProgramMode.perfImport:
             if (cli.repo.length == 0)
-            {
-                error(i"--perf-import-github-run needs --repo OWNER/NAME");
-                return 2;
-            }
+            return failRun(text(i"--perf-import-github-run needs --repo OWNER/NAME"), 2);
             done = importGithubRun(cli.repo, cli.perfImportGithubRun);
             break;
         case ProgramMode.perfPush:
             const key = cli.signingKey.length ? cli.signingKey : configuredSigningKey(repoRoot);
             if (key.length == 0)
-            {
-                error(i"--perf-push needs --signing-key or git's user.signingkey");
-                return 2;
-            }
+            return failRun(text(i"--perf-push needs --signing-key or git's user.signingkey"), 2);
             done = pushLocal(cli.allowDirty, key, cli.historyRemote.length ? cli.historyRemote : pushRemote,
                 signers);
             break;
         case ProgramMode.perfAppend:
             if (cli.perfRecords.length == 0 || cli.perfRunId.length == 0 || cli.perfRunDate.length != 10
                 || cli.landedCommit.length < 12 || cli.signingKey.length == 0)
-            {
-                error(i"--perf-append needs --perf-records, --perf-run-id, --perf-run-date YYYY-MM-DD, --landed-commit and --signing-key");
-                return 2;
-            }
+            return failRun(text(i"--perf-append needs --perf-records, --perf-run-id, --perf-run-date YYYY-MM-DD, --landed-commit and --signing-key"), 2);
             done = appendRun(cli.perfRecords, cli.perfRunId, cli.perfRunAttempt, cli.perfRunDate, cli.landedCommit,
                 cli.signingKey, cli.historyRemote.length ? cli.historyRemote : canonicalRemote, signers);
             break;
@@ -7197,37 +7081,28 @@ private int runPerfPublish(ProgramMode mode, const ref CliParams cli)
                     assert(0);
     }
     if (done.hasError)
-    {
-        error(i"$(done.error)");
-        return 1;
-    }
+    return failRun(done.error);
     foreach (line; done.value.lineSplitter)
         info(i"$(line)");
-    return 0;
+    return ranOk();
 }
 
 /// `--write-pin-costs FILE`: the toolchain build plan's costs, from the history.
-private int runWritePinCosts(string path, string historyRemote)
+private RunExpected!void runWritePinCosts(string path, string historyRemote)
 {
     import std.file : write;
     import placements_run : pinCostsJson;
 
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
-    {
-        error(i"Could not detect repository root");
-        return 1;
-    }
+    return failRun("Could not detect repository root");
     string[] degradations;
     const json = pinCostsJson(repoRoot, historyRemote, degradations);
     foreach (d; degradations)
         warning(i"$(d)");
     if (json.hasError)
-    {
-        error(i"$(json.error)");
-        return 1;
-    }
+    return failRun(json.error);
     write(path, json.value ~ "\n");
     info(i"wrote $(path)");
-    return 0;
+    return ranOk();
 }

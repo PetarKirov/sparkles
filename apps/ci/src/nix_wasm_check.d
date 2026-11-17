@@ -24,6 +24,7 @@ the builtin fails the mode: a check that did not run is not a pass.
 module nix_wasm_check;
 
 import std.json : JSONType, JSONValue, parseJSON;
+import sparkles.core_cli.args : failRun, ranOk, RunExpected;
 
 /// What one Nix expression reported.
 struct Verdict
@@ -114,7 +115,7 @@ struct NixWasmPin
 /// Runs the checks with `nix` (an evaluator with `builtins.wasm`) from the
 /// checkout at `root`, for the tree's module and, when nix/nix-wasm-pin.json
 /// pins one, for the pinned module; returns the process status.
-int runCheckNixWasm(string root, string nix, string module_, string answers) @system
+RunExpected!void runCheckNixWasm(string root, string nix, string module_, string answers) @system
 {
     import std.file : read, readText;
     import std.stdio : stderr, writeln;
@@ -122,7 +123,7 @@ int runCheckNixWasm(string root, string nix, string module_, string answers) @sy
     if (!module_.length || !answers.length)
     {
         stderr.writeln("--check-nix-wasm needs --nix-wasm-module and --nix-wasm-answers");
-        return 2;
+        return failRun("--check-nix-wasm needs --nix-wasm-module and --nix-wasm-answers", 2);
     }
     const probe = evaluate(nix, "builtins ? wasm");
     if (probe.failure !is null || probe.value.type != JSONType.true_)
@@ -130,7 +131,7 @@ int runCheckNixWasm(string root, string nix, string module_, string answers) @sy
         stderr.writeln("--check-nix-wasm: `", nix, "` has no builtins.wasm (Determinate Nix with "
             ~ "the wasm-builtin feature); the check did not run",
             probe.failure is null ? "" : ":\n" ~ probe.failure);
-        return 1;
+        return failRun("`" ~ nix ~ "` has no builtins.wasm; the check did not run");
     }
 
     Verdict[] verdicts;
@@ -178,7 +179,7 @@ int runCheckNixWasm(string root, string nix, string module_, string answers) @sy
         if (v.failure !is null)
             status = 1;
     }
-    return status;
+    return status == 0 ? ranOk() : failRun("the dub recipe module disagrees with the native oracle");
 }
 
 // `nix build`'s output path for `installable`, as a JSON string.
