@@ -267,6 +267,11 @@
       # Not on Linux arm64 (nix/packages/bench-tools.nix).
       ++ lib.optional (config.packages ? termbench) config.packages.termbench
       ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+        # The build graph's planning-trace oracles (oracle 20 step 1, oracle 24
+        # step 2): `apps/ci/tools/plan-graph.d --check` traces its own
+        # planning. A gate run by hand, not a CI job.
+        pkgs.strace
+
         # Headless Chromium for the sparkles:twoslash visual-regression check
         # (libs/twoslash/examples/visual-check.mjs): it lays out the rendered
         # HTML overlay and asserts popup geometry. Dev-only ($CHROME_BIN
