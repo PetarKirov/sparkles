@@ -66,12 +66,11 @@ private auto normalizedScalar(scope const ref SdlScalar value)
 
     auto tmp = TmpFS.create();
     const source = buildPath(tmp.dir(), "recipe.d");
-    // Absolute: the recipe is built in `tmp`, and a relocated build records
+    const binary = buildPath(tmp.dir(), "sdl-recipe-symbol-probe");
+    // Absolute: the probe is built in `tmp`, and a relocated build records
     // the path relative to the repository root.
     const root = buildNormalizedPath(__FILE_FULL_PATH__.dirName.absolutePath, "../../../../../..");
-    write(source, "/+ dub.sdl:\nname \"sdl-recipe-symbol-probe\"\n"
-        ~ "dependency \"sparkles:wired\" path=\"" ~ root ~ "\"\n+/\n"
-        ~ q{
+    write(source, q{
             import sparkles.wired.sdl.config : sdlDubRecipe;
             import sparkles.wired.sdl.reader : parseSdlDocument;
             void main(string[] args) {
@@ -79,10 +78,15 @@ private auto normalizedScalar(scope const ref SdlScalar value)
                 assert(parsed.hasValue);
             }
         });
-    const build = execute(["dub", "build", "--single", source, "--compiler=ldc2", "--skip-registry=all"],
-        workDir: tmp.dir());
+    // The compiler itself, not dub, which a test never runs (build-graph
+    // BGX1): `-i` compiles what the probe imports from these roots, which
+    // the SDL modules keep to repository packages.
+    string[] argv = ["ldc2", "-preview=in", "-preview=dip1000", "-d-debug", "-g", "-i", "-of=" ~ binary];
+    foreach (lib; ["wired", "base", "metadata", "reflection", "test-attributes"])
+        argv ~= "-I=" ~ buildPath(root, "libs", lib, "src");
+    const build = execute(argv ~ source, workDir: tmp.dir());
     assert(build.status == 0, build.output);
-    const symbols = execute(["nm", buildPath(tmp.dir(), "sdl-recipe-symbol-probe")]);
+    const symbols = execute(["nm", binary]);
     assert(symbols.status == 0, build.output ~ symbols.output);
     assert(symbols.output.canFind("decodeSdlScalarInto"), "probe did not instantiate scalar decoding");
     foreach (name; ["decodeFloat", "readSdlDecimalFloat", "decodeInteger",
