@@ -31,7 +31,7 @@ $(LIST
         reportable results, not curiosities.
 )
 
-CI wiring: the harness runs under `dub test` today (which `ci --test`
+CI wiring: the harness runs under `dub test` today (which `ci test`
 covers); the `dub run :ci` verbatim-corpus sweep lands with M5's `--check`,
 when there is a formatter to drive it.
 */

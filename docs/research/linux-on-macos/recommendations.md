@@ -13,7 +13,7 @@
 2. **Run without `--fail-fast`** and watch for a stalled log: the
    pre-existing `event-horizon` hang reproduces here in 2 of 3 runs, and
    a killed test binary lets the sweep continue.
-3. **Probe before you debug.** `ci --linux-host-probe` reports
+3. **Probe before you debug.** `ci host probe` reports
    Determinate (gated), Apple `container` (running or not),
    nix-darwin's `/etc/nix/machines`, and `extra-platforms`.
 4. **Disable `external-builders` when substituting.** A configured-but-
@@ -38,7 +38,7 @@ a dirty `packages.ci` not yet in cachix):
    NixOS guest is acceptable.
 3. **If Determinate grants the feature**, raise `--cpu-count` in the
    `external-builders` JSON (default 1). Re-enable the helper for
-   realize; keep Apple `container` for `ci --test`.
+   realize; keep Apple `container` for `ci test`.
 
 ## Do not
 
@@ -55,7 +55,7 @@ a dirty `packages.ci` not yet in cachix):
 
 `apps/ci/src/linux_host.d`:
 
-- `--linux-host-probe` — report backends, exit 0.
+- `ci host probe` — report backends, exit 0.
 - `--host-system aarch64-linux|x86_64-linux` — pick the first of `HEAD`,
   `@{upstream}`, `merge-base origin/main`, `origin/main` whose
   `packages.<system>.ci` substitutes and whose shell inputs all arrive;

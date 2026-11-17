@@ -507,7 +507,7 @@ enough to run under fuzzers; the enabling oracle for `libFuzzer`/OSS-Fuzz.
 > Its average slowdown is just 73% yet it accurately detects bugs at the point of
 > occurrence.
 
-**Relevance to sparkles.** `ci --test-sanitize` already runs ASan under LDC. Fuzz
+**Relevance to sparkles.** `ci test --sanitize address` already runs ASan under LDC. Fuzz
 harnesses for `sparkles:image` must run ASan builds, especially across `@trusted`
 SIMD kernels and ImportC'd reference codecs, where D's bounds checks do not apply.
 Pool/arena allocators in `base` hide overflows from ASan unless they poison redzones.

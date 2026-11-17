@@ -14,68 +14,9 @@ executed by placing a header comment after the `dub.sdl` block:
 // ci: build-only
 ---
 
-Usage:
----
-nix run .#ci -- [--verify|--update] [--fail-fast] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
-nix run .#ci -- --example-files [--fail-fast] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
-nix run .#ci -- --build [--fail-fast]
-nix run .#ci -- --test [--packages NAME...] [--skip-packages NAME...] [--fail-fast]
-nix run .#ci -- --test --host-system aarch64-linux [--host-ci-rev REV] [--fail-fast]
-nix run .#ci -- --test --host-system x86_64-linux [--host-ci-rev REV] [--fail-fast]
-nix run .#ci -- --linux-host-probe
-nix run .#ci -- --test-extracted [--packages NAME...] [--skip-packages NAME...] [--fail-fast]
-nix run .#ci -- --test-sanitize [--packages NAME...] [--skip-packages NAME...] [--fail-fast]
-nix run .#ci -- --list-slow-tests
-nix run .#ci -- --test-slow [--packages NAME...] [--tests NAME...] [--fail-fast]
-nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
-nix run .#ci -- --check-vcs-urls [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
-nix run .#ci -- --check-docs-sidebar
-nix run .#ci -- --check-glossary
-nix run .#ci -- --check-adhoc-sdl
-nix run .#ci -- --check-opaque-recipes
-nix run .#ci -- --check-credits
-nix run .#ci -- --check-wasm-modules --text-module FILE --table-module FILE --wired-module FILE --wasi-loader FILE --wasi-shim DIR
-nix run .#ci -- --check-nix-wasm --nix-wasm-module FILE --nix-wasm-answers DIR [--nix-wasm-evaluator NIX]
-nix run .#ci -- --stage-docs-wasm
-nix run .#ci -- --check-blob-paths [--clone-root DIR] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
-nix run .#ci -- --gc-report FILE [--gc-baseline FILE] [--gc-top N]
-nix run .#ci -- [--log-level trace|info|warning|error]
----
-
-Modes:
-
-$(LIST
-    $(ITEM Default — run examples and display results in boxes)
-    $(ITEM `--verify` — compare output against expected output blocks, report mismatches)
-    $(ITEM `--update` — rewrite the markdown file with actual example output (golden snapshot update))
-    $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/base/examples/*.d`, `libs/build-primitives/examples/*.d`, `libs/core-cli/examples/*.d`, `libs/wired/examples/*.d`, `docs/research/async-io/io-uring/examples/*.d`, `docs/research/async-io/gcd/examples/*.d`, `docs/research/units-of-measure/examples/*.d`, `docs/research/cpu-pmu/examples/*.d`, `docs/research/sanitizers/examples/*.d`, `docs/research/manim/examples/*.d`, `docs/research/anchored-overlays/examples/*.d`, `docs/research/property-tree/examples/*.d`, `docs/research/algebraic-effects/durable-execution/examples/*.d`, `docs/research/images/mir-algorithm/examples/*.d`, `docs/research/images/wired-flat-fit/examples/*.d`, the per-subject `examples/` directories under `docs/research/platform-ui-guidelines/`, and the per-subject `examples/` directories under `docs/research/autological-artifacts/`)
-    $(ITEM `--build` — run `dub build` for each sub-package defined in the root `dub.sdl`)
-    $(ITEM `--test` — run `dub test` for each sub-package defined in the root `dub.sdl`, twice per package: `-t 1` then `-t N` (`N = max(2, hwParallelism())`) so a stack-heavy test cannot hide on the main thread. `@slow` tests are left out (`--skip-slow`); `--test-slow` runs them)
-    $(ITEM `--watch` — with `--test` or `--build`: wait for a change to the packages' inputs in the work tree (sources, recipes, string imports), then test or build only the packages the change reaches, after each change until interrupted. A change to a workspace input (a lock, the toolchain, `ci`'s planner) plans again and runs every package)
-    $(ITEM `--list-slow-tests` — print the `@slow` unittests found in the sub-packages' sources as the JSON array the `slow-tests` CI matrix expands (`[{"package":…,"test":…}]`), and append it to `$GITHUB_OUTPUT` as `matrix`. Fails on a `@slow` test without a `@("name")`, and when there is none at all)
-    $(ITEM `--test-slow` — run the `@slow` unittests, one `dub test` per package, narrowed by `--packages` and `--tests` (test names). First checks that the package's test binary lists exactly the slow tests its sources mark (`--list --only-slow`), so a test the source scan missed fails the job instead of going unrun)
-    $(ITEM `--host-system aarch64-linux|x86_64-linux` — on macOS, re-exec the same mode inside an Apple `container` Linux VM, using the matching `packages.<system>.ci` store path bind-mounted from `/nix/store`. The Linux `ci` is realized from a git revision CI has built (`HEAD`, the merge-base with `origin/main`, then `origin/main`), never from the dirty tree; the tests run against the mounted working tree. See `docs/research/linux-on-macos/`)
-    $(ITEM `--host-ci-rev REV` — with `--host-system`: realize the Linux `ci` from this revision instead of the default chain)
-    $(ITEM `--linux-host-probe` — report which Linux-on-macOS backends are available (Determinate native builder, Apple container, nix-darwin linux-builder) and exit)
-    $(ITEM `--test-extracted` — run the test runner's `--better-c` and `--wasm` modes for each sub-package whose sources use the matching marker attribute, failing (rather than skipping) when a mode's toolchain is missing)
-    $(ITEM `--test-sanitize` — Linux LDC only (`DC=ldc2`): `dub test -b unittest` with AddressSanitizer and LDC's stack-overflow sanitizer, one `-t N` leg on 4 MiB workers. UBSan is unreachable from D and from ImportC (`-Xcc` only reaches the preprocessor and the linker); see `docs/research/sanitizers/ubsan.md`)
-    $(ITEM `--include-files` (alias `--files`) — select explicit files or git-style globs; when omitted, each mode uses its tracked defaults)
-    $(ITEM `--exclude-files` — drop matching files from the include set (or from the mode's defaults); same path/glob selectors as `--include-files`)
-    $(ITEM `--fail-fast` — stop on the first failing example and replay its output at the end)
-    $(ITEM `--dedup-reference-links` — report duplicate markdown reference definitions by URL)
-    $(ITEM `--fix-reference-links` — rewrite duplicates to a canonical label)
-    $(ITEM `--check-vcs-urls` — check tracked markdown files for github.com/raw.githubusercontent.com URLs, ensuring they reference a specific commit SHA)
-    $(ITEM `--check-docs-sidebar` — verify the VitePress sidebar in `docs/.vitepress/sidebar.json` is consistent with published `docs/**/*.md` pages: every page is linked, and every sidebar link resolves to a page (respects `srcExclude`; home page is implicit))
-    $(ITEM `--check-glossary` — verify `docs/.vitepress/glossary.json` (ids, owners, plain-text summaries, cross-references) and that every docs link into the glossary names an existing entry; entries no page links to are reported, not failed)
-    $(ITEM `--check-opaque-recipes` — report every recipe entry no input set can hold (a command, a flag carrying a path, a path through a variable or outside the repository), with what to write instead: each makes the requests that build it selected by every change. One that `apps/ci/opaque-recipe-allowlist.txt` does not list with a reason fails (see the `opaque_recipes` module))
-    $(ITEM `--check-adhoc-sdl` — verify no D source reads, edits or detects SDL by matching text: a text-matching call whose arguments hold an SDL marker fails unless `apps/ci/sdl-audit-allowlist.txt` lists it with a reason (lossless editing SDE9; see the `sdl_audit` module))
-    $(ITEM `--check-credits` — verify the credits document (`docs/credits/`) against the build inputs: every dub package, native library, static archive, bundled font and grammar bundle the applications link or ship has a part, every part names something shipped, and each application page includes exactly its own parts (see the `credits` module))
-    $(ITEM `--check-wasm-modules` — run a fixed corpus through the documentation site's WebAssembly modules under `node` and through the same D functions natively, and fail on any difference (docs/specs/toolchain/wasm-modules.md, TCM9; see `wasm_modules_check`))
-    $(ITEM `--check-nix-wasm` — on an evaluator with `builtins.wasm`, compare the dub recipe module's answers with the native oracle's and the recipe table's facts from the module with the regular-expression reader's, for the tree's module and the one nix/nix-wasm-pin.json pins, which must also equal a rebuild of its revision (docs/specs/wired/wasm, WW10; see `nix_wasm_check`))
-    $(ITEM `--stage-docs-wasm` — build the documentation site's WebAssembly modules (`nix build .#docs-wasm`) and copy them into `docs/public/` (TCM3; see `docs_wasm`))
-    $(ITEM `--check-blob-paths` — verify every SHA-pinned GitHub blob citation names a path that exists at that commit, using local clones under `--clone-root` (default `$REPOS`). Complements `--check-vcs-urls`, which only checks the ref; a wrong path is a 404 no ref check can see. $(B Local only) — a citation whose repository is not cloned is reported as unchecked, never failed, so this is not wired into CI or a pre-commit hook)
-    $(ITEM `--gc-report FILE` — summarize a GC recording (`sparkles.profiling.gc_sampler`; a run with `SPARKLES_GC_SAMPLES=FILE` and `--DRT-gcopt=gc:sampler`): bytes allocated by site and inclusively by function, the collections' pauses, and what stayed live after the last one, scanned or not. `--gc-baseline` subtracts a shorter run of the same scenario, leaving the steady cost)
-)
+The command line is `cli.d`'s command tree: `ci --help` lists the commands,
+`ci <command> --help` a command's options, and the `ci` specification's §1.1
+(`docs/specs/ci/task-dag/SPEC.md`) states them.
 
 The script looks for D code blocks starting with:
 ---
@@ -96,13 +37,13 @@ expected output here
 An `ansi` block stores the output verbatim, escape sequences included, so a
 colored example keeps its color. `[Output]` (and the alias `[Output:ansi]`)
 are also recognised; `[Output]` is the legacy spelling and stores
-ANSI-stripped text. New blocks — including those `--update` inserts — use
+ANSI-stripped text. New blocks — including those `ci examples update` inserts — use
 `ansi`.
 
 For examples with dynamic output (timestamps, file locations, etc.), place a
 `<!-- md-example-expected -->` HTML comment directive between the code block
 and the output block. The directive contains a wildcard pattern used for
-`--verify` instead of the literal output block. Use `{{_}}` as a wildcard
+`ci examples verify` instead of the literal output block. Use `{{_}}` as a wildcard
 that matches any non-empty text:
 
 ---html
@@ -160,8 +101,8 @@ import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight;
 import sparkles.base.text.case_text : asciiLower, unicodeLower;
 
 // sparkles packages
-import sparkles.core_cli.args : Argument, failRun, HelpInfo, Option, parseCli, ranOk, reportCliError,
-    RunExpected;
+import sparkles.base.expected : andThen, Expected, ok;
+import sparkles.core_cli.args : failRun, ranOk, RunError, RunExpected;
 import sparkles.base.logger :
     error, info, initLogger, LogDelta, LogLevel, takeLogDelta, trace, warning, writeLogDelta;
 import sparkles.core_cli.process_utils :
@@ -193,6 +134,8 @@ import example_manifest : exampleRunsOnHost;
 import fence_audit : AuditScope, FenceAuditOptions, runFenceAudit, wrapperFenceEnd;
 import wasm_modules_check : runCheckWasmModules;
 import docs_wasm : stageDocsWasm;
+import cli : ExampleAction, FileSelection, GithubOptions, PerfCommand, Sanitizer, SpecialModes, StatsCommand,
+    TestCommand;
 import linux_host :
     alreadyOnHostSystem, linuxHostSystems, runLinuxHostProbe, runOnLinuxHost;
 
@@ -222,515 +165,6 @@ private BoxProps resultBox(string footer)
 }
 
 // === Types ===
-
-struct CliParams
-{
-    @(Option(`seed-dub-cache`, description: "Copy Nix-vendored dependency sources into DUB_HOME (default ~/.dub), preserving existing versions, then exit."))
-    bool seedDubCache;
-
-    @(Option(`V|verify`, description: "Compare example output against expected output blocks in the markdown."))
-    bool verify;
-
-    @(Option(`u|update`, description: "Rewrite the markdown file with actual example output."))
-    bool update;
-
-    @(Option(`audit-fences`, description: "Classify every fenced code block in docs/ and README.md against the tree-sitter grammar bundle, and inventory the VitePress code-block features a highlighter swap must preserve."))
-    bool auditFences;
-
-    @(Option(`json`, description: "With --audit-fences: write the machine-readable report to this file."))
-    string json;
-
-    @(Option(`root`, description: "With --audit-fences: audit this worktree instead of the current one."))
-    string root;
-
-    @(Option(`audit-scope`, description: "With --audit-fences: which side of the config srcExclude split to census - site (default), all, or excluded."))
-    string auditScope = "site";
-
-    @(Option(`x|example-files`, description: "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/base/examples/*.d, libs/build-primitives/examples/*.d, libs/core-cli/examples/*.d, libs/wired/examples/*.d, docs/research/async-io/io-uring/examples/*.d, docs/research/async-io/gcd/examples/*.d, docs/research/units-of-measure/examples/*.d, docs/research/cpu-pmu/examples/*.d, docs/research/sanitizers/examples/*.d, docs/research/manim/examples/*.d, docs/research/anchored-overlays/examples/*.d, docs/research/property-tree/examples/*.d, docs/research/algebraic-effects/durable-execution/examples/*.d, docs/research/images/mir-algorithm/examples/*.d, docs/research/images/wired-flat-fit/examples/*.d, the per-subject examples directories under docs/research/platform-ui-guidelines/, and the per-subject examples directories under docs/research/autological-artifacts/."))
-    bool exampleFiles;
-
-    @(Option(`build`, description: "Run dub build for each sub-package defined in the root dub.sdl."))
-    bool build;
-
-    @(Option(`build-each-commit`,
-        description: "Build sub-packages at every commit from --base to HEAD, in one "
-        ~ "scratch worktree, so each commit of a stack is known to build: CI builds "
-        ~ "only a pull request's tip. Defaults to the apps whose default "
-        ~ "configuration dub test never compiles (hue, ui-gallery, diagram)."))
-    bool buildEachCommit;
-
-    @(Option(`base`,
-        description: "With --build-each-commit: the commit the range starts after. "
-        ~ "Default: the merge-base of HEAD and origin/main."))
-    string base;
-
-    @(Option(`packages`,
-        description: "With --build-each-commit: the sub-packages to build, by name. "
-        ~ "With --test-slow: the sub-packages whose slow tests to run. "
-        ~ "With --test, --test-sanitize or --test-extracted: test only these "
-        ~ "sub-packages (default: every one the root dub.sdl declares)."))
-    string[] packages;
-
-    @(Option(`skip-packages`,
-        description: "With --test, --test-sanitize or --test-extracted: leave these "
-        ~ "sub-packages out, so a CI shard can take every package the others do not list."))
-    string[] skipPackages;
-
-    @(Option(`perf-push`,
-        description: "Append this machine's run records to refs/perf/data, signed with --signing-key "
-        ~ "or git's user.signingkey (observability OBH6). A record of a dirty tree needs --allow-dirty."))
-    bool perfPush;
-
-    @(Option(`allow-dirty`, description: "With --perf-push: push records of a dirty tree too."))
-    bool allowDirty;
-
-    @(Option(`signing-key`,
-        description: "With --perf-push or --perf-append: the SSH key that signs the history's commit."))
-    string signingKey;
-
-    @(Option(`perf-import-github-run`,
-        description: "Build a run record from each test job's log of this GitHub Actions run, with gh, "
-        ~ "as origin `imported`, for --perf-push to publish: seeds the history (needs --repo)."))
-    string perfImportGithubRun;
-
-    @(Option(`perf-append`,
-        description: "Append the run records under --perf-records, the artifacts of run --perf-run-id "
-        ~ "attempt --perf-run-attempt, to refs/perf/data under --landed-commit (observability OBH4). "
-        ~ "The identity and --perf-run-date come from the provider's API, never from the records."))
-    bool perfAppend;
-
-    @(Option(`perf-records`, description: "With --perf-append: the directory the records were downloaded to."))
-    string perfRecords;
-
-    @(Option(`perf-run-id`, description: "With --perf-append: the run whose records these are."))
-    string perfRunId;
-
-    @(Option(`perf-run-attempt`, description: "With --perf-append: that run's attempt."))
-    string perfRunAttempt = "1";
-
-    @(Option(`perf-run-date`, description: "With --perf-append: the run's start date, YYYY-MM-DD, in UTC."))
-    string perfRunDate;
-
-    @(Option(`landed-commit`, description: "With --perf-append: the commit of main the records describe."))
-    string landedCommit;
-
-    @(Option(`write-pin-costs`,
-        description: "Write the toolchain build plan's cost file to this path: each pin's median "
-        ~ "recorded build time on refs/perf/data and ci/placements.json's budget (TC23)."))
-    string writePinCosts;
-
-    @(Option(`list-placements`,
-        description: "Print ci/placements.json's shards as a CI provider's matrix, with the "
-        ~ "refs/perf/data commit every shard reads (CIC14). With --github-output, also set it as "
-        ~ "the step's `matrix` output."))
-    bool listPlacements;
-
-    @(Option(`provider`,
-        description: "With --list-placements: the CI provider whose runners to list (default: github)."))
-    string provider = "github";
-
-    @(Option(`github-output`,
-        description: "With --list-placements: append the matrix to this file, the step's $GITHUB_OUTPUT."))
-    string githubOutput;
-
-    @(Option(`history-tip`,
-        description: "With --shard: the refs/perf/data commit to pack from, as the planning job "
-        ~ "read it. Default: the newest commit not later than HEAD's committer time."))
-    string historyTip;
-
-    @(Option(`history-remote`,
-        description: "The repository whose refs/perf/data to read (default: Sparkles' own)."))
-    string historyRemote;
-
-    @(Option(`placement`,
-        description: "With --test, --test-sanitize or --test-extracted: the placement of "
-        ~ "ci/placements.json this run belongs to, recorded in its run record."))
-    string placement;
-
-    @(Option(`shard`,
-        description: "With --placement: which of the placement's shards this run is, as K/N."))
-    string shard;
-
-    @(Option(`list-slow-tests`,
-        description: "Print the @slow unittests as the JSON matrix of the slow-tests CI job "
-        ~ "(also appended to $GITHUB_OUTPUT as `matrix`)."))
-    bool listSlowTests;
-
-    @(Option(`test-slow`,
-        description: "Run the @slow unittests (left out of --test), one dub test per package."))
-    bool testSlow;
-
-    @(Option(`tests`,
-        description: "With --test-slow: the slow tests to run, by name (default: all of them)."))
-    string[] tests;
-
-    @(Option(`t|test`, description: "Run dub test for each sub-package defined in the root dub.sdl."))
-    bool test;
-
-    @(Option(`watch`,
-        description: "With --test or --build: wait for a change to the packages' inputs, then "
-        ~ "test or build the packages it reaches, again after each change, until interrupted."))
-    bool watch;
-
-    @(Option(`host-system`,
-        description: "Re-exec this mode on aarch64-linux or x86_64-linux from macOS, "
-            ~ "via Apple container plus the matching packages.<system>.ci store path."))
-    string hostSystem;
-
-    @(Option(`host-ci-rev`,
-        description: "With --host-system: the git revision to realize the Linux ci from "
-            ~ "(default: HEAD, then the merge-base with origin/main, then origin/main)."))
-    string hostCiRev;
-
-    @(Option(`linux-host-probe`,
-        description: "Report which Linux-on-macOS backends are available and exit."))
-    bool linuxHostProbe;
-
-    @(Option(`test-extracted`, description: "Run the test runner's --better-c and --wasm modes for each sub-package that uses the matching marker attribute. Fails if a mode's toolchain is missing rather than skipping."))
-    bool testExtracted;
-
-    @(Option(`test-sanitize`, description: "Linux LDC only (DC=ldc2): run each sub-package's tests under AddressSanitizer."))
-    bool testSanitize;
-
-    @(Option(`F|fail-fast`, description: "Stop on the first failing example and replay its output at the end."))
-    bool failFast;
-
-    // Canonical name last (same convention as short|long): `--files` is the
-    // alias, `--include-files` is the primary name shown in synopsis/errors.
-    @(Option(`files|include-files`,
-        description: "File paths or git-style globs to include. Pass one or more "
-            ~ "selectors immediately after the flag. Alias: --files. When omitted, "
-            ~ "each mode uses its tracked defaults."))
-    string[] files;
-
-    @(Option(`exclude-files`,
-        description: "File paths or git-style globs to exclude from the include set "
-            ~ "(or from the mode's tracked defaults). Pass one or more selectors "
-            ~ "immediately after the flag. May be repeated."))
-    string[] exclude;
-
-    /// The one mode that takes a positional: `--check-commit-scope <path>`.
-    /// Everything else selects its inputs with `--include-files` / `--exclude-files`.
-    @(Argument("arg", optional: true))
-    string[] positionals;
-
-    @(Option(`d|dedup-reference-links`, description: "Report duplicate markdown reference definitions that point to the same URL."))
-    bool dedupReferenceLinks;
-
-    @(Option(`f|fix-reference-links`, description: "Rewrite duplicate markdown references to one canonical label per URL."))
-    bool fixReferenceLinks;
-
-    @(Option(`L|log-level`, description: "Set the log level (trace, info, warning, error). Default: info."))
-    LogLevel logLevel = LogLevel.info;
-
-    @(Option(`check-commit-scope`, description: "Check a commit message for a detailed scope (used by pre-commit commit-msg hook). If no file is given or the argument is '-', reads the message from stdin instead of a file."))
-    bool checkCommitScope;
-
-    @(Option(`check-vcs-urls`, description: "Check tracked markdown files (or specified files) for github.com and raw.githubusercontent.com URLs, ensuring they reference a specific git commit."))
-    bool checkVcsUrls;
-
-    @(Option(`check-docs-sidebar`,
-        description: "Verify the VitePress sidebar (docs/.vitepress/config.mts) is consistent "
-        ~ "with published docs/**/*.md pages: every page is linked, and every "
-        ~ "sidebar link resolves to a page. Respects srcExclude; the home page "
-        ~ "(docs/index.md) is always considered linked."))
-    bool checkDocsSidebar;
-
-    @(Option(`check-spec-evidence`,
-        description: "Verify every symbol a spec's evidence column cites resolves in the tree. "
-        ~ "Citations listed in docs/specs/evidence-backlog.txt are reported, not failed; "
-        ~ "a new unresolved citation fails, and so does a listed one that now resolves."))
-    bool checkSpecEvidence;
-
-    @(Option(`update-spec-evidence-backlog`,
-        description: "With --check-spec-evidence: rewrite docs/specs/evidence-backlog.txt "
-        ~ "to list exactly the citations that resolve nowhere now."))
-    bool updateSpecEvidenceBacklog;
-
-    @(Option(`check-glossary`,
-        description: "Verify docs/.vitepress/glossary.json — unique slug ids, known owners, "
-        ~ "plain-text summaries, portable links, cross-references — and that every docs link "
-        ~ "into the glossary names an existing entry. Unused entries are reported, not failed."))
-    bool checkGlossary;
-    @(Option(`check-adhoc-sdl`,
-        description: "Verify no D source matches SDL text by hand (lossless editing SDE9): "
-        ~ "a canFind/indexOf/regex/… call whose arguments hold an SDL marker fails unless "
-        ~ "apps/ci/sdl-audit-allowlist.txt lists it with a reason; so does a stale entry."))
-    bool checkAdHocSdl;
-    @(Option(`check-opaque-recipes`,
-        description: "Report every recipe entry no input set can hold (commands, flags carrying paths, "
-        ~ "paths through variables or outside the repository) with what to write instead; an entry "
-        ~ "apps/ci/opaque-recipe-allowlist.txt does not list with a reason fails, and so does a stale one."))
-    bool checkOpaqueRecipes;
-
-    @(Option(`check-credits`,
-        description: "Verify the credits document (docs/credits/) against the build inputs: "
-        ~ "every component an application links or ships has a part, every part names "
-        ~ "something shipped, and each application page includes exactly its parts."))
-    bool checkCredits;
-
-    @(Option(`record-task`,
-        description: "Run the command given after `--` and record it as the task ID in a run "
-        ~ "record, with its wall time and outcome (observability OD21): a step `ci` does not run "
-        ~ "itself, such as a toolchain pin build. Exits with the command's status."))
-    string recordTask;
-
-    @(Option(`check-pin-cache`,
-        description: "Verify that Sparkles' Cachix cache serves every pinned system's toolchain "
-        ~ "outputs (the pin set's toolchain-* entries; TC23). Evaluates the flake, builds nothing, "
-        ~ "needs no token. The cache is $CACHIX_CACHE, or sparkles."))
-    bool checkPinCache;
-
-    @(Option(`check-blob-paths`,
-        description: "Verify that every SHA-pinned GitHub blob citation names a path that "
-        ~ "exists at that commit, using local clones under --clone-root. "
-        ~ "Complements --check-vcs-urls, which only checks the ref. Local only: "
-        ~ "a citation whose repository is not cloned is reported as unchecked, "
-        ~ "never as a failure."))
-    bool checkBlobPaths;
-
-    @(Option(`gc-report`,
-        description: "Summarize a GC recording (sparkles.profiling.gc_sampler: a run with "
-        ~ "SPARKLES_GC_SAMPLES=FILE and --DRT-gcopt=gc:sampler): the bytes allocated by site and "
-        ~ "inclusively by function, the pauses, and what stayed live, scanned or not."))
-    string gcReport;
-
-    @(Option(`gc-baseline`,
-        description: "With --gc-report: a shorter recording of the same scenario to subtract, "
-        ~ "leaving the steady cost (a 1200-frame drag minus a 200-frame one)."))
-    string gcBaseline;
-
-    @(Option(`gc-top`,
-        description: "With --gc-report: the rows each table shows (default 25)."))
-    size_t gcTop = 25;
-
-    @(Option(`clone-root`,
-        description: "Root directory holding the upstream clones --check-blob-paths reads. "
-        ~ "Defaults to the REPOS environment variable."))
-    string cloneRoot;
-
-    @(Option(`check-wasm-modules`,
-        description: "Run a fixed corpus through the WebAssembly modules (--text-module, "
-        ~ "--table-module, --wired-module) under node and through the same D functions natively, and "
-        ~ "fail on any difference (TCM9)."))
-    bool checkWasmModules;
-
-    @(Option(`text-module`,
-        description: "With --check-wasm-modules: the text module (spk-text.wasm)."))
-    string textModule;
-
-    @(Option(`table-module`,
-        description: "With --check-wasm-modules: the table module (spk-table.wasm)."))
-    string tableModule;
-
-    @(Option(`wired-module`,
-        description: "With --check-wasm-modules: the wired module (spk-wired.wasm)."))
-    string wiredModule;
-
-    @(Option(`wasi-loader`,
-        description: "With --check-wasm-modules: the site's loader (docs/.vitepress/theme/wasi.ts)."))
-    string wasiLoader;
-
-    @(Option(`wasi-shim`,
-        description: "With --check-wasm-modules: the @bjorn3/browser_wasi_shim package directory."))
-    string wasiShim;
-
-    @(Option(`check-nix-wasm`,
-        description: "On an evaluator with builtins.wasm, check the dub recipe module (--nix-wasm-module) "
-        ~ "against the native oracle's answers (--nix-wasm-answers) and the regular-expression reader "
-        ~ "(docs/specs/wired/wasm, WW10)."))
-    bool checkNixWasm;
-
-    @(Option(`nix-wasm-module`,
-        description: "With --check-nix-wasm: the module (spk-dub-manifest.wasm)."))
-    string nixWasmModule;
-
-    @(Option(`nix-wasm-answers`,
-        description: "With --check-nix-wasm: the oracle's answers (the dub-manifest-nix-answers package)."))
-    string nixWasmAnswers;
-
-    @(Option(`nix-wasm-evaluator`,
-        description: "With --check-nix-wasm: the evaluator to run (default: nix)."))
-    string nixWasmEvaluator = "nix";
-
-    @(Option(`stage-docs-wasm`,
-        description: "Build the documentation site's WebAssembly modules (nix build .#docs-wasm) "
-        ~ "and copy them into docs/public/."))
-    bool stageDocsWasm;
-
-    @(Option(`coverage`,
-        description: "With --test, build each sub-package's tests under -cov and merge their "
-        ~ "listings into build/coverage, then report covered/coverable lines per package, "
-        ~ "worst first. On by default; pass --no-coverage for a plain test run. Reports "
-        ~ "only; nothing fails on a low number."))
-    bool coverage = true;
-
-    @(Option(`C|ci-stats`,
-        description: "Compute GitHub Actions CI job timing statistics and runner-type aggregates. "
-        ~ "See docs/specs/ci/stats/ for the full specification."))
-    bool ciStats;
-
-    @(Option(`g|github-token`,
-        description: "GitHub token for API access (Bearer auth). Falls back to $GITHUB_TOKEN."))
-    string githubToken;
-
-    @(Option(`r|repo`,
-        description: "Target repository as owner/repo (e.g. PetarKirov/sparkles)."))
-    string repo;
-
-    @(Option(`l|limit`,
-        description: "Maximum number of recent workflow runs to analyze (default 100)."))
-    int limit = 100;
-
-    @(Option(`S|since`,
-        description: "Only include runs created on/after this date (YYYY-MM-DD or ISO)."))
-    string since;
-
-    @(Option(`w|workflow`,
-        description: "Filter to runs/jobs matching this workflow name or path substring."))
-    string workflow;
-
-    @(Option(`c|conclusion`,
-        description: "Only jobs with this conclusion (e.g. success, failure)."))
-    string conclusion;
-
-    @(Option(`b|branch`,
-        description: "Only runs on this branch (head_branch, exact match)."))
-    string branch;
-
-    @(Option(`B|baseline`,
-        description: "Compare --branch against this branch per job name, showing the median delta. "
-        ~ "Both refs are taken from the same run window."))
-    string baseline;
-
-    @(Option(`s|split`,
-        description: "Split the fetched jobs at this instant (YYYY-MM-DD or ISO-8601) and compare "
-        ~ "the halves per job name. The axis to use when a workflow only triggers on "
-        ~ "pull_request and so never runs on the default branch."))
-    string split;
-
-    @(Option(`steps`,
-        description: "Break the slowest job names down by step, so a regression is attributed "
-        ~ "to the step that owns it rather than to the job total."))
-    bool steps;
-
-    @(Option(`step-jobs`,
-        description: "How many job names --steps expands (default 3)."))
-    int stepJobs = 3;
-
-    @(Option(`badge-dir`,
-        description: "With --ci-stats --merges: also write the shields.io endpoint documents the "
-        ~ "README badges read (merged-prs.json, merged-green.json) into this directory."))
-    string badgeDir;
-
-    @(Option(`mirror-checks`,
-        description: "Give a commit on the default branch the checks its pull request already "
-        ~ "earned, when the landed tree is byte-identical to the tree that pull request built. "
-        ~ "Needs --repo and --sha; exits reporting mirrored=false when the trees differ, so the "
-        ~ "caller can run the real build instead."))
-    bool mirrorChecks;
-
-    @(Option(`sha`,
-        description: "With --mirror-checks: the commit to attach the mirrored checks to."))
-    string sha;
-
-    @(Option(`skip-check`,
-        description: "With --mirror-checks: a check-run name never to mirror, repeatable. Use it "
-        ~ "for checks whose own workflow also runs on this push, which would otherwise land twice."))
-    string[] skipCheck;
-
-    @(Option(`dry-run`,
-        description: "With --mirror-checks: report what would be mirrored without creating "
-        ~ "anything. With --gc-r2: report what would be deleted without deleting it."))
-    bool dryRun;
-
-    @(Option(`gc-r2`,
-        description: "Garbage-collect the R2 binary cache: keep the gc-roots of the trees of "
-        ~ "HEAD's last --keep-commits first-parent commits, everything younger than --grace-days, "
-        ~ "and their closures; delete the rest. Reads R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, "
-        ~ "R2_ACCOUNT_ID and R2_BUCKET."))
-    bool gcR2;
-
-    @(Option(`keep-commits`,
-        description: "With --gc-r2: how many of HEAD's first-parent commits keep their roots "
-        ~ "(default 30)."))
-    int keepCommits = 30;
-
-    @(Option(`grace-days`,
-        description: "With --gc-r2: objects younger than this many days are kept, and their "
-        ~ "closures with them (default 14)."))
-    int graceDays = 14;
-
-    @(Option(`report-link-rot`,
-        description: "Keep one standing issue in step with the link sweep: a failing sweep opens "
-        ~ "or rewrites it, a passing one closes it. Needs --repo; reads the sweep log named by "
-        ~ "--report and the verdict from --rotten."))
-    bool reportLinkRot;
-
-    @(Option(`report`,
-        description: "With --report-link-rot: path to the sweep log to quote in the issue."))
-    string report;
-
-    @(Option(`rotten`,
-        description: "With --report-link-rot: the sweep found dead links. Without it the sweep "
-        ~ "is treated as clean and the standing issue is closed."))
-    bool rotten;
-
-    @(Option(`run-url`,
-        description: "With --report-link-rot: URL of the run to link from the issue body."))
-    string runUrl;
-
-    @(Option(`merges`,
-        description: "With --ci-stats: audit what merged pull requests actually landed on the "
-        ~ "default branch -- commits carried, whether the landed tree is the tree CI built, "
-        ~ "and the share green at the head. Answers what mirroring PR checks onto the branch "
-        ~ "would cover, and what a rebuild policy would cost."))
-    bool merges;
-}
-
-enum ProgramMode
-{
-    runExamples,
-    verifyExamples,
-    updateExamples,
-    runExampleFiles,
-    runDubBuild,
-    buildEachCommit,
-    runDubTests,
-    runExtractedTests,
-    runSanitizeTests,
-    listSlowTests,
-    runSlowTests,
-    checkReferenceLinks,
-    fixReferenceLinks,
-    checkCommitScope,
-    checkVcsUrls,
-    checkDocsSidebar,
-    checkSpecEvidence,
-    checkGlossary,
-    checkAdHocSdl,
-    checkOpaqueRecipes,
-    checkCredits,
-    checkPinCache,
-    recordTask,
-    listPlacements,
-    writePinCosts,
-    perfPush,
-    perfImport,
-    perfAppend,
-    checkBlobPaths,
-    gcReport,
-    checkWasmModules,
-    checkNixWasm,
-    stageDocsWasm,
-    ciStats,
-    mirrorChecks,
-    reportLinkRot,
-    gcR2,
-    auditFences,
-    linuxHostProbe,
-    seedDubCache,
-}
 
 struct Example
 {
@@ -806,562 +240,12 @@ private auto refDefRegex() => regex(r"^\[([^\]]+)\]:\s+(https?://\S+)");
 /// output; on failure, compiler errors are still reported.
 
 
-/// Reports a mode's outcome the way `runCli` reports a command's, and returns
-/// the exit status: a skip on standard output and 0, a failure on standard
-/// error with its status.
-private int exitStatus(RunExpected!void outcome)
-{
-    if (!outcome.hasError)
-        return 0;
-    if (outcome.error.skipped)
-    {
-        stdout.writeln("SKIP: ", outcome.error.message);
-        return 0;
-    }
-    stderr.writeln("Error: ", outcome.error.message);
-    return outcome.error.exitCode;
-}
-int ciMain(string[] args)
-{
-    // Install the logger *before* parsing so a slow CLI parse still has a
-    // timestamped breadcrumb. Default `--log-level` is info; honour a
-    // requested level once the flags are in.
-    initLogger(LogLevel.info);
-    info(i"ci starting{dim :} $(args.length > 1 ? args[1 .. $].join(" ") : "(no args)")");
-
-    auto parsed = parseCli!CliParams(
-        args,
-        HelpInfo(
-            "ci",
-            "Run repository CI helpers for markdown examples, standalone example files, and markdown reference maintenance",
-        ),
-    );
-    if (!parsed)
-        return reportCliError(parsed.error);
-    auto cli = parsed.value;
-    if (cli.logLevel != LogLevel.info)
-        applyLogLevel(cli.logLevel);
-
-    info(i"cli parsed");
-    logHostResources();
-
-    const positionalArgs = cli.positionals.idup;
-    const modeError = validateCliMode(cli, positionalArgs);
-    if (modeError !is null)
-    {
-        error(i"$(modeError)");
-        return 1;
-    }
-
-    const mode = resolveProgramMode(cli);
-    if (mode == ProgramMode.runExampleFiles || mode == ProgramMode.runDubBuild
-            || mode == ProgramMode.runDubTests || mode == ProgramMode.runSanitizeTests
-            || mode == ProgramMode.runExtractedTests || mode == ProgramMode.buildEachCommit
-            || mode == ProgramMode.runSlowTests)
-    {
-        import dub_cache : seedBundledDubHome, userDubHome;
-        seedBundledDubHome(userDubHome());
-    }
-    // `--coverage` is on by default, so it cannot be rejected alongside
-    // `--test-sanitize` without making every plain invocation fail; the
-    // sanitizer mode overrides it and says so. ASan and `-cov` both
-    // instrument every function, and the listings would describe an ASan
-    // build nobody ships while overwriting the plain run's `build/coverage`.
-    const coverage = mode == ProgramMode.runSanitizeTests ? false : cli.coverage;
-    info(i"mode {cyan $(programModeName(mode))}{dim , fail-fast=$(cli.failFast), coverage=$(coverage)}");
-    if (mode == ProgramMode.runSanitizeTests && cli.coverage)
-        info(i"coverage is off under --test-sanitize (ASan and -cov instrumentation do not mix)");
-
-    if (mode == ProgramMode.linuxHostProbe)
-        return exitStatus(runLinuxHostProbe());
-
-    if (cli.hostSystem.length && !alreadyOnHostSystem(cli.hostSystem))
-        return exitStatus(runOnLinuxHost(cli.hostSystem, args, cli.hostCiRev));
-
-    if (mode == ProgramMode.checkCommitScope)
-    {
-        string source = (positionalArgs.length > 0) ? positionalArgs[0] : "-";
-        return exitStatus(runCheckCommitScope(source));
-    }
-
-    if (mode == ProgramMode.checkDocsSidebar)
-        return exitStatus(runCheckDocsSidebar());
-
-    if (mode == ProgramMode.checkSpecEvidence)
-        return exitStatus(runCheckSpecEvidence(cli.updateSpecEvidenceBacklog));
-
-    if (mode == ProgramMode.checkGlossary)
-        return exitStatus(runCheckGlossary());
-    if (mode == ProgramMode.checkAdHocSdl)
-        return exitStatus(runCheckAdHocSdl());
-    if (mode == ProgramMode.checkOpaqueRecipes)
-        return exitStatus(runCheckOpaqueRecipes());
-    if (mode == ProgramMode.checkCredits)
-        return exitStatus(runCheckCredits());
-    if (mode == ProgramMode.perfPush || mode == ProgramMode.perfImport || mode == ProgramMode.perfAppend)
-        return exitStatus(runPerfPublish(mode, cli));
-    if (mode == ProgramMode.writePinCosts)
-        return exitStatus(runWritePinCosts(cli.writePinCosts, cli.historyRemote));
-    if (mode == ProgramMode.listPlacements)
-        return exitStatus(runListPlacements(cli.provider, cli.githubOutput, cli.historyRemote));
-    if (mode == ProgramMode.recordTask)
-        return exitStatus(runRecordTask(cli.recordTask, cli.positionals, cli.placement, cli.shard));
-    if (mode == ProgramMode.checkPinCache)
-        return exitStatus(runCheckPinCache());
-    if (mode == ProgramMode.checkWasmModules)
-        return exitStatus(runCheckWasmModules(cli.textModule, cli.tableModule, cli.wiredModule, cli.wasiLoader,
-            cli.wasiShim));
-    if (mode == ProgramMode.checkNixWasm)
-    {
-        import nix_wasm_check : runCheckNixWasm;
-        return exitStatus(runCheckNixWasm(detectRepoRoot(), cli.nixWasmEvaluator, cli.nixWasmModule,
-            cli.nixWasmAnswers));
-    }
-    if (mode == ProgramMode.stageDocsWasm)
-        return exitStatus(stageDocsWasm(detectRepoRoot()));
-
-    // The audit resolves its own corpus (docs/**/*.md + README.md, or --files),
-    // so it must not fall through to the shared "no input files" usage error.
-    if (mode == ProgramMode.seedDubCache)
-    {
-        import dub_cache : seedBundledDubHome, userDubHome;
-        if (!environment.get("SPARKLES_DUB_SOURCES", "").length)
-        {
-            error(i"No source bundle configured; use nix run .#ci -- --seed-dub-cache");
-            return 1;
-        }
-        const imported = seedBundledDubHome(userDubHome());
-        info(i"Imported $(imported) dependency version(s) into $(userDubHome())");
-        return 0;
-    }
-
-    if (mode == ProgramMode.auditFences)
-        return exitStatus(runAuditFencesMode(cli));
-
-    if (mode == ProgramMode.runDubBuild)
-        return exitStatus(cli.watch
-            ? runWatchMode(WatchAction.build, cli.failFast)
-            : runDubBuildMode(cli.failFast));
-
-    if (mode == ProgramMode.buildEachCommit)
-        return exitStatus(runBuildEachCommitMode(cli.base, cli.packages, cli.failFast));
-
-    if (mode == ProgramMode.runDubTests)
-        return exitStatus(cli.watch
-            ? runWatchMode(WatchAction.test, cli.failFast)
-            : runDubTestsMode(cli.failFast, coverage, cli.packages, cli.skipPackages,
-                placementArgs(cli)));
-
-    if (mode == ProgramMode.runSanitizeTests)
-        return exitStatus(runDubTestsMode(cli.failFast, coverage, cli.packages, cli.skipPackages,
-            placementArgs(cli),
-            sanitize: true));
-
-    if (mode == ProgramMode.runExtractedTests)
-        return exitStatus(runExtractedTestsMode(cli.failFast, cli.packages, cli.skipPackages,
-            placementArgs(cli)));
-
-    if (mode == ProgramMode.listSlowTests)
-        return exitStatus(runListSlowTestsMode());
-
-    if (mode == ProgramMode.runSlowTests)
-        return exitStatus(runSlowTestsMode(cli.packages, cli.tests, cli.failFast));
-
-    if (mode == ProgramMode.gcReport)
-    {
-        import gc_report : runGcReport;
-        return exitStatus(runGcReport(cli.gcReport, cli.gcBaseline, cli.gcTop));
-    }
-
-    if (mode == ProgramMode.ciStats)
-        return exitStatus(runCiStatsMode(cli));
-
-    if (mode == ProgramMode.mirrorChecks)
-        return exitStatus(runMirrorChecksMode(cli));
-
-    if (mode == ProgramMode.reportLinkRot)
-        return exitStatus(runReportLinkRotMode(cli));
-
-    if (mode == ProgramMode.gcR2)
-        return exitStatus(runGcR2Mode(cli));
-
-
-    auto inputFiles = collectInputFiles(cli, mode);
-
-    if (inputFiles.length == 0)
-    {
-        if (cli.files.length > 0 || cli.exclude.length > 0)
-        {
-            error(i"--include-files / --exclude-files selection matched no supported input files for this mode");
-            return 1;
-        }
-
-        if (isReferenceMode(mode))
-            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--dedup-reference-links|--fix-reference-links] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]");
-        else if (mode == ProgramMode.runExampleFiles)
-            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --example-files [--fail-fast] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]");
-        else if (mode == ProgramMode.checkCommitScope)
-            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --check-commit-scope [<commit-msg-file> | -]");
-        else if (mode == ProgramMode.checkVcsUrls)
-            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --check-vcs-urls [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]");
-        else if (mode == ProgramMode.checkDocsSidebar)
-            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --check-docs-sidebar");
-        else if (mode == ProgramMode.checkBlobPaths)
-            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --check-blob-paths [--clone-root DIR] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]");
-        else
-            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--verify|--update] [--fail-fast] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]");
-        return 1;
-    }
-
-    if (mode == ProgramMode.runExampleFiles)
-        return exitStatus(runExampleFilesMode(inputFiles, cli.failFast));
-
-    if (mode == ProgramMode.checkReferenceLinks)
-        return exitStatus(runReferenceLinkMode(inputFiles, false));
-
-    if (mode == ProgramMode.fixReferenceLinks)
-        return exitStatus(runReferenceLinkMode(inputFiles, true));
-
-    if (mode == ProgramMode.checkVcsUrls)
-        return exitStatus(runCheckVcsUrls(inputFiles));
-
-    if (mode == ProgramMode.checkBlobPaths)
-        return exitStatus(runCheckBlobPaths(inputFiles, cli.cloneRoot));
-
-    return exitStatus(runExamplesForFiles(inputFiles, mode, cli.failFast));
-}
-
-private string validateCliMode(
-    in CliParams cli,
-    in string[] positionalArgs,
-)
-{
-    if (cli.seedDubCache && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test
-            || cli.testExtracted || cli.testSanitize || cli.buildEachCommit || cli.auditFences
-            || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope
-            || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkSpecEvidence || cli.checkGlossary
-            || cli.checkPinCache || cli.checkAdHocSdl || cli.checkOpaqueRecipes || cli.checkBlobPaths || cli.ciStats || cli.mirrorChecks || cli.reportLinkRot || cli.gcR2 || cli.linuxHostProbe
-            || cli.hostSystem.length || cli.files.length || cli.exclude.length))
-        return "--seed-dub-cache cannot be combined with other modes or file selection";
-
-    if (cli.verify && cli.update)
-        return "--verify and --update are mutually exclusive";
-
-    if (cli.exampleFiles && (cli.verify || cli.update))
-        return "--example-files cannot be combined with --verify or --update";
-
-    if (cli.build && (cli.verify || cli.update))
-        return "--build cannot be combined with --verify or --update";
-
-    if (cli.test && (cli.verify || cli.update))
-        return "--test cannot be combined with --verify or --update";
-
-    if (cli.testSanitize && (cli.verify || cli.update))
-        return "--test-sanitize cannot be combined with --verify or --update";
-
-
-    if (cli.build && cli.exampleFiles)
-        return "--build cannot be combined with --example-files";
-
-    if (cli.test && cli.exampleFiles)
-        return "--test cannot be combined with --example-files";
-
-    if (cli.testSanitize && cli.exampleFiles)
-        return "--test-sanitize cannot be combined with --example-files";
-
-    if (cli.build && cli.test)
-        return "--build cannot be combined with --test";
-
-    if (cli.watch && !cli.test && !cli.build)
-        return "--watch needs --test or --build";
-
-    if (cli.build && cli.testSanitize)
-        return "--build cannot be combined with --test-sanitize";
-
-    if (cli.test && cli.testSanitize)
-        return "--test cannot be combined with --test-sanitize";
-
-    if ((cli.verify || cli.update)
-        && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
-    {
-        return "example modes (--verify/--update) cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
-    }
-
-    if (cli.exampleFiles && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
-        return "--example-files cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
-
-    if (cli.build && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
-        return "--build cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
-
-    if (cli.test && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
-        return "--test cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
-
-    if (cli.testSanitize && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
-        return "--test-sanitize cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
-
-    if (cli.testExtracted && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test
-            || cli.testSanitize || cli.dedupReferenceLinks || cli.fixReferenceLinks))
-        return "--test-extracted cannot be combined with other modes";
-
-    if (cli.testSanitize && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test
-            || cli.testExtracted || cli.dedupReferenceLinks || cli.fixReferenceLinks))
-        return "--test-sanitize cannot be combined with other modes";
-
-    if ((cli.testSlow || cli.listSlowTests) && (cli.verify || cli.update || cli.exampleFiles
-            || cli.build || cli.test || cli.testExtracted || cli.testSanitize || cli.buildEachCommit
-            || cli.dedupReferenceLinks || cli.fixReferenceLinks || (cli.testSlow && cli.listSlowTests)))
-        return (cli.testSlow ? "--test-slow" : "--list-slow-tests") ~ " cannot be combined with other modes";
-
-    if (cli.tests.length && !cli.testSlow)
-        return "--tests needs --test-slow";
-
-    if (cli.checkCommitScope && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test || cli.testSanitize || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkBlobPaths || cli.ciStats))
-        return "--check-commit-scope cannot be combined with other modes";
-
-    if (cli.checkVcsUrls && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test || cli.testSanitize || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkDocsSidebar || cli.checkBlobPaths || cli.ciStats))
-        return "--check-vcs-urls cannot be combined with other modes";
-
-    if (cli.checkBlobPaths && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test || cli.testSanitize || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar || cli.ciStats))
-        return "--check-blob-paths cannot be combined with other modes";
-
-    if (cli.checkDocsSidebar && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test || cli.testSanitize || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkBlobPaths || cli.ciStats))
-        return "--check-docs-sidebar cannot be combined with other modes";
-
-    if (cli.ciStats && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test
-            || cli.testSanitize || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkBlobPaths))
-        return "--ci-stats cannot be combined with other modes";
-
-    if (cli.mirrorChecks && cli.sha.length == 0)
-        return "--mirror-checks requires --sha";
-
-    if (cli.mirrorChecks && cli.repo.length == 0)
-        return "--mirror-checks requires --repo owner/repo";
-
-    if (cli.gcR2 && (cli.keepCommits <= 0 || cli.graceDays < 0))
-        return "--gc-r2 needs a positive --keep-commits and a non-negative --grace-days";
-
-    if (cli.linuxHostProbe && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test
-            || cli.testExtracted || cli.dedupReferenceLinks || cli.fixReferenceLinks
-            || cli.checkCommitScope || cli.checkVcsUrls || cli.checkDocsSidebar
-            || cli.checkBlobPaths || cli.ciStats || cli.auditFences || cli.testSanitize
-            || cli.steps || cli.mirrorChecks || cli.reportLinkRot))
-        return "--linux-host-probe cannot be combined with other modes";
-
-    if (cli.hostSystem.length)
-    {
-        bool known;
-        foreach (s; linuxHostSystems)
-            if (cli.hostSystem == s)
-                known = true;
-        if (!known)
-            return "--host-system must be aarch64-linux or x86_64-linux";
-    }
-    if (cli.hostCiRev.length && cli.hostSystem.length == 0)
-        return "--host-ci-rev needs --host-system";
-
-    if (cli.ciStats && cli.limit <= 0)
-        return "--limit must be a positive integer";
-
-    // A baseline is one side of a two-population comparison; without
-    // `--branch` there is nothing to compare it against.
-    if (cli.ciStats && cli.baseline.length && cli.branch.length == 0)
-        return "--baseline requires --branch (the candidate side of the comparison)";
-
-    if (cli.ciStats && cli.stepJobs <= 0)
-        return "--step-jobs must be a positive integer";
-
-    // Reject a malformed pivot here rather than after a few hundred API calls.
-    if (cli.ciStats && cli.split.length)
-    {
-        import ci_stats : parseSplitInstant;
-
-        try
-            cast(void) parseSplitInstant(cli.split);
-        catch (Exception e)
-            return "--split: " ~ e.msg;
-    }
-
-    if (cli.checkCommitScope && positionalArgs.length > 1)
-        return "--check-commit-scope accepts at most one argument (a path or '-' for stdin)";
-
-    if (positionalArgs.length > 0 && !cli.checkCommitScope && !cli.recordTask.length)
-        return "Positional file arguments are no longer supported; use --include-files (alias --files)";
-
-    return null;
-}
-
-private ProgramMode resolveProgramMode(in CliParams cli)
-{
-    if (cli.seedDubCache)
-        return ProgramMode.seedDubCache;
-
-    if (cli.linuxHostProbe)
-        return ProgramMode.linuxHostProbe;
-
-    if (cli.auditFences)
-        return ProgramMode.auditFences;
-
-    if (cli.gcReport.length)
-        return ProgramMode.gcReport;
-
-    if (cli.ciStats)
-        return ProgramMode.ciStats;
-
-    if (cli.mirrorChecks)
-        return ProgramMode.mirrorChecks;
-
-    if (cli.reportLinkRot)
-        return ProgramMode.reportLinkRot;
-
-    if (cli.gcR2)
-        return ProgramMode.gcR2;
-
-    if (cli.exampleFiles)
-        return ProgramMode.runExampleFiles;
-
-    if (cli.testExtracted)
-        return ProgramMode.runExtractedTests;
-
-    if (cli.testSanitize)
-        return ProgramMode.runSanitizeTests;
-
-    if (cli.listSlowTests)
-        return ProgramMode.listSlowTests;
-
-    if (cli.testSlow)
-        return ProgramMode.runSlowTests;
-
-    if (cli.test)
-        return ProgramMode.runDubTests;
-
-    if (cli.buildEachCommit)
-        return ProgramMode.buildEachCommit;
-
-    if (cli.build)
-        return ProgramMode.runDubBuild;
-
-    if (cli.fixReferenceLinks)
-        return ProgramMode.fixReferenceLinks;
-
-    if (cli.dedupReferenceLinks)
-        return ProgramMode.checkReferenceLinks;
-
-    if (cli.update)
-        return ProgramMode.updateExamples;
-
-    if (cli.verify)
-        return ProgramMode.verifyExamples;
-
-    if (cli.checkCommitScope)
-        return ProgramMode.checkCommitScope;
-
-    if (cli.checkVcsUrls)
-        return ProgramMode.checkVcsUrls;
-
-    if (cli.checkDocsSidebar)
-        return ProgramMode.checkDocsSidebar;
-
-    if (cli.checkSpecEvidence)
-        return ProgramMode.checkSpecEvidence;
-
-    if (cli.checkGlossary)
-        return ProgramMode.checkGlossary;
-    if (cli.checkAdHocSdl)
-        return ProgramMode.checkAdHocSdl;
-    if (cli.checkOpaqueRecipes)
-        return ProgramMode.checkOpaqueRecipes;
-    if (cli.checkCredits)
-        return ProgramMode.checkCredits;
-    if (cli.perfPush)
-        return ProgramMode.perfPush;
-    if (cli.perfImportGithubRun.length)
-        return ProgramMode.perfImport;
-    if (cli.perfAppend)
-        return ProgramMode.perfAppend;
-    if (cli.writePinCosts.length)
-        return ProgramMode.writePinCosts;
-    if (cli.listPlacements)
-        return ProgramMode.listPlacements;
-    if (cli.recordTask.length)
-        return ProgramMode.recordTask;
-    if (cli.checkPinCache)
-        return ProgramMode.checkPinCache;
-
-    if (cli.checkBlobPaths)
-        return ProgramMode.checkBlobPaths;
-
-    if (cli.checkWasmModules)
-        return ProgramMode.checkWasmModules;
-
-    if (cli.checkNixWasm)
-        return ProgramMode.checkNixWasm;
-
-    if (cli.stageDocsWasm)
-        return ProgramMode.stageDocsWasm;
-
-    return ProgramMode.runExamples;
-}
-
-/// Flag-shaped name for a log line (`--test`, `--example-files`, …).
-private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
-{
-    final switch (mode)
-    {
-        case ProgramMode.runExamples:        return "examples";
-        case ProgramMode.verifyExamples:     return "--verify";
-        case ProgramMode.updateExamples:     return "--update";
-        case ProgramMode.runExampleFiles:    return "--example-files";
-        case ProgramMode.runDubBuild:        return "--build";
-        case ProgramMode.buildEachCommit:    return "--build-each-commit";
-        case ProgramMode.runDubTests:        return "--test";
-        case ProgramMode.runExtractedTests:  return "--test-extracted";
-        case ProgramMode.runSanitizeTests:   return "--test-sanitize";
-        case ProgramMode.listSlowTests:      return "--list-slow-tests";
-        case ProgramMode.runSlowTests:       return "--test-slow";
-        case ProgramMode.checkReferenceLinks: return "--dedup-reference-links";
-        case ProgramMode.fixReferenceLinks:  return "--fix-reference-links";
-        case ProgramMode.checkCommitScope:   return "--check-commit-scope";
-        case ProgramMode.checkVcsUrls:       return "--check-vcs-urls";
-        case ProgramMode.checkDocsSidebar:   return "--check-docs-sidebar";
-        case ProgramMode.checkSpecEvidence:  return "--check-spec-evidence";
-        case ProgramMode.checkGlossary:      return "--check-glossary";
-        case ProgramMode.checkAdHocSdl:      return "--check-adhoc-sdl";
-        case ProgramMode.checkOpaqueRecipes: return "--check-opaque-recipes";
-        case ProgramMode.checkCredits:       return "--check-credits";
-        case ProgramMode.checkPinCache:      return "--check-pin-cache";
-        case ProgramMode.recordTask:         return "--record-task";
-        case ProgramMode.listPlacements:     return "--list-placements";
-        case ProgramMode.writePinCosts:      return "--write-pin-costs";
-        case ProgramMode.perfPush:           return "--perf-push";
-        case ProgramMode.perfImport:         return "--perf-import-github-run";
-        case ProgramMode.perfAppend:         return "--perf-append";
-        case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
-        case ProgramMode.gcReport:           return "--gc-report";
-        case ProgramMode.checkWasmModules:   return "--check-wasm-modules";
-        case ProgramMode.checkNixWasm:       return "--check-nix-wasm";
-        case ProgramMode.stageDocsWasm:      return "--stage-docs-wasm";
-        case ProgramMode.ciStats:            return "--ci-stats";
-        case ProgramMode.mirrorChecks:       return "--mirror-checks";
-        case ProgramMode.reportLinkRot:      return "--report-link-rot";
-        case ProgramMode.gcR2:               return "--gc-r2";
-        case ProgramMode.auditFences:        return "--audit-fences";
-        case ProgramMode.linuxHostProbe:     return "--linux-host-probe";
-        case ProgramMode.seedDubCache:       return "--seed-dub-cache";
-    }
-}
-
-private bool isReferenceMode(in ProgramMode mode)
-{
-    return mode == ProgramMode.checkReferenceLinks
-        || mode == ProgramMode.fixReferenceLinks;
-}
-
 /// Runs the detailed commit scope check for a commit message file.
 /// This is invoked by the pre-commit commit-msg hook.
 /// Returns 0 on success (allow commit), 1 on failure (block).
 /// Check the given commit message (file path or "-" / empty for stdin) for
 /// detailed scope compliance. Returns 0 on success (allow), 1 on violation (block).
-private RunExpected!void runCheckCommitScope(string msgSource)
+package RunExpected!void runCheckCommitScope(string msgSource)
 {
     import std.file : readText;
     import std.process : execute;
@@ -1548,7 +432,7 @@ private string[] trackedMarkdownFiles()
 }
 
 /// Git pathspecs for the repository's standalone example `.d` files — the
-/// defaults `--example-files` uses when no `--include-files` selection is
+/// defaults `ci examples standalone` uses when no `--include-files` selection is
 /// given: the `base`, `build-primitives`, and `core-cli` library demos plus the
 /// worked examples that accompany the research docs
 /// (`docs/research/async-io/io-uring/`, `docs/research/async-io/gcd/`,
@@ -1697,14 +581,26 @@ private string[] trackedFilesMatching(string pattern)
         .array;
 }
 
-/// Runs the fence audit (`--audit-fences`). `--files` selectors override the
-/// default `docs/**/*.md` + `README.md` set; globs resolve through
-/// `git ls-files` in the current directory, so combine them with `--root` only
-/// when the two agree.
-private RunExpected!void runAuditFencesMode(in CliParams cli)
+/// `ci docs fences-audit`. `--include-files` selectors override the default
+/// `docs/**/*.md` + `README.md` set; globs resolve through `git ls-files` in
+/// the current directory, so combine them with `--root` only when the two
+/// agree.
+package RunExpected!void runAuditFencesCommand(in FileSelection files, string json, string root,
+    AuditScope auditScope)
+{
+    return runFenceAudit(FenceAuditOptions(
+        root: root,
+        files: selectedFiles(files.include).filter!(path => path.endsWith(".md")).array,
+        jsonPath: json,
+        auditScope: auditScope,
+    ));
+}
+
+/// The files `selectors` name: globs through `git ls-files`, paths as given.
+private string[] selectedFiles(in string[] selectors)
 {
     string[] selected;
-    foreach (selector; cli.files)
+    foreach (selector; selectors)
     {
         if (selector.length == 0)
             continue;
@@ -1714,70 +610,137 @@ private RunExpected!void runAuditFencesMode(in CliParams cli)
         else
             selected ~= selector.idup;
     }
-
-    // An unknown scope is a typo, not a reason to silently census the default
-    // set and report numbers the caller did not ask for.
-    AuditScope scope_;
-    switch (cli.auditScope)
-    {
-        case "site":     scope_ = AuditScope.site;     break;
-        case "all":      scope_ = AuditScope.all;      break;
-        case "excluded": scope_ = AuditScope.excluded; break;
-        default:
-            return failRun(text(i"unknown --audit-scope `$(cli.auditScope)`; expected site, all or excluded"));
-    }
-
-    return runFenceAudit(FenceAuditOptions(
-        root: cli.root,
-        files: selected.filter!(path => path.endsWith(".md")).array,
-        jsonPath: cli.json,
-        auditScope: scope_,
-    ));
+    return selected;
 }
 
-private string[] collectInputFiles(
-    in CliParams cli,
-    in ProgramMode mode,
-)
+/// What a file-selecting command reads by default, and which files it takes.
+private enum InputFiles
 {
-    const hasExplicitSelection = cli.files.length > 0;
+    markdown,         /// `.md` files, by default the tracked ones
+    markdownExamples, /// `.md` files, with no default: the files must be named
+    standalone,       /// `.d` example programs, by default the tracked example directories
+}
 
-    string[] inputFiles;
+/**
+The files a command reads: `files.include` (or the defaults of `kind`), minus
+`files.exclude`. An error when nothing is left: a selection that matched
+nothing is a mistake, and so is a command with no default given no files.
+*/
+private RunExpected!(string[]) collectInputFiles(in FileSelection files, InputFiles kind, string command)
+{
+    string[] inputFiles = selectedFiles(files.include);
+    if (inputFiles.length == 0 && files.include.length == 0)
+        final switch (kind)
+        {
+            case InputFiles.markdown:
+                inputFiles = trackedMarkdownFiles();
+                break;
+            case InputFiles.standalone:
+                inputFiles = trackedStandaloneExampleFiles();
+                break;
+            case InputFiles.markdownExamples:
+                return failRun!(string[])(command ~ " needs --include-files FILE|GLOB...");
+        }
 
-    foreach (selector; cli.files)
-    {
-        if (selector.length == 0)
-            continue;
-
-        if (isGlobSelector(selector))
-            inputFiles ~= trackedFilesMatching(selector);
-        else
-            inputFiles ~= selector.idup;
-    }
-
-    if (inputFiles.length == 0 && !hasExplicitSelection)
-    {
-        if (isReferenceMode(mode))
-            inputFiles = trackedMarkdownFiles();
-        else if (mode == ProgramMode.runExampleFiles)
-            inputFiles = trackedStandaloneExampleFiles();
-        else if (mode == ProgramMode.checkVcsUrls)
-            inputFiles = trackedMarkdownFiles();
-        else if (mode == ProgramMode.checkBlobPaths)
-            inputFiles = trackedMarkdownFiles();
-    }
-
-    const requiredSuffix = mode == ProgramMode.runExampleFiles ? ".d" : ".md";
-
-    return inputFiles
+    const requiredSuffix = kind == InputFiles.standalone ? ".d" : ".md";
+    auto selected = inputFiles
         .filter!(path => path.length > 0)
         .filter!(path => path.endsWith(requiredSuffix))
-        .filter!(path => !isExcludedBy(path, cli.exclude))
+        .filter!(path => !isExcludedBy(path, files.exclude))
         .map!(path => path.idup)
         .array;
+    if (selected.length == 0)
+        return failRun!(string[])(text(command, ": the selection matched no ", requiredSuffix, " file"));
+    return ok!RunError(selected);
 }
 
-private RunExpected!void runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool failFast)
+/// `ci examples run|verify|update`.
+package RunExpected!void runMarkdownExamplesCommand(ExampleAction action, in FileSelection files,
+    bool failFast)
+{
+    const command = text("ci examples ", action);
+    return collectInputFiles(files, InputFiles.markdownExamples, command)
+        .andThen!(mdFiles => runExamplesForFiles(mdFiles, action, failFast));
+}
+
+/// `ci examples standalone`.
+package RunExpected!void runStandaloneExamplesCommand(in FileSelection files, bool failFast)
+{
+    seedDubHome();
+    return collectInputFiles(files, InputFiles.standalone, "ci examples standalone")
+        .andThen!(exampleFiles => runExampleFilesMode(exampleFiles, failFast));
+}
+
+/// `ci check reference-links` and `ci fix reference-links`.
+package RunExpected!void runReferenceLinksCommand(in FileSelection files, bool fix)
+{
+    return collectInputFiles(files, InputFiles.markdown, fix ? "ci fix reference-links" : "ci check reference-links")
+        .andThen!(mdFiles => runReferenceLinkMode(mdFiles, fix));
+}
+
+/// `ci check vcs-urls`.
+package RunExpected!void runCheckVcsUrlsCommand(in FileSelection files)
+{
+    return collectInputFiles(files, InputFiles.markdown, "ci check vcs-urls")
+        .andThen!(mdFiles => runCheckVcsUrls(mdFiles));
+}
+
+/// `ci check blob-paths`.
+package RunExpected!void runCheckBlobPathsCommand(in FileSelection files, string cloneRoot)
+{
+    return collectInputFiles(files, InputFiles.markdown, "ci check blob-paths")
+        .andThen!(mdFiles => runCheckBlobPaths(mdFiles, cloneRoot));
+}
+
+/// Seed DUB's source cache from the Nix bundle, for the commands that run dub.
+package void seedDubHome()
+{
+    import dub_cache : seedBundledDubHome, userDubHome;
+
+    seedBundledDubHome(userDubHome());
+}
+
+/// `ci cache seed-dub`.
+package RunExpected!void runSeedDubCache()
+{
+    import dub_cache : seedBundledDubHome, userDubHome;
+
+    if (!environment.get("SPARKLES_DUB_SOURCES", "").length)
+        return failRun("No source bundle configured; use nix run .#ci -- cache seed-dub");
+    const imported = seedBundledDubHome(userDubHome());
+    info(i"Imported $(imported) dependency version(s) into $(userDubHome())");
+    return ranOk();
+}
+
+/// `ci test`: the mode its options select.
+package RunExpected!void runTestCommand(in TestCommand cmd)
+{
+    seedDubHome();
+    const where = PlacementArgs(cmd.placement, cmd.shard, cmd.historyTip, cmd.history.historyRemote);
+    if (cmd.buildOnly)
+        return cmd.watch ? runWatchMode(WatchAction.build, cmd.failFast) : runDubBuildMode(cmd.failFast);
+    if (cmd.slow)
+        return runSlowTestsMode(cmd.from, cmd.tests, cmd.failFast);
+    if (cmd.specialModes != SpecialModes.off)
+        return runExtractedTestsMode(cmd.failFast, cmd.from, where,
+            ExtractedModes(
+                betterC: cmd.specialModes != SpecialModes.wasm,
+                wasm: cmd.specialModes != SpecialModes.betterc));
+    if (cmd.sanitize == Sanitizer.address)
+    {
+        // ASan and `-cov` both instrument every function, and the listings
+        // would describe an ASan build nobody ships while overwriting the
+        // plain run's `build/coverage`.
+        if (cmd.coverage)
+            info(i"coverage is off under --sanitize (ASan and -cov instrumentation do not mix)");
+        return runDubTestsMode(cmd.failFast, false, cmd.from, where, sanitize: true);
+    }
+    if (cmd.watch)
+        return runWatchMode(WatchAction.test, cmd.failFast);
+    return runDubTestsMode(cmd.failFast, cmd.coverage, cmd.from, where);
+}
+
+private RunExpected!void runExamplesForFiles(string[] mdFiles, ExampleAction action, bool failFast)
 {
     static struct FileExamples
     {
@@ -1896,59 +859,16 @@ private RunExpected!void runExamplesForFiles(string[] mdFiles, in ProgramMode mo
         offset += g.examples.length;
 
         RunExpected!void rc;
-        final switch (mode)
+        final switch (action)
         {
-            case ProgramMode.runExamples:
+            case ExampleAction.run:
                 rc = runDefaultMode(g.examples, results, g.mdFile, failFast);
                 break;
-            case ProgramMode.verifyExamples:
+            case ExampleAction.verify:
                 rc = runVerifyMode(g.examples, results, g.mdFile, failFast);
                 break;
-            case ProgramMode.updateExamples:
+            case ExampleAction.update:
                 rc = runUpdateMode(g.examples, results, g.mdFile, failFast);
-                break;
-            case ProgramMode.runExampleFiles:
-            case ProgramMode.runDubBuild:
-            case ProgramMode.buildEachCommit:
-            case ProgramMode.runDubTests:
-            case ProgramMode.runExtractedTests:
-            case ProgramMode.runSanitizeTests:
-            case ProgramMode.listSlowTests:
-            case ProgramMode.runSlowTests:
-                rc = failRun("not a markdown example mode");
-                break;
-            case ProgramMode.checkReferenceLinks:
-            case ProgramMode.fixReferenceLinks:
-            case ProgramMode.checkCommitScope:
-            case ProgramMode.checkVcsUrls:
-            case ProgramMode.checkDocsSidebar:
-            case ProgramMode.checkSpecEvidence:
-            case ProgramMode.checkGlossary:
-            case ProgramMode.checkAdHocSdl:
-            case ProgramMode.checkOpaqueRecipes:
-            case ProgramMode.checkCredits:
-            case ProgramMode.checkPinCache:
-            case ProgramMode.recordTask:
-            case ProgramMode.listPlacements:
-            case ProgramMode.writePinCosts:
-            case ProgramMode.perfPush:
-            case ProgramMode.perfImport:
-            case ProgramMode.perfAppend:
-            case ProgramMode.checkBlobPaths:
-            case ProgramMode.checkWasmModules:
-            case ProgramMode.checkNixWasm:
-            case ProgramMode.stageDocsWasm:
-                rc = failRun("not a markdown example mode");
-                break;
-            case ProgramMode.gcReport:
-            case ProgramMode.ciStats:
-            case ProgramMode.mirrorChecks:
-            case ProgramMode.reportLinkRot:
-            case ProgramMode.gcR2:
-            case ProgramMode.auditFences:
-            case ProgramMode.linuxHostProbe:
-            case ProgramMode.seedDubCache:
-                rc = failRun("not a markdown example mode");   // handled earlier in main(); should never reach here
                 break;
         }
 
@@ -2029,7 +949,7 @@ private Duration exampleTimeout()
 /// Re-apply the Sparkles + Phobos log level without resetting the
 /// `DeltaTimeLogger` clock, so `--log-level` after the early `initLogger`
 /// does not drop the timestamps already emitted.
-private void applyLogLevel(LogLevel level) @safe
+package void applyLogLevel(LogLevel level) @safe
 {
     import std.logger : globalLogLevel;
 
@@ -2046,7 +966,7 @@ private void applyLogLevel(LogLevel level) @safe
 
 /// One host-resource snapshot: the breadcrumb that tells a slow CI log
 /// whether the runner was already tight on RAM/CPUs before any work started.
-private void logHostResources()
+package void logHostResources()
 {
     import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.text.writers : writeBytes, writeFixedPoint;
@@ -2407,7 +1327,7 @@ private bool[] batchObjectsExist(string cloneDir, in string[] specs, size_t chun
 /++
 Check that every SHA-pinned blob citation names a path present at that commit.
 
-Complements `--check-vcs-urls`, which proves only that a citation carries a
+Complements `ci check vcs-urls`, which proves only that a citation carries a
 commit SHA rather than a moving ref. See `blob_paths` for why this is a local
 check and why an unclonable repository is reported rather than failed.
 +/
@@ -2540,7 +1460,7 @@ private RunExpected!void runCheckBlobPaths(string[] files, string cloneRoot)
                 f.ref_.path, f.ref_.sha[0 .. 12], f.cloneDir);
             stderr.writeln;
         }
-        stderr.writeln("These 404 upstream. --check-vcs-urls cannot catch them: it "
+        stderr.writeln("These 404 upstream. ci check vcs-urls cannot catch them: it "
             ~ "verifies the ref, not the path.");
         return failRun("SHA-pinned citation(s) name paths that do not exist");
     }
@@ -2555,13 +1475,13 @@ private RunExpected!void runCheckBlobPaths(string[] files, string cloneRoot)
 /// when pages are missing from the sidebar or sidebar links are dangling.
 
 /++
-`--check-adhoc-sdl`: no D source matches SDL text by hand (`sdl_audit`).
+`ci check adhoc-sdl`: no D source matches SDL text by hand (`sdl_audit`).
 
-Whole-tree, like `--check-spec-evidence`: every tracked D source is read. A hit
+Whole-tree, like `ci check spec-evidence`: every tracked D source is read. A hit
 the allowlist does not name fails, and so does an allowlist entry that names
 no hit any more, so the list only shrinks.
 +/
-private RunExpected!void runCheckAdHocSdl()
+package RunExpected!void runCheckAdHocSdl()
 {
     import std.file : exists, readText;
     import std.path : buildPath, extension;
@@ -2615,14 +1535,14 @@ private RunExpected!void runCheckAdHocSdl()
 }
 
 /++
-`--check-opaque-recipes`: the recipe entries no input set can hold
+`ci check opaque-recipes`: the recipe entries no input set can hold
 (`opaque_recipes`), on every host the repository builds on.
 
 Each is reported with what to write instead. One the allowlist does not name
 fails, and so does an allowlist entry that names none any more, so a new
 opaque entry is a reviewed decision and the list only shrinks.
 +/
-private RunExpected!void runCheckOpaqueRecipes()
+package RunExpected!void runCheckOpaqueRecipes()
 {
     import std.file : exists, readText;
     import std.path : buildPath;
@@ -2677,13 +1597,13 @@ private RunExpected!void runCheckOpaqueRecipes()
 }
 
 /++
-`--check-spec-evidence`: every symbol a spec's evidence column cites must exist.
+`ci check spec-evidence`: every symbol a spec's evidence column cites must exist.
 
-Whole-tree, like `--check-docs-sidebar`: a requirement's traceability claim is
+Whole-tree, like `ci check sidebar`: a requirement's traceability claim is
 not a property of the diff that touched it, and the rows that rot are precisely
 the ones nobody is editing.
 +/
-private RunExpected!void runCheckSpecEvidence(bool updateBacklog)
+package RunExpected!void runCheckSpecEvidence(bool updateBacklog)
 {
     import std.file : exists, readText, write;
     import std.path : buildPath, extension;
@@ -2765,13 +1685,13 @@ private RunExpected!void runCheckSpecEvidence(bool updateBacklog)
 }
 
 /++
-`--check-glossary`: the glossary data is well formed, and every docs link into
+`ci check glossary`: the glossary data is well formed, and every docs link into
 it names an entry (`sparkles.docs.glossary.checkGlossary`).
 
-Whole-tree, like `--check-docs-sidebar`: deleting an entry breaks pages the
+Whole-tree, like `ci check sidebar`: deleting an entry breaks pages the
 change never touched.
 +/
-private RunExpected!void runCheckGlossary()
+package RunExpected!void runCheckGlossary()
 {
     const repoRoot = detectRepoRoot();
 
@@ -2818,7 +1738,7 @@ private RunExpected!void runCheckGlossary()
 }
 
 /// TC23's gate; see `derivation_pin.checkToolchainCached`.
-private RunExpected!void runCheckPinCache()
+package RunExpected!void runCheckPinCache()
 {
     version (Posix)
     {
@@ -2830,11 +1750,11 @@ private RunExpected!void runCheckPinCache()
         return failRun(checked.error);
     }
     else
-    return failRun("--check-pin-cache needs a POSIX host");
+    return failRun("ci check pin-cache needs a POSIX host");
 }
 
-/// `--check-credits`: the credits document against the build inputs (`credits`).
-private RunExpected!void runCheckCredits()
+/// `ci check credits`: the credits document against the build inputs (`credits`).
+package RunExpected!void runCheckCredits()
 {
     import credits : checkCredits, creditsDir, partsDir;
     import std.file : dirEntries, isFile, SpanMode;
@@ -2886,7 +1806,7 @@ private RunExpected!void runCheckCredits()
     return failRun("the credits do not match the build inputs");
 }
 
-private RunExpected!void runCheckDocsSidebar()
+package RunExpected!void runCheckDocsSidebar()
 {
     import std.stdio : stderr;
 
@@ -3436,7 +2356,7 @@ that is what broke.
 `-cov` changes how a package links, and some cannot take it: under DMD the
 `sparkles:dmd-lsp` family fails to resolve `dmd.backend.*` in a coverage build
 while linking and passing perfectly without one. That is a build incompatibility,
-not a failing test, and `--test`'s job is to report whether the tests pass — so a
+not a failing test, and `ci test`'s job is to report whether the tests pass — so a
 package that only fails *with* coverage is run again without it and reported on
 its own merits, with its absence from the table noted rather than hidden.
 
@@ -3685,7 +2605,7 @@ private struct CoverageRun
 /**
 Prepares `build/coverage` for a run, clearing whatever a previous one left.
 
-Clearing is not optional: `merge:1` accumulates, so a second `ci --test` over a
+Clearing is not optional: `merge:1` accumulates, so a second `ci test` over a
 stale directory would report hit counts summed across both runs. Percentages
 would survive that, but the per-line counts a viewer shows would not.
 
@@ -3850,11 +2770,11 @@ private RunExpected!void runDubBuildMode(bool failFast)
 }
 
 /++
-`--build-each-commit`: `dub build` the chosen packages at every commit from
+`ci commits build-each`: `dub build` the chosen packages at every commit from
 `base` (exclusive) to `HEAD`, in one detached scratch worktree walked oldest
 first. See $(MREF each_commit) for why.
 +/
-private RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool failFast)
+package RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool failFast)
 {
     import std.conv : to;
     import std.file : rmdirRecurse, tempDir;
@@ -3871,7 +2791,7 @@ private RunExpected!void runBuildEachCommitMode(string base, string[] requested,
     const pkgs = selectPackages(requested.length ? requested
         : defaultEachCommitPackages.dup, subPackageDirectories(repoRoot), unknown);
     if (unknown.length)
-    return failRun(text(i"--packages: no sub-package named $(unknown.join(", "))"));
+    return failRun(text(i"--from: no sub-package named $(unknown.join(", "))"));
     string wasiCompiler;
     if (!findWasiCompiler(pkgs, wasiCompiler))
         return failRun("no WebAssembly-capable compiler for a package that needs one");
@@ -3977,65 +2897,51 @@ private RunExpected!void runBuildEachCommitMode(string base, string[] requested,
 }
 
 /**
-The sub-package paths a test mode covers: those `--packages` names, in
-request order, or every one in `all` when it names none; then without those
-`--skip-packages` names. Names no sub-package has are returned in `unknown`.
+The sub-package paths a test run covers: those `--from` names, in request
+order, or every one in `all` when it names none. Names no sub-package has are
+returned in `unknown`.
 */
-private string[] narrowSubPackages(in string[] all, in string[] requested,
-    in string[] skipped, out string[] unknown) @safe pure
+private string[] narrowSubPackages(in string[] all, in string[] requested, out string[] unknown) @safe pure
 {
     import each_commit : selectPackages;
 
-    string[] unknownRequested, unknownSkipped;
-    string[] chosen;
     if (requested.length)
-        chosen = selectPackages(requested, all, unknownRequested);
-    else
-        foreach (path; all)
-            chosen ~= path;
-    const dropped = selectPackages(skipped, all, unknownSkipped);
-    unknown = unknownRequested ~ unknownSkipped;
-    return chosen.filter!(path => !dropped.canFind(path)).array;
+        return selectPackages(requested, all, unknown);
+    return all.dup;
 }
 
-@("ci.narrowSubPackages.requestThenSkip")
+@("ci.narrowSubPackages.requested")
 @safe pure
 unittest
 {
     const all = ["libs/base", "libs/ui", "apps/hue"];
     string[] unknown;
-    assert(narrowSubPackages(all, [], [], unknown) == all);
-    assert(narrowSubPackages(all, ["hue", "base"], [], unknown) == ["apps/hue", "libs/base"],
+    assert(narrowSubPackages(all, [], unknown) == all);
+    assert(narrowSubPackages(all, ["hue", "base"], unknown) == ["apps/hue", "libs/base"],
         "in request order");
-    assert(narrowSubPackages(all, [], ["ui"], unknown) == ["libs/base", "apps/hue"],
-        "a skip list leaves every other package, a new one included");
     assert(unknown.length == 0);
-    narrowSubPackages(all, ["uii"], ["hu"], unknown);
-    assert(unknown == ["uii", "hu"], "typos in either list are reported");
+    narrowSubPackages(all, ["uii"], unknown);
+    assert(unknown == ["uii"], "a typo is reported");
 }
-
-/**
-The sub-packages a test mode covers ($(LREF narrowSubPackages)). A name no
-sub-package has is an error rather than a smaller run: a CI shard lists its
-packages by hand, and a typo there would otherwise pass having tested
-nothing, or test a package twice.
-*/
 
 /// The options of a test run that change what it runs, as its run record's
 /// `invocation.options` holds them (observability OBR7): not `--fail-fast`.
-private string[] recordedOptions(in string[] requested, in string[] skipped, bool coverage) @safe pure
+private string[] recordedOptions(in string[] requested, bool coverage) @safe pure
 {
     string[] options;
     if (requested.length)
-        options ~= ["--packages"] ~ requested.dup;
-    if (skipped.length)
-        options ~= ["--skip-packages"] ~ skipped.dup;
+        options ~= ["--from"] ~ requested.dup;
     if (coverage)
         options ~= "--coverage";
     return options;
 }
-private bool requestedSubPackages(string repoRoot, in string[] requested,
-    in string[] skipped, out string[] chosen)
+
+/**
+The sub-packages a test run covers ($(LREF narrowSubPackages)). A name no
+sub-package has is an error rather than a smaller run: a typo would otherwise
+pass having tested nothing.
+*/
+private bool requestedSubPackages(string repoRoot, in string[] requested, out string[] chosen)
 {
     const all = subPackageDirectories(repoRoot);
     if (all.length == 0)
@@ -4044,29 +2950,24 @@ private bool requestedSubPackages(string repoRoot, in string[] requested,
         return false;
     }
     string[] unknown;
-    chosen = narrowSubPackages(all, requested, skipped, unknown);
+    chosen = narrowSubPackages(all, requested, unknown);
     if (unknown.length)
     {
-        error(i"--packages/--skip-packages: no sub-package named $(unknown.join(", "))");
-        return false;
-    }
-    if (chosen.length == 0)
-    {
-        error(i"--packages/--skip-packages leave no sub-package to test");
+        error(i"--from: no sub-package named $(unknown.join(", "))");
         return false;
     }
     return true;
 }
 
 private RunExpected!void runDubTestsMode(bool failFast, bool coverage, in string[] requested,
-    in string[] skipped, in PlacementArgs where, bool sanitize = false)
+    in PlacementArgs where, bool sanitize = false)
 {
     if (sanitize)
     {
         if (!compilerIsLdc(environment.get("DC", "")))
-        return failRun("--test-sanitize requires LDC (set DC=ldc2)");
+        return failRun("ci test --sanitize address requires LDC (set DC=ldc2)");
         if (!sanitizePlatformSupported())
-        return failRun("--test-sanitize is Linux-only: nixpkgs LDC has no ASan runtime on Darwin");
+        return failRun("ci test --sanitize address is Linux-only: nixpkgs LDC has no ASan runtime on Darwin");
     }
 
     info(i"resolving repository root");
@@ -4077,9 +2978,9 @@ private RunExpected!void runDubTestsMode(bool failFast, bool coverage, in string
 
     info(i"parsing dub.sdl sub-packages");
     string[] subPackages;
-    if (!requestedSubPackages(repoRoot, requested, skipped, subPackages))
+    if (!requestedSubPackages(repoRoot, requested, subPackages))
         return failRun("could not resolve the requested sub-packages");
-    if (where.shard.length && !narrowToShard(repoRoot, requested, skipped, where, subPackages))
+    if (where.shard.length && !narrowToShard(repoRoot, requested, where, subPackages))
         return failRun("could not narrow the sub-packages to shard " ~ where.shard);
     // A placement chooses its legs and whether it collects coverage (OD22).
     bool serialLeg = true, parallelLeg = true;
@@ -4131,7 +3032,7 @@ private RunExpected!void runDubTestsMode(bool failFast, bool coverage, in string
     // exists to contrast with is off under ASan (see `stack_budget.d`), and
     // the runner sizes ASan workers at 4 MiB so a body cannot reach a guard
     // page. One leg also halves a job that rebuilds every package with ASan.
-    // The plain legs leave the `@slow` tests to `--test-slow`, which CI runs
+    // The plain legs leave the `@slow` tests to `ci test --slow`, which CI runs
     // as jobs of their own; under ASan they still run, in the one leg.
     TestLeg[] legs;
     if (sanitize)
@@ -4147,8 +3048,8 @@ private RunExpected!void runDubTestsMode(bool failFast, bool coverage, in string
 
     // One task per package leg, in a run record (observability OD21): the
     // placements pack their shards from the history of these wall times.
-    auto recorder = RunRecorder.open(repoRoot, sanitize ? "--test-sanitize" : "--test",
-        recordedOptions(requested, skipped, coverage), where.placement, where.shard);
+    auto recorder = RunRecorder.open(repoRoot, sanitize ? "test --sanitize address" : "test",
+        recordedOptions(requested, coverage), where.placement, where.shard);
     scope (exit)
         if (const degradation = recorder.finish())
             warning(i"$(degradation)");
@@ -4204,7 +3105,7 @@ private RunExpected!void runDubTestsMode(bool failFast, bool coverage, in string
 }
 
 /**
-Reports line coverage from the listings a `--test` run merged into `cov.dir`.
+Reports line coverage from the listings a `ci test` run merged into `cov.dir`.
 
 Reports only. There is no threshold and nothing fails on a low number: D's
 `-cov` counts template instantiations per instantiation and emits listings for
@@ -4327,7 +3228,7 @@ unittest
 /// the cycle-safe `sourcePaths "../test-runner/src" …` source-include used by
 /// `base`, `core-cli`, and `test-utils`.
 ///
-/// This gate is what keeps `--test-extracted` honest. Without the runner,
+/// This gate is what keeps `ci test --special-modes all` honest. Without the runner,
 /// `dub test :pkg -- --better-c` reaches druntime's default tester, which
 /// ignores the flag, runs the ordinary unittests and exits 0 — a green that
 /// means nothing. Better to leave such a package out than to report success
@@ -4398,10 +3299,10 @@ private ExtractedModes extractedModesOf(string repoRoot, string packagePath)
     return modes;
 }
 
-/// `--test-extracted`: run the test runner's `--better-c` and `--wasm` modes
+/// `ci test --special-modes all`: run the test runner's `--better-c` and `--wasm` modes
 /// for every sub-package whose sources use the matching marker attribute.
 ///
-/// These modes are not covered by `--test`: a `@betterC` test runs as an
+/// These modes are not covered by `ci test`: a `@betterC` test runs as an
 /// ordinary unittest there, and only `--better-c` additionally extracts it,
 /// compiles it without druntime, and runs the result — so a break in the
 /// extraction, the `-betterC` codegen, or the wasm cross-compile is invisible
@@ -4412,8 +3313,8 @@ private ExtractedModes extractedModesOf(string repoRoot, string packagePath)
 /// wasm-ld, no wasm runtime), which is right for a contributor's machine and
 /// exactly wrong here — without it a missing linker would leave this reporting
 /// success having run nothing.
-private RunExpected!void runExtractedTestsMode(bool failFast, in string[] requested, in string[] skipped,
-    in PlacementArgs where)
+private RunExpected!void runExtractedTestsMode(bool failFast, in string[] requested,
+    in PlacementArgs where, ExtractedModes wanted)
 {
     info(i"resolving repository root");
     const repoRoot = detectRepoRoot();
@@ -4423,9 +3324,9 @@ private RunExpected!void runExtractedTestsMode(bool failFast, in string[] reques
 
     info(i"scanning sub-packages for @betterC / @wasm");
     string[] subPackages;
-    if (!requestedSubPackages(repoRoot, requested, skipped, subPackages))
+    if (!requestedSubPackages(repoRoot, requested, subPackages))
         return failRun("could not resolve the requested sub-packages");
-    if (where.shard.length && !narrowToShard(repoRoot, requested, skipped, where, subPackages))
+    if (where.shard.length && !narrowToShard(repoRoot, requested, where, subPackages))
         return failRun("could not narrow the sub-packages to shard " ~ where.shard);
 
     struct Job
@@ -4439,9 +3340,9 @@ private RunExpected!void runExtractedTestsMode(bool failFast, in string[] reques
     foreach (pkg; subPackages)
     {
         const modes = extractedModesOf(repoRoot, pkg);
-        if (modes.betterC)
+        if (modes.betterC && wanted.betterC)
             jobs ~= Job(pkg, pkg.baseName, "--better-c");
-        if (modes.wasm)
+        if (modes.wasm && wanted.wasm)
             jobs ~= Job(pkg, pkg.baseName, "--wasm");
     }
 
@@ -4463,8 +3364,8 @@ private RunExpected!void runExtractedTestsMode(bool failFast, in string[] reques
         monitor.sample();
     }
 
-    auto recorder = RunRecorder.open(repoRoot, "--test-extracted",
-        recordedOptions(requested, skipped, false), where.placement, where.shard);
+    auto recorder = RunRecorder.open(repoRoot, "test --special-modes",
+        recordedOptions(requested, false), where.placement, where.shard);
     scope (exit)
         if (const degradation = recorder.finish())
             warning(i"$(degradation)");
@@ -4558,9 +3459,9 @@ private SlowTestJob[] collectSlowTests(string repoRoot, in string[] packageNames
     return jobs;
 }
 
-/// `--list-slow-tests`: the `slow-tests` CI job's matrix, on stdout and in
+/// `ci slow-tests list`: the `slow-tests` CI job's matrix, on stdout and in
 /// `$GITHUB_OUTPUT`.
-private RunExpected!void runListSlowTestsMode()
+package RunExpected!void runListSlowTestsMode()
 {
     import std.stdio : File;
 
@@ -4576,7 +3477,7 @@ private RunExpected!void runListSlowTestsMode()
         return failRun(text(problems.length, " problem(s) collecting the slow tests"));
     if (jobs.length == 0)
     {
-        // As for `--test-extracted`: the job exists for these tests, so an
+        // As for `ci test --special-modes all`: the job exists for these tests, so an
         // empty list means the scan (or the attribute) regressed.
         return failRun("No @slow test found — the slow-tests matrix would be empty");
     }
@@ -4590,7 +3491,7 @@ private RunExpected!void runListSlowTestsMode()
     return ranOk();
 }
 
-/// `--test-slow`: run the `@slow` tests of each selected package, after
+/// `ci test --slow`: run the `@slow` tests of each selected package, after
 /// checking that its test binary agrees with the source scan about which
 /// tests those are.
 private RunExpected!void runSlowTestsMode(in string[] packageNames, in string[] testNames, bool failFast)
@@ -5459,7 +4360,7 @@ private bool isSourceLibrary(string repoRoot, string packagePath)
 /// any configuration. Only the setting counts, never the word in a comment:
 /// ui-gallery's recipe mentions a sourceLibrary it depends on, and treating it
 /// as one built its `unittest` configuration, which never compiles `main`, so
-/// `--build-each-commit` passed a commit whose executable did not build.
+/// `ci commits build-each` passed a commit whose executable did not build.
 bool declaresSourceLibrary(in DubManifest manifest) @safe pure nothrow @nogc
 {
     import std.algorithm.searching : any;
@@ -5498,7 +4399,7 @@ private string[] dubBuildCommand(string repoRoot, string packagePath, string pkg
     return cmd;
 }
 
-/// Worker count for the parallel `ci --test` leg: at least 2 so a test
+/// Worker count for the parallel `ci test` leg: at least 2 so a test
 /// cannot hide on the 8 MiB main thread.
 uint parallelTestThreads(uint hw) @safe pure nothrow @nogc
     => hw < 2 ? 2 : hw;
@@ -5659,91 +4560,6 @@ unittest
     assert(cmd[$ - 5 .. $] == ["-b", "unittest-cov", "--", "-t", "1"]);
 }
 
-@("ci.validateCliMode.buildExclusions")
-unittest
-{
-    CliParams params;
-    params.build = true;
-    assert(validateCliMode(params, null) is null);
-    assert(resolveProgramMode(params) == ProgramMode.runDubBuild);
-    assert(programModeName(ProgramMode.runDubBuild) == "--build");
-
-    params.test = true;
-    assert(validateCliMode(params, null) == "--build cannot be combined with --test");
-
-    params.test = false;
-    params.verify = true;
-    assert(validateCliMode(params, null) == "--build cannot be combined with --verify or --update");
-
-    params.verify = false;
-    params.exampleFiles = true;
-    assert(validateCliMode(params, null) == "--build cannot be combined with --example-files");
-
-    params.exampleFiles = false;
-    params.dedupReferenceLinks = true;
-    assert(validateCliMode(params, null)
-        == "--build cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)");
-}
-
-@("ci.validateCliMode.slowTestModes")
-unittest
-{
-    CliParams params;
-    params.testSlow = true;
-    params.packages = ["font-oracle"];
-    params.tests = ["oracle.raster.freeType"];
-    assert(validateCliMode(params, null) is null);
-    assert(resolveProgramMode(params) == ProgramMode.runSlowTests);
-    assert(programModeName(ProgramMode.runSlowTests) == "--test-slow");
-
-    params.test = true;
-    assert(validateCliMode(params, null) == "--test-slow cannot be combined with other modes");
-
-    params.test = false;
-    params.listSlowTests = true;
-    assert(validateCliMode(params, null) == "--test-slow cannot be combined with other modes");
-
-    // `--tests` names tests for `--test-slow` to run, and means nothing alone.
-    params.testSlow = false;
-    assert(validateCliMode(params, null) == "--tests needs --test-slow");
-    params.tests = null;
-    assert(validateCliMode(params, null) is null);
-    assert(resolveProgramMode(params) == ProgramMode.listSlowTests);
-}
-
-@("ci.validateCliMode.sanitizeExclusions")
-unittest
-{
-    CliParams params;
-    params.testSanitize = true;
-    assert(validateCliMode(params, null) is null);
-    assert(resolveProgramMode(params) == ProgramMode.runSanitizeTests);
-    assert(programModeName(ProgramMode.runSanitizeTests) == "--test-sanitize");
-
-    params.test = true;
-    assert(validateCliMode(params, null) == "--test cannot be combined with --test-sanitize");
-
-    params.test = false;
-    params.build = true;
-    assert(validateCliMode(params, null) == "--build cannot be combined with --test-sanitize");
-
-    params.build = false;
-    params.verify = true;
-    assert(validateCliMode(params, null)
-        == "--test-sanitize cannot be combined with --verify or --update");
-
-    params.verify = false;
-    params.testExtracted = true;
-    assert(validateCliMode(params, null)
-        == "--test-extracted cannot be combined with other modes");
-
-    // `--coverage` defaults to true, so it is overridden (and announced)
-    // rather than rejected: the pair must stay valid.
-    params.testExtracted = false;
-    params.coverage = true;
-    assert(validateCliMode(params, null) is null);
-}
-
 /// Linux is the only host where nixpkgs LDC can link ASan (gcc `libasan`
 /// fallback). Darwin's LDC looks for `libclang_rt.asan_osx_dynamic.dylib`,
 /// which the nix build does not ship.
@@ -5847,8 +4663,8 @@ unittest
 }
 
 /// A child's `DFLAGS` on top of the ambient `$DFLAGS`, so a mode that adds
-/// flags (`--coverage`, `--test-sanitize`) does not drop the ones the shell
-/// already carries: `--test` keeps them, and the other legs must build the
+/// flags (`--coverage`, `ci test --sanitize address`) does not drop the ones the shell
+/// already carries: `ci test` keeps them, and the other legs must build the
 /// same code plus their own switches.
 private string[string] withAmbientDflags(const string[string] env, string ambient) @safe
 {
@@ -5872,29 +4688,6 @@ unittest
     // No child DFLAGS: nothing to merge into; the ambient value is inherited
     // by the child process on its own.
     assert("DFLAGS" !in withAmbientDflags(["ASAN_OPTIONS": "x"], "-L-L/opt/lib"));
-}
-
-@("ci.validateCliMode.hostSystem")
-unittest
-{
-    CliParams params;
-    params.test = true;
-    params.hostSystem = "aarch64-linux";
-    assert(validateCliMode(params, null) is null);
-
-    params.hostSystem = "aarch64-darwin";
-    assert(validateCliMode(params, null)
-        == "--host-system must be aarch64-linux or x86_64-linux");
-
-    params.hostSystem = "aarch64-linux";
-    params.linuxHostProbe = true;
-    assert(validateCliMode(params, null)
-        == "--linux-host-probe cannot be combined with other modes");
-
-    params.linuxHostProbe = false;
-    params.hostSystem = null;
-    params.hostCiRev = "origin/main";
-    assert(validateCliMode(params, null) == "--host-ci-rev needs --host-system");
 }
 
 /// Merge LDC's `-linkonce-templates` into a child environment's `DFLAGS`.
@@ -6357,7 +5150,7 @@ private void displayFailureReplay(FailureReplay replay)
         .writeln;
 }
 
-/// Whole-run stats for a `ci --test` / `--test-extracted` Results box.
+/// Whole-run stats for a `ci test` / `ci test --special-modes all` Results box.
 private struct TestRunStats
 {
     ResourceUsage tree;       /// peak RSS / procs of the `ci` process group
@@ -6536,7 +5329,7 @@ unittest
     assert(footer.canFind("×"), footer);
 }
 
-/// The `--test` Results box: pass/fail counts and failed names on the left,
+/// The `ci test` Results box: pass/fail counts and failed names on the left,
 /// whole-run resource stats on the right.
 private void displayTestRunSummary(in TestRunStats stats)
 {
@@ -6600,14 +5393,14 @@ private void displaySummary(size_t total, size_t failures)
 // (see docs/specs/ci/stats/)
 // ---------------------------------------------------------------------------
 
-private RunExpected!void runCiStatsMode(in CliParams cli)
+package RunExpected!void runCiStatsCommand(in StatsCommand cli)
 {
     import std.process : environment;
     import std.stdio : writeln;
 
     import ci_stats : CiStatsOptions, fetchAndDeserializeJson, runCiStats;
 
-    string token = cli.githubToken;
+    string token = cli.github.token;
     if (token.length == 0)
         token = environment.get("GITHUB_TOKEN", "");
 
@@ -6615,10 +5408,10 @@ private RunExpected!void runCiStatsMode(in CliParams cli)
     // took: a different question over a different endpoint, sharing only the
     // repo/token/limit options.
     if (cli.merges)
-        return runMergeAudit(cli.repo, token, cli.limit, cli.badgeDir);
+        return runMergeAudit(cli.github.repo, token, cli.limit, cli.badgeDir);
 
     auto opts = CiStatsOptions(
-        repo: cli.repo,
+        repo: cli.github.repo,
         token: token,
         limit: cli.limit,
         since: cli.since,
@@ -6642,7 +5435,7 @@ private RunExpected!void runCiStatsMode(in CliParams cli)
     return ranOk();
 }
 
-/// `--ci-stats --merges`: what landed on the default branch, and what it would
+/// `ci stats --merges`: what landed on the default branch, and what it would
 /// cost to verify the part the pull requests did not already prove.
 private RunExpected!void runMergeAudit(string repo, string token, int limit, string badgeDir)
 {
@@ -6675,9 +5468,10 @@ private RunExpected!void runMergeAudit(string repo, string token, int limit, str
     return ranOk();
 }
 
-/// `--mirror-checks`: attach a pull request's checks to the commit its work
+/// `ci github mirror-checks`: attach a pull request's checks to the commit its work
 /// landed as, when the landed tree is the tree that pull request built.
-private RunExpected!void runMirrorChecksMode(in CliParams cli)
+package RunExpected!void runMirrorChecksCommand(in GithubOptions github, string sha, in string[] skipCheck,
+    bool dryRun)
 {
     import std.process : environment;
 
@@ -6686,12 +5480,12 @@ private RunExpected!void runMirrorChecksMode(in CliParams cli)
     import check_mirror : mirrorChecks, publishOutcome;
     import ci_stats : fetchAndDeserializeJson;
 
-    string token = cli.githubToken;
+    string token = github.token;
     if (token.length == 0)
         token = environment.get("GITHUB_TOKEN", "");
 
     auto res = mirrorChecks!fetchAndDeserializeJson(
-        cli.repo, token, cli.sha, cli.skipCheck, cli.dryRun);
+        github.repo, token, sha, skipCheck, dryRun);
     if (res.hasError)
     {
         string errMsg = res.error;
@@ -6708,9 +5502,10 @@ private RunExpected!void runMirrorChecksMode(in CliParams cli)
     return ranOk();
 }
 
-/// `--report-link-rot`: reconcile the standing link-rot issue with the sweep's
+/// `ci github link-rot-issue`: reconcile the standing link-rot issue with the sweep's
 /// verdict, so its presence means "links are broken" and nothing else does.
-private RunExpected!void runReportLinkRotMode(in CliParams cli)
+package RunExpected!void runReportLinkRotCommand(in GithubOptions github, string reportPath, bool rotten,
+    string runUrl)
 {
     import std.file : exists, readText;
     import std.process : environment;
@@ -6720,16 +5515,16 @@ private RunExpected!void runReportLinkRotMode(in CliParams cli)
     import ci_stats : fetchAndDeserializeJson;
     import link_rot : reportLinkRot;
 
-    string token = cli.githubToken;
+    string token = github.token;
     if (token.length == 0)
         token = environment.get("GITHUB_TOKEN", "");
 
     string report;
-    if (cli.report.length && cli.report.exists)
-        report = cli.report.readText;
+    if (reportPath.length && reportPath.exists)
+        report = reportPath.readText;
 
     auto res = reportLinkRot!fetchAndDeserializeJson(
-        cli.repo, token, cli.rotten, report, cli.runUrl);
+        github.repo, token, rotten, report, runUrl);
     if (res.hasError)
     {
         string errMsg = res.error;
@@ -6741,8 +5536,8 @@ private RunExpected!void runReportLinkRotMode(in CliParams cli)
     return ranOk();
 }
 
-/// `--gc-r2`: garbage-collect the R2 binary cache (see `r2_gc`).
-private RunExpected!void runGcR2Mode(in CliParams cli)
+/// `ci cache gc-r2`: garbage-collect the R2 binary cache (see `r2_gc`).
+package RunExpected!void runGcR2Command(int keepCommits, int graceDays, bool dryRun)
 {
     import core.time : days;
     import std.algorithm.iteration : filter, map, sum;
@@ -6766,15 +5561,15 @@ private RunExpected!void runGcR2Mode(in CliParams cli)
     if (bucket.hasError)
     {
         string msg = bucket.error;
-        return failRun(text(i"--gc-r2: $(msg)"));
+        return failRun(text(i"ci cache gc-r2: $(msg)"));
     }
 
     const log = execute(["git", "log", "--first-parent", "--format=%T",
-        "-n", cli.keepCommits.to!string, "HEAD"]);
+        "-n", keepCommits.to!string, "HEAD"]);
     if (log.status != 0)
     {
         string out_ = log.output;
-        return failRun(text(i"--gc-r2: git log failed: $(out_)"));
+        return failRun(text(i"ci cache gc-r2: git log failed: $(out_)"));
     }
     const string[] keepTrees = log.output.lineSplitter.map!(l => l.strip.idup).filter!(l => l.length).array;
 
@@ -6805,17 +5600,17 @@ private RunExpected!void runGcR2Mode(in CliParams cli)
     if (listed.hasError)
     {
         string msg = listed.error;
-        return failRun(text(i"--gc-r2: $(msg)"));
+        return failRun(text(i"ci cache gc-r2: $(msg)"));
     }
     auto objects = listed.value;
     const now = Clock.currTime(UTC());
-    const grace = cli.graceDays.days;
+    const grace = graceDays.days;
     const totalBytes = objects.map!(o => o.size).sum(0UL);
     writefln("R2: %d objects, %s, in %s.", objects.length, gib(totalBytes), bucket.value.name);
 
     auto roots = keptRoots(objects, keepTrees, now, grace);
     if (roots.length == 0)
-    return failRun(text(i"--gc-r2: no root survives (no gc-roots/ object for the last $(cli.keepCommits) trees, none younger than $(cli.graceDays) days); refusing to collect"));
+    return failRun(text(i"ci cache gc-r2: no root survives (no gc-roots/ object for the last $(keepCommits) trees, none younger than $(graceDays) days); refusing to collect"));
 
     string[] seeds;
     auto rootTexts = getAll(roots.map!(o => o.key).array);
@@ -6824,7 +5619,7 @@ private RunExpected!void runGcR2Mode(in CliParams cli)
         if (got.hasError)
         {
             string msg = got.error;
-            return failRun(text(i"--gc-r2: reading $(roots[i].key): $(msg)"));
+            return failRun(text(i"ci cache gc-r2: reading $(roots[i].key): $(msg)"));
         }
         foreach (line; got.value.lineSplitter)
         {
@@ -6832,7 +5627,7 @@ private RunExpected!void runGcR2Mode(in CliParams cli)
             if (hash.hasError)
             {
                 string msg = hash.error;
-                warning(i"--gc-r2: $(roots[i].key): $(msg)");
+                warning(i"ci cache gc-r2: $(roots[i].key): $(msg)");
                 continue;
             }
             seeds ~= hash.value;
@@ -6840,23 +5635,23 @@ private RunExpected!void runGcR2Mode(in CliParams cli)
     }
     const young = youngNarinfos(objects, now, grace);
     writefln("R2: %d roots kept (%d trees of HEAD's last %d commits), %d store paths in them, %d narinfos younger than %d days.",
-        roots.length, keepTrees.length, cli.keepCommits, seeds.length, young.length, cli.graceDays);
+        roots.length, keepTrees.length, keepCommits, seeds.length, young.length, graceDays);
     seeds ~= young;
 
     auto live = markLive!(hashes => getAll(hashes.map!(h => h ~ ".narinfo").array))(seeds);
     if (live.hasError)
     {
         string msg = live.error;
-        return failRun(text(i"--gc-r2: $(msg); deleting nothing"));
+        return failRun(text(i"ci cache gc-r2: $(msg); deleting nothing"));
     }
     if (live.value.missing.length)
-        warning(i"--gc-r2: $(live.value.missing.length) live store paths have no narinfo in the bucket (they are served elsewhere, or were never pushed)");
+        warning(i"ci cache gc-r2: $(live.value.missing.length) live store paths have no narinfo in the bucket (they are served elsewhere, or were never pushed)");
 
     const p = plan(objects, live.value, keepTrees, now, grace);
     writefln("R2: %d live store paths. Keeping %d objects (%s); %s %d narinfos, %d NARs and %d roots (%s).",
-        live.value.paths.length, p.keptObjects, gib(p.keptBytes), cli.dryRun ? "would delete" : "deleting",
+        live.value.paths.length, p.keptObjects, gib(p.keptBytes), dryRun ? "would delete" : "deleting",
         p.deleteNarinfos.length, p.deleteNars.length, p.deleteRoots.length, gib(p.freedBytes));
-    if (cli.dryRun)
+    if (dryRun)
         return ranOk();
 
     // Narinfos before the NARs they name: a client then sees a missing path,
@@ -6874,19 +5669,19 @@ private RunExpected!void runGcR2Mode(in CliParams cli)
         foreach (msg; messages)
             if (msg.length)
             {
-                warning(i"--gc-r2: $(msg)");
+                warning(i"ci cache gc-r2: $(msg)");
                 failures++;
             }
     }
     if (failures)
-    return failRun(text(i"--gc-r2: $(failures) deletions failed; the next collection retries them"));
+    return failRun(text(i"ci cache gc-r2: $(failures) deletions failed; the next collection retries them"));
     info(i"R2: collected $(gib(p.freedBytes)).");
     return ranOk();
 }
 
 /**
-One command `--test` or `--build` runs for a package, as a planner outside
-this module needs it to run the package the same way: the `--watch` rounds,
+One command `ci test` or `ci test --build-only` runs for a package, as a planner outside
+this module needs it to run the package the same way: the `ci test --watch` rounds,
 which run it as a task.
 */
 struct PackageCommand
@@ -6896,7 +5691,7 @@ struct PackageCommand
     string[string] env; /// added to the inherited environment
 }
 
-/// The legs `--test` runs for the package in the repository-relative
+/// The legs `ci test` runs for the package in the repository-relative
 /// `pkgDir`, in order, without coverage: `-t 1`, then the parallel leg on
 /// `threads` threads ($(LREF defaultTestThreads)).
 PackageCommand[] packageTestCommands(string repoRoot, string pkgDir, uint threads)
@@ -6912,11 +5707,11 @@ PackageCommand[] packageTestCommands(string repoRoot, string pkgDir, uint thread
     ];
 }
 
-/// The parallel leg's thread count `--test` uses now. It follows the host's
+/// The parallel leg's thread count `ci test` uses now. It follows the host's
 /// load, so a planner that compares commands across runs reads it once.
 uint defaultTestThreads() => parallelTestThreads(hwParallelism());
 
-/// The command `--build` runs for the package in the repository-relative
+/// The command `ci test --build-only` runs for the package in the repository-relative
 /// `pkgDir`, with `wasiCompiler` as $(LREF findWasiCompiler) found it.
 PackageCommand packageBuildCommand(string repoRoot, string pkgDir, string wasiCompiler)
 {
@@ -6928,18 +5723,18 @@ PackageCommand packageBuildCommand(string repoRoot, string pkgDir, string wasiCo
         withLdcDflags(null));
 }
 
-/// `--record-task ID -- COMMAND…`: run the command with this process's
+/// `ci perf record ID -- COMMAND…`: run the command with this process's
 /// standard streams, record it as task `ID` (its wall time and outcome) in a
 /// run record, and exit with its status. A record that cannot be written is a
 /// warning, never a change of status (observability OBD11).
-private RunExpected!void runRecordTask(string taskId, string[] command, string placement, string shard)
+package RunExpected!void runRecordTask(string taskId, string[] command, string placement, string shard)
 {
     import std.process : spawnProcess, wait;
 
     if (command.length == 0)
-    return failRun(text(i"--record-task $(taskId) needs a command after --"), 2);
+    return failRun(text(i"ci perf record $(taskId) needs a command after --"), 2);
     const repoRoot = detectRepoRoot();
-    auto recorder = RunRecorder.open(repoRoot is null ? "." : repoRoot, "--record-task", [taskId],
+    auto recorder = RunRecorder.open(repoRoot is null ? "." : repoRoot, "perf record", [taskId],
         placement, shard);
     int status;
     recorder.begin();
@@ -6947,7 +5742,7 @@ private RunExpected!void runRecordTask(string taskId, string[] command, string p
         status = wait(spawnProcess(command));
     catch (Exception e)
     {
-        error(i"--record-task $(taskId): $(e.msg)");
+        error(i"ci perf record $(taskId): $(e.msg)");
         status = 127;
     }
     recorder.end(taskId, status == 0);
@@ -6956,16 +5751,13 @@ private RunExpected!void runRecordTask(string taskId, string[] command, string p
     return status == 0 ? ranOk() : failRun(text(taskId, " exited with status ", status), status);
 }
 
-/// The placement options of `cli`, as the test modes take them.
-private PlacementArgs placementArgs(const ref CliParams cli) @safe pure nothrow =>
-    PlacementArgs(cli.placement, cli.shard, cli.historyTip, cli.historyRemote);
 
 /**
 `--shard K/N`: replace `subPackages` by the packages shard `K` of
 `where.placement` runs, packed from the history (CIC14). The shard owns its
-selection, so `--packages` and `--skip-packages` are refused beside it.
+selection, so `--from` is refused beside it.
 */
-private bool narrowToShard(string repoRoot, in string[] requested, in string[] skipped,
+private bool narrowToShard(string repoRoot, in string[] requested,
     in PlacementArgs where, ref string[] subPackages)
 {
     if (where.placement.length == 0)
@@ -6973,9 +5765,9 @@ private bool narrowToShard(string repoRoot, in string[] requested, in string[] s
         error(i"--shard needs --placement");
         return false;
     }
-    if (requested.length || skipped.length)
+    if (requested.length)
     {
-        error(i"--shard chooses the packages itself; drop --packages and --skip-packages");
+        error(i"--shard chooses the packages itself; drop --from");
         return false;
     }
     const kn = parseShard(where.shard);
@@ -7000,9 +5792,9 @@ private bool narrowToShard(string repoRoot, in string[] requested, in string[] s
     return true;
 }
 
-/// `--list-placements`: the placements' shards as a CI matrix, with the tip
+/// `ci placements list`: the placements' shards as a CI matrix, with the tip
 /// of `refs/perf/data` every shard reads.
-private RunExpected!void runListPlacements(string provider, string githubOutput, string historyRemote)
+package RunExpected!void runListPlacements(string provider, string githubOutput, string historyRemote)
 {
     import std.file : append;
     import std.path : buildPath;
@@ -7040,55 +5832,64 @@ private RunExpected!void runListPlacements(string provider, string githubOutput,
     return ranOk();
 }
 
-/// `--perf-push`, `--perf-import-github-run` and `--perf-append`.
-private RunExpected!void runPerfPublish(ProgramMode mode, const ref CliParams cli)
+/// The repository root and its history's allowed-signers file.
+private RunExpected!string perfSigners()
 {
     import std.path : buildPath;
-    import perf_history : canonicalRemote;
-    import perf_publish : appendRun, configuredSigningKey, importGithubRun, pushLocal, pushRemote;
-    import sparkles.base.expected : Expected, ok;
 
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
-    return failRun("Could not detect repository root");
-    const signers = buildPath(repoRoot, "nix", "perf-data-signers");
-    Expected!(string, string) done = ok("");
-    final switch (mode)
-    {
-        case ProgramMode.perfImport:
-            if (cli.repo.length == 0)
-            return failRun(text(i"--perf-import-github-run needs --repo OWNER/NAME"), 2);
-            done = importGithubRun(cli.repo, cli.perfImportGithubRun);
-            break;
-        case ProgramMode.perfPush:
-            const key = cli.signingKey.length ? cli.signingKey : configuredSigningKey(repoRoot);
-            if (key.length == 0)
-            return failRun(text(i"--perf-push needs --signing-key or git's user.signingkey"), 2);
-            done = pushLocal(cli.allowDirty, key, cli.historyRemote.length ? cli.historyRemote : pushRemote,
-                signers);
-            break;
-        case ProgramMode.perfAppend:
-            if (cli.perfRecords.length == 0 || cli.perfRunId.length == 0 || cli.perfRunDate.length != 10
-                || cli.landedCommit.length < 12 || cli.signingKey.length == 0)
-            return failRun(text(i"--perf-append needs --perf-records, --perf-run-id, --perf-run-date YYYY-MM-DD, --landed-commit and --signing-key"), 2);
-            done = appendRun(cli.perfRecords, cli.perfRunId, cli.perfRunAttempt, cli.perfRunDate, cli.landedCommit,
-                cli.signingKey, cli.historyRemote.length ? cli.historyRemote : canonicalRemote, signers);
-            break;
-        // Every other mode is dispatched elsewhere.
-        static foreach (m; __traits(allMembers, ProgramMode))
-            static if (m != "perfImport" && m != "perfPush" && m != "perfAppend")
-                case __traits(getMember, ProgramMode, m):
-                    assert(0);
-    }
+        return failRun!string("Could not detect repository root");
+    return ok!RunError(buildPath(repoRoot, "nix", "perf-data-signers"));
+}
+
+/// A publishing step's outcome: its report logged line by line.
+private RunExpected!void reportPublished(Expected!(string, string) done)
+{
     if (done.hasError)
-    return failRun(done.error);
+        return failRun(done.error);
     foreach (line; done.value.lineSplitter)
         info(i"$(line)");
     return ranOk();
 }
 
-/// `--write-pin-costs FILE`: the toolchain build plan's costs, from the history.
-private RunExpected!void runWritePinCosts(string path, string historyRemote)
+/// `ci perf import RUN`: records from a GitHub Actions run's job logs.
+package RunExpected!void runPerfImportCommand(string runId, string repo)
+{
+    import perf_publish : importGithubRun;
+
+    return reportPublished(importGithubRun(repo, runId));
+}
+
+/// `ci perf push`: this machine's records, signed by the maintainer (OBH6).
+package RunExpected!void runPerfPushCommand(bool allowDirty, string signingKey, string historyRemote)
+{
+    import perf_publish : configuredSigningKey, pushLocal, pushRemote;
+
+    return perfSigners().andThen!((signers) {
+        const key = signingKey.length ? signingKey : configuredSigningKey(detectRepoRoot());
+        if (key.length == 0)
+            return failRun("ci perf push needs --signing-key or git's user.signingkey", 2);
+        return reportPublished(pushLocal(allowDirty, key, historyRemote.length ? historyRemote : pushRemote,
+            signers));
+    });
+}
+
+/// `ci perf append`: a CI run's downloaded records, signed by CI (OBH4).
+package RunExpected!void runPerfAppendCommand(in PerfCommand.Append cmd)
+{
+    import perf_history : canonicalRemote;
+    import perf_publish : appendRun;
+
+    if (cmd.signing.signingKey.length == 0)
+        return failRun("ci perf append needs --signing-key", 2);
+    const remote = cmd.history.historyRemote.length ? cmd.history.historyRemote : canonicalRemote;
+    return perfSigners().andThen!(signers => reportPublished(appendRun(cmd.records, cmd.runId,
+        cmd.runAttempt, cmd.runDate, cmd.landedCommit, cmd.signing.signingKey, remote, signers)));
+}
+
+/// `ci cache pin-costs FILE`: the toolchain build plan's costs, from the history.
+package RunExpected!void runWritePinCosts(string path, string historyRemote)
 {
     import std.file : write;
     import placements_run : pinCostsJson;

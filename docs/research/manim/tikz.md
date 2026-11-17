@@ -589,7 +589,7 @@ loadable **libraries** — and the surface is enormous.
 > case, and TikZ scope transforms are the general
 > [`affine-transform.d`](./examples/affine-transform.d) composition — but no
 > new TeX-driving probe was added, as none would compile-and-run under the
-> `ci --example-files` D toolchain.
+> `ci examples standalone` D toolchain.
 
 <!-- References -->
 

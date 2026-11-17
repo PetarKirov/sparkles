@@ -9,7 +9,7 @@
 // constructors, once, before any other export is called.
 //
 // Only syntax that type stripping erases, so node runs it as it is: the
-// agreement check (`ci --check-wasm-modules`, TCM9) loads the modules through
+// agreement check (`ci check wasm-modules`, TCM9) loads the modules through
 // this file too.
 import { ConsoleStdout, File, OpenFile, WASI } from '@bjorn3/browser_wasi_shim';
 

@@ -1029,7 +1029,7 @@ dub build :base
 dub build :core-cli
 
 # Run all tests
-dub run :ci -- --test
+dub run :ci -- test
 
 # Test a specific sub-package
 dub test :base
@@ -1051,7 +1051,7 @@ The project uses a **Nix development shell** for reproducible builds:
 
 ```bash
 nix develop -c dub build :core-cli
-nix run .#ci -- --test
+nix run .#ci -- test
 ```
 
 The shell seeds DUB's writable package cache from Nix-vendored sources, keeping
@@ -1060,7 +1060,7 @@ same sources once before using plain `dub` offline:
 
 ```bash
 nix build .#ci .#hue .#ui-gallery  # while online
-nix run --offline .#ci -- --seed-dub-cache
+nix run --offline .#ci -- cache seed-dub
 dub build :core-cli --skip-registry=all
 ```
 

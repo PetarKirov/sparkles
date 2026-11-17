@@ -179,7 +179,7 @@ Three things fall out of the run:
   swallows `docs/x.md`. Both are corrections, and both bring us into agreement
   with `.gitignore`, ripgrep and minimatch — the last of which matters because
   `docs/.vitepress/docs-config.json`'s `srcExclude` list is evaluated by
-  **VitePress**, not by us, so `ci --audit-fences` and the site build can
+  **VitePress**, not by us, so `ci docs fences-audit` and the site build can
   silently disagree today. Every current `srcExclude` entry already begins
   `**/` and is unaffected.
 - **One engine gap is exposed.** `**/x` does not match `x`, because

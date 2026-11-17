@@ -3,7 +3,7 @@ import { withMermaid } from 'vitepress-plugin-mermaid';
 import { groupIconMdPlugin } from 'vitepress-plugin-group-icons';
 
 // The sidebar tree and the srcExclude list are plain data, not code, and they
-// have consumers besides VitePress: `ci --check-docs-sidebar` verifies every
+// have consumers besides VitePress: `ci check sidebar` verifies every
 // published page is linked (and that every link resolves to a page). Those two
 // JSON files are the single source of truth; this config imports them. To add
 // a page, edit sidebar.json — see docs/guidelines/AGENTS.md § "The docs
@@ -36,7 +36,7 @@ const manifest: SiteManifest | null = fs.existsSync(manifestPath)
 // augmented tree beside the manifest, and this config just READS it, falling
 // back to the raw sidebar.json when the listings are not built. One
 // algorithm, one implementation; sidebar.json stays the checked source of
-// truth for pages (ci --check-docs-sidebar is unaffected).
+// truth for pages (ci check sidebar is unaffected).
 const augmentedSidebarPath = path.resolve(
   process.cwd(),
   'docs/public/src/sidebar.json',

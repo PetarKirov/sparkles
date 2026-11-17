@@ -97,7 +97,7 @@ no history — the pin is the HEAD SHA only, and line numbers are as-of that HEA
 > (`lib/sql.d` + `06-sql.d`) at the pin above, plus the repo's own
 > [IES guideline](../../guidelines/interpolated-expression-sequences.md) and
 > `core.interpolation` (druntime). Its runnable `[Output]` example is CI-verified
-> (`ci --verify`). Foreign-library claims restate the already-ledgered deep-dives.
+> (`ci examples verify`). Foreign-library claims restate the already-ledgered deep-dives.
 
 ## Per-page → repo mapping
 

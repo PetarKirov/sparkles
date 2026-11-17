@@ -1,5 +1,5 @@
 /++
-`ci --mirror-checks` — give a commit on the default branch the checks its pull
+`ci github mirror-checks` — give a commit on the default branch the checks its pull
 request already earned.
 
 The repository merges by rebase, so nothing that lands on `main` carries a SHA
@@ -19,7 +19,7 @@ When the trees differ the base moved under the pull request, the merge produced
 content no run has ever built, and there is nothing honest to copy. This
 command says so and exits; the caller runs the real thing.
 
-`ci --ci-stats --merges` measures the split over history — 75.7% mirrorable
+`ci stats --merges` measures the split over history — 75.7% mirrorable
 against 24.3% needing a build, at the time this was written.
 
 $(B Token:) creating a check run is an app-authenticated call. A workflow's
@@ -112,7 +112,7 @@ private struct GhCreatedCheckRun
 // Policy
 // ---------------------------------------------------------------------------
 
-/// What `--mirror-checks` decided, and why. The caller (a workflow) branches on
+/// What `ci github mirror-checks` decided, and why. The caller (a workflow) branches on
 /// `mirrored`: false means "build this commit for real".
 struct MirrorOutcome
 {

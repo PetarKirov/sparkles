@@ -109,7 +109,7 @@ struct BuildCost
     string source; /// How the figure was obtained: a measurement, or an estimate and its basis.
 }
 
-/// The cost file `ci --write-pin-costs` writes: the budget a CI build may take,
+/// The cost file `ci cache pin-costs` writes: the budget a CI build may take,
 /// and each pin's median recorded build from `refs/perf/data`,
 /// keyed by pin name (`<name>-<system>`).
 struct BuildCosts

@@ -463,7 +463,7 @@ unavoidable.
 Three of the delta-table rows claim mechanisms D already has, with no Vulkan SDK or
 binding required — `sType` default initializers, `structextends` → template
 constraints, and `Expected!(T, VkResult)` result typing. The following runnable
-sketch (CI-verified via the repo's `ci --verify` harness) puts those claims under
+sketch (CI-verified via the repo's `ci examples verify` harness) puts those claims under
 test against miniature stand-ins for the registry-generated types:
 
 ```d

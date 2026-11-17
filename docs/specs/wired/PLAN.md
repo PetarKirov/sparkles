@@ -12,7 +12,7 @@ backend and supported types (§4), the `@Wire*` policy and its resolution lattic
 (§5), case styles (§6), enum representation (§7), value transforms (§8), errors
 (§9), and the public API (§10). Every code block is a runnable example with a
 checked output; the implementation milestones make them pass under
-`nix run .#ci -- --verify`.
+`nix run .#ci -- examples verify`.
 
 ## M2 — base text primitives (`sparkles:base`)
 
@@ -32,7 +32,7 @@ Gate: `dub test :base` — `convertCase` runtime cases plus `static assert` CTFE
 coverage (incl. acronym/digit boundaries), `writeConvertedCase` into a
 `Buffer` matching `convertCase` for every style (and a `@nogc` case), the
 enum primitives, and a non-integer-backed enum; plus
-`nix run .#ci -- --verify --files docs/specs/base/text/case-style.md`.
+`nix run .#ci -- examples verify --include-files docs/specs/base/text/case-style.md`.
 
 ## M3 — policy (`sparkles.wired.policy`)
 
@@ -75,7 +75,7 @@ object-key path segments, and nested-struct isolation.
 ## M5 — docs & verification
 
 The `docs/libs/wired/` guide; the VitePress sidebar entry for this spec; and
-`nix run .#ci -- --verify` over [SPEC.md](./SPEC.md) and the guide.
+`nix run .#ci -- examples verify` over [SPEC.md](./SPEC.md) and the guide.
 
 Gate: every spec example runs and matches; `yarn docs:build` is clean.
 
@@ -102,7 +102,7 @@ Engine milestones, each independently green:
 - **M12** — native decode/encode walks (`JsonError`-based) + text-level
   API. Gate: twitter decode ≥ 1 GB/s, compile-time bench not regressed.
 - **M13** — **breaking** switch-over to the native surface and `JsonError`
-  (SPEC §11.6); `ci --verify` over the revised examples.
+  (SPEC §11.6); `ci examples verify` over the revised examples.
 - **M14** — retire the `std.json` walk; port the test suite.
 - **M15+** — optimization rounds (in progress; the gate table lives in
   [bench-baseline.md](./bench-baseline.md)). Landed: the pointer number

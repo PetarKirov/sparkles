@@ -78,7 +78,7 @@ small, under `libs/base/src/sparkles/base/text/` beside the readers it extends â
 - **Per milestone:** `dub test :parsing` (or `:base`) green; a `@nogc` unittest proving the
   zero-allocation property (M0/M1); the M2 client matching `sparkles.versions`' accept/reject
   set on a shared corpus; a runnable README `[Output]` example verified by
-  `nix run .#ci -- --verify`.
+  `nix run .#ci -- examples verify`.
 - **Idiom conformance:** `@safe pure nothrow @nogc` on leaf/non-template code; attributes
   inferred on combinator templates; `Expected` (no exceptions in the `@nogc` path); tests in
   feature modules, not `package.d` (the silly gotcha).

@@ -235,7 +235,7 @@ strongest grounding the corpus has. The engine is the repository's **`ci` helper
 (`apps/ci`), which makes example code self-testing in two ways, both run in CI:
 
 - **Markdown-embedded examples.** A fenced `d` block written as a single-file `dub`
-  program, immediately followed by an `ansi` block. `ci --verify` **extracts the
+  program, immediately followed by an `ansi` block. `ci examples verify` **extracts the
   snippet from the `.md`, compiles and runs it, and diffs its stdout/stderr against the
   `ansi` block** — so the numbers and text quoted in the prose are provably what
   the code actually prints. The block holds the output verbatim, escape sequences
@@ -245,7 +245,7 @@ strongest grounding the corpus has. The engine is the repository's **`ci` helper
   Full convention: [AGENTS § Runnable README examples](./AGENTS.md#runnable-readme-examples).
 - **Standalone `examples/` programs.** A directory of single-file `dub` programs
   (`#!/usr/bin/env dub` + an embedded `dub.sdl`), each demonstrating one claim from the
-  deep-dive. `ci --example-files` (`-x`) **compiles and runs** them, and the directory
+  deep-dive. `ci examples standalone` (`-x`) **compiles and runs** them, and the directory
   is registered in the helper's defaults (alongside `libs/core-cli/examples/*.d`) so it
   runs on every pass — no example is "documented but dead". async-io's
   [`io-uring/`](../research/async-io/io-uring/index.md) ships ~40 (`nop.d`, `tcp-echo.d`,
@@ -303,7 +303,7 @@ illustrative. Rules:
 - The `lychee` link checker is slow and flaky on large external sets; it is reasonable
   to `SKIP=lychee` at commit time and let CI run it (see below).
 - **Verify pinned blob paths offline before publishing**, with
-  `nix run .#ci -- --check-blob-paths` (or `dub run :ci -- --check-blob-paths`). The
+  `nix run .#ci -- check blob-paths` (or `dub run :ci -- check blob-paths`). The
   `check-vcs-urls` hook proves a GitHub URL carries a 40-character SHA; it says nothing
   about whether the **path** after that SHA exists. A citation pinned to a real commit
   but naming a file one directory over is a 404 that surfaces only under `lychee` — so
@@ -357,7 +357,7 @@ commits `docs` or `research`.
 - [ ] Every term links to its definition — a same-doc section, another `docs/` page, or
       the canonical external reference (the [`expected` cheat sheet](./idioms/expected/index.md#cheat-sheet-d-expected-vs-rust-result) is the model).
 - [ ] Demonstrable claims are backed by a runnable example the `ci` helper compiles and
-      runs — a markdown `ansi` output example (`ci --verify`) or a standalone `examples/*.d`
-      (`ci --example-files`); examples stay green cross-platform (`SKIP:` / `platforms`).
+      runs — a markdown `ansi` output example (`ci examples verify`) or a standalone `examples/*.d`
+      (`ci examples standalone`); examples stay green cross-platform (`SKIP:` / `platforms`).
 - [ ] Samples are source-only illustrative fixtures; artifacts git-ignored; hooks pass.
 - [ ] Flaky external links pinned to `web.archive.org` or excluded in `lychee.exclude`.

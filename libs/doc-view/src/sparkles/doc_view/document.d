@@ -425,7 +425,7 @@ struct DocumentPipeline
     /// ditto
     uint maxEditDistance = 1024;
     string coverageArtifact; /// `--cov` / `--overlay coverage=<path>`
-    /// `COV4`: with no artifact named, look for one `ci --test` left behind.
+    /// `COV4`: with no artifact named, look for one `ci test` left behind.
     /// On by default, like live types — the reader should not have to ask for
     /// data the repository already has.
     bool autoCoverage = true;

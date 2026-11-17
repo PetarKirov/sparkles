@@ -1,5 +1,5 @@
 # `run-all-examples`: smoke-runs every standalone example the way
-# `ci --example-files` does.
+# `ci examples standalone` does.
 { lib, ... }:
 {
   perSystem =
@@ -32,7 +32,7 @@
       ) (builtins.filter buildableHere allExampleFiles);
     in
     {
-      # Smoke-run every standalone example the way `ci --example-files` does:
+      # Smoke-run every standalone example the way `ci examples standalone` does:
       # `// ci: build-only` examples are built (they are retained in the
       # script's closure) but not executed; the rest run sequentially and any
       # non-zero exit is collected into the final status.

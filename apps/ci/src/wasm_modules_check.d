@@ -1,5 +1,5 @@
 /++
-`--check-wasm-modules`: the documentation site's WebAssembly modules agree
+`ci check wasm-modules`: the documentation site's WebAssembly modules agree
 with the same D functions run natively (docs/specs/toolchain/wasm-modules.md,
 `TCM9`).
 
@@ -302,7 +302,7 @@ RunExpected!void runCheckWasmModules(string textModule, string tableModule, stri
     foreach (path; [textModule, tableModule, wiredModule, loader, shim])
         if (path.length == 0 || !path.exists)
         {
-            stderr.writeln("--check-wasm-modules: '", path, "' does not exist ",
+            stderr.writeln("ci check wasm-modules: '", path, "' does not exist ",
                 "(pass --text-module, --table-module, --wired-module, --wasi-loader and --wasi-shim)");
             return failRun("'" ~ path ~ "' does not exist");
         }
@@ -323,7 +323,7 @@ RunExpected!void runCheckWasmModules(string textModule, string tableModule, stri
     const run = execute(["node", "--no-warnings", host, textModule, tableModule, wiredModule, request, reply]);
     if (run.status != 0)
     {
-        stderr.writeln("--check-wasm-modules: the node host failed (", run.status, "):\n", run.output);
+        stderr.writeln("ci check wasm-modules: the node host failed (", run.status, "):\n", run.output);
         return failRun(text("the node host failed (", run.status, ")"));
     }
 

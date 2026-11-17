@@ -157,7 +157,7 @@ variable `p[i] << i`: `ldc2 -c -output-ll -Xcc=-fsanitize=undefined` emits **0**
 the same flag. `[hw-verified: aarch64-darwin]`. Every `.c` dub compiles in this repository
 (the `libs/wsi` XCB/Wayland bridges, the ghostty and tree-sitter ImportC shims) takes this
 path, and the C libraries themselves are prebuilt by nix and never recompiled — which is
-why `ci --test-sanitize` carries ASan and LDC's stack-overflow sanitizer only.
+why `ci test --sanitize address` carries ASan and LDC's stack-overflow sanitizer only.
 
 ### D and druntime interaction
 

@@ -20,7 +20,7 @@ prose gets switched off. So a token is reported only when it $(I looks like a
 symbol and resolves nowhere) — a spelling this module declines to classify is
 left alone, and $(LREF isSymbolLike) is where that judgement lives.
 
-Complements `--check-docs-sidebar` (are pages linked?) and `--check-vcs-urls`
+Complements `ci check sidebar` (are pages linked?) and `ci check vcs-urls`
 (are citations pinned?): this one asks whether the citation is $(I true).
 +/
 module spec_evidence;
@@ -700,12 +700,12 @@ string renderBacklog(in Unresolved[] bad) @safe pure
     foreach (u; bad)
         keys ~= backlogKey(u.cite);
     string text =
-        "# Spec evidence that resolves nowhere, as of when `ci --check-spec-evidence`\n"
+        "# Spec evidence that resolves nowhere, as of when `ci check spec-evidence`\n"
         ~ "# became a gate. Each line is `file id token`, and the list may only shrink:\n"
         ~ "# fix a row (cite what satisfies it, or give an undelivered one its true\n"
         ~ "# status) and delete its line. A new unresolved citation fails the check,\n"
         ~ "# and so does a line here that resolves now. After a batch of fixes,\n"
-        ~ "# `ci --check-spec-evidence --update-spec-evidence-backlog` rewrites it; a\n"
+        ~ "# `ci fix spec-evidence-backlog` rewrites it; a\n"
         ~ "# line that rewrite ADDS is a new stale citation, to fix instead.\n";
     foreach (k; keys.sort.uniq)
         text ~= k ~ "\n";

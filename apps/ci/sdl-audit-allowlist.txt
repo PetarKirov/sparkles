@@ -1,4 +1,4 @@
-# Reviewed exceptions to `ci --check-adhoc-sdl` (lossless editing SDE9,
+# Reviewed exceptions to `ci check adhoc-sdl` (lossless editing SDE9,
 # docs/specs/wired/sdl/editing.md): marked operands the audit's rule cannot
 # tell from SDL work. One per line: `path | literal | reason`, the literal as
 # the audit reports it. An entry that matches nothing fails the audit, so
@@ -11,4 +11,4 @@ apps/ci/tools/scan-recipe-vocabulary.d | subPackage | the vocabulary scanner cla
 apps/ci/tools/scan-recipe-vocabulary.d | buildType | as `subPackage`: a parsed directive name or a `dub.json` key, compared as a name
 libs/build-primitives/src/sparkles/build_primitives/resolve/recipe.d | listSettings | a compile-time list of the schema's field names, joined for `__traits(getMember)`; no SDL text is built
 libs/build-primitives/src/sparkles/build_primitives/workspace/input_sets.d | /dub.sdl: | `writeOpaqueDiagnostic` names the recipe file a diagnostic is about, after its directory; no SDL is read, matched or built
-apps/ci/src/perf_publish.d | ^╭──╼ \[\d+/\d+\] (\S+) › dub test :\S+ -- (.*?) ╾ | the importer reads `ci --test`'s own log boxes back from a CI job log; `dub test :<package>` is the text `ci` printed, not a recipe
+apps/ci/src/perf_publish.d | ^╭──╼ \[\d+/\d+\] (\S+) › dub test :\S+ -- (.*?) ╾ | the importer reads `ci test`'s own log boxes back from a CI job log; `dub test :<package>` is the text `ci` printed, not a recipe

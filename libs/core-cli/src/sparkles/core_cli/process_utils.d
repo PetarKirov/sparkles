@@ -519,7 +519,7 @@ void sampleProcessTree(int rootPid, ref ResourceUsage usage) @trusted
 }
 
 /// $(LREF sampleProcessTree) for this process — the whole group a parent like
-/// `ci --test` cares about (`ci` plus every live descendant).
+/// `ci test` cares about (`ci` plus every live descendant).
 void sampleThisProcessTree(ref ResourceUsage usage) @trusted
 {
     import std.process : thisProcessID;

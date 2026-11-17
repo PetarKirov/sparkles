@@ -97,7 +97,7 @@ put a tool there only if a CI job runs it; everything else goes in `devPackages`
 
 The shells seed DUB's writable source cache from `packages.dub-sources` on entry,
 preserving existing versions. After building `.#ci` without entering a shell,
-run `nix run --offline .#ci -- --seed-dub-cache` before using plain `dub` offline.
+run `nix run --offline .#ci -- cache seed-dub` before using plain `dub` offline.
 The destination is `$DUB_HOME` or `~/.dub` (custom `settings.json` `dubHome` users
 must set `DUB_HOME` explicitly). Only sources are imported, not compiled caches,
 settings or local overrides. `ci` retains the Nix source bundle in its runtime
@@ -198,7 +198,7 @@ lists every flag, [docs](../libs/test-runner/index.md)). Beyond `-i`/`-e`/`-v`/
 `sparkles.test_runner.attributes` — `@ctfe`, `@betterC` (`--better-c`), `@wasm`
 (`--wasm`), `@benchmark`/`@workload` (`--bench`), `@slow` (`--skip-slow`/
 `--only-slow`). Mark a test that takes minutes `@slow`, with a `@("name")`:
-`ci --test` skips it and CI runs it as a job of its own. Mark a test that must
+`ci test` skips it and CI runs it as a job of its own. Mark a test that must
 run alone `@serial` (process-wide state): it runs after the parallel tests,
 whatever `-t` says; `@serial(threadAffinity: ThreadAffinity.mainThread)` also
 pins it to the main thread (a thread-confined library, such as Nix's
@@ -238,20 +238,20 @@ test under a debugger. Every sub-package integrates it the same way:
 ### Run the full CI check locally
 
 ```bash
-nix run .#ci -- --test --fail-fast                   # dub test, every sub-package
-DC=ldc2 nix run .#ci -- --test-sanitize --fail-fast  # Linux: AddressSanitizer
-nix run .#ci -- --test-extracted                     # --better-c/--wasm where used
-nix run .#ci -- --test-slow                          # the @slow tests --test skips
-nix run .#ci -- --verify --files README.md           # markdown examples
-nix run .#ci -- --check-vcs-urls                     # unpinned GitHub URLs
-nix run .#ci -- --check-docs-sidebar                 # sidebar ↔ pages
-nix run .#ci -- --check-spec-evidence                # spec evidence cites what exists
-nix run .#ci -- --check-blob-paths                   # local only, see below
+nix run .#ci -- test --fail-fast                            # dub test, every sub-package
+DC=ldc2 nix run .#ci -- test --sanitize address --fail-fast # Linux: AddressSanitizer
+nix run .#ci -- test --special-modes all                    # --better-c/--wasm where used
+nix run .#ci -- test --slow                                 # the @slow tests `ci test` skips
+nix run .#ci -- examples verify --include-files README.md   # markdown examples
+nix run .#ci -- check vcs-urls                              # unpinned GitHub URLs
+nix run .#ci -- check sidebar                               # sidebar ↔ pages
+nix run .#ci -- check spec-evidence                         # spec evidence cites what exists
+nix run .#ci -- check blob-paths                            # local only, see below
 ```
 
-`--check-blob-paths` checks that a SHA-pinned citation names a path that exists
+`ci check blob-paths` checks that a SHA-pinned citation names a path that exists
 at that SHA (`git cat-file -e` against the upstream clones under `$REPOS`) — the
-404 `--check-vcs-urls` cannot see. Uncloned repositories report as unchecked,
+404 `ci check vcs-urls` cannot see. Uncloned repositories report as unchecked,
 so it is neither a hook nor a CI job: run it before publishing a research catalog.
 
 ### What the default branch reports
@@ -260,18 +260,18 @@ so it is neither a hook nor a CI job: run it before publishing a research catalo
 landed (rebased) tree with the tree the pull request built: equal trees get the
 PR's checks mirrored onto the commit; different ones call `ci.yml` as a reusable
 workflow. Rehearse it with
-`nix run .#ci-minimal -- --mirror-checks --repo PetarKirov/sparkles --sha "$(git rev-parse origin/main)" --dry-run`
-(`--ci-stats --merges` measures the split). Before touching the workflows:
+`nix run .#ci-minimal -- github mirror-checks --repo PetarKirov/sparkles --sha "$(git rev-parse origin/main)" --no-write`
+(`ci stats --merges` measures the split). Before touching the workflows:
 
 - **Jobs that only talk to an API use `.#ci-minimal`** — the same binary without
   the compiler toolchain in its runtime closure (83 MiB vs 1.4 GiB on x86_64-linux).
-  `--test`, `--test-extracted`, `--test-slow`, and `--example-files` need `.#ci`.
+  `ci test` (every form) and `ci examples standalone` need `.#ci`.
 - **Every `ci.yml` job runs on every trigger; select work through the trigger
   list.** A called workflow sees the _caller's_ event (`push` on the rebuild
   path), and the merge-queue run is the only one that sees the batched result —
   an `if:` guard on either silently builds nothing and reports green.
 - **The networked link sweep is `link-check.yml`**, nightly, reconciling one
-  issue via `ci --report-link-rot`. PRs run `lychee-offline` on the tree and the
+  issue via `ci github link-rot-issue`. PRs run `lychee-offline` on the tree and the
   networked check on their own diff.
 
 ## Code Style & Idioms
@@ -443,17 +443,17 @@ Cross-cutting guides in `docs/guidelines/`; per-library Diátaxis docs in
 
 `docs/.vitepress/sidebar.json` (the sidebar tree) and
 `docs/.vitepress/docs-config.json` (`srcExclude`) are the single source of
-truth, read by `config.mts` as JSON imports, by `ci --check-docs-sidebar`, and
-by `ci --audit-fences`. Edit the JSON — `config.mts` only passes it through.
+truth, read by `config.mts` as JSON imports, by `ci check sidebar`, and
+by `ci docs fences-audit`. Edit the JSON — `config.mts` only passes it through.
 
 To add a page, add `{ "text": "…", "link": "/route" }` to the right group (a
 group is `{ "text", "collapsed": true, "items": [ … ] }`); the link is the route
 — leading `/`, no `.md`, `/dir/` for `dir/index.md`. Then run
-`ci --check-docs-sidebar`.
+`ci check sidebar`.
 
 The glossary is data too: `docs/.vitepress/glossary.json` (schema:
 `sparkles.docs.glossary`) renders the `/glossary` page and every
-`<GlossaryList owner="…" />`, and `ci --check-glossary` validates it together
+`<GlossaryList owner="…" />`, and `ci check glossary` validates it together
 with every docs link into it. Link a term to `…/glossary.md#<id>`; never
 redefine it in prose. See
 [Writing Specification Prose](./spec-prose.md#link-terms-to-the-glossary).
@@ -487,9 +487,9 @@ Expected output here
 to `ansi` by regenerating it.
 
 ```bash
-nix run .#ci -- --verify --files README.md   # check
-nix run .#ci -- --update --files README.md   # regenerate the ansi blocks
-nix run .#ci -- --files README.md            # just run
+nix run .#ci -- examples verify --include-files README.md   # check
+nix run .#ci -- examples update --include-files README.md   # regenerate the ansi blocks
+nix run .#ci -- examples run --include-files README.md      # just run
 ```
 
 README examples use `version="*"` (readers copy them), so `dub add-local <repo>`
@@ -560,7 +560,7 @@ not want cross-linked too. Committed source and Markdown files are unaffected.
 - **Each commit is atomic and green** (build + test + lint on its own); tweaks to
   an earlier commit go in as `git commit --fixup=<sha>`. CI builds only a PR's
   tip, so check the rest before pushing a series:
-  `nix run .#ci -- --build-each-commit` builds every commit since the merge-base
+  `nix run .#ci -- commits build-each` builds every commit since the merge-base
   with `origin/main` in a scratch worktree (`--base <ref>`, `--packages <name>…`;
   by default `hue`, `ui-gallery` and `diagram`, whose GUI configurations
   `dub test` never compiles).

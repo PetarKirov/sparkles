@@ -148,7 +148,7 @@ happens to be called `glossary` from being checked against these ids.
 
 ## 4. Consistency
 
-`ci --check-glossary` loads the entries, collects the references of §3 from
+`ci check glossary` loads the entries, collects the references of §3 from
 every tracked Markdown file under `docs/`, and applies the rules of §1–§3
 together with those below. It fails on any violation. The check covers the
 whole tree on every run, because deleting an entry breaks pages the change

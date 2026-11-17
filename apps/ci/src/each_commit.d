@@ -1,5 +1,5 @@
 /++
-`--build-each-commit`: build the chosen sub-packages at every commit of a range.
+`ci commits build-each`: build the chosen sub-packages at every commit of a range.
 
 CI builds a pull request's $(I tip). A stacked series is merged by rebase, so
 every commit in it lands on `main` and becomes a `git bisect` stop, and the

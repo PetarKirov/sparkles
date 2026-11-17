@@ -131,8 +131,8 @@ struct workload
 /// like any other unless the run asks otherwise: `--skip-slow` leaves it out
 /// (the summary counts what it left out) and `--only-slow` runs nothing else.
 ///
-/// The marker exists for CI, where `ci --test` passes `--skip-slow` and
-/// `ci --test-slow` runs each slow test as a job of its own. That needs every
+/// The marker exists for CI, where `ci test` passes `--skip-slow` and
+/// `ci test --slow` runs each slow test as a job of its own. That needs every
 /// slow test to have a string name (`@("…")`): it is what the job is called,
 /// and what `ci` selects it by.
 struct slow

@@ -1,5 +1,5 @@
 /++
-`ci --ci-stats --merges` — what actually lands on `main`, and what it would
+`ci stats --merges` — what actually lands on `main`, and what it would
 cost to verify it.
 
 The repository merges by rebase, so every commit on `main` carries a SHA that

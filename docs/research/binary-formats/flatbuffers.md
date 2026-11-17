@@ -237,7 +237,7 @@ The following portable D program is an **independent offset invariant check**
 over that observed vector, plus a separately constructed negative-displacement
 case. It is not a complete verifier or FlatBuffers binding.
 Unlike the manual C++ probe, this example is registered by its Markdown
-code/output pair for `ci --verify`.
+code/output pair for `ci examples verify`.
 
 ```d
 #!/usr/bin/env dub

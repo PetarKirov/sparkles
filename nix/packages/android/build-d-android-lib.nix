@@ -165,7 +165,7 @@ in
           "${config.packages.libghostty-vt-android}/lib/${abi}/libghostty-vt.a"
           "${config.packages.libkqueue-android}/lib/${abi}/libkqueue.a"
         ];
-        # Spelled out: `ci --check-credits` reads this list.
+        # Spelled out: `ci check credits` reads this list.
         dubDeps = [
           {
             name = "raylib-d";

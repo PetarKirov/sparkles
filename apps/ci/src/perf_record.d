@@ -38,7 +38,7 @@ enum TaskOutcome : ubyte
     failed,
 }
 
-/// One task of a record: a package's test run, or a `--record-task` command.
+/// One task of a record: a package's test run, or a `ci perf record` command.
 struct RecordedTask
 {
     string id; /// TDM1's form: `test:<package>:<mode>:<leg>`, `pin-build:<pin>`
@@ -141,7 +141,7 @@ struct RunFacts
     uint logicalCores;
     uint memoryGiB;
     // Run
-    string command; /// `--test`, `--test-sanitize`, …
+    string command; /// `ci test`, `ci test --sanitize address`, …
     string[] options; /// Normalized: only the options that change what runs.
     string compiler; /// `$DC`'s vendor, `ldc2` or `dmd`.
     string compilerVersion;
@@ -307,7 +307,7 @@ unittest
     f.commit = "0123456789abcdef0123456789abcdef01234567";
     f.os = "linux";
     f.logicalCores = 16;
-    f.command = "--test";
+    f.command = "test";
     f.compiler = "ldc2";
     const tasks = [
         RecordedTask("test:ui:unittest:parallel", TaskOutcome.failed, 30, 70),

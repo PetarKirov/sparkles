@@ -132,7 +132,7 @@ state, parse `path:<dir>#frag`, lock (virtual mode), get `outputs`, select +
    Register `subPackage "apps/nix-eval"` in the root `dub.sdl` (sorted).
 2. A runnable `README.md` example per the
    [`[Output]` convention](../../guidelines/AGENTS.md#runnable-readme-examples)
-   (uses `version="*"`), verified with `nix run .#ci -- --verify`.
+   (uses `version="*"`), verified with `nix run .#ci -- examples verify`.
 3. Per-library docs stub under `docs/libs/nix/` (Diátaxis) is encouraged but
    may follow.
 
@@ -141,8 +141,8 @@ state, parse `path:<dir>#frag`, lock (virtual mode), get `outputs`, select +
 - [ ] `dub test :nix` green; the unset-`NIX_CFLAGS_COMPILE` rebuild still
       finds the headers (pkg-config proven).
 - [ ] `dub build :nix-eval` builds; the demo evaluates int/list/attrs.
-- [ ] `nix run .#ci -- --test --fail-fast` passes for the new package.
-- [ ] README example verifies (`nix run .#ci -- --verify --files README.md`).
+- [ ] `nix run .#ci -- test --fail-fast` passes for the new package.
+- [ ] README example verifies (`nix run .#ci -- examples verify --include-files README.md`).
 - [ ] New files `git add`-ed before any `nix develop`/flake build.
 - [ ] Atomic commits per AGENTS.md (`build(nix)` flake wiring first, then
       `feat(nix)` per layer, then `feat(terminal)`-style `feat(nix-eval)`).

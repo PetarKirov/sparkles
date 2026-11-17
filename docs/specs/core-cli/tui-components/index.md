@@ -273,4 +273,4 @@ clients of this primitive and stay pure producers themselves.
 | `release`         | C1–C4 (bump select, publish confirm), D1–D3 (pre-flight/stages checklist), B.1 (stats table alignment/header/width), E1–E2 (type/area breakdowns), receipt box + `oscLink` |
 | `ci`              | D1/D3/D4 (per-example verification progress), B.1, A1 (piped-output degradation)                                                                                           |
 | test runner       | Already consumes `ProgressLine`, `drawTable`, `terminalWidth`, and hosts the `prepareConsole` logic A1 hoists                                                              |
-| `docs`/`examples` | Every component lands with a runnable example (`ci --verify`)                                                                                                              |
+| `docs`/`examples` | Every component lands with a runnable example (`ci examples verify`)                                                                                                       |

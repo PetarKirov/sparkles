@@ -616,7 +616,7 @@ non-binding requirements that follow from this page are in
 
 The three programs depend only on `sparkles:wired` by path and need no network or
 files. The working tree's `apps/ci/src/app.d` adds
-`docs/research/images/wired-flat-fit/examples/*.d` to `ci --example-files`' default
+`docs/research/images/wired-flat-fit/examples/*.d` to `ci examples standalone`' default
 set, beside `docs/research/images/mir-algorithm/examples/*.d`; until that change is
 committed, CI does not run them.
 

@@ -68,7 +68,7 @@ event-horizon's `raw_pool` and `pool`, its fiber parker (below).
 `core.sync.condition` and `pthread_mutex_t` switched to `sparkles.base.sync`,
 one package per commit, with before-and-after measurements where a hot path
 changes.
-**Acceptance.** `ci --test` and the example and documentation checks pass; no
+**Acceptance.** `ci test` and the example and documentation checks pass; no
 `core.sync.mutex`, `core.sync.condition` or `pthread_mutex_t` remains outside
 the seam and the portable thread parker.
 **Exceptions.** None remain in event-horizon: `raw_pool` moved with its fiber

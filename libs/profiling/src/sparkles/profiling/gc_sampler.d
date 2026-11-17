@@ -12,7 +12,7 @@ with
 SPARKLES_GC_SAMPLES=out.gcs ./program --DRT-gcopt=gc:sampler
 ---
 
-and summarize `out.gcs` with `ci --gc-report out.gcs --gc-exe ./program`.
+and summarize `out.gcs` with `ci gc-report out.gcs --gc-exe ./program`.
 Nothing is recorded, and the collector is druntime's own, unless a run
 selects `gc:sampler`.
 

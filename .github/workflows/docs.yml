@@ -56,7 +56,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # `yarn docs:build` first runs `build:wasm` (`ci --stage-docs-wasm`), which
+      # `yarn docs:build` first runs `build:wasm` (`ci docs stage-wasm`), which
       # builds the site's WebAssembly modules with `nix build .#docs-wasm`.
       # Install Nix and wire up the binary cache so the toolchain (the
       # project's LDC and its WASI runtime) is pulled from the cache rather
@@ -98,7 +98,7 @@ jobs:
 
       # The README badges read these from the deployed site. Regenerating them
       # here rather than committing them keeps the number honest: it is
-      # computed from the same aggregate `ci --ci-stats --merges` prints, and a
+      # computed from the same aggregate `ci stats --merges` prints, and a
       # committed JSON would be stale from the merge after the one that wrote
       # it. A failure here is not worth failing a docs deploy over -- the
       # previously deployed badge simply stays up.
@@ -107,7 +107,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          nix run .#ci-minimal -- --ci-stats --merges \
+          nix run .#ci-minimal -- stats --merges \
             --repo "$GITHUB_REPOSITORY" --limit 1000 \
             --badge-dir docs/public/badges
 

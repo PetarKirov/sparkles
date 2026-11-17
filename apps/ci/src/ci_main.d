@@ -10,6 +10,6 @@
  */
 module ci_main;
 
-import app : ciMain;
+import cli : ciMain;
 
 int main(string[] args) => ciMain(args);

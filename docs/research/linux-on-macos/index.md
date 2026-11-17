@@ -1,13 +1,13 @@
 # Linux on macOS — building and testing Nix flake outputs
 
 How to realize `{aarch64,x86_64}-linux` Nix derivations on an Apple-silicon
-Mac, and how to _run_ the working-tree command `ci --test` for those
+Mac, and how to _run_ the working-tree command `ci test` for those
 systems — not merely download a Linux ELF into `/nix/store`.
 
 The sparkles flake already declares Linux outputs: `inputs.systems` is
 [`nix-systems/triplet`][nix-systems-triplet], i.e.
 `["aarch64-darwin" "aarch64-linux" "x86_64-linux"]`. GitHub Actions already
-runs `ci --test` on `ubuntu-latest` (`x86_64-linux`) and `ubuntu-24.04-arm`
+runs `ci test` on `ubuntu-latest` (`x86_64-linux`) and `ubuntu-24.04-arm`
 (`aarch64-linux`). This tree is about doing the same **from the laptop**.
 
 **Last reviewed:** September 4, 2026
@@ -65,18 +65,18 @@ This survey answers six questions:
 
 ## Milestones
 
-| Date       | What landed                                                                                                                             |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| 2022       | nixpkgs `darwin.linux-builder` (QEMU NixOS VM, SSH on port 31022)                                                                       |
-| 2025-05-28 | [DeterminateSystems/nix-src#78][pr78] — `external-builders` experimental feature                                                        |
-| 2025-08-05 | Determinate Nix 3.8.4 blog: native Linux builder for macOS (developer preview)                                                          |
-| 2025-06-09 | Apple `container` / Containerization public repos                                                                                       |
-| 2026-05-06 | IOHK `nix-linux-builder` v0.3.0 — same `external-builders` protocol, ungated                                                            |
-| 2026-09-04 | This survey: Determinate builder configured but gated; Apple `container` 1.1.0 runs `ci --test` inside the reconstructed `devShells.ci` |
+| Date       | What landed                                                                                                                           |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 2022       | nixpkgs `darwin.linux-builder` (QEMU NixOS VM, SSH on port 31022)                                                                     |
+| 2025-05-28 | [DeterminateSystems/nix-src#78][pr78] — `external-builders` experimental feature                                                      |
+| 2025-08-05 | Determinate Nix 3.8.4 blog: native Linux builder for macOS (developer preview)                                                        |
+| 2025-06-09 | Apple `container` / Containerization public repos                                                                                     |
+| 2026-05-06 | IOHK `nix-linux-builder` v0.3.0 — same `external-builders` protocol, ungated                                                          |
+| 2026-09-04 | This survey: Determinate builder configured but gated; Apple `container` 1.1.0 runs `ci test` inside the reconstructed `devShells.ci` |
 
 ## Suggested reading
 
-- **I want to run `ci --test` on Linux from this Mac.** [recommendations][recommendations], then `ci --linux-host-probe` and `ci --test --host-system aarch64-linux`.
+- **I want to run `ci test` on Linux from this Mac.** [recommendations][recommendations], then `ci host probe` and `ci test --host-system aarch64-linux`.
 - **I want `nix build .#packages.aarch64-linux.*` to compile missing paths.** [determinate-linux-builder][detsys] (gated) or [nix-darwin-linux-builder][darwin-builder] / [IOHK][iohk].
 - **I am designing the dispatcher.** [concepts][concepts] then [sparkles-baseline][baseline].
 

@@ -387,7 +387,7 @@ int.init   = 0
 ```bash
 dub test :base                        # unit tests, including the escape static asserts
 dub test :base -- --better-c          # the policies usable without druntime
-nix run .#ci -- --verify --files docs/specs/base/buffer.md
+nix run .#ci -- examples verify --include-files docs/specs/base/buffer.md
 ```
 
 Each requirement above that concerns a compile-time rejection — `BUF2`, `BUF3`,

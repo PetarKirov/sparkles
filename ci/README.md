@@ -5,8 +5,8 @@ here. `.github/workflows/` and `.circleci/config.yml` are the two thin YAML
 front-ends; a behaviour change belongs in this directory so it lands on both.
 
 > [!NOTE]
-> Do not confuse this with `apps/ci`, the repository's D helper (`ci --test`,
-> `ci --verify`, …). That tool is the _workload_ CI runs. These scripts are the
+> Do not confuse this with `apps/ci`, the repository's D helper (`ci test`,
+> `ci examples verify`, …). That tool is the _workload_ CI runs. These scripts are the
 > _plumbing_ that gets a runner to the point where it can run it.
 
 ## Why shell, and not D
@@ -70,7 +70,7 @@ PR — which gets no secrets — still run the pipeline.
 | `lib/r2.sh`                  | The R2 cache's credentials check, store URL, `nix copy` and S3 `PUT`                     |
 | `with-cache.sh`              | Queues each built path through a post-build hook and `nix copy`s it to the R2 bucket     |
 | `gc-root.sh`                 | Copies a build's closure to R2 and records it as a garbage-collection root               |
-| `ci --gc-r2` (`apps/ci`)     | Garbage-collects the R2 bucket, keeping the roots of `main`'s last trees (`r2-gc.yml`)   |
+| `ci cache gc-r2` (`apps/ci`) | Garbage-collects the R2 bucket, keeping the roots of `main`'s last trees (`r2-gc.yml`)   |
 | `push-pin-set-r2.sh`         | Mirrors the pin set's toolchain outputs into the R2 bucket and roots them (`pin-cache`)  |
 | `release-pin.sh`             | Highest-tag guard, then `cachix push` + `cachix pin --keep-revisions`                    |
 | `toolchain-pin.d`            | Pins the pin set (`nix/pin-targets.nix`) to Cachix, prunes the rest, checks it is cached |
@@ -121,7 +121,7 @@ the same check on the set's `toolchain-*` entries, the outputs TC23 names, on
 every trigger, from the compiler-free `ci-minimal` binary:
 
 ```bash
-nix run .#ci-minimal -- --check-pin-cache
+nix run .#ci-minimal -- check pin-cache
 ```
 
 The implementation lives in `apps/ci/src/derivation_pin*.d`. One Event Horizon
@@ -285,7 +285,7 @@ Three findings are worth not rediscovering:
 
 ### What still does not work in a blocked-egress container
 
-`ci --verify` / the `verify-md-examples` hook. A markdown example is a dub
+`ci examples verify` / the `verify-md-examples` hook. A markdown example is a dub
 single-file program whose inline recipe pulls registry packages, and dub
 resolves those **transitively at build time** — `vibe-container`, for one,
 appears in no tracked file at all. The seeding step above works from
@@ -330,12 +330,12 @@ then disable the project (CircleCI) or the workflow triggers (GitHub).
 > A merge here is a rebase, so the commit that lands on `main` has a SHA no run
 > has seen. Rather than rebuild it or leave it bare, `main-checks.yml` compares
 > the landed **tree** against the tree the pull request built and, when they
-> match, mirrors that pull request's checks onto the commit (`ci --mirror-checks`,
+> match, mirrors that pull request's checks onto the commit (`ci github mirror-checks`,
 > run from the 121 MiB `.#ci-minimal` output rather than the 2.4 GiB `.#ci`).
 > When they differ — the base moved under the pull request, so the merge produced
 > content nothing has built — it calls `ci.yml` as a reusable workflow so the
 > real jobs report against that commit.
-> `ci --ci-stats --merges` measures the split: 75.7% mirrored, 24.3% rebuilt,
+> `ci stats --merges` measures the split: 75.7% mirrored, 24.3% rebuilt,
 > about 2.7 full runs a week.
 >
 > This is also why no job in `ci.yml` carries an `if:` guard any more. A called
@@ -420,8 +420,8 @@ mirror step. Each other missing output whose recorded cost fits the budget in
 a runner of its system, through `with-cache.sh`, so it reaches R2 as it
 finishes. One over the budget, and one that needs it, is reported with the
 `toolchain-pin.d` command that builds it on a developer host. Each build is
-recorded as a `pin-build:<pin>` task (`ci --record-task`), and a pin's cost is
-the median of its records on `refs/perf/data`, which `ci --write-pin-costs`
+recorded as a `pin-build:<pin>` task (`ci perf record`), and a pin's cost is
+the median of its records on `refs/perf/data`, which `ci cache pin-costs`
 writes out for the plan.
 
 `nix-cache-info` in the bucket was written once by hand, not by Nix (which
@@ -454,7 +454,7 @@ Cloudflare caches by default):
 
 All three ignore the origin's cache-control and bypass the browser cache. A
 NAR never changes, so a month is safe; a narinfo is cached for an hour so a
-path `ci --gc-r2` deletes stops being advertised soon after. A 404 is never
+path `ci cache gc-r2` deletes stops being advertised soon after. A 404 is never
 cached, because a path pushed a minute ago must not keep looking missing.
 NARs over 512 MB exceed Cloudflare's cacheable size and come from R2
 directly.
@@ -474,7 +474,7 @@ rebase, and when the landed tree equals the tree the pull request built,
 (see AGENTS.md). The same equality makes the pull request's roots `main`'s,
 with nothing copied.
 
-`ci --gc-r2` collects, weekly (`.github/workflows/r2-gc.yml`). It keeps the
+`ci cache gc-r2` collects, weekly (`.github/workflows/r2-gc.yml`). It keeps the
 roots of the trees of `HEAD`'s last 30 first-parent commits — `cachix pin
 --keep-revisions`, with git history as the revision list — and every object
 younger than 14 days, which covers open pull requests and uploads still in
@@ -489,7 +489,7 @@ manual dispatch is a dry run unless told otherwise:
 gh workflow run r2-gc.yml -f dry_run=false
 ```
 
-Locally, with the R2 credentials exported, `nix run .#ci-minimal -- --gc-r2
+Locally, with the R2 credentials exported, `nix run .#ci-minimal -- cache gc-r2
 --dry-run` prints the same plan; `R2_ENDPOINT` points it at another S3 server
 (a local MinIO, for testing).
 
@@ -514,7 +514,7 @@ everything interactive:
 
 The biggest single cut is `chromium` (1.7 GiB), which exists only for
 `libs/twoslash/examples/visual-check.mjs` — a `.mjs`, so neither
-`ci --example-files` (which globs `.d`) nor any other job runs it. Also gone:
+`ci examples standalone` (which globs `.d`) nor any other job runs it. Also gone:
 `perf` (nothing execs the CLI; the probes call `perf_event_open` and link
 libpfm), the profilers, the benchmark harnesses and corpora, the
 text-conformance oracle libraries and PyD Python (not a root sub-package), and
@@ -555,7 +555,7 @@ terminal made it render a select prompt and then die on the EOF behind it.
 The fix is in `apps/ci`, not here: `executeLogged` spawns every example and
 `dub test` with `ChildStdin.empty`, so children always see a non-terminal,
 already-EOF stdin. That makes the behaviour identical on both providers _and_
-on a developer's terminal, where `ci --verify` would otherwise stall on the
+on a developer's terminal, where `ci examples verify` would otherwise stall on the
 same prompt. If you add a step that runs a program which might prompt, either
 route it through `ci` or redirect `</dev/null` yourself.
 
@@ -593,7 +593,7 @@ still uses them, and they were never provider-specific.
 
 ## Cost
 
-Measured with `ci --ci-stats` over `2026-07-06 … 2026-08-06`. GitHub's Actions
+Measured with `ci stats` over `2026-07-06 … 2026-08-06`. GitHub's Actions
 API caps pagination at 1000 runs, so the sample is the most recent 1000 of the
 window's 1396 runs (3176 jobs, 16,363 job-minutes); the monthly figures below
 scale that by 1.396.

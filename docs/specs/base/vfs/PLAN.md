@@ -72,8 +72,8 @@ blocking pool.
 **Deliverable.** `docs/specs/base/vfs/` with SPEC, backends, PLAN, testing and
 decisions, registered in the docs sidebar, and the glossary entries its
 opening relies on.
-**Acceptance.** `dub run :ci -- --check-docs-sidebar`, `--check-glossary`,
-`--check-vcs-urls` and the docs site build pass; every requirement has a row
+**Acceptance.** `dub run :ci -- check sidebar`, `ci check glossary`,
+`ci check vcs-urls` and the docs site build pass; every requirement has a row
 in [testing.md § requirement checks](./testing.md#requirement-checks). The
 independent-review item stays unmet until a second reviewer reads it.
 **Excludes.** Code.

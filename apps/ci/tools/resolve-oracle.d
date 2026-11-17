@@ -30,8 +30,8 @@ $(LIST
         `subConfiguration`, under `checked`.
 )
 and every single-file package `ci` runs is one request under `debug`, as
-`ci` runs it: each example `ci --example-files` runs, and each fence of a
-tracked Markdown file `ci --verify` runs. dub reads a fence as `ci` hands it
+`ci` runs it: each example `ci examples standalone` runs, and each fence of a
+tracked Markdown file `ci examples verify` runs. dub reads a fence as `ci` hands it
 over, its in-tree dependencies by version rewritten to paths; the resolver
 reads it as written, with its in-tree rewrite (BGR6).
 Every binary target of each request is compared: source files, import, C
@@ -279,7 +279,7 @@ string[] gitLsFiles(string[] pathspecs)
     return result.output.lineSplitter.filter!(l => l.length != 0).map!(l => l.idup).array;
 }
 
-/// The single-file examples `ci --example-files` runs: the globs of
+/// The single-file examples `ci examples standalone` runs: the globs of
 /// `standaloneExampleGlobs` in `apps/ci/src/app.d`, read from the source so
 /// the oracle follows that list.
 string[] exampleFiles()
@@ -299,7 +299,7 @@ string[] exampleFiles()
     return gitLsFiles(globs).filter!(f => locateEmbeddedRecipe(readText(f)).found).array;
 }
 
-/// A Markdown fence `ci --verify` runs.
+/// A Markdown fence `ci examples verify` runs.
 struct Fence
 {
     string file; /// the Markdown file
@@ -451,7 +451,7 @@ int main(string[] args)
     {
         packages = subPackages.dup;
         singleFiles = exampleFiles();
-        // The files CI's `--verify` job passes: every tracked one but the
+        // The files CI's `ci examples verify` job passes: every tracked one but the
         // highlighter's test data, whose fences are fixtures.
         markdownFiles = gitLsFiles(["*.md", ":!libs/syntax/test/data/**",
             ":!libs/source-view/test/data/**"]);

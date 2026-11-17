@@ -54,9 +54,9 @@ Publication commands:
 
 ```bash
 prek run prettier --files docs/specs/wired/config/*.md docs/.vitepress/sidebar.json docs/.vitepress/glossary.json
-dub run :ci -- --check-docs-sidebar
-dub run :ci -- --check-glossary
-dub run :ci -- --check-spec-evidence
+dub run :ci -- check sidebar
+dub run :ci -- check glossary
+dub run :ci -- check spec-evidence
 yarn docs:build
 ```
 

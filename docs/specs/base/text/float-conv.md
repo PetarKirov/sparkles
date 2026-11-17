@@ -519,7 +519,7 @@ dub test :base                                                           # every
 dub test :base -- -t 1                                                   # the 512 KiB worker stack
 dub test :base -b bench -- --bench -i float_conv.bench --group-by=format # §6
 dub test :base -- --better-c                                             # CTF4
-nix run .#ci -- --verify --files docs/specs/base/text/float-conv.md      # the example above
+nix run .#ci -- examples verify --include-files docs/specs/base/text/float-conv.md      # the example above
 ```
 
 Each requirement is pinned by named tests in `float_conv.d`:

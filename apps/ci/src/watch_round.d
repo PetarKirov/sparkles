@@ -1,11 +1,11 @@
 /**
-One `--watch` round as a task graph, run on the task executor (design
+One `ci test --watch` round as a task graph, run on the task executor (design
 BGW15, BGW18; task-DAG TDM15, TDM16).
 
 $(LREF planRound) turns the packages a change selected into nodes: for
-`--test`, one per leg (`-t 1`, then the parallel leg), for `--build` one
+`ci test`, one per leg (`-t 1`, then the parallel leg), for `ci test --build-only` one
 per package, ordered after the packages it depends on. Each node runs the
-command `--test` or `--build` would ($(REF packageTestCommands, app)), and
+command `ci test` or `ci test --build-only` would ($(REF packageTestCommands, app)), and
 states its files: it reads the input sets of every package and
 configuration its request's closure holds, and writes those packages'
 `build` and `.dub` directories, where dub puts a path dependency's
@@ -63,9 +63,9 @@ final class Round
 /**
 The round that runs `action` over the packages `selection` holds, from
 `plan` and the watched input `state`, for the repository at `repoRoot`.
-`wasiCompiler` is $(REF findWasiCompiler, app)'s, for `--build`, and
+`wasiCompiler` is $(REF findWasiCompiler, app)'s, for `ci test --build-only`, and
 `threads` the parallel test leg's. Creates each package's `build`
-directory, as `--test` and `--build` do.
+directory, as `ci test` and `ci test --build-only` do.
 */
 Round planRound(ClaimPlan plan, const ref Selection selection, RoundAction action,
     const ref InputState state, string repoRoot, string wasiCompiler, uint threads)
@@ -146,7 +146,7 @@ Round planRound(ClaimPlan plan, const ref Selection selection, RoundAction actio
         }
         planned[si] = true;
     }
-    // `--build`: a package after the packages it depends on, as dub would.
+    // `ci test --build-only`: a package after the packages it depends on, as dub would.
     if (action == RoundAction.build)
         foreach (e; selection.edges)
             if (planned[e.dependency] && planned[e.dependent])

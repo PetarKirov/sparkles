@@ -1,5 +1,5 @@
 /++
-`--check-nix-wasm`: the dub recipe module for Nix's `builtins.wasm`
+`ci check nix-wasm`: the dub recipe module for Nix's `builtins.wasm`
 (docs/specs/wired/wasm) checked on an evaluator that has the builtin.
 
 Two Nix expressions in `libs/dub-manifest/dub-manifest-nix-wasm` do the comparing, and
@@ -122,13 +122,13 @@ RunExpected!void runCheckNixWasm(string root, string nix, string module_, string
 
     if (!module_.length || !answers.length)
     {
-        stderr.writeln("--check-nix-wasm needs --nix-wasm-module and --nix-wasm-answers");
-        return failRun("--check-nix-wasm needs --nix-wasm-module and --nix-wasm-answers", 2);
+        stderr.writeln("ci check nix-wasm needs --module and --answers");
+        return failRun("ci check nix-wasm needs --module and --answers", 2);
     }
     const probe = evaluate(nix, "builtins ? wasm");
     if (probe.failure !is null || probe.value.type != JSONType.true_)
     {
-        stderr.writeln("--check-nix-wasm: `", nix, "` has no builtins.wasm (Determinate Nix with "
+        stderr.writeln("ci check nix-wasm: `", nix, "` has no builtins.wasm (Determinate Nix with "
             ~ "the wasm-builtin feature); the check did not run",
             probe.failure is null ? "" : ":\n" ~ probe.failure);
         return failRun("`" ~ nix ~ "` has no builtins.wasm; the check did not run");

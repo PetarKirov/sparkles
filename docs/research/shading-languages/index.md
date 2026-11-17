@@ -152,7 +152,7 @@ The vocabulary is defined once in [Concepts](./concepts.md); the deep-dives link
 ## Runnable examples
 
 Each compiles a D device module with the toolchain the dev and CI shells provide
-(`ldc2-vulkan`, `spirv-val`, `spirv-cross`), runs under `ci --example-files`, and
+(`ldc2-vulkan`, `spirv-val`, `spirv-cross`), runs under `ci examples standalone`, and
 prints `SKIP:` where the tools are missing.
 
 | Example                                                             | Shows                                                                                                 |

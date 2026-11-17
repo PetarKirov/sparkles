@@ -682,7 +682,7 @@ and `S copyS() => moveS();`, calling `copyS()`:
 ### Verifying these examples
 
 The `dub` single-file recipes above carry `toolchainRequirements
-frontend=">=2.111"`, so `dub` (and therefore `ci --verify`) selects a compliant
+frontend=">=2.111"`, so `dub` (and therefore `ci examples verify`) selects a compliant
 compiler and the recipes run as written. The repo's pinned **DMD 2.110 cannot
 compile them** — by design the requirement produces a clear diagnostic instead
 of a cryptic _"undefined identifier `__rvalue`"_:
@@ -697,14 +697,14 @@ the compiler used for verification:
 
 ```bash
 # Default: dub picks the first compliant compiler in PATH (LDC here)
-nix run .#ci -- --verify --files docs/guidelines/move-semantics/index.md
+nix run .#ci -- examples verify --include-files docs/guidelines/move-semantics/index.md
 
 # Force LDC explicitly
-DC=ldc2 nix run .#ci -- --verify --files docs/guidelines/move-semantics/index.md
+DC=ldc2 nix run .#ci -- examples verify --include-files docs/guidelines/move-semantics/index.md
 
 # Verify against a development DMD that implements the 2.113-era rules
 DC=/path/to/dmd/generated/linux/release/64/dmd \
-  nix run .#ci -- --verify --files docs/guidelines/move-semantics/index.md
+  nix run .#ci -- examples verify --include-files docs/guidelines/move-semantics/index.md
 ```
 
 ---

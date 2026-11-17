@@ -69,7 +69,7 @@ if only a matcher would, it is here.
 ## Runnable grounding
 
 Three examples live in `theory/examples/`, each compiled and run by
-`ci --example-files`, each backing a specific claim:
+`ci examples standalone`, each backing a specific claim:
 
 | Example                 | Backs                                                                                                                                                                                                                                                     |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

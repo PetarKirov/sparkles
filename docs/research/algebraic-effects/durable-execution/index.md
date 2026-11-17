@@ -195,7 +195,7 @@ then [Golem] for the one serious answer to versioning, and
 **"I want to see it work."** The runnable
 [replay-journal example](./examples/replay-journal.d): about 200 lines of D that
 journal a miniature release, crash at every index, resume, and detect a diverged
-program. `ci --example-files` compiles and runs it.
+program. `ci examples standalone` compiles and runs it.
 
 **"I want the closest prior art to what we are building."**
 [effect-workflow] (the design this was sketched from), [Restate] (the closest

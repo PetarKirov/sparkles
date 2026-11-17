@@ -2,7 +2,7 @@
 // its gutter the way `--live-types` lights up hovers — without the reader having
 // to know where `-cov` put its listings or what it called them.
 //
-// `ci --test` merges every sub-package's run into `<repo>/build/coverage`, and
+// `ci test` merges every sub-package's run into `<repo>/build/coverage`, and
 // that convention is the whole contract here: one directory, one truthful entry
 // per file (`COV4`).
 //
@@ -27,7 +27,7 @@ import std.path : absolutePath, buildPath, dirName;
 import sparkles.base.logger : info;
 import sparkles.code_instrumentation : dmdListingSource;
 
-/// Where `ci --test` leaves its merged listings, relative to the repository root.
+/// Where `ci test` leaves its merged listings, relative to the repository root.
 enum coverageDirName = buildPath("build", "coverage");
 
 /// One artifact and the source it describes.

@@ -189,8 +189,8 @@ Rules that keep usage bounded and output verifiable:
   (SHA-pinned `github.com/…/blob/<40-char SHA>/<path>` URLs, ≥1 verbatim
   quote with file path, reference-style links under `<!-- References -->`,
   backticked identifiers, no invented release dates — mark `~` or omit).
-- **Waves with review gates.** After each wave: `dub run :ci -- --check-docs-sidebar`,
-  `yarn docs:build`, and `dub run :ci -- --check-blob-paths` (offline
+- **Waves with review gates.** After each wave: `dub run :ci -- check sidebar`,
+  `yarn docs:build`, and `dub run :ci -- check blob-paths` (offline
   `git cat-file` against the clones) must pass before the next wave starts.
   Unverifiable claims are cut or marked, never smoothed over.
 - **Wave order:** 0 scaffold (`index.md` skeleton + `concepts.md`) →
@@ -210,8 +210,8 @@ Rules that keep usage bounded and output verifiable:
 ## 7. Validation checklist (per wave)
 
 - [ ] `yarn docs:build` green; new pages registered in the sidebar.
-- [ ] `dub run :ci -- --check-docs-sidebar` and `--check-vcs-urls` pass.
-- [ ] `dub run :ci -- --check-blob-paths` — every pinned citation resolves
+- [ ] `dub run :ci -- check sidebar` and `ci check vcs-urls` pass.
+- [ ] `dub run :ci -- check blob-paths` — every pinned citation resolves
       against its `$REPOS` clone (unchecked repos reported as such).
 - [ ] Each new deep-dive follows the §3 spine and carries ≥1 verbatim,
       cited primary-source quote.

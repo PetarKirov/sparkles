@@ -51,7 +51,7 @@ Configuration is a JSON blob in `nix.conf`, not a launchd NixOS guest.
 `determinate-nixd builder --help` exposes `--memory-size` (default 8
 GiB), `--cpu-count` (default **1**), `--kernel`, `--initrd`. The
 nix-darwin-generated `/etc/nix/nix.custom.conf` does not pass
-`--cpu-count`, so a successful builder would run `ci --test` on one
+`--cpu-count`, so a successful builder would run `ci test` on one
 vCPU unless that JSON is edited.
 
 The feature is gated. Troubleshooting requires a FlakeHub login (this
@@ -88,7 +88,7 @@ Nix-side work: [nix-src#78][pr78] (merged 2025-07-17,
    back in the host store.
 5. **Availability.** Configured on this host, FlakeHub-authenticated,
    **feature-gated off**.
-6. **Interactive vs derivation.** Derivation only. `ci --test` is not a
+6. **Interactive vs derivation.** Derivation only. `ci test` is not a
    drv.
 
 ## Strengths
@@ -110,11 +110,11 @@ Nix-side work: [nix-src#78][pr78] (merged 2025-07-17,
 
 ## Key design decisions and trade-offs
 
-| Decision                           | Rationale                  | Trade-off                                   |
-| ---------------------------------- | -------------------------- | ------------------------------------------- |
-| `external-builders` instead of SSH | No daemon VM, no host keys | New Nix feature; not in every Nix           |
-| Feature-gate behind FlakeHub       | Gradual rollout            | A working install can still be a 400        |
-| Default 1 vCPU / 8 GiB             | Conservative for laptops   | Unusable for `ci --test` without JSON edits |
+| Decision                           | Rationale                  | Trade-off                                 |
+| ---------------------------------- | -------------------------- | ----------------------------------------- |
+| `external-builders` instead of SSH | No daemon VM, no host keys | New Nix feature; not in every Nix         |
+| Feature-gate behind FlakeHub       | Gradual rollout            | A working install can still be a 400      |
+| Default 1 vCPU / 8 GiB             | Conservative for laptops   | Unusable for `ci test` without JSON edits |
 
 ## Sources
 

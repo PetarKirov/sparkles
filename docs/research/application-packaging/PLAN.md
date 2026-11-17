@@ -455,7 +455,7 @@ autosquashed only after user approval.
 ### 9.2 Validation state
 
 - Prettier is clean across the catalog and VitePress configuration.
-- `dub run :ci -- --verify --files 'docs/research/application-packaging/*.md'` passes.
+- `dub run :ci -- examples verify --include-files 'docs/research/application-packaging/*.md'` passes.
 - `yarn docs:build` passes after escaping literal Go-template delimiters and allowing
   links to repository `.nix` source files.
 - `lychee` passes for all catalog pages and the sidebar.
@@ -565,7 +565,7 @@ Run, in order:
 npx prettier --write 'docs/research/application-packaging/**/*.md' \
     docs/.vitepress/config.mts
 yarn docs:build
-dub run :ci -- --verify --files 'docs/research/application-packaging/*.md'
+dub run :ci -- examples verify --include-files 'docs/research/application-packaging/*.md'
 git diff --check
 ```
 

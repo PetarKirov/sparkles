@@ -10,7 +10,7 @@ Each application has a page of its own with only the components it ships:
 [sparkles:terminal](./terminal.md) and [hue](./hue.md). The same pages are
 bundled with the applications.
 
-`ci --check-credits` keeps this document honest: it reads the build inputs —
+`ci check credits` keeps this document honest: it reads the build inputs —
 the dub lock, the application manifests, the Android builders and the font
 bundle — and fails when something shipped has no section here, or a section
 names something nothing ships.

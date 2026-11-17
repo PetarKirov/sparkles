@@ -286,7 +286,7 @@ today's `columnWidths` (retained as the base case); (2) bands and rules deriving
 of geometry helpers; (3) locking the existing golden unittests + the `drawTable.styledContent`
 golden as byte-identical regression tests. External `[Output]` blocks that reproduce
 `drawTable` verbatim (`README.md`, `docs/overview.md`, `docs/specs/base/text/index.md`, and
-the test-runner bench tables) must stay put — verified with `nix run .#ci -- --verify`. The
+the test-runner bench tables) must stay put — verified with `nix run .#ci -- examples verify`. The
 bench-table snapshots change intentionally when numeric columns are right-aligned and are
 regenerated in that same change.
 

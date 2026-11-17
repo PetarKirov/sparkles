@@ -158,4 +158,4 @@ mockup ([D10](./decisions.md)); its behaviour is agreed. Evidence uses
 `unverified` / `partial` / `verified` per [the spec
 guideline](../../guidelines/spec-docs.md#keep-evidence-scoped-and-honest).
 Rows trace to the design (`Traces to`) until delivered; only delivered rows
-are checked by `ci --check-spec-evidence`.
+are checked by `ci check spec-evidence`.

@@ -140,7 +140,7 @@ into the umbrella's master catalog, so they must be defensible.
   (`git rev-parse HEAD`) or `gh api`.
 - **The path after the SHA must exist at that commit.** Verify with
   `git cat-file -e <sha>:<path>` in the clone. This is what
-  `ci --check-blob-paths` re-checks later; a wrong path passes the SHA check and
+  `ci check blob-paths` re-checks later; a wrong path passes the SHA check and
   fails only the link checker.
 - Prefer canonical non-GitHub docs where they exist (`sqlite.org`,
   `man7.org`, `docs.kernel.org`, `refspecs.linuxfoundation.org`, `pkg.go.dev`,
@@ -152,7 +152,7 @@ into the umbrella's master catalog, so they must be defensible.
 
 Clone every upstream you cite into `$REPOS/autological/<org>/<repo>` (shallow is
 fine: `git clone --filter=blob:none` or `--depth 1`; use a full-ish clone if you
-need history). That path is what `ci --check-blob-paths` indexes. Record the SHA
+need history). That path is what `ci check blob-paths` indexes. Record the SHA
 you read at, and cite that SHA.
 
 Kernel sources are already cloned at `$REPOS/linux` — use it for

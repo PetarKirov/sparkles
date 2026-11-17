@@ -85,7 +85,7 @@ dub run --single docs/research/build-systems/examples/rebuild-behavior.d --skip-
 
 The runner prints the installed engine versions and one row per checked
 scenario. Missing engines produce an explicit `SKIP:` line; an assertion
-failure is a failed experiment. The repository's `ci --example-files`
+failure is a failed experiment. The repository's `ci examples standalone`
 selection includes the runner. Ninja must be available on `PATH` to exercise
 its rows; a successful Make run does not imply Ninja was tested.
 

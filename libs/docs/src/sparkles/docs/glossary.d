@@ -10,7 +10,7 @@ $(LIST
         per-library terminology sections)
     $(ITEM the site theme reads the same entries to show a term's `summary`
         when a reader hovers a link to it)
-    $(ITEM `ci --check-glossary` validates the entries and every link into
+    $(ITEM `ci check glossary` validates the entries and every link into
         the glossary from the documentation, using this module)
 )
 
@@ -122,7 +122,7 @@ The `owner` a page declares in its YAML front matter, or an empty slice.
 
 A specification names its owning package in front matter
 (`docs/guidelines/spec-prose.md`), and may do so before the package exists:
-a draft spec is how a library is proposed. `ci --check-glossary` therefore
+a draft spec is how a library is proposed. `ci check glossary` therefore
 accepts an owner declared here as well as the in-tree package names, so a
 draft can own its terms from the start.
 

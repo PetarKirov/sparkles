@@ -12,7 +12,7 @@ on top follow from them.
 
 > [!TIP]
 > Every example on this page is a runnable dub single-file program, and its
-> output block is checked by CI (`ci --verify`), so what the page shows is
+> output block is checked by CI (`ci examples verify`), so what the page shows is
 > what the code does.
 
 | See also                                                        |                                                    |
@@ -643,7 +643,7 @@ The layers above the buffer do not add storage; they add an invariant.
 ```bash
 dub test :base                   # the policies, copy-on-write, tryWrite, the static asserts
 dub test :base -- --better-c     # the container without druntime
-nix run .#ci -- --verify --files docs/libs/base/explanation/buffer.md
+nix run .#ci -- examples verify --include-files docs/libs/base/explanation/buffer.md
 ```
 
 The spec's requirement tables — `BUF`, `WRT`, `TMP`, `CST` — name each

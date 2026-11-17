@@ -10,7 +10,7 @@ Observed 2026-09-04 on `petar-kirov-macbook-pro`, Darwin 25.6.0
 `github:nix-systems/triplet` →
 `aarch64-darwin`, `aarch64-linux`, `x86_64-linux`. So
 `packages.aarch64-linux.ci` and `packages.x86_64-linux.ci` exist as
-attrpaths. GitHub Actions runs `ci --test` on `ubuntu-latest` and
+attrpaths. GitHub Actions runs `ci test` on `ubuntu-latest` and
 `ubuntu-24.04-arm`; `nix-build` / `.#all-desktop` runs on
 `ubuntu-latest` and `macos-latest` only — **not** on
 `ubuntu-24.04-arm`. Linux aarch64 _packages_ still land in
@@ -31,9 +31,9 @@ attrpaths. GitHub Actions runs `ci --test` on `ubuntu-latest` and
 
 [`examples/probe-backends.d`](./examples/probe-backends.d) prints this
 table's raw sources (`determinate-nixd version`, `container system status`,
-`nix config show …`) and is the standalone example `ci --example-files`
+`nix config show …`) and is the standalone example `ci examples standalone`
 runs; on a Linux host it prints a `SKIP:` line and exits 0.
-`ci --linux-host-probe` is the classified version.
+`ci host probe` is the classified version.
 
 ## What actually worked
 
@@ -55,7 +55,7 @@ runs; on a Linux host it prints a `SKIP:` line and exits 0.
 
 Three failures, each of which moved the design.
 
-**The `ci` wrapper is not the dev shell.** `ci --test --fail-fast` with
+**The `ci` wrapper is not the dev shell.** `ci test --fail-fast` with
 only the `packages.ci` wrapper on `PATH` died on package `ci` itself:
 `pkg-config` missing, then `tree_sitter/api.h: No such file`. The
 wrapper's `PATH` is `git`, `dub`, `nodejs`, `lld`, `ldc` — not
@@ -107,11 +107,11 @@ container run --rm --arch arm64 --cpus 13 --memory 18G \
   alpine /private/tmp/enter/enter.sh --test --fail-fast --no-coverage
 ```
 
-`ci --test --host-system aarch64-linux` is that recipe, with `--cpus` from
-`hwParallelism()` and `--memory` half the host's RAM. `--linux-host-probe`
+`ci test --host-system aarch64-linux` is that recipe, with `--cpus` from
+`hwParallelism()` and `--memory` half the host's RAM. `ci host probe`
 prints the backend table; `--host-ci-rev <rev>` pins step 1.
 
-## Results: `ci --test` on aarch64-linux
+## Results: `ci test` on aarch64-linux
 
 Two dispatched runs plus a per-package sweep of the remainder, all in an
 11–13 vCPU / 18 GiB guest entered into `devShells.aarch64-linux.ci` at
@@ -138,7 +138,7 @@ the ones that read `$SPARKLES_FLAKE_INPUT_*`, `$SPARKLES_DMD_IMPORT_PATH`,
 `$SPARKLES_TS_GRAMMAR_PATH`, `$JSON_TEST_SUITE` and link libghostty-vt —
 all pass, which is the evidence that the hook's exports reached the guest.
 
-## Results: `ci --test` on x86_64-linux (Rosetta)
+## Results: `ci test` on x86_64-linux (Rosetta)
 
 Dispatched from the linked worktree into `devShells.x86_64-linux.ci` at
 `1cbbee86` (identical shell hash to `9c888fc5`; the whole shell output is

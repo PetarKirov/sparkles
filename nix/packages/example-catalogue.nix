@@ -1,7 +1,7 @@
 # The standalone examples' catalogue, read at evaluation time: every
 # `libs/*/examples` program with an inline dub recipe, its file's text, what
 # its path and recipe say (`exampleInfo`), where it may build
-# (`buildableHere`), and how `ci --example-files` runs it (`exampleSpec`).
+# (`buildableHere`), and how `ci examples standalone` runs it (`exampleSpec`).
 # Exported as `legacyPackages.exampleCatalog` for the example builder
 # (examples.nix), `run-all-examples` and the Android examples.
 { lib, ... }:
@@ -151,7 +151,7 @@
       # This must agree with `hostPlatformTokens` in
       # `apps/ci/src/example_manifest.d`: the two decide the same question, and
       # a disagreement means an example nix builds is skipped by
-      # `ci --example-files`, or the reverse.
+      # `ci examples standalone`, or the reverse.
       hostPlatformTokens = [
         pkgs.stdenv.hostPlatform.system
       ]

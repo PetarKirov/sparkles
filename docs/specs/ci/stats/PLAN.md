@@ -1,4 +1,4 @@
-# `ci --ci-stats` — Delivery plan
+# `ci stats` — Delivery plan
 
 _Companion to [SPEC.md](./SPEC.md). Each milestone is independently green (builds, tests, lints, style). The SPEC is the contract; this document is the schedule._
 
@@ -14,11 +14,11 @@ Gate: files exist, follow the style of `docs/specs/release/{SPEC,PLAN}.md` and `
 ## M1 — Infrastructure in `apps/ci`
 
 - Add `dependency "expected" version="~>0.4.1"` and `dependency "sparkles:wired" path="../.."` (plus matching selections/lock updates) to `apps/ci/dub.sdl`.
-- Extend `CliParams` with the new flags (`--ci-stats`, `--github-token`, `--repo`, `--limit`, `--since`, `--workflow`, `--conclusion`, `--json`, `--no-live`).
+- Extend `CliParams` with the new flags (`ci stats`, `--github-token`, `--repo`, `--limit`, `--since`, `--workflow`, `--conclusion`, `--json`, `--no-live`).
 - Extend `ProgramMode`, `validateCliMode`, `resolveProgramMode`, and the dispatch in `main`.
 - Basic `--help` and conflict/error paths work and are consistent with other modes.
 
-Gate: `dub build :ci` succeeds; `dub run :ci -- --ci-stats --help` renders the new options cleanly; invalid combinations are rejected before any network work.
+Gate: `dub build :ci` succeeds; `dub run :ci -- stats --help` renders the new options cleanly; invalid combinations are rejected before any network work.
 
 ## M2 — Injectable fetch layer (`std.net.curl` + wired)
 
@@ -29,7 +29,7 @@ Gate: `dub build :ci` succeeds; `dub run :ci -- --ci-stats --help` renders the n
 
 Gate:
 
-- `dub run :ci -- --ci-stats --repo microsoft/vscode --limit 3` succeeds on a public repo (or with token).
+- `dub run :ci -- stats --repo microsoft/vscode --limit 3` succeeds on a public repo (or with token).
 - Error paths (bad token, rate limit, malformed JSON) produce friendly `Result` failures.
 - Unit-testable: a local template returning a literal `T` can be passed instead of the real fetcher.
 
@@ -68,8 +68,8 @@ Gate:
 
 Gate:
 
-- `nix run .#ci -- --ci-stats ...` works.
-- `nix run .#ci -- --test --fail-fast` (ci package at minimum) is green.
+- `nix run .#ci -- stats ...` works.
+- `nix run .#ci -- test --fail-fast` (ci package at minimum) is green.
 - Full style / editorconfig / guideline audit passes.
 - SPEC and PLAN are updated with any behavioural adjustments discovered during implementation.
 - Feature branch (in dedicated worktree) is ready for review.

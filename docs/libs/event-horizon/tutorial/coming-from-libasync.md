@@ -16,7 +16,7 @@ backend or workload behaves identically.
 > Each source tab imports a complete single-file DUB program. Run it with
 > `dub run --single <file> -b checked`; assertions stay enabled. Each labelled
 > output belongs to the immediately preceding implementation and is independently
-> checked by `ci --verify`. See [Running the examples](./running-examples.md)
+> checked by `ci examples verify`. See [Running the examples](./running-examples.md)
 > for prerequisites, dependency versions and the validation command.
 
 ## Translate notification semantics carefully

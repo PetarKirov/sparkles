@@ -59,7 +59,7 @@ string[] subPackageDirectories(string repoRoot)
 /// Used to decide which `dependency "<name>" version="*"` lines in
 /// markdown examples should be redirected to the local working copy
 /// during `docs run`/`verify`/`update`, and which owners a glossary entry
-/// may name (`--check-glossary`).
+/// may name (`ci check glossary`).
 @safe
 string[] inTreePackageNames(string repoRoot)
 {

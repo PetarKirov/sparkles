@@ -121,7 +121,7 @@
       };
 
       # Both modules, as the documentation site serves them (TCM3): `ci
-      # --stage-docs-wasm` copies them into docs/public/ before VitePress builds.
+      # ci docs stage-wasm` copies them into docs/public/ before VitePress builds.
       packages.wired-wasm = buildWasmModule {
         pname = "wired-wasm";
         appDir = "libs/wired/wired-wasm";
@@ -172,7 +172,7 @@
           }
           ''
             set -o pipefail
-            ${lib.getExe config.packages.ci-minimal} --check-wasm-modules \
+            ${lib.getExe config.packages.ci-minimal} check wasm-modules \
               --text-module ${config.packages.text-wasm}/spk-text.wasm \
               --table-module ${config.packages.table-wasm}/spk-table.wasm \
               --wired-module ${config.packages.wired-wasm}/spk-wired.wasm \
@@ -237,9 +237,9 @@
           pkgs.writeShellApplication {
             name = "check-nix-wasm";
             text = ''
-              exec ${lib.getExe config.packages.ci-minimal} --check-nix-wasm \
-                --nix-wasm-module ${config.packages.dub-manifest-nix-wasm}/spk-dub-manifest.wasm \
-                --nix-wasm-answers ${config.packages.dub-manifest-nix-answers} "$@"
+              exec ${lib.getExe config.packages.ci-minimal} check nix-wasm \
+                --module ${config.packages.dub-manifest-nix-wasm}/spk-dub-manifest.wasm \
+                --answers ${config.packages.dub-manifest-nix-answers} "$@"
             '';
           }
         );

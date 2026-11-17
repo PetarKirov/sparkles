@@ -277,7 +277,7 @@ it. The gate runs after the builds. An output's cost is the median of the
 builds `pin-build` recorded for it, one `pin-build:<pin>` task each, in the run
 records on `refs/perf/data`
 ([OD21](../build-primitives/observability/decisions.md#od21-test-wall-times-reach-the-history-before-the-build-graph-accepted));
-`ci --write-pin-costs` hands them to the plan. Nothing is estimated: an output
+`ci cache pin-costs` hands them to the plan. Nothing is estimated: an output
 never built has no cost and is attempted. The budget is
 `ci/placements.json`'s `pinBuildBudgetMinutes`.
 

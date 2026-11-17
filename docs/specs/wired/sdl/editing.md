@@ -462,7 +462,7 @@ hashing and existence checks are not SDL work. The oracle has two parts:
 - **Completeness:** each [§7](#7-migration-coverage) row is migrated, and
   the S15 gate re-runs the repository inventory with an independent
   reviewer, recording the result in §7.
-- **Regression:** an `apps/ci` audit (`ci --check-adhoc-sdl`) reads D
+- **Regression:** an `apps/ci` audit (`ci check adhoc-sdl`) reads D
   sources outside `libs/wired/src/sparkles/wired/sdl/`,
   `libs/dub-manifest/src/sparkles/build_primitives/dub_manifest.d`, the
   audit itself, and test code (`unittest` blocks and `version (unittest)`

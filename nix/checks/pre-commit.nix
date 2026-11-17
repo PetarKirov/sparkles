@@ -35,7 +35,7 @@ let
     # shape, and the sorter's multiline-array style fights prettier's inline
     # one — the two can never both pass on a short array.
     "docs/hue-site.json"
-    # Same story again, and these are not hand-edited at all: `ci --ci-stats
+    # Same story again, and these are not hand-edited at all: `ci stats
     # --merges --badge-dir` regenerates them during the docs deploy. The
     # committed copies only seed the first one.
     "docs/public/badges/merged-prs.json"
@@ -258,8 +258,9 @@ in
                 name = "fix-markdown-reference-links";
                 files = "\\.md$";
                 args = [
-                  "--fix-reference-links"
-                  "--files"
+                  "fix"
+                  "reference-links"
+                  "--include-files"
                 ];
                 passFilenames = true;
                 requireSerial = false;
@@ -285,9 +286,10 @@ in
                 # fixed in `ci` via dub `--temp-build`; serializing here is about
                 # bounded, predictable parallelism rather than correctness.
                 args = [
-                  "--verify"
+                  "examples"
+                  "verify"
                   "--fail-fast"
-                  "--files"
+                  "--include-files"
                 ];
                 passFilenames = true;
               };
@@ -297,7 +299,7 @@ in
               # never drift from `byGraphemeCluster`; prek reports a failure if the
               # file was rewritten, mirroring prettier.
               #
-              # Built on demand with `dub --single`, the way `ci --verify` builds
+              # Built on demand with `dub --single`, the way `ci examples verify` builds
               # every markdown example: pointing at the prebuilt example
               # derivation would put it — and its deps bundle — in the dev shell,
               # since `installationScript` carries every hook entry there.
@@ -375,35 +377,42 @@ in
                 name = "check-vcs-urls";
                 files = "\\.md$";
                 args = [
-                  "--check-vcs-urls"
-                  "--files"
+                  "check"
+                  "vcs-urls"
+                  "--include-files"
                 ];
                 passFilenames = true;
               };
 
               # VitePress sidebar ↔ published docs/**/*.md consistency (pages must
               # appear in the sidebar; sidebar links must resolve to pages). Logic
-              # lives in D (apps/ci --check-docs-sidebar) per the project guideline
+              # lives in D (apps/ci check sidebar) per the project guideline
               # that substantial hook logic must not be shell. pass_filenames=false:
               # the check is whole-tree (orphans are about files *not* staged), and
               # runs when any path under docs/ changes — including the sidebar config.
               check-docs-sidebar = mkCiHook {
                 name = "check-docs-sidebar";
                 files = "^docs/";
-                args = [ "--check-docs-sidebar" ];
+                args = [
+                  "check"
+                  "sidebar"
+                ];
               };
 
               # The glossary data (docs/.vitepress/glossary.json) and every docs
-              # link into it (apps/ci --check-glossary). Whole-tree like the
+              # link into it (apps/ci check glossary). Whole-tree like the
               # sidebar check: removing an entry breaks pages nobody staged.
               check-glossary = mkCiHook {
                 name = "check-glossary";
                 files = "^docs/";
-                args = [ "--check-glossary" ];
+                args = [
+                  "check"
+                  "glossary"
+                ];
               };
 
               # The credits document against the build inputs (apps/ci
-              # --check-credits, docs/specs/terminal/pages.md TPG14): every
+              # ci check credits, docs/specs/terminal/pages.md TPG14): every
               # component an application links or ships has a part, and every
               # part names something shipped. Whole-tree, triggered by the
               # document and by everything that names a component — the dub
@@ -411,11 +420,14 @@ in
               check-credits = mkCiHook {
                 name = "check-credits";
                 files = "(^docs/credits/|dub\\.sdl$|dub\\.selections\\.json$|^nix/)";
-                args = [ "--check-credits" ];
+                args = [
+                  "check"
+                  "credits"
+                ];
               };
 
               # Every symbol a spec's evidence column cites must exist in the
-              # tree (apps/ci --check-spec-evidence), against the committed
+              # tree (apps/ci check spec-evidence), against the committed
               # backlog of ones that did not when the gate went on. Whole-tree,
               # and triggered by D sources as well as specs: a citation goes
               # stale when the code it names is renamed, not when the spec is
@@ -423,10 +435,13 @@ in
               check-spec-evidence = mkCiHook {
                 name = "check-spec-evidence";
                 files = "(^docs/specs/|\\.d$|dub\\.sdl$)";
-                args = [ "--check-spec-evidence" ];
+                args = [
+                  "check"
+                  "spec-evidence"
+                ];
               };
 
-              # No D source matches SDL text by hand (apps/ci --check-adhoc-sdl,
+              # No D source matches SDL text by hand (apps/ci check adhoc-sdl,
               # lossless editing SDE9): SDL is read through sparkles.wired.sdl or
               # the dub.sdl schema, and the reviewed exceptions sit in
               # apps/ci/sdl-audit-allowlist.txt. Whole-tree, like the evidence
@@ -436,14 +451,17 @@ in
                 name = "check-adhoc-sdl";
                 files = "(\\.d$|^apps/ci/sdl-audit-allowlist\\.txt$)";
                 entry = lib.getExe config.packages.ci;
-                args = [ "--check-adhoc-sdl" ];
+                args = [
+                  "check"
+                  "adhoc-sdl"
+                ];
                 language = "system";
                 pass_filenames = false;
                 require_serial = true;
               };
 
               # No recipe entry that no input set can hold, unless reviewed
-              # (apps/ci --check-opaque-recipes; fileset-native workspace
+              # (apps/ci check opaque-recipes; fileset-native workspace
               # BGW3/BGW4): a command, a flag carrying a path, or a path through
               # a variable or outside the repository makes every request that
               # builds it selected by any change. The check says what to write
@@ -454,7 +472,10 @@ in
                 name = "check-opaque-recipes";
                 files = "(dub\\.sdl$|^apps/ci/opaque-recipe-allowlist\\.txt$)";
                 entry = lib.getExe config.packages.ci;
-                args = [ "--check-opaque-recipes" ];
+                args = [
+                  "check"
+                  "opaque-recipes"
+                ];
                 language = "system";
                 pass_filenames = false;
                 require_serial = true;
@@ -475,7 +496,10 @@ in
                   id = "detailed-scope";
                   name = "detailed commit scope";
                   entry = lib.getExe config.packages.ci;
-                  args = [ "--check-commit-scope" ];
+                  args = [
+                    "check"
+                    "commit-scope"
+                  ];
                   language = "system";
                   pass_filenames = false;
                   stages = [ "commit-msg" ];

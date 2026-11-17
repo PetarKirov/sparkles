@@ -33,7 +33,7 @@ which `std.json` reports by throwing.
 
 A compiler that cannot link a `wasm32-unknown-wasip1` program, or a missing
 `wasmtime`, is reported as a skip naming the missing piece; with
-`--require-toolchain` (as `ci --test-extracted` runs it) the skip fails the
+`--require-toolchain` (as `ci test --special-modes all` runs it) the skip fails the
 run.
 
 ## Constraints

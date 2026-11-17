@@ -1,13 +1,13 @@
 /++
 Find the `@slow` unittests in a package's sources, without building it.
 
-`ci --test` leaves `@slow` tests out (it passes the runner's `--skip-slow`),
-and `ci --test-slow` runs them, one CI job per test. The job list has to exist
+`ci test` leaves `@slow` tests out (it passes the runner's `--skip-slow`),
+and `ci test --slow` runs them, one CI job per test. The job list has to exist
 before anything is built, so it comes from the source text: every `unittest`
 declaration whose attributes include `@slow`, named by its `@("…")` string.
 
 A text scan can miss a test the compiler sees (an attribute applied through a
-`@slow:` label or block, say). `--test-slow` therefore also asks the built test
+`@slow:` label or block, say). `ci test --slow` therefore also asks the built test
 binary for its slow tests (`--list --only-slow`) and fails when the two lists
 differ, so a miss turns red instead of going unrun.
 

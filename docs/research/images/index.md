@@ -207,7 +207,7 @@ applicable, because …" where one does not apply:
 | 5    | [`concepts.md`](./concepts.md) completed, the [taxonomy](#taxonomy), the [milestones](#milestones) and [`comparison.md`](./comparison.md) with its delta against the baseline (done) |
 
 Each wave ends with a verification pass by an agent that did not write the doc:
-every quote is re-read from the pinned clone, and `ci --check-blob-paths` runs
+every quote is re-read from the pinned clone, and `ci check blob-paths` runs
 before the commit.
 
 ### Tier C digest

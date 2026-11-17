@@ -543,7 +543,7 @@ from a path that unconditionally asserts ([`imageio/image.d`][io-test16]).
   through a transitive pin (`intel-intrinsics` via `dplug:core`) and a
   compiler/library interaction in a type test. Without CI the breakage was
   invisible. Sparkles' pinned `dub.selections.json` and `nix/dub-lock.json`, and
-  `ci --test` on every PR, address exactly this; any mir dependency would join the
+  `ci test` on every PR, address exactly this; any mir dependency would join the
   lock. Separately, dcv's tests compare against hand values only; an oracle (the
   baseline's stb_image parity for PNG) is what dcv lacks.
 - **Q9.** dcv's five sub-packages are split by external dependency (Gamut, FFmpeg,

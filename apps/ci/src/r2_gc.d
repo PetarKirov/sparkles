@@ -1,5 +1,5 @@
 /**
-`ci --gc-r2` — garbage-collect the R2 binary cache (`sparkles-nix-cache`,
+`ci cache gc-r2` — garbage-collect the R2 binary cache (`sparkles-nix-cache`,
 served at cache.sparkles.petar-kirov.dev).
 
 Nix cannot collect a binary cache, and R2 never evicts, so this does what

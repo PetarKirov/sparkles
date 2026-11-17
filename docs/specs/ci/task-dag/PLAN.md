@@ -75,12 +75,12 @@ observability plan that
 [OD21](../../build-primitives/observability/decisions.md#od21-test-wall-times-reach-the-history-before-the-build-graph-accepted)
 names:
 
-- **Records:** `--test`, `--test-sanitize` and `--test-extracted` write a run
+- **Records:** `--test`, `ci test --sanitize address` and `ci test --special-modes all` write a run
   record with one task per package run, task id
   `test:<package>:<mode>:<leg>` (TDM1), where `<leg>` is `serial` or
   `parallel` rather than a thread count that varies by host, its outcome and
   `task.wall`.
-  `--record-task ID -- COMMAND` records any other command the same way. CI
+  `ci perf record ID -- COMMAND` records any other command the same way. CI
   uploads the records as artifacts.
 - **History:** `main-checks.yml` appends the validating run's records to
   `refs/perf/data` (OBH3–OBH5), signed with the CI key (OBH8). `ci perf push`
@@ -88,18 +88,18 @@ names:
   from an earlier run's job logs, to seed the history.
 - **Placements:** one data file, `ci/placements.json`, declares each placement:
   its system, compiler, mode, legs, coverage, runners per provider, shard count and time
-  limit. `ci --list-placements` prints them with their shards as JSON, and sets
+  limit. `ci placements list` prints them with their shards as JSON, and sets
   it as a job output.
 - **Shards:** `--placement NAME --shard K/N` packs the placement's packages
   longest first, by the median `task.wall` of each task's last five records on
   that placement, and runs shard `K`. A package with no record takes the
   median of the placement's recorded tasks.
 - **Workflows:** the test, sanitizer and extracted jobs take their matrix from
-  `--list-placements`, and name no package. The steps the first shard used to
+  `ci placements list`, and name no package. The steps the first shard used to
   run beside its tests move to jobs of their own. CircleCI runs the same
   placements by `--shard ${CIRCLE_NODE_INDEX}/${CIRCLE_NODE_TOTAL}`.
 - **The toolchain's build plan** reads each pin's cost the same way, from the
-  `pin-build:<pin>` tasks its builds record (`--write-pin-costs`), and the
+  `pin-build:<pin>` tasks its builds record (`ci cache pin-costs`), and the
   hand-kept `nix/pin-build-costs.json` is gone.
 
 Prerequisites from the owner: the CI signing key's environment and the
@@ -112,11 +112,11 @@ from two `--history-tip` reads; a forged or unsigned record is not read.
 
 Progress: delivered on `feat/ci-placements`, waiting for the gate's landings.
 Run records (`perf_record`, `perf_run`), the signed history (`perf_history`),
-publishing (`perf_publish`: `--perf-append`, `--perf-push`,
-`--perf-import-github-run`), `ci/placements.json` with `--list-placements`
+publishing (`perf_publish`: `ci perf append`, `ci perf push`,
+`ci perf import`), `ci/placements.json` with `ci placements list`
 and `--shard`, the workflows (`ci.yml`'s `placements`, `test` and `platform`
 jobs, `main-checks.yml`'s `perf-append`, CircleCI's parallelism) and the
-toolchain's recorded costs (`--write-pin-costs`).
+toolchain's recorded costs (`ci cache pin-costs`).
 
 ## M7a: The canonical command line over the current implementations
 
@@ -189,8 +189,7 @@ Gate:
   deterministic listing merge and atomic publication (SPEC §5.2, §6).
 - `--sanitize address`, `--slow` and `--special-modes betterc|wasm|all` as
   variants and task kinds.
-- Remove `--test-extracted`, `--test-sanitize`, `--test-slow` and
-  `--coverage`'s old form.
+- Remove the current special-mode, sanitizer, slow-test and coverage loops.
 
 Gate: ordinary tests pass with and without coverage. A fixture that fails only
 under coverage is degraded and exits zero, and a true fallback failure exits
@@ -199,10 +198,10 @@ one. Parallel listings never share a destination.
 ## M9: Markdown and standalone examples
 
 - Markdown extraction and per-example single-file packages, shared by
-  `docs run`, `docs verify` and `docs update`, built against the shared library
+  `ci examples run`, `verify` and `update`, built against the shared library
   variants.
 - `ci examples standalone` with directives and platform skips.
-- Remove `--example-files`, the default markdown mode and `TaskPool` example
+- Remove the current example loops and `TaskPool` example
   execution.
 
 Gate: README verification, a multi-file update fixture, standalone build-only
@@ -237,7 +236,7 @@ events and dry runs; commit hook output stays concise.
 - `ci pipeline` as the union graph of every CI job (SPEC §1.3), with the
   determinism check as one of its tasks (CIC13).
 - Placements (CIC14): the placement file, `--placement` and
-  `--list-placements`, with shards packed from recorded wall times.
+  `ci placements list`, with shards packed from recorded wall times.
 - Verify that every production command constructs a graph and uses the common
   executor. Remove superseded worker pools, serial loops, polling, duplicate
   fail-fast code and command-owned live regions.
@@ -261,7 +260,7 @@ Default non-TTY output is stable across a randomized completion stress run.
 
 - Change workflows, hooks and developer documentation to the canonical
   commands, in the same series as the cutovers.
-- Generate the workflows from `ci pipeline --list-placements`. No workflow
+- Generate the workflows from `ci placements list pipeline`. No workflow
   passes `--since` (CIC15).
 - Reconcile `docs/specs/ci/stats/` terminology with `ci stats` and the common
   reporter.

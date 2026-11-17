@@ -39,7 +39,7 @@ build it with dub against the locked dependencies, so a dependency change in
 any library it uses rebuilds or fails it like any other dub program.
 
 **TCM2: Checked like other programs.** _(Owner: `sparkles:ci`.)_ The modules
-**must** be built by `ci --build-each-commit` and by the flake's aggregate
+**must** be built by `ci commits build-each` and by the flake's aggregate
 build on every supported host of [TC21](./SPEC.md#_8-platforms-tests-and-caches).
 
 **TCM3: Built, not committed.** _(Owner: `sparkles:docs`.)_ The site build

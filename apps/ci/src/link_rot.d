@@ -1,5 +1,5 @@
 /++
-`ci --report-link-rot` — keep one standing issue in step with the link sweep.
+`ci github link-rot-issue` — keep one standing issue in step with the link sweep.
 
 Link rot is a condition, not an event. The URLs in this repository point at
 other people's servers, and a few of the ~15k are always moved, retired, or
@@ -103,7 +103,7 @@ Result!RotReport reportLinkRot(alias fetchJson)(
     import std.json : JSONValue;
 
     if (repo.length == 0)
-        return failure!RotReport("--report-link-rot requires --repo owner/repo");
+        return failure!RotReport("ci github link-rot-issue requires --repo owner/repo");
 
     string[string] headers;
     if (token.length)

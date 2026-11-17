@@ -153,7 +153,7 @@ revision and the derivation builds the runner from the flake's own source.
 The pin moves to `main` once P1 lands there.
 
 Gate: `dub test` passes for `base`, `event-horizon`, `test-harness` and
-`test-runner-impl`, and `nix run .#ci -- --test --fail-fast` passes, with the
+`test-runner-impl`, and `nix run .#ci -- test --fail-fast` passes, with the
 runner pinned; `-i`, `-e`, `-v`, `-t` and `-l` behave as in the CLI
 reference; the §11 scenarios of process-model.md pass; and no recipe names
 `test-runner-impl` or a path inside the attributes, shim, harness or runner.
@@ -170,7 +170,7 @@ runner builds from the flake's own source. Open: pinning a revision of
 > (`wasm32-unknown-wasip1`, `$SPARKLES_WASI_LDC`, the packages' `-preview`
 > switches, `wasmtime`) and `runWasmBareTests`, `extract.d`'s
 > `generateWasiProgram`, the `--wasm-bare` option. The gate passes:
-> `ci --test-extracted` runs the `@wasm` tests of `sparkles:base`,
+> `ci test --special-modes all` runs the `@wasm` tests of `sparkles:base`,
 > `sparkles:ui`, `sparkles:table-wasm` and the runner under `wasmtime`, and
 > `sparkles:table-wasm`'s throw and catch, read a table seeded by a module
 > constructor and allocate.
@@ -180,7 +180,7 @@ true. `--wasm` compiles the extracted tests for `wasm32-unknown-wasip1` with
 the toolchain's WASI druntime and Phobos, links them through the runtime's WASI
 compiler driver, and runs them under `wasmtime`; the bare `-betterC` path
 moves to `--wasm-bare`, linked by the compiler's internal linker. Prerequisite: the WASI runtime of the
-[toolchain plan's TC-M5](../toolchain/PLAN.md). Gate: `ci --test-extracted`
+[toolchain plan's TC-M5](../toolchain/PLAN.md). Gate: `ci test --special-modes all`
 runs every `@wasm` test under `wasmtime` in CI, and a `@wasm` test that
 throws and catches an exception, runs a module constructor, and allocates
 with the GC passes.
@@ -600,7 +600,7 @@ Ship these caveats; never paper over them:
 
 Every milestone lands as independently green commits: full suites
 (`dub test :test-harness`, `dub test :test-runner-impl`, `dub test :base`,
-`nix run .#ci -- --test --fail-fast`), plus per-milestone gates:
+`nix run .#ci -- test --fail-fast`), plus per-milestone gates:
 
 - **B1** — `--list-metrics` shows the capability block; on the dev box the
   report matches the survey (preciseMemory via `ibs_op`; eventTracing

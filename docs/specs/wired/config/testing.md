@@ -467,8 +467,8 @@ C0 review/publication evidence only, not implementation acceptance.
   blocker there. Q1–Q4 remain scoped implementation prerequisites, not passed gates.
 - **P1 — publication checks: passed.** The repository-hook Prettier 3.8.3
   formatter/checker passed for the five spec pages, sidebar, and glossary.
-  Separate `dub run :ci` invocations passed `--check-docs-sidebar` (1617 pages),
-  `--check-glossary` (70 entries, 109 links), and `--check-spec-evidence`
+  Separate `dub run :ci` invocations passed `ci check sidebar` (1617 pages),
+  `ci check glossary` (70 entries, 109 links), and `ci check spec-evidence`
   (2775 citations across 191 spec files). The initial sidebar attempt failed
   because the new pages were untracked; staging them resolved that prerequisite.
   `yarn exec prettier` was unavailable, so the publication plan uses the existing
@@ -781,7 +781,7 @@ through arbitrary input.
 printed `tabWidth=8`, then reported a priority-1000 conflict with definitions
 16 and 8 conflicting and the priority-1500 definition 4 overridden. The driver
 also asserts failed full-config copying and unchanged caller input.
-`dub add-local .` followed by `dub run :ci -- --verify --files README.md` passed
+`dub add-local .` followed by `dub run :ci -- examples verify --include-files README.md` passed
 all 19 examples, including the scalar example's output `8`.
 
 Independent storage/lifetime and decoder reviews found no remaining

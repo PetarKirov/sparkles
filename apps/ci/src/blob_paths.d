@@ -160,7 +160,7 @@ Extracts every SHA-pinned blob citation from `content`.
 Both spellings the docs use are recognised: `github.com/<org>/<repo>/blob/<sha>/<path>`
 and the `raw.githubusercontent.com/<org>/<repo>/<sha>/<path>` form the link
 checker remaps to. Only 40-character hexadecimal refs match, so a branch or tag
-URL is left to $(D --check-vcs-urls), which is the check that exists to reject it.
+URL is left to $(D ci check vcs-urls), which is the check that exists to reject it.
 +/
 @safe
 BlobRef[] parseBlobRefs(string content, string file = "")
@@ -298,7 +298,7 @@ string resolveClone(in string[string] index, in BlobRef r)
 @("blob_paths.parseBlobRefs.ignoresUnpinnedAndDirectoryLinks")
 @safe unittest
 {
-    // A branch ref is --check-vcs-urls' job, not this one; a repo root and a
+    // A branch ref is ci check vcs-urls' job, not this one; a repo root and a
     // /tree/ link name no file, so there is nothing to resolve.
     const md = "https://github.com/o/r/blob/main/a.d\n"
         ~ "https://github.com/o/r\n"

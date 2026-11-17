@@ -1,5 +1,5 @@
 /++
-`--stage-docs-wasm`: put the documentation site's WebAssembly modules where
+`ci docs stage-wasm`: put the documentation site's WebAssembly modules where
 VitePress serves them (docs/specs/toolchain/wasm-modules.md, `TCM3`).
 
 The modules are built from the tree the site is built from (`nix build
@@ -41,10 +41,10 @@ RunExpected!void stageDocsWasm(string repoRoot)
     {
         if (docsWasmModules.all!(m => buildPath(outDir, m).exists))
         {
-            stderr.writeln("--stage-docs-wasm: nix not found; reusing the modules in ", outDir);
+            stderr.writeln("ci docs stage-wasm: nix not found; reusing the modules in ", outDir);
             return ranOk();
         }
-        stderr.writeln("--stage-docs-wasm: nix not found, and ", outDir, " lacks the modules: ",
+        stderr.writeln("ci docs stage-wasm: nix not found, and ", outDir, " lacks the modules: ",
             "copy those of `nix build .#docs-wasm` there");
         return failRun("nix not found, and " ~ outDir ~ " lacks the WebAssembly modules");
     }
@@ -52,7 +52,7 @@ RunExpected!void stageDocsWasm(string repoRoot)
     const build = execute(["nix", "build", repoRoot ~ "#docs-wasm", "--no-link", "--print-out-paths"]);
     if (build.status != 0)
     {
-        stderr.writeln("--stage-docs-wasm: nix build .#docs-wasm failed:\n", build.output);
+        stderr.writeln("ci docs stage-wasm: nix build .#docs-wasm failed:\n", build.output);
         return failRun("nix build .#docs-wasm failed");
     }
     // The store path is the last line; nix's warnings come before it.
@@ -62,7 +62,7 @@ RunExpected!void stageDocsWasm(string repoRoot)
         const target = buildPath(outDir, m);
         copy(buildPath(store, m), target);
         setAttributes(target, octal!644);
-        stderr.writeln("--stage-docs-wasm: wrote ", target, " (", getSize(target), " bytes)");
+        stderr.writeln("ci docs stage-wasm: wrote ", target, " (", getSize(target), " bytes)");
     }
     return ranOk();
 }

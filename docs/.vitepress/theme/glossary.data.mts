@@ -1,6 +1,6 @@
 // Build-time loader for the glossary (docs/.vitepress/glossary.json).
 //
-// The JSON is the single source of truth; `ci --check-glossary` validates it
+// The JSON is the single source of truth; `ci check glossary` validates it
 // with the D schema in libs/docs/src/sparkles/docs/glossary.d. This loader only
 // renders each definition's inline Markdown with the site's own renderer, so
 // code spans and links look exactly as they do in a page.

@@ -189,7 +189,7 @@ For every open-source subject:
    (Zoekt's `doc/design.md`, ripgrep's `regex-automata` module docs, fzy's `ALGORITHM.md`
    in the sibling tree).
 5. Cite permanent `blob/<sha>/path` URLs, never floating `main`.
-6. Verify pinned blob paths offline with `nix run .#ci -- --check-blob-paths` before
+6. Verify pinned blob paths offline with `nix run .#ci -- check blob-paths` before
    publishing.
 
 For academic subjects, the protocol differs and must be stated on the page:
@@ -397,7 +397,7 @@ an unnamed denominator is not evidence.
 ## 9. Runnable examples
 
 The tree's strongest grounding. Each is a single-file `dub` program under a graduated
-subject's `examples/`, compiled and run by `ci --example-files`, cross-linked to the
+subject's `examples/`, compiled and run by `ci examples standalone`, cross-linked to the
 prose section it backs. Candidates, in rough order of value:
 
 | Example                   | Claim it grounds                                                                         |
@@ -432,7 +432,7 @@ The GPU example in particular must skip cleanly on a headless CI runner.
 
 Corpus discipline: examples that measure anything must run against a **fixed, in-repo
 corpus** (a generated file with a known match distribution), never against the working
-tree — otherwise the numbers in the prose drift with every commit and the `ci --verify`
+tree — otherwise the numbers in the prose drift with every commit and the `ci examples verify`
 output diff goes red for the wrong reason.
 
 ## 10. The measurement protocol
@@ -567,9 +567,9 @@ primitives; Indexes; Acceleration; Systems and semantics; Synthesis. Then:
 ```bash
 npx prettier --write 'docs/research/full-text-search/**/*.md' docs/.vitepress/config.mts
 yarn docs:build
-dub run :ci -- --verify --files 'docs/research/full-text-search/**/*.md'
-dub run :ci -- --example-files 'docs/research/full-text-search/**/examples/*.d'
-nix run .#ci -- --check-blob-paths
+dub run :ci -- examples verify --include-files 'docs/research/full-text-search/**/*.md'
+dub run :ci -- examples standalone 'docs/research/full-text-search/**/examples/*.d'
+nix run .#ci -- check blob-paths
 git diff --check
 ```
 
@@ -611,8 +611,8 @@ in isolation; either order the sidebar commit last or combine, as
 - [ ] Runnable examples compile and run in CI, skip cleanly where the host lacks a
       capability, and measure only the fixed in-repo corpus.
 - [ ] `index.md` and `comparison.md` carry `**Last reviewed:**` dates.
-- [ ] `yarn docs:build`, `ci --verify`, `ci --example-files`, and
-      `--check-blob-paths` all pass.
+- [ ] `yarn docs:build`, `ci examples verify`, `ci examples standalone`, and
+      `ci check blob-paths` all pass.
 - [ ] Recommendations reflect the evidence rather than preceding it, and name the
       measurement that would falsify each choice.
 - [ ] Nothing pushed without explicit authorization.
