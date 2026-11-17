@@ -180,6 +180,16 @@ Gate:
 - An edit to one `sparkles:base` module recompiles only the variants whose
   manifests contain it.
 
+Progress: local execution without the store. `build_graph/execute.d` makes an
+action graph concrete for a run directory and runs it on the task-DAG
+executor: compiles, archives and links with BGA4's complete environment
+and their tools by absolute path, the root mapped to `.` (BGA5), and the
+test-root module generated in process. `plan-graph --run=versions` builds
+and tests `sparkles:versions` in 16 actions; two runs in different
+directories produce byte-identical objects, archives and test binary, none
+naming the worktree or the run directory. Next: typed generators (BGG1),
+which `dmd:lexer`'s `config.d` needs.
+
 ## E4: The Nix backend
 
 - Content-addressed source inputs, and derivations created without evaluation

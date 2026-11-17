@@ -48,6 +48,10 @@ $(LIST
         recorded or refused (oracle 24 steps 1–4).
 )
 
+`--run=<package> [--into=<dir>]` is E3's local execution by hand: it plans that
+package's test root and runs its actions on the task-DAG executor, with the
+toolchain from `PATH` named by absolute path (`build_graph/execute.d`).
+
 Needs the dev shell's `SPARKLES_DUB_SOURCES` for the registry packages, and
 `strace` (the dev shell's, on Linux) for the trace steps. `--trace-target=F`
 is the traced planner: it plans once between two marker lookups and writes
@@ -92,6 +96,13 @@ int main(string[] args)
 
     if (traceTarget.length)
         return tracedPlan(root, traceTarget[0]["--trace-target=".length .. $]);
+    const runOnly = args.filter!(a => a.startsWith("--run=")).array;
+    if (runOnly.length)
+    {
+        const into = args.filter!(a => a.startsWith("--into=")).array;
+        return runPackage(root, runOnly[0]["--run=".length .. $],
+            into.length ? absolutePath(into[0]["--into=".length .. $]) : buildPath(root, "build", "graph-run"));
+    }
 
     auto first = planRepository(root);
     if (first.error.length)
@@ -234,7 +245,7 @@ void marker(string name) @trusted
     cast(void) access(("/.plan-graph-" ~ name).toStringz, F_OK);
 }
 
-Planned planRepository(string root, bool markers = false)
+Planned planRepository(string root, bool markers = false, string only = null, Tools tools = Tools.init)
 {
     const d = driverEnvironment();
     if (d.sources is null)
@@ -271,6 +282,8 @@ Planned planRepository(string root, bool markers = false)
     Resolution[] rs;
     foreach (ref pkg; graph.value.packages)
     {
+        if (only.length && pkg.shortName != only)
+            continue;
         auto request = ResolveRequest(directory: root, subPackage: pkg.shortName, buildType: "unittest",
             platform: platform, testRoot: true);
         foreach (n, s; registry.value)
@@ -300,7 +313,7 @@ Planned planRepository(string root, bool markers = false)
             if (!p.packageDirectories.canFind(t.directory))
                 p.packageDirectories ~= t.directory;
 
-    auto g = planActions(p.plan, rs, root);
+    auto g = planActions(p.plan, rs, root, tools);
     if (g.hasError)
         return Planned(text(g.error));
     p.graph = g.value;
@@ -932,7 +945,7 @@ string checkCic5(string root, ref const Planned p, string without = null)
 
 // Oracle 24 step 1: outside `unittest` blocks, no planning module imports
 // `std.file` or names `std.stdio`'s `File`, and every `ambientAuthority()`
-// is in `resolve/tree.d`, which opens BGF2's roots.
+// is in `resolve/tree.d` or `build_graph/execute.d`, which open BGF2's roots.
 string sourceAudit(string root)
 {
     import sparkles.d_source.mentions : scanSource;
@@ -962,7 +975,7 @@ string sourceAudit(string root)
                 const namesFile = t == "stdio" && i + 2 < ts.length && (ts[i + 1] == ":" || ts[i + 1] == ".")
                     && ts[i + 2] == "File";
                 const ambient = t == "ambientAuthority" && i + 1 < ts.length && ts[i + 1] == "("
-                    && !shown.endsWith("resolve/tree.d");
+                    && !shown.endsWith("resolve/tree.d") && !shown.endsWith("build_graph/execute.d");
                 if (importsFile || namesFile || ambient)
                     failures ~= text(" ", shown, ":", t.line);
             }
@@ -1112,4 +1125,66 @@ configuration "unittest" {
             failures ~= text(" a link to `", bad, "` did not fail planning naming it (", error, ");");
     }
     return failures;
+}
+
+// The executable `name` on `PATH`, by absolute path, its links resolved.
+string onPath(string name)
+{
+    import std.file : exists, isFile, readLink, isSymlink;
+    import std.path : absolutePath;
+
+    foreach (dir; environment.get("PATH", "").split(':'))
+    {
+        const p = buildPath(dir, name);
+        if (dir.length && exists(p) && isFile(p))
+            return p;
+    }
+    return null;
+}
+
+/*
+E3's local execution, by hand: plans the test root of the package `only`
+(`:versions`), with the toolchain from `PATH` by absolute path, and runs its
+actions into `into` on the task-DAG executor: compiles, archives and the
+link with the fixed environment, then the test. Prints each task's lines
+and its outcome; the exit status is the run's.
+*/
+int runPackage(string root, string only, string into)
+{
+    import std.file : mkdirRecurse;
+    import std.parallelism : totalCPUs;
+    import std.stdio : stdout;
+    import sparkles.build_graph.execute : RunLayout, executionNodes, runActions;
+    import sparkles.build_primitives.task.action : EnvEntry;
+
+    const tools = Tools(compiler: onPath("ldc2"), archiver: onPath("ar"), cc: onPath("cc"), linker: onPath("ld.lld"));
+    if (tools.compiler is null || tools.archiver is null || tools.cc is null || tools.linker is null)
+    {
+        stderr.writeln("plan-graph: ldc2, ar, cc and ld.lld must be on PATH");
+        return 2;
+    }
+    auto p = planRepository(root, false, only, tools);
+    if (p.error.length)
+    {
+        stderr.writeln("plan-graph: ", p.error);
+        return 1;
+    }
+    if (p.requests == 0)
+    {
+        stderr.writeln("plan-graph: no package ", only);
+        return 2;
+    }
+    mkdirRecurse(into);
+    // Generators and tests run with the environment they are given here,
+    // declared whole (BGX1): the driver's own.
+    EnvEntry[] declared;
+    foreach (name, value; environment.toAA)
+        declared ~= EnvEntry(name, value);
+    declared.sort!((a, b) => a.name < b.name);
+    const layout = RunLayout(root, into);
+    auto nodes = executionNodes(p.graph, layout, declared);
+    auto w = stdout.lockingTextWriter;
+    const r = runActions(nodes, p.graph, layout, w, cast(uint) totalCPUs);
+    writeln(p.graph.actions.length, " actions; exit ", r.exitCode);
+    return r.exitCode;
 }

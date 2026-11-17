@@ -117,6 +117,11 @@ struct Tools
 {
     string compiler = "ldc2"; /// by absolute path in a real plan (BGA4)
     string archiver = "llvm-ar"; ///
+    /// The C compiler driver and the linker, by absolute path (BGA4): LDC
+    /// takes them as `-gcc=` and `--linker=`, and searches no `PATH` for
+    /// them. Empty leaves the compiler's choice.
+    string cc;
+    string linker; /// ditto
 }
 
 /**
@@ -199,7 +204,7 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
             {
                 auto gen = Action(ActionKind.generate, actionId(ActionKind.generate, *v), vi,
                     TaskAction(InProcessAction("generate:test-root-module",
-                        r.testRoot.testedSources.dup)),
+                        testRootArguments(*v, root, r.testRoot.testedSources))),
                     [DeclaredOutput("dub_test_root.d")], defaultWeight(ActionKind.generate));
                 before ~= add(gen);
             }
@@ -356,7 +361,7 @@ TaskAction copyOf(ref const TaskAction a) @safe pure nothrow
 
     return a.match!(
         (ref const ProcessAction p) => TaskAction(ProcessAction(p.argv.dup, p.envDelta.dup, p.cwd, p.stdin,
-            p.timeout, p.sandbox)),
+            p.timeout, p.sandbox, p.completeEnvironment)),
         (ref const InProcessAction i) => TaskAction(InProcessAction(i.handler, i.arguments.dup)),
         (ref const InertAction x) => TaskAction(InertAction(x.note)));
 }
@@ -396,6 +401,42 @@ string relative(string path, string root) @safe pure nothrow
     return path;
 }
 
+// The test-root generator's arguments: the package directory relative to
+// the root, the module's output path, the import roots relative to the
+// package, `--`, and the tested sources relative to the package.
+// The name `-fuse-ld=` takes for the linker at `path`: `ld.lld` is `lld`.
+string linkerName(string path) @safe pure nothrow
+{
+    size_t slash = path.length;
+    while (slash > 0 && path[slash - 1] != '/')
+        --slash;
+    const base = path[slash .. $];
+    return base.startsWith("ld.") ? base[3 .. $] : base;
+}
+
+string directoryOf(string path) @safe pure nothrow
+{
+    size_t slash = path.length;
+    while (slash > 0 && path[slash - 1] != '/')
+        --slash;
+    return slash > 1 ? path[0 .. slash - 1] : "/";
+}
+
+string[] testRootArguments(ref const Variant v, string root, const string[] tested) @safe
+{
+    string[] arguments = [relative(v.directory, root), "$OUT/dub_test_root.d"];
+    foreach (p; v.settings.importPaths)
+        if (p.startsWith(v.directory ~ "/"))
+        {
+            auto r = p[v.directory.length + 1 .. $];
+            while (r.length && r[$ - 1] == '/')
+                r = r[0 .. $ - 1];
+            arguments ~= r;
+        }
+    arguments ~= "--";
+    return arguments ~ tested;
+}
+
 // The compiler's arguments for a variant's one compile.
 string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId generatedRoot) @safe
 {
@@ -405,6 +446,11 @@ string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId
     if (ldc)
         argv ~= "-singleobj";
     argv ~= "-of=$OUT/" ~ objectName(v);
+    // BGA5: the root maps to `.` in what the outputs record.
+    if (ldc)
+        argv ~= "--ffile-prefix-map=$ROOT=.";
+    if (ldc && tools.cc.length)
+        argv ~= "-gcc=" ~ tools.cc;
     argv ~= optionFlags(s.options, ldc);
     // Tests run on several threads, so LDC counts coverage atomically (CIC7).
     if (ldc && (s.options & BuildOption.coverage))
@@ -423,7 +469,13 @@ string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId
         if (!isLinkerInput(f))
             argv ~= relative(f, root);
     if (!generatedRoot.empty)
+    {
+        // The generated module lies in its producer's output directory,
+        // which the run chooses: mapped to a fixed name, as the root is.
+        if (ldc)
+            argv ~= "--ffile-prefix-map=$IN(" ~ generatedRoot.text ~ ")=generated";
         argv ~= inputPath(generatedRoot, "dub_test_root.d");
+    }
     return argv;
 }
 
@@ -433,7 +485,23 @@ string[] linkArgv(ref const Variant v, string root, const Tools tools, TaskId co
     const string[] archives, uint threads) @safe
 {
     const s = &v.settings;
-    string[] argv = [tools.compiler, "-of=$OUT/" ~ binaryName(v), inputPath(compile, objectName(v))];
+    // dub links with the compiler flags too; the tools named here come
+    // after them, so they win over a recipe's `--linker=lld`.
+    // dub turns build options into compiler flags before it links.
+    string[] argv = [tools.compiler];
+    argv ~= optionFlags(s.options, v.platform.compiler == "ldc");
+    foreach (f; s.dflags)
+        argv ~= f;
+    argv ~= ["-of=$OUT/" ~ binaryName(v), inputPath(compile, objectName(v))];
+    if (v.platform.compiler == "ldc")
+    {
+        if (tools.cc.length)
+            argv ~= "-gcc=" ~ tools.cc;
+        // GCC takes `-fuse-ld=` by name only: the linker's directory goes
+        // first on the driver's program path, so the name finds it there.
+        if (tools.linker.length)
+            argv ~= ["--linker=" ~ linkerName(tools.linker), "-Xcc=-B" ~ directoryOf(tools.linker)];
+    }
     argv ~= archives;
     foreach (f; s.sourceFiles)
         if (isLinkerInput(f))

@@ -193,6 +193,13 @@ private:
                 secrets ~= redactionNeedles(entry.value);
         }
         secrets = longestFirst(secrets);
+        if (action.completeEnvironment)
+        {
+            // The whole environment (build-graph BGA4): a non-null base, so
+            // nothing is inherited, with the entries over it.
+            static immutable const(char)[][1] none = [""];
+            cfg.process.env = none[0 .. 0];
+        }
         cfg.process.envOverlay = overlay;
 
         void onEvent(in ProcessEvent ev)
