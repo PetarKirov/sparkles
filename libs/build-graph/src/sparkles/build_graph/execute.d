@@ -286,6 +286,7 @@ import sparkles.build_primitives.task.model : TaskOutcome;
 import sparkles.build_primitives.task.process : ProcessDriver, ProcessDriverOptions;
 import sparkles.event_horizon.sched : Sched;
 import sparkles.build_graph.store : Manifest, ManifestEntry, OutputRecord, ResultRecord, Store,
+    preimageDifferences,
     cacheDirTag, declaredKeyOf, formatVersion, hexOf, layoutVersion, parseHex, readAll, readBytes, resultKey,
     statPath;
 
@@ -295,6 +296,15 @@ struct RunStats
 {
     size_t[string] reused;   /// by kind
     size_t[string] executed; /// by kind
+    size_t[string] misses;   /// by class (BGS8): `declared`, `manifest`, `evicted`
+
+    void miss(string class_) @safe pure nothrow
+    {
+        if (auto n = class_ in misses)
+            ++*n;
+        else
+            misses[class_] = 1;
+    }
 
     void count(string kind, bool hit) @safe pure nothrow
     {
@@ -319,6 +329,8 @@ struct RunStats
         foreach (k; kinds.keys.sort)
             s ~= (s.length ? "; " : "") ~ k ~ " " ~ text(executed.get(k, 0)) ~ " executed, "
                 ~ text(reused.get(k, 0)) ~ " reused";
+        foreach (c; misses.keys.sort)
+            s ~= "; " ~ text(misses[c]) ~ " " ~ c ~ " misses";
         return s;
     }
 }
@@ -545,20 +557,23 @@ struct ActionDriver
         const id = ctx.node.id;
         auto a = id.text in planned;
         const kind = a !is null ? text((*a).kind) : "action";
-        string declared;
+        string declared, preimage;
         if (stored && a !is null && reusable(**a))
-        {
-            string preimage;
             if (declaredPreimage(**a, preimage))
                 declared = declaredKeyOf(preimage);
-        }
         if (declared.length)
+        {
             if (auto hit = lookup(**a, declared))
                 if (adopt(id, *hit))
                 {
                     stats.count(kind, true);
                     return TaskOutcome(Succeeded());
                 }
+            // BGS8: every miss is classified and explained.
+            const miss = explainMiss(**a, declared, preimage);
+            stats.miss(miss[0]);
+            ctx.output(OutputStream.stderr, "miss (" ~ miss[0] ~ "): " ~ miss[1]);
+        }
         if (!makeDirectories(id))
             return TaskOutcome(Failed(FailureReason.contract));
         auto outcome = process.run(ctx);
@@ -597,6 +612,7 @@ struct ActionDriver
             ctx.output(OutputStream.stderr, store.note);
         if (published !is null)
         {
+            store.recordPreimage(id.text, preimage);
             if (hasManifest)
                 store.useManifest(declared, manifest);
             outputsDigestOf[id.text] = published.outputsDigest;
@@ -689,6 +705,49 @@ struct ActionDriver
             (ref const InertAction _) {});
         preimage = s;
         return known;
+    }
+
+    /*
+    BGS8: why `a` missed. `declared` when no manifest list exists for its
+    declared key (or, for an action without one, no result), naming each
+    component that differs from the preimage its task last published;
+    `manifest` when a list exists but no manifest matches, naming the most
+    recently used one's first file whose digest differs, or its first absent
+    candidate that now exists; `evicted` when a manifest matches but its
+    result is gone.
+    */
+    private string[2] explainMiss(ref const Action a, string declared, string preimage)
+    {
+        string declaredMiss()
+        {
+            const older = store.preimage(a.id.text);
+            if (older is null)
+                return "no preimage is recorded for the task";
+            const differing = preimageDifferences(older, preimage);
+            return differing.length ? "differs in " ~ differing : "the same preimage, published under another key";
+        }
+        if (a.kind != ActionKind.compile)
+            return ["declared", declaredMiss()];
+        const list = store.manifests(declared);
+        if (!list.length)
+            return ["declared", declaredMiss()];
+        foreach (ref m; list)
+            if (holds(m))
+                return ["evicted", "a manifest matches, and its result " ~ resultKey(declared, m) ~ " is gone"];
+        foreach (ref f; list[0].files)
+        {
+            if (f.path.startsWith("/nix/store/"))
+                continue;
+            ubyte[32] d;
+            if (!digestOf(f.path, d))
+                return ["manifest", f.path ~ " is gone"];
+            if (d != f.digest)
+                return ["manifest", f.path ~ " changed"];
+        }
+        foreach (path; list[0].absent)
+            if (!path.startsWith("/nix/store/") && present(path))
+                return ["manifest", path ~ " appeared"];
+        return ["manifest", "no manifest matches"];
     }
 
     // The result `a`'s declared key leads to, if the store holds one: for a
