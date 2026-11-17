@@ -866,6 +866,71 @@ void scrollToCaret(ref LayoutContext context, in Text text, CaretTarget caret, s
     }
 }
 
+/**
+The visual rows before each logical line of a text, at a layout context's
+wrap width (`EDR6`): the scroll position and length of a long document in
+rows are lookups, not a walk over its lines. The count is redone in full when
+the text or the wrap width changes, and only then.
+*/
+struct RowIndex
+{
+    private UniqueBuffer!long prefix;
+    private Text counted;
+    private size_t countedWrap = size_t.max;
+
+@safe pure nothrow @nogc:
+
+    /// Recount when `text` or `context`'s wrap width changed since the last call.
+    void refresh(ref LayoutContext context, in Text text)
+    {
+        if (countedWrap == context.options.wrapCells && counted == text && prefix.length)
+            return;
+        const count = text.lineCount;
+        prefix.clear(releaseStorage: false);
+        long total;
+        foreach (line; 0 .. count)
+        {
+            prefix.put(total);
+            total += cast(long) context.rowCount(text, line);
+        }
+        prefix.put(total);
+        counted = Text(text);
+        countedWrap = context.options.wrapCells;
+    }
+
+    /// Visual rows before logical line `line`; the total past the last line.
+    long rowsBefore(size_t line) const
+        => !prefix.length ? 0 : line + 1 < prefix.length ? prefix[line] : prefix[prefix.length - 1];
+
+    /// The index of visual row `row` of logical line `line`, from the top of the text.
+    long rowOf(size_t line, size_t row) const => rowsBefore(line) + cast(long) row;
+
+    /// The text's visual rows.
+    long total() const => rowsBefore(size_t.max - 1);
+}
+
+/// A wrapped line counts its rows; the index follows the text and the width.
+@("editor.layout.rowIndex")
+@safe pure nothrow @nogc unittest
+{
+    LayoutContext context;
+    context.options.wrapCells = 10;
+    auto text = Text("short\nalpha beta gamma delta\nend");
+    RowIndex index;
+    index.refresh(context, text);
+    const wrapped = cast(long) context.rowCount(text, 1);
+    assert(wrapped > 1);
+    assert(index.rowsBefore(0) == 0 && index.rowsBefore(1) == 1 && index.rowsBefore(2) == 1 + wrapped);
+    assert(index.rowOf(2, 0) == 1 + wrapped && index.total == 2 + wrapped);
+    assert(index.rowsBefore(99) == index.total);
+    context.options.wrapCells = 0;
+    index.refresh(context, text);
+    assert(index.total == 3, "unwrapped: a row a line");
+    text = Text("one");
+    index.refresh(context, text);
+    assert(index.total == 1);
+}
+
 /// Move the top (`line`, `row`) by `delta` visual rows (a wheel), within the text.
 void scrollRows(ref LayoutContext context, in Text text, long delta, ref size_t line, ref size_t row)
     @safe pure nothrow @nogc

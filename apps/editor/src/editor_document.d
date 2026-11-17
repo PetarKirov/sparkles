@@ -4,7 +4,7 @@ module editor_document;
 import sparkles.text_buffer.text : Text;
 import sparkles.ui.components.scroll_body : ScrollBody;
 import sparkles.ui.editor.field : EditorFieldOf;
-import sparkles.ui.editor.layout : LayoutContext;
+import sparkles.ui.editor.layout : LayoutContext, RowIndex;
 import sparkles.base.text.envelope : encodeEnvelope, LineEnding, TextEnvelope;
 
 /// A tab owns its reference-counted field; arrays contain tab references, never Text values.
@@ -22,9 +22,7 @@ class Document
     long syncedVisualRow;
     bool followCaret = true;
     /// Visual rows before each line, for the text and wrap width they were counted at.
-    long[] rowPrefix;
-    Text countedText;
-    size_t countedWrap = size_t.max;
+    RowIndex rows;
     string language = "text";
     bool bom;
     LineEnding predominant;

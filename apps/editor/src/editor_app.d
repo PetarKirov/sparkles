@@ -23,7 +23,7 @@ import settings : choose, EditorSettings, fromSession, IndentChoice, Presentatio
 import sparkles.ui.editor.line_edit : IndentOptions, lineCommentToken;
 import sparkles.ui.editor.context : CaretTarget;
 import sparkles.text_buffer.summary : Affinity;
-import sparkles.ui.editor.layout : LayoutContext, ParagraphLayout, scrollRows, scrollToCaret;
+import sparkles.ui.editor.layout : LayoutContext, ParagraphLayout, RowIndex, scrollRows, scrollToCaret;
 import sparkles.ui.components.lantern_view : BoxLayout, LabelArena, viewLantern;
 import sparkles.ui.editor.field : EditorField, forwardClipboard;
 import sparkles.ui.editor.command : EditCommand, EditKind;
@@ -463,33 +463,11 @@ The visual rows before each line of `document` (`EAP17`, `EAP29`), counted
 once per text and wrap width: a steady frame reuses them, and a line short
 enough to be one row is counted without a layout.
 */
-private const(long)[] rowPrefix(Document document) @safe
+private ref RowIndex rowIndex(Document document) @safe
 {
-    auto context = &document.field.context;
-    const text = document.field.state.text;
-    if (document.countedWrap == context.options.wrapCells && document.countedText == text)
-        return document.rowPrefix;
-    const count = text.lineCount;
-    document.rowPrefix.length = count + 1;
-    long total;
-    foreach (line; 0 .. count)
-    {
-        document.rowPrefix[line] = total;
-        total += cast(long) context.rowCount(text, line);
-    }
-    document.rowPrefix[count] = total;
-    document.countedText = Text(text);
-    document.countedWrap = context.options.wrapCells;
-    return document.rowPrefix;
+    document.rows.refresh(document.field.context, document.field.state.text);
+    return document.rows;
 }
-
-private long visualRowIndex(Document document, size_t targetLine, size_t targetRow) @safe
-{
-    const prefix = rowPrefix(document);
-    return (targetLine + 1 < prefix.length ? prefix[targetLine] : prefix[$ - 1]) + cast(long) targetRow;
-}
-
-private long totalVisualRows(Document document) @safe => rowPrefix(document)[$ - 1];
 
 private enum Dialog : ubyte { none, openPath, savePath, dirtyClose, recoveryClose, restoreOffer }
 
@@ -2419,7 +2397,7 @@ struct EditorApp
             context.viewportLines = visible;
             if (document.firstLine >= count) document.firstLine = count ? count - 1 : 0;
             const text = document.field.state.text;
-            const totalRows = totalVisualRows(document);
+            const totalRows = rowIndex(document).total;
             document.scroll.content = totalRows;
             document.scroll.viewport = cast(long) visible;
             document.scroll.motion.instant = host.backend != Backend.gui;
@@ -2428,7 +2406,7 @@ struct EditorApp
                 const primary = document.field.state.selection.primary;
                 scrollToCaret(*context, text, CaretTarget(primary.head, primary.affinity),
                     visible, document.firstLine, document.firstRow);
-                document.syncedVisualRow = visualRowIndex(document, document.firstLine, document.firstRow);
+                document.syncedVisualRow = rowIndex(document).rowOf(document.firstLine, document.firstRow);
                 document.scroll.motion.jumpTo(cast(double) document.syncedVisualRow, document.scroll.limit);
             }
             else
@@ -2440,7 +2418,7 @@ struct EditorApp
                 if (delta != 0)
                 {
                     scrollRows(*context, text, delta, document.firstLine, document.firstRow);
-                    document.syncedVisualRow = visualRowIndex(document, document.firstLine, document.firstRow);
+                    document.syncedVisualRow = rowIndex(document).rowOf(document.firstLine, document.firstRow);
                     if (document.syncedVisualRow != targetRow)
                         document.scroll.motion.jumpTo(cast(double) document.syncedVisualRow, document.scroll.limit);
                 }
@@ -2452,7 +2430,7 @@ struct EditorApp
             {
                 scrollRows(*context, text, -(overshoot < document.syncedVisualRow ? overshoot : document.syncedVisualRow),
                     document.firstLine, document.firstRow);
-                document.syncedVisualRow = visualRowIndex(document, document.firstLine, document.firstRow);
+                document.syncedVisualRow = rowIndex(document).rowOf(document.firstLine, document.firstRow);
                 document.scroll.motion.jumpTo(cast(double) document.syncedVisualRow, document.scroll.limit);
             }
             context.originLine = document.firstLine;
