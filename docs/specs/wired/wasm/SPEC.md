@@ -201,7 +201,17 @@ module **must** be a reactor of the [toolchain's module
 contract](../../toolchain/wasm-modules.md), sharing its memory interface
 (TCM5), its loader (TCM7) and its native agreement check (TCM9), and
 exporting parse with diagnostics, canonical format, and typed recipe decode
-for JSON and SDL. Its exports join TCM5's table when its slice is planned.
+for JSON and SDL through one export, `spk_wired_run`: it **must** answer a
+JSON request `{ op, format, text, name? }` with one JSON response.
+`op` `parse` answers `{ tree }`: for JSON the value; for SDL the top-level
+tags as `{ name, line, values, attributes, children }`, each value
+`{ kind, text }`, `kind` the scalar kind without a trailing `_` and `text`
+its canonical SDL spelling. `format` answers `{ text }`: SDL written
+canonically, JSON indented by two spaces with members in source order.
+`recipe` answers what the Nix module answers for `{ text; name; }` (WW4,
+WW5), byte for byte. Text that does not parse answers WW5's `{ error }`; a
+request that is not one of these answers `{ fault }`, and the call returns
+`-1` only when the response does not fit or a range is invalid (TCM5).
 
 ## 5. The npm package
 
@@ -303,9 +313,11 @@ that the documentation describes.
 
 ### D6: The npm module
 
-**Open; blocks WW13.** One reactor shared with the site (WW12), wrapped by
-the package's JavaScript, or a module with an export set of its own.
-Decided by measurement when WW13's slice is planned.
+**Accepted: the site's module** (2026-11-17). WW12's single request
+export carries every operation the package offers, so the package wraps
+`spk-wired.wasm` in JavaScript rather than building a module with an
+export set of its own; one module is built and checked once (TCM9), and
+the site and the package cannot drift apart.
 
 ## 8. Prototype evidence
 

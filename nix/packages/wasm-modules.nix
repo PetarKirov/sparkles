@@ -122,9 +122,17 @@
 
       # Both modules, as the documentation site serves them (TCM3): `ci
       # --stage-docs-wasm` copies them into docs/public/ before VitePress builds.
+      packages.wired-wasm = buildWasmModule {
+        pname = "wired-wasm";
+        appDir = "libs/wired/wired-wasm";
+        targetName = "spk-wired";
+        description = "sparkles:wired as a WebAssembly module (the docs' JSON/SDL playground, the npm package)";
+      };
+
       packages.docs-wasm = pkgs.runCommand "docs-wasm" { } ''
         install -Dm644 ${config.packages.text-wasm}/spk-text.wasm $out/spk-text.wasm
         install -Dm644 ${config.packages.table-wasm}/spk-table.wasm $out/spk-table.wasm
+        install -Dm644 ${config.packages.wired-wasm}/spk-wired.wasm $out/spk-wired.wasm
       '';
 
       # TCM9: each module, under node, agrees with the same functions run
@@ -140,6 +148,7 @@
             ${lib.getExe config.packages.ci-minimal} --check-wasm-modules \
               --text-module ${config.packages.text-wasm}/spk-text.wasm \
               --table-module ${config.packages.table-wasm}/spk-table.wasm \
+              --wired-module ${config.packages.wired-wasm}/spk-wired.wasm \
               --wasi-loader ${../../docs/.vitepress/theme/wasi.ts} \
               --wasi-shim ${browserWasiShim} \
               | tee "$out"

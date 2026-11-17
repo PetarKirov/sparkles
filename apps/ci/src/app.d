@@ -34,7 +34,7 @@ nix run .#ci -- --check-glossary
 nix run .#ci -- --check-adhoc-sdl
 nix run .#ci -- --check-opaque-recipes
 nix run .#ci -- --check-credits
-nix run .#ci -- --check-wasm-modules --text-module FILE --table-module FILE --wasi-loader FILE --wasi-shim DIR
+nix run .#ci -- --check-wasm-modules --text-module FILE --table-module FILE --wired-module FILE --wasi-loader FILE --wasi-shim DIR
 nix run .#ci -- --check-nix-wasm --nix-wasm-module FILE --nix-wasm-answers DIR [--nix-wasm-evaluator NIX]
 nix run .#ci -- --stage-docs-wasm
 nix run .#ci -- --check-blob-paths [--clone-root DIR] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
@@ -510,7 +510,7 @@ struct CliParams
 
     @(Option(`check-wasm-modules`,
         description: "Run a fixed corpus through the WebAssembly modules (--text-module, "
-        ~ "--table-module) under node and through the same D functions natively, and "
+        ~ "--table-module, --wired-module) under node and through the same D functions natively, and "
         ~ "fail on any difference (TCM9)."))
     bool checkWasmModules;
 
@@ -521,6 +521,10 @@ struct CliParams
     @(Option(`table-module`,
         description: "With --check-wasm-modules: the table module (spk-table.wasm)."))
     string tableModule;
+
+    @(Option(`wired-module`,
+        description: "With --check-wasm-modules: the wired module (spk-wired.wasm)."))
+    string wiredModule;
 
     @(Option(`wasi-loader`,
         description: "With --check-wasm-modules: the site's loader (docs/.vitepress/theme/wasi.ts)."))
@@ -888,7 +892,8 @@ int ciMain(string[] args)
     if (mode == ProgramMode.checkPinCache)
         return runCheckPinCache();
     if (mode == ProgramMode.checkWasmModules)
-        return runCheckWasmModules(cli.textModule, cli.tableModule, cli.wasiLoader, cli.wasiShim);
+        return runCheckWasmModules(cli.textModule, cli.tableModule, cli.wiredModule, cli.wasiLoader,
+            cli.wasiShim);
     if (mode == ProgramMode.checkNixWasm)
     {
         import nix_wasm_check : runCheckNixWasm;

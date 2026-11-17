@@ -101,7 +101,19 @@ Obligations: WW15. `@wasm` tests over each format's reader, writer, typed
 codec and errors, and the recipe schema's forms and rejections; run them
 under `ci --test-extracted`.
 
-## W6 — Playground; W7 — npm package
+## W6 — Playground
+
+Done: `libs/wired/wired-wasm` (`spk-wired.wasm`, 1552 KB after `wasm-opt -Oz`),
+`WiredPlayground.vue` on `docs/libs/wired/how-to/try-in-the-browser.md`,
+the module in `docs-wasm` and `--stage-docs-wasm`, and 11 requests in
+`ci --check-wasm-modules`'s corpus (TCM9), all agreeing with `wiredRun`
+run natively.
+
+Obligations: WW12. A reactor on the module contract's interface with one
+request export; a site component; the TCM5 table, TCM8 size record and
+TCM9 corpus extended.
+
+## W7 — npm package
 
 Obligations: WW12; WW13, WW14, D6. Planned when W4 has landed; each first
 refines its section of the specification, then follows the module

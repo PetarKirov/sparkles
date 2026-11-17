@@ -997,6 +997,10 @@
             "collapsed": true,
             "items": [
               {
+                "text": "Try JSON, SDL and dub recipes in the browser",
+                "link": "/libs/wired/how-to/try-in-the-browser"
+              },
+              {
                 "text": "Resolve scalar configuration",
                 "link": "/libs/wired/how-to/resolve-scalar-config"
               },
