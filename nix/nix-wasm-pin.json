@@ -1,6 +1,6 @@
 {
   "flake": "github:PetarKirov/sparkles",
-  "hash": null,
-  "rev": null,
-  "url": null
+  "hash": "sha256-ag53Vw5e73HEwEMvuQOs/jINYTDgtyI4gYSulzOXYt4=",
+  "rev": "64433fcf7bec206626de0ff3274e4aa8b938e77d",
+  "url": "https://raw.githubusercontent.com/PetarKirov/sparkles/6b7740b12c869f77825e6fd8771fefe77b16f839/64433fcf7bec206626de0ff3274e4aa8b938e77d/spk-dub-manifest.wasm"
 }
