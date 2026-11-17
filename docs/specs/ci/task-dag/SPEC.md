@@ -54,35 +54,37 @@ ci pipeline [--from SELECTOR...] [--since REF] [--dependencies] [--dependents]
 ci placements list [--provider github|circleci] [--github-output FILE]
                    [--history-remote URL]
 
-ci test [--build-only | --special-modes betterc|wasm|all]
+ci test [--build-only | --special-modes off|betterc|wasm|all]
         [--from SELECTOR...] [--since REF]
         [--dependencies] [--dependents]
-        [--coverage | --no-coverage] [--sanitize address]
+        [--coverage | --no-coverage] [--sanitize off|address]
         [--slow [--tests NAME...]] [--backend local|nix]
         [--require-cached KIND...] [--watch]
         [--placement NAME --shard K/N [--history-tip COMMIT]]
         [--history-remote URL]
 
-ci docs examples [--include-files SELECTOR...] [--exclude-files SELECTOR...]
-ci docs run|verify|update [--include-files SELECTOR...] [--exclude-files SELECTOR...]
-ci docs links check|fix [--include-files SELECTOR...] [--exclude-files SELECTOR...]
-ci docs vcs-urls check [--include-files SELECTOR...] [--exclude-files SELECTOR...]
-ci docs sidebar check
-ci docs glossary check
-ci docs credits check
-ci docs spec-evidence check|update-backlog
-ci docs blob-paths check [--clone-root DIR] [--include-files SELECTOR...]
-ci docs fences audit [--root DIR] [--audit-scope site|all|excluded] [--json FILE]
-ci docs wasm check|stage [module options]
+ci examples run|verify|update [--include-files SELECTOR...] [--exclude-files SELECTOR...]
+ci examples standalone [--include-files SELECTOR...] [--exclude-files SELECTOR...]
 
-ci audit adhoc-sdl
-ci audit opaque-recipes
-ci nix-wasm check [module options]
-ci gc-report RECORDING [--baseline RECORDING] [--top N]
+ci check commit-scope [COMMIT_MESSAGE_FILE|-]
+ci check reference-links|vcs-urls [--include-files SELECTOR...] [--exclude-files SELECTOR...]
+ci check blob-paths [--clone-root DIR] [--include-files SELECTOR...]
+ci check sidebar|glossary|credits|spec-evidence
+ci check adhoc-sdl|opaque-recipes
+ci check pin-cache
+ci check wasm-modules|nix-wasm [module options]
+ci fix reference-links [--include-files SELECTOR...] [--exclude-files SELECTOR...]
+ci fix spec-evidence-backlog
+
+ci docs fences-audit [--root DIR] [--audit-scope site|all|excluded] [--json FILE]
+ci docs stage-wasm
+
+ci github mirror-checks [--repo R] [--sha SHA] [--skip-check NAME...] [--no-write]
+ci github link-rot-issue [--repo R] [--report FILE] [--rotten] [--run-url URL]
+ci stats [--merges [--badge-dir DIR]] [statistics options]
 
 ci commits build-each [--base REF] [--packages NAME...]
-ci commit-scope [COMMIT_MESSAGE_FILE|-]
-ci cache seed-dub | check-pins | stats | list | gc
+ci cache seed-dub | stats | list | gc
 ci cache pin-costs FILE [--history-remote URL]
 ci cache gc-r2 [--keep-commits N] [--grace-days N] [--no-delete]
 ci cache verify [--rerun [--determinism-sample N]] [--key KEY...] [--task TASK...]
@@ -90,10 +92,9 @@ ci cache remove --key KEY... | --task TASK... | --package NAME... | --toolchain 
 ci cache replace TASK...
 ci cache explain TASK
 ci host probe
-ci checks mirror [--repo R] [--sha SHA] [--skip-check NAME...] [--no-write]
-ci stats [--merges] [statistics options]
-ci link-rot report [report options]
 ci slow-tests list
+ci gc-report RECORDING [--baseline RECORDING] [--top N]
+
 ci perf record TASK -- COMMAND...
 ci perf push [--allow-dirty] [--signing-key KEY] [--history-remote URL]
 ci perf import RUN --repo R
@@ -121,7 +122,7 @@ sets 4. Invalid combinations fail before any
 task runs. Repository workflows pass `--interlaced`.
 
 **CIC2: One-node graphs.** A command that is a single check, such as
-`ci docs sidebar check`, **must** plan a one-node graph. It runs through the
+`ci check sidebar`, **must** plan a one-node graph. It runs through the
 executor and reporter, so its outcome, exit status and output follow the same
 rules as every other command.
 
@@ -131,11 +132,11 @@ derivations, which run on the configured remote builders as well
 ([build graph §10](../../build-primitives/build-graph/SPEC.md#_10-the-nix-backend)).
 Non-build tasks run locally under both.
 
-`ci test`, `ci pipeline` and the `ci docs` commands that build also accept
+`ci test`, `ci pipeline` and the `ci examples` commands also accept
 `--host-system SYSTEM` and `--host-ci-rev REV`, which re-run the command inside
 a Linux VM from macOS, as the old flags did.
 
-`ci checks mirror` reads the GitHub API even when it writes nothing. So its
+`ci github mirror-checks` reads the GitHub API even when it writes nothing. So its
 rehearsal option is `--no-write`, not the common `--dry-run`, which forbids
 network access. `ci cache gc-r2 --no-delete` lists the bucket for the same
 reason.
@@ -160,7 +161,8 @@ invalid.
 `ci test --special-modes MODE` creates the test runner's extracted special-mode
 tasks:
 
-- `MODE` is a wired enum whose CLI spellings are `betterc`, `wasm` and `all`;
+- `MODE` is a wired enum whose CLI spellings are `off` (the default: ordinary
+  tests), `betterc`, `wasm` and `all`;
   core-cli's `?`/`help` value-help forms list them.
 - A selected package gets a task only for marker attributes present in its
   sources, and only if it integrates `sparkles:test-runner`.
@@ -190,10 +192,10 @@ purpose.
 `ci pipeline` plans, as one graph:
 
 - every `ci test` mode CI runs;
-- `ci docs examples` and the markdown verification CI runs;
-- every `ci docs … check`;
-- `ci commit-scope` for the commits of the range;
-- `ci cache check-pins`, the build-settings check
+- `ci examples standalone` and the markdown verification CI runs;
+- every `ci check …`;
+- `ci check commit-scope` for the commits of the range;
+- `ci check pin-cache`, the build-settings check
   (`standardize-build-settings --check`), and the native comparison archives
   that the Event Horizon examples link;
 - the configuration-specific test jobs CI runs, such as `terminal`'s
@@ -276,66 +278,74 @@ See [build graph D43](../../build-primitives/build-graph/decisions.md#d43-amendm
 The flags in the first column below are not part of the command line. There is
 no legacy parser, alias, precedence table, or fallback dispatch.
 
-| Removed flag                      | Replacement                            |
-| --------------------------------- | -------------------------------------- |
-| `--test`, `-t`                    | `ci test`                              |
-| `--build`                         | `ci test --build-only`                 |
-| `--test-extracted`                | `ci test --special-modes all`          |
-| `--test-sanitize`                 | `ci test --sanitize address`           |
-| `--test-slow`                     | `ci test --slow`                       |
-| `--packages` (with `--test-slow`) | `ci test --slow --from`                |
-| `--packages` (with `--test`)      | `ci test --from`                       |
-| `--files`                         | `--include-files`                      |
-| `--list-slow-tests`               | `ci slow-tests list`                   |
-| `--coverage`                      | `ci test --coverage`                   |
-| `--example-files`, `-x`           | `ci docs examples`                     |
-| default markdown mode             | `ci docs run`                          |
-| `--verify`, `-V`                  | `ci docs verify`                       |
-| `--update`, `-u`                  | `ci docs update`                       |
-| `--dedup-reference-links`, `-d`   | `ci docs links check`                  |
-| `--fix-reference-links`, `-f`     | `ci docs links fix`                    |
-| `--check-vcs-urls`                | `ci docs vcs-urls check`               |
-| `--check-docs-sidebar`            | `ci docs sidebar check`                |
-| `--check-glossary`                | `ci docs glossary check`               |
-| `--check-credits`                 | `ci docs credits check`                |
-| `--check-spec-evidence`           | `ci docs spec-evidence check`          |
-| `--update-spec-evidence-backlog`  | `ci docs spec-evidence update-backlog` |
-| `--check-blob-paths`              | `ci docs blob-paths check`             |
-| `--audit-fences`                  | `ci docs fences audit`                 |
-| `--check-wasm-modules`            | `ci docs wasm check`                   |
-| `--stage-docs-wasm`               | `ci docs wasm stage`                   |
-| `--build-each-commit`             | `ci commits build-each`                |
-| `--check-commit-scope`            | `ci commit-scope`                      |
-| `--seed-dub-cache`                | `ci cache seed-dub`                    |
-| `--check-pin-cache`               | `ci cache check-pins`                  |
-| `--linux-host-probe`              | `ci host probe`                        |
-| `--mirror-checks`                 | `ci checks mirror`                     |
-| `--mirror-checks --dry-run`       | `ci checks mirror --no-write`          |
-| `--ci-stats`, `-C`                | `ci stats`                             |
-| `--report-link-rot`               | `ci link-rot report`                   |
-| `--watch` (with `--test`)         | `ci test --watch`                      |
-| `--watch` (with `--build`)        | `ci test --build-only --watch`         |
-| `--list-placements`               | `ci placements list`                   |
-| `--check-adhoc-sdl`               | `ci audit adhoc-sdl`                   |
-| `--check-opaque-recipes`          | `ci audit opaque-recipes`              |
-| `--check-nix-wasm`                | `ci nix-wasm check`                    |
-| `--gc-report`                     | `ci gc-report`                         |
-| `--write-pin-costs`               | `ci cache pin-costs`                   |
-| `--gc-r2`                         | `ci cache gc-r2`                       |
-| `--gc-r2 --dry-run`               | `ci cache gc-r2 --no-delete`           |
-| `--record-task`                   | `ci perf record`                       |
-| `--perf-push`                     | `ci perf push`                         |
-| `--perf-import-github-run`        | `ci perf import`                       |
-| `--perf-append`                   | `ci perf append`                       |
-| `--perf-records`, `--perf-run-*`  | `ci perf append --records`, `--run-*`  |
-| `--ci-stats --merges`             | `ci stats --merges`                    |
-| `--skip-packages`                 | `ci test --placement --shard`          |
+| Removed flag                      | Replacement                           |
+| --------------------------------- | ------------------------------------- |
+| `--test`, `-t`                    | `ci test`                             |
+| `--build`                         | `ci test --build-only`                |
+| `--test-extracted`                | `ci test --special-modes all`         |
+| `--test-sanitize`                 | `ci test --sanitize address`          |
+| `--test-slow`                     | `ci test --slow`                      |
+| `--packages` (with `--test-slow`) | `ci test --slow --from`               |
+| `--packages` (with `--test`)      | `ci test --from`                      |
+| `--files`                         | `--include-files`                     |
+| `--list-slow-tests`               | `ci slow-tests list`                  |
+| `--coverage`                      | `ci test --coverage`                  |
+| `--example-files`, `-x`           | `ci examples standalone`              |
+| default markdown mode             | `ci examples run`                     |
+| `--verify`, `-V`                  | `ci examples verify`                  |
+| `--update`, `-u`                  | `ci examples update`                  |
+| `--dedup-reference-links`, `-d`   | `ci check reference-links`            |
+| `--fix-reference-links`, `-f`     | `ci fix reference-links`              |
+| `--check-vcs-urls`                | `ci check vcs-urls`                   |
+| `--check-docs-sidebar`            | `ci check sidebar`                    |
+| `--check-glossary`                | `ci check glossary`                   |
+| `--check-credits`                 | `ci check credits`                    |
+| `--check-spec-evidence`           | `ci check spec-evidence`              |
+| `--update-spec-evidence-backlog`  | `ci fix spec-evidence-backlog`        |
+| `--check-blob-paths`              | `ci check blob-paths`                 |
+| `--audit-fences`                  | `ci docs fences-audit`                |
+| `--check-wasm-modules`            | `ci check wasm-modules`               |
+| `--stage-docs-wasm`               | `ci docs stage-wasm`                  |
+| `--build-each-commit`             | `ci commits build-each`               |
+| `--check-commit-scope`            | `ci check commit-scope`               |
+| `--seed-dub-cache`                | `ci cache seed-dub`                   |
+| `--check-pin-cache`               | `ci check pin-cache`                  |
+| `--linux-host-probe`              | `ci host probe`                       |
+| `--mirror-checks`                 | `ci github mirror-checks`             |
+| `--mirror-checks --dry-run`       | `ci github mirror-checks --no-write`  |
+| `--ci-stats`, `-C`                | `ci stats`                            |
+| `--report-link-rot`               | `ci github link-rot-issue`            |
+| `--watch` (with `--test`)         | `ci test --watch`                     |
+| `--watch` (with `--build`)        | `ci test --build-only --watch`        |
+| `--list-placements`               | `ci placements list`                  |
+| `--check-adhoc-sdl`               | `ci check adhoc-sdl`                  |
+| `--check-opaque-recipes`          | `ci check opaque-recipes`             |
+| `--check-nix-wasm`                | `ci check nix-wasm`                   |
+| `--gc-report`                     | `ci gc-report`                        |
+| `--write-pin-costs`               | `ci cache pin-costs`                  |
+| `--gc-r2`                         | `ci cache gc-r2`                      |
+| `--gc-r2 --dry-run`               | `ci cache gc-r2 --no-delete`          |
+| `--record-task`                   | `ci perf record`                      |
+| `--perf-push`                     | `ci perf push`                        |
+| `--perf-import-github-run`        | `ci perf import`                      |
+| `--perf-append`                   | `ci perf append`                      |
+| `--perf-records`, `--perf-run-*`  | `ci perf append --records`, `--run-*` |
+| `--ci-stats --merges`             | `ci stats --merges`                   |
+| `--skip-packages`                 | `ci test --placement --shard`         |
 
 **CIC4: No removed flag survives.** The parser **must** reject every flag in the
-table's first column, with a diagnostic naming its replacement. Option-only
+table's first column as it rejects any unknown option, naming it and printing
+the help; the table is the migration map, not a list the parser keeps. Option-only
 flags keep their spelling on the command that owns them; for example, `--json`,
-`--root` and `--audit-scope` move to `ci docs fences audit`, and `--tests` to
+`--root` and `--audit-scope` move to `ci docs fences-audit`, and `--tests` to
 `ci test --slow`.
+
+**CIC17: Commands are verbs over subjects.** A pass/fail check is a command of
+`ci check`, and a check that rewrites what it checks is a command of `ci fix`,
+so `ci check --help` lists every check the repository's hooks and workflows
+run. Commands that act on GitHub are commands of `ci github`. A command group
+has no default action: a bare group reports the missing command with its help,
+and exits non-zero.
 
 ## 3. Yarn inspiration and Sparkles differences
 
@@ -595,7 +605,7 @@ report.
 read message -> parse subject -> optional staged-path query -> policy check
 ```
 
-`ci commit-scope` uses the common models and summary but defaults to a compact
+`ci check commit-scope` uses the common models and summary but defaults to a compact
 reporter suitable for a commit hook. stdin is an explicit input action, not
 inherited by subprocess tasks. `ci commits build-each` plans one build of the
 selected packages per commit of the range, each in its own scratch worktree,
@@ -608,8 +618,8 @@ as the JSON array the `slow-tests` CI matrix expands, and set it as the
 `matrix` output through the CI-provider module (TDO6). A `@slow` test without a
 name, or an empty list, is an error.
 
-The other maintenance commands, `ci cache`, `ci host probe`, `ci checks mirror`
-and `ci link-rot report`, are one-node graphs (CIC2) over their existing
+The other maintenance commands, `ci cache`, `ci host probe`, `ci github mirror-checks`
+and `ci github link-rot-issue`, are one-node graphs (CIC2) over their existing
 behaviour.
 
 ## 6. Build and coverage locations

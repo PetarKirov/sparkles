@@ -138,14 +138,15 @@ and needs none of the prerequisites above.
     are not accepted yet, since nothing could honour them.
 - `ci pipeline` does not exist yet; `ci placements list` and
   `ci test --placement NAME --shard K/N` carry M3a's placements.
-- Reject every removed flag with its replacement (CIC4).
+- Reject every removed flag as an unknown option (CIC4), and give checks,
+  fixes and GitHub actions their verb groups (CIC17).
 - Change every workflow, hook, script, Nix package and document that runs
   `ci` in the same change, so the repository never runs a removed flag.
 
 Gate:
 
 - `ci`'s tests pass, and a test rejects every flag of SPEC §2's first column
-  with its replacement named.
+  as an unknown option.
 - Repository CI is green on the canonical commands, on GitHub Actions and
   CircleCI.
 - No script, hook, workflow or user-facing document uses a removed flag.
@@ -200,7 +201,7 @@ one. Parallel listings never share a destination.
 - Markdown extraction and per-example single-file packages, shared by
   `docs run`, `docs verify` and `docs update`, built against the shared library
   variants.
-- `ci docs examples` with directives and platform skips.
+- `ci examples standalone` with directives and platform skips.
 - Remove `--example-files`, the default markdown mode and `TaskPool` example
   execution.
 
@@ -210,12 +211,12 @@ green. No `std.parallelism` import remains in `apps/ci`.
 
 ## M10: Documentation commands
 
-- Every `ci docs …` check and rewrite of SPEC §5.6, including glossary,
+- Every documentation `ci check` and `ci fix` of SPEC §5.6, including glossary,
   credits, spec evidence and the WebAssembly modules.
 - Preserve every file default, selector semantic, source-position
   diagnostic, local-clone behavior and audit scope.
 
-Gate: every `ci docs` command has a parity fixture. Mutating commands make no
+Gate: every documentation check and fix has a parity fixture. Mutating commands make no
 writes under dry run and write atomically otherwise. The pre-commit hook
 invocations remain green after their migration.
 
@@ -223,9 +224,9 @@ invocations remain green after their migration.
 
 - `ci stats` with its degradations (SPEC §5.7). Blocking HTTP runs through the
   blocking pool until a native client exists.
-- `ci commit-scope` and `ci commits build-each` on the shared store.
+- `ci check commit-scope` and `ci commits build-each` on the shared store.
 - `ci cache`, with removal and replacement (BGS7), `ci host probe`,
-  `ci checks mirror`, `ci link-rot report` and `ci slow-tests list`.
+  `ci github mirror-checks`, `ci github link-rot-issue` and `ci slow-tests list`.
 
 Gate: complete, partial, empty-comparison, authentication-failure and optional
 metadata fixtures have the specified outcomes and exits; tokens are absent from

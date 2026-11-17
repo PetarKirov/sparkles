@@ -236,4 +236,27 @@ needs the build graph, such as `--since` or `--require-cached`, is not
 accepted until the command that honours it exists, so no option is parsed and
 ignored.
 
+The owner settled the details in the same interview:
+
+- **Verbs over subjects (CIC17).** Pass/fail checks are commands of
+  `ci check`, the checks that rewrite are commands of `ci fix`, and GitHub-side
+  actions are commands of `ci github`. This replaces the first draft's
+  subject-first groups such as `ci docs sidebar check`, eleven of which held a
+  single verb.
+- **Options belong where they mean something.** `--log-level` is the
+  program's and is accepted anywhere. `--fail-fast` and `--host-system` belong
+  to the commands that honour them.
+- **Enums spell their default.** `--special-modes` and `--sanitize` spell
+  their default `off`, since core-cli has no optional enum option.
+- **Removed flags are unknown options (CIC4).** They get no table of
+  replacements in the parser; SPEC §2 is the migration map.
+- **Errors print as core-cli prints them**, `Error: <message>`. A common
+  rendering of `ci`'s output, possibly through `sparkles:ui`, is a later
+  design pass.
+- **No default commands.** A bare group prints its help and fails.
+- **`ci test --build-only` runs today's `dub build`** until M7b.
+- **The command tree lives in `cli.d`** first; moving each group's
+  implementation out of `app.d` into SPEC §7's modules follows in later
+  commits.
+
 **Revisit when** never: the flags it removes do not return (CIC4).
