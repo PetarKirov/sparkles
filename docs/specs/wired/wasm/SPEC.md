@@ -1,0 +1,310 @@
+---
+status: draft
+owner: sparkles:wired
+reviewed: 2026-11-17
+---
+
+# `sparkles:wired` — WebAssembly builds
+
+## Abstract
+
+`sparkles:wired` compiled to WebAssembly, for four consumers: Nix
+evaluation, which reads every `dub.sdl` in the repository through the
+evaluator's `builtins.wasm` instead of regular expressions; a documentation
+playground; an npm package for JavaScript and TypeScript tooling; and any
+WebAssembly program that depends on the library. One D core does the work,
+and each host gets a thin entry layer over it. A Nix evaluation that cannot
+run WebAssembly keeps a fallback, and a check holds the two paths to the
+same answers.
+
+## Introduction
+
+Sparkles' Nix code needs to know what its dub recipes say. The flake computes
+each application's source closure, the components it ships, and the
+manifests dub needs on disk by following `dependency`, `subConfiguration`,
+`importPaths` and `sourcePaths` through every `dub.sdl` it reaches. It does
+this during evaluation, where no D program can run, so
+`nix/packages/manifest-graph.nix` reads the recipes with regular expressions
+and hand-written brace matching. [Lossless editing §7](../sdl/editing.md#7-migration-coverage)
+records that as an accepted exception to SDE9: a construct those readers
+misread is a Nix bug, found only when a build goes wrong.
+
+The same parser has three more audiences. The documentation site already
+runs Sparkles' D code in the browser, through the WebAssembly modules of
+the [toolchain's module contract](../../toolchain/wasm-modules.md), and a
+playground for JSON and SDL documents belongs beside the cell explorer and
+the table playground. Editors and web tools written in JavaScript want a
+parser for `dub.sdl` and `dub.json` that agrees with the one dub-adjacent
+Sparkles tools use. And a library that only builds natively cannot be a
+dependency of anything that targets WebAssembly.
+
+Some Nix implementations now run WebAssembly during evaluation:
+Determinate Nix's `builtins.wasm`, behind the experimental `wasm-builtin`
+feature, calls a module with a Nix value and receives one back. Upstream
+Nix has the same builtin under review. A prototype on this specification's
+branch runs the repository's own `parseDubManifest`, compiled for
+`wasm32-unknown-wasip1`, as such a module, and on every recipe in the
+repository its answers equal the regular-expression readers'
+([§8](#_8-prototype-evidence)).
+
+The approach is one core with per-host entry layers. The core is the
+existing D code (the SDL and JSON readers and writers, the typed codecs,
+and the dub recipe schema), built for WebAssembly with its runtime.
+Each host's entry layer converts between that core's values and the
+host's: Nix values through the evaluator's host functions, the shared
+memory interface for the site, a JavaScript API for npm. No entry layer
+holds parsing or schema logic of its own.
+
+Out of scope: lossless editing, open documents and path selectors (the
+SDL editor stays native); typed decoding into schemas other than the dub
+recipe; and the Nix readers of single-file examples' embedded recipes
+(`example-catalogue.nix`, `android/examples.nix`), which a later slice may
+add once the recipe table of WW9 exists. The JSON and SDL parsers' own
+correctness is their packages' concern; this specification covers what
+building, calling and delivering them as WebAssembly adds. The delivery
+order is in [PLAN.md](./PLAN.md); decisions and open questions are in
+[§7](#_7-decisions-and-open-questions).
+
+## Contract at a glance
+
+1. One D core; an entry layer converts values and owns no parsing.
+2. The Nix module answers with a typed recipe, and reports a bad recipe as
+   data, never by aborting evaluation.
+3. Each recipe is parsed at most once per evaluation, whichever reader
+   parsed it.
+4. A Nix without `builtins.wasm` evaluates to the same result through the
+   fallback; a check compares the two on every recipe.
+5. The module reaches an evaluation without import-from-derivation.
+
+## 1. The core
+
+**WW1: Buildable core.** _(Owner: `sparkles:wired`.)_ The JSON and SDL
+document readers and writers, the typed codecs, and the dub recipe schema
+(`parseDubManifest`, `parseDubJsonManifest`, `parseEmbeddedDubManifest`)
+**must** build for `wasm32-unknown-wasip1` with the toolchain of
+[TCW](../../toolchain/wasi.md), with no source change specific to that
+target beyond `version (WASI)` entry layers. The recipe schema **must** live
+in a package whose dependencies build for that target; today it is a module
+of `sparkles:build-primitives`, whose event loop does not ([D3](#d3-where-the-recipe-schema-lives)).
+
+**WW2: Entry layers convert, nothing more.** _(Owner: each entry layer.)_
+An entry layer **must** reach every parse, validation, format and typed
+decode through the core's public functions; it **must not** match recipe
+text, choose defaults, or reimplement a schema rule. A difference between a
+module's answer and the native function's on the same input is a defect of
+the entry layer or the toolchain.
+
+## 2. The Nix module
+
+The host interface is Determinate Nix's, specified by its manual's
+[Wasm host interface](https://github.com/DeterminateSystems/nix-src/blob/abe7d1f4a79effbd33040f10600f68a1b87e3943/doc/manual/source/protocols/wasm.md)
+page; this section fixes how Sparkles uses it.
+
+**WW3: Calling convention.** _(Owner: the Nix entry layer.)_ The module
+**must** be a WASI command module: the evaluator runs `_start` with the
+argument's value identifier in `argv[1]`, and the module returns its result
+through `return_to_nix`. It **must** import only `env` host functions and
+`wasi_snapshot_preview1`. Its argument is the recipe's text as a Nix string
+and, optionally, its file name for diagnostics, as
+`{ text; name ? "dub.sdl"; }`; a bare string **must** be accepted as
+`{ text = s; }`. The format follows the name: `dub.json` decodes JSON,
+anything else SDL.
+
+**WW4: Result shape.** _(Owner: the Nix entry layer.)_ A recipe decodes to
+`{ recipe = <attrs>; }`, where `<attrs>` mirrors the schema's D aggregates:
+an aggregate becomes an attribute set, an array a list, a string a string,
+a `bool` a Boolean. Attribute names are the D field names with a trailing
+`_` removed (`version_` becomes `version`). A field whose value is empty (an
+empty string or list, `false`, or an aggregate whose fields are all empty)
+**must** be absent, and a reader takes it with `or` and the empty value.
+The schema's catch-all for unknown directives is never emitted: the schema
+rejects what it does not name (WW5).
+
+**WW5: Errors are values.** _(Owner: the Nix entry layer.)_ For text the
+SDL or JSON reader rejects, or a recipe the schema rejects, the module
+**must** return `{ error = { name; line; column; message; }; }`, positions
+1-based as the native reader reports them, and **must not** call `panic` or
+trap. `panic` is reserved for a broken calling convention: a missing or
+non-string argument. A caller turns an error into `throw` with the name and
+position in the message, so a recipe that dub would reject stops the
+evaluation where it is read.
+
+**WW6: No collection.** _(Owner: the Nix entry layer.)_ The evaluator
+instantiates a module afresh for every call and drops its memory when the
+call returns, so the module **may** run its garbage collector without
+collecting (`gcopt=gc:manual`). It **must not** rely on state surviving
+between calls.
+
+**WW7: Detection and fallback.** _(Owner: Sparkles' Nix code.)_ The Nix
+code **must** use the module when `builtins ? wasm` holds and the regular
+expression readers otherwise, choosing once per evaluation. The two paths
+**must** yield equal recipe facts (WW9) for every recipe the evaluation
+reads; a difference on a repository recipe fails WW10's check. The
+fallback stays until the evaluator Sparkles' CI and dev shells run has the
+builtin enabled; removing it is a decision of its own, made after that.
+
+**WW8: No import-from-derivation.** _(Owner: Sparkles' Nix code.)_ The
+module an evaluation calls **must not** be an output of that evaluation's
+own derivations, so evaluation never waits for a build. How it arrives is
+[D2](#d2-how-the-module-reaches-evaluation): until that is decided, the Nix
+path is enabled only where the module is supplied explicitly.
+
+## 3. The recipe table
+
+**WW9: One read per recipe.** _(Owner: Sparkles' Nix code.)_ The Nix code
+**must** read the recipes through one attribute set built once per
+evaluation, keyed by repository-relative directory, whose values are the
+recipe facts. Each value is computed lazily, so an evaluation parses only
+the recipes it reaches and each at most once. The facts are what the
+closure walks consume, the same from either reader:
+
+| Fact             | Meaning                                                                                                                                                                                                        |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `subPackages`    | the root's `subPackage` paths, in order (root only)                                                                                                                                                            |
+| `configurations` | configuration names, in declaration order                                                                                                                                                                      |
+| `edges.<scope>`  | for the preamble and each configuration: in-tree dependency names, `subConfiguration` choices, and the in-tree packages named by `../<name>/src` or `../../libs/<name>/src` in `importPaths` and `sourcePaths` |
+
+Comments are not edges: a dependency quoted in a `//` comment **must not**
+appear in the facts. The fileset walk and the shipped-components walk
+differ in which scopes they follow, not in how scopes are read.
+
+**WW10: Agreement check.** _(Owner: `sparkles:ci`.)_ A check run by Nix
+**must** compute the facts of every recipe the root `dub.sdl` declares with
+both readers and fail on any difference, naming the directory and the fact.
+It runs only where the module can run (WW7, WW8); elsewhere it reports
+itself as not run, never as passed. A seeded divergence (a recipe whose
+dependency appears only in a comment, and one whose `unittest`
+configuration is not last) **must** be among its fixtures, so the check is
+seen to catch what the regular-expression reader gets wrong.
+
+**WW11: Evaluation cost.** _(Owner: Sparkles' Nix code.)_ With the table of
+WW9, evaluating every package of the flake through the Nix path **must not**
+take longer than through the fallback with the same table, plus the
+module's one-time compilation; [§8](#_8-prototype-evidence) has the
+measurement method. A slower module is a defect to fix before WW7's
+choice favours it.
+
+## 4. The documentation playground
+
+**WW12: A site module.** _(Owner: `sparkles:wired`.)_ The playground's
+module **must** be a reactor of the [toolchain's module
+contract](../../toolchain/wasm-modules.md), sharing its memory interface
+(TCM5), its loader (TCM7) and its native agreement check (TCM9), and
+exporting parse with diagnostics, canonical format, and typed recipe decode
+for JSON and SDL. Its exports join TCM5's table when its slice is planned.
+
+## 5. The npm package
+
+**WW13: One package, two runtimes.** _(Owner: `sparkles:wired`.)_ The npm
+package `@sparkles-pkgs/wired` **must** be an ES module with TypeScript
+declarations that loads in Node.js and in browsers, exposing parse with
+diagnostics, canonical format, typed recipe decode, and the generic
+document tree for JSON and SDL. Its module **must** be built from the same
+core as WW12's; whether it is the same module is [D6](#d6-the-npm-module).
+
+**WW14: Published from CI.** _(Owner: `sparkles:release`.)_ The package
+**must** be published by a release workflow through npm's trusted
+publishing (OpenID Connect from GitHub Actions), with provenance, and no
+long-lived npm token in the repository's secrets. Its version follows
+`sparkles:wired`'s under the monorepo's
+[release rules](../../../guidelines/release.md).
+
+## 6. Portability
+
+**WW15: Tested on WebAssembly.** _(Owner: `sparkles:wired`.)_ The tests of
+the core (WW1) that need no file system, process or thread **must** run
+under the test runner's `--wasm` mode in CI, and the module packages of
+WW3, WW12 and WW13 **must** be built by `ci --build-each-commit`, like the
+modules of TCM2.
+
+## 7. Decisions and open questions
+
+### D1: The target
+
+**Accepted** (prototype evidence, 2026-11-17). Build for
+`wasm32-unknown-wasip1` with druntime and Phobos. The schema's decode and
+the SDL reader allocate through the garbage collector, so a freestanding
+build without the runtime would mean rewriting them; the prototype shows
+the runtime costs 0.04 ms a call to start and adds no failure.
+Revisit if a consumer needs a module much smaller than about 1.1 MB.
+
+### D2: How the module reaches evaluation
+
+**Open; blocks enabling WW7's Nix path in the flake.** The module is a
+build output, and WW8 forbids building it during the evaluation that uses
+it. Options:
+
+1. **A pinned module**, like `nix/test-runner-pin.json`: a revision's
+   module, published (a GitHub release asset or the Cachix cache) and
+   fetched by hash during evaluation. A check rebuilds the pinned revision
+   and requires a byte-identical module. A schema change reaches
+   evaluation only when the pin moves.
+2. **The module committed** under a generated path, with a check that the
+   tree's build reproduces it byte for byte. Simplest to consume; breaks
+   the rule TCM3 states for the site's modules, and adds about 1.1 MB per
+   change to history.
+3. **Import-from-derivation**, accepted for this one case. Rejected once
+   for the regular-expression readers' replacement
+   ([editing §7](../sdl/editing.md#7-migration-coverage)); evaluation would
+   build the module and its toolchain before it can finish.
+
+Recommendation: option 1. The pin's lag is the cost, and the fallback
+already makes a stale pin safe: it changes speed, never answers, as long
+as WW10 passes.
+
+### D3: Where the recipe schema lives
+
+**Open; blocks WW1's completion.** `dub_manifest.d` depends only on
+`sparkles:wired` and Phobos, but its package, `sparkles:build-primitives`,
+depends on event-horizon, which does not build for WebAssembly; the
+prototype compiles the one file directly. Options: a sub-package of its
+own (`sparkles:dub-manifest`) that `build-primitives` depends on, keeping
+the module name; or moving it into `sparkles:wired`. Recommendation: its
+own sub-package, so `wired` stays free of dub's vocabulary.
+
+### D4: The Nix attribute names
+
+**Proposed** (WW4). D field names, trailing `_` dropped, empty fields
+absent. The alternative, dub's own directive spellings (`dependency` for
+`dependencies`), reads closer to the recipe and further from the D API
+that the documentation describes.
+
+### D5: Which evaluator
+
+**Accepted** (owner had no preference; 2026-11-17). Detect and fall back
+(WW7) rather than move Sparkles to Determinate Nix or wait for upstream.
+
+### D6: The npm module
+
+**Open; blocks WW13.** One reactor shared with the site (WW12), wrapped by
+the package's JavaScript, or a module with an export set of its own.
+Decided by measurement when WW13's slice is planned.
+
+## 8. Prototype evidence
+
+Revision `92a4cfa0e` (branch `feat/wired-wasm-nix`, not merged), in
+`libs/build-primitives/nix-wasm`: WW3's calling convention with a bare
+string argument, WW4's shape, WW6; errors still `panic` (WW5 unmet).
+Determinate Nix 3.24.2 with `wasm-builtin`, x86_64-linux, LDC 1.43 (the
+flake's WASI build), `wasm-opt -Oz` from binaryen 133.
+
+| Measurement                                            | Result                                                         |
+| ------------------------------------------------------ | -------------------------------------------------------------- |
+| Agreement with `manifest-graph.nix` (`agree.nix`)      | all 73 sub-package recipes and the root's `subPackage` list    |
+| Module size                                            | 1.12 MB, 250 KB gzipped                                        |
+| One call, the repository's recipes (4.1 KB mean)       | 0.294 ms; native `parseDubManifest`, the same inputs: 0.110 ms |
+| Of which: instantiation and runtime start              | 0.04 ms                                                        |
+| Recipe reads in an evaluation of every flake package   | 4409, about 60 a recipe                                        |
+| 60 reads a recipe: regular expressions, as today       | 0.57 s, 97 MB                                                  |
+| 60 reads a recipe: the module, each recipe parsed once | 0.11 s, 59 MB                                                  |
+
+Per-call times are the slope between 50 and 200 rounds over the 73
+recipes, each round's text varied by a comment so nothing is shared, best
+of three. The regular-expression readers would gain from WW9's table too:
+one pass over every recipe costs them about 0.02 s, so with the table they
+stay faster than the module, and WW11 compares the two paths with the
+table in both.
+
+What the prototype does not establish: WW5's error values, WW8's delivery,
+the shipped-components walk's facts (it compared only the fileset walk's
+edges and the `subPackage` list), JSON recipes, and anything of WW12–WW15.

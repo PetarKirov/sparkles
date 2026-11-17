@@ -1,0 +1,76 @@
+# `sparkles:wired` WebAssembly builds — Delivery plan
+
+_Companion to [SPEC.md](./SPEC.md). Each W-milestone is independently green:
+it builds, its packages' tests pass, and no later milestone is needed to make
+an earlier commit valid. The Nix slices come first because they retire an
+exception the repository already carries; the site and npm slices stay coarse
+until their decisions are made._
+
+## W0 — Feasibility prototype
+
+Done on `feat/wired-wasm-nix` (`07558a94d`, `92a4cfa0e`); its measurements
+are [SPEC §8](./SPEC.md#_8-prototype-evidence). It answered the blocking
+questions: whether a D program with its runtime runs under `builtins.wasm`
+(yes), whether its answers agree with the regular-expression readers (on
+every repository recipe), and what it costs (0.294 ms a call; slower than a
+regular expression, faster than today's readers once each recipe is parsed
+once). The prototype is not the production module: W1 replaces it.
+
+## W1 — The recipe schema, buildable
+
+Obligations: WW1, D3. Move the recipe schema into a package whose
+dependencies build for WebAssembly, as D3 decides, without changing the
+schema or its module name; `build-primitives` depends on it.
+
+Gate: `dub test` of the new package and of `build-primitives` pass; the
+new package builds for `wasm32-unknown-wasip1` with the flake's WASI LDC;
+`ci --build-each-commit` builds both; the spec-evidence check resolves.
+
+## W2 — The Nix module
+
+Obligations: WW2–WW6, WW15 for the module package. The entry layer of the
+prototype, completed: the `{ text; name; }` argument, `dub.json` by name,
+WW5's error values, and a native unit test of the value conversion against
+a recording fake of the host functions (the conversion is ordinary D; only
+the imports are wasm).
+
+Gate: a Nix check, on an evaluator with the builtin, decodes a fixture
+corpus (every repository recipe, a JSON recipe, and recipes that fail to
+lex, to parse, and to validate) and compares each answer with the native
+decode's, printed by a native helper as the same attribute set; every
+rejection returns `error` with the native reader's position and message,
+and none aborts evaluation.
+
+## W3 — The recipe table and the fallback
+
+Obligations: WW7, WW9, WW10, WW11. `manifest-graph.nix` reads through the
+table; the regular-expression reader becomes the table's fallback
+producer, stripping comments and reading every configuration; the
+agreement check runs over every recipe, with WW10's seeded fixtures.
+
+Gate: the flake's outputs evaluate to the same derivations before and after
+(the table changes how recipes are read, not what is built); WW11's
+measurement recorded for both paths; the agreement check passes and is
+seen to fail on its seeded divergences.
+
+Prerequisite for turning the Nix path on in the flake: D2. Before it, W3
+lands with the module supplied explicitly (WW8), which CI exercises in the
+agreement check only.
+
+## W4 — Delivery to evaluation
+
+Obligations: WW8, D2. Implement the chosen delivery, and switch the
+flake's default to the Nix path where `builtins ? wasm` holds. Then record,
+in [editing §7](../sdl/editing.md#7-migration-coverage), that the
+exception's readers are now the fallback of WW7.
+
+## W5 — Portability
+
+Obligations: WW15. Mark the core's tests that need no file system,
+process or thread `@wasm`; run them under `ci --test-extracted`.
+
+## W6 — Playground; W7 — npm package
+
+Obligations: WW12; WW13, WW14, D6. Planned when W4 has landed; each first
+refines its section of the specification, then follows the module
+contract's gates (TCM8 size record, TCM9 agreement).
