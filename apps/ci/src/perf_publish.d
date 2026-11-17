@@ -51,21 +51,35 @@ RecordFiles[] collectRecords(string root) @trusted
 }
 
 /**
-The records of one CI run that may be appended (OBH5): each valid and of
-`runPrefix` (`gh-<run id>-<attempt>-`), the first of any identifier claimed
-twice, and at most `recordsPerJob` per job. `dropped` says why each other one
-was left out.
+The records of one CI run that may be appended (OBH5): each valid, of run
+`runId` and of one of its attempts up to `lastAttempt`, the first of any
+identifier claimed twice, and at most `recordsPerJob` per job. A re-run of
+the failed jobs keeps the passed jobs' artifacts, so one run's records carry
+the attempts that wrote them. `dropped` says why each other one was left out.
 */
-RecordFiles[] admitRunRecords(RecordFiles[] records, string runPrefix, out string[] dropped) @safe
+RecordFiles[] admitRunRecords(RecordFiles[] records, string runId, uint lastAttempt, out string[] dropped) @safe
 {
     RecordFiles[] admitted;
     bool[string] seen;
     uint[string] perJob;
     foreach (r; records)
     {
-        if (const why = validateRecord(r, runPrefix))
+        if (const why = validateRecord(r, "gh-" ~ runId ~ "-"))
         {
             dropped ~= r.runId ~ ": " ~ why;
+            continue;
+        }
+        const parts = r.runId.split("-");
+        if (parts.length != 5)
+        {
+            dropped ~= r.runId ~ ": not gh-<run>-<attempt>-<job>-<n>";
+            continue;
+        }
+        // `gh-<run>-<attempt>-<job>-<n>`: the attempt is the third segment.
+        const attempt = parts[2];
+        if (!attemptAtMost(attempt, lastAttempt))
+        {
+            dropped ~= r.runId ~ format(": attempt %s is not one of the run's %d", attempt, lastAttempt);
             continue;
         }
         if (r.runId in seen)
@@ -74,7 +88,7 @@ RecordFiles[] admitRunRecords(RecordFiles[] records, string runPrefix, out strin
             continue;
         }
         // `gh-<run>-<attempt>-<job>-<n>`: the job is the fourth segment.
-        const job = r.runId.split("-")[3];
+        const job = parts[3];
         if (perJob.get(job, 0) >= recordsPerJob)
         {
             dropped ~= r.runId ~ format(": more than %d records for job %s", recordsPerJob, job);
@@ -98,10 +112,28 @@ unittest
         rec("gh-9-1-aaaaaaaaaaaa-1"), rec("gh-9-1-aaaaaaaaaaaa-2"), rec("gh-9-1-aaaaaaaaaaaa-3"),
         rec("gh-9-1-aaaaaaaaaaaa-4"), rec("gh-9-1-aaaaaaaaaaaa-5"), rec("gh-9-1-aaaaaaaaaaaa-1"),
         rec("gh-9-1-bbbbbbbbbbbb-1"), rec("gh-8-1-bbbbbbbbbbbb-1"),
-    ], "gh-9-1-", dropped);
+        // A re-run of the failed jobs: its record says attempt 3, the others 1.
+        rec("gh-9-3-cccccccccccc-1"), rec("gh-9-4-cccccccccccc-1"), rec("gh-9-0-cccccccccccc-1"),
+    ], "9", 3, dropped);
     assert(admitted.map!(r => r.runId).array == ["gh-9-1-aaaaaaaaaaaa-1", "gh-9-1-aaaaaaaaaaaa-2",
-        "gh-9-1-aaaaaaaaaaaa-3", "gh-9-1-aaaaaaaaaaaa-4", "gh-9-1-bbbbbbbbbbbb-1"]);
-    assert(dropped.length == 3, "a fifth for one job, a repeated id, another run's record");
+        "gh-9-1-aaaaaaaaaaaa-3", "gh-9-1-aaaaaaaaaaaa-4", "gh-9-1-bbbbbbbbbbbb-1", "gh-9-3-cccccccccccc-1"]);
+    assert(dropped.length == 5,
+        "a fifth for one job, a repeated id, another run's record, attempts 4 and 0 of a run at 3");
+}
+
+/// Whether `text` is a run attempt from 1 to `last`.
+private bool attemptAtMost(string text, uint last) @safe pure nothrow
+{
+    if (text.length == 0 || text.length > 9)
+        return false;
+    uint n;
+    foreach (c; text)
+    {
+        if (c < '0' || c > '9')
+            return false;
+        n = n * 10 + (c - '0');
+    }
+    return n >= 1 && n <= last;
 }
 
 /// The run directory of a record in the history (OBH1).
@@ -121,10 +153,19 @@ Expected!(string, string) appendRun(string recordsRoot, string runId, string att
     string landedCommit, string signingKey, string remote, string signersFile) @trusted
 {
     string[] dropped;
-    auto admitted = admitRunRecords(collectRecords(recordsRoot), "gh-" ~ runId ~ "-" ~ attempt ~ "-", dropped);
+    auto records = collectRecords(recordsRoot);
+    uint lastAttempt;
+    try
+        lastAttempt = attempt.to!uint;
+    catch (Exception)
+        return err!string("--perf-run-attempt " ~ attempt ~ " is not a number");
+    auto admitted = admitRunRecords(records, runId, lastAttempt, dropped);
     string report;
     foreach (d; dropped)
         report ~= "dropped " ~ d ~ "\n";
+    // Records that all fail admission are a fault to see, not an empty run.
+    if (admitted.length == 0 && records.length > 0)
+        return err!string(report ~ format("every one of the %d record(s) was dropped", records.length));
     if (admitted.length == 0)
         return ok(report ~ "no record to append");
     Append[] appends = admitted.map!(r => Append(runDir(runDate, landedCommit, r.runId), r)).array;
