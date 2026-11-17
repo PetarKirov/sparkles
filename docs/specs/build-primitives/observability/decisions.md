@@ -484,6 +484,39 @@ from earlier runs' logs can seed the history through `ci perf push`. Met on
 come from the executor's measurement table (OBA5) and keep their task ids, so
 the series continue.
 
+## OD22: One placement runs the serial leg and collects coverage (accepted)
+
+**Question.** `ci --test` ran every package twice, at `-t 1` and at `-t N`, on
+every placement, and built each one with `-cov`, so coverage was collected
+in both legs of three placements. The coverage only fills a table in the
+job's log; nothing gates on it. Does every placement need both legs and
+coverage?
+
+**What each leg catches.** `-t 1` runs each test on its worker's main thread,
+with the main thread's stack, in one process. `-t N` runs tests on worker
+threads under the 512 KiB stack watermark, across several processes, so it
+catches stack overruns and tests that interfere across processes. A test that
+needs the main thread is marked `@serial(threadAffinity: mainThread)` and runs
+there in either leg (TRS2). What `-t 1` alone catches is narrow: code that
+passes only on the main thread's larger stack, in one process.
+
+**Choice,** accepted by the owner on 2026-11-17:
+
+- Every test placement runs the `-t N` leg.
+- One placement, `x86_64-linux-ldc2`, also runs `-t 1` and collects coverage;
+  the others build without `-cov`, so they compile and run faster.
+- `ci/placements.json` states both per placement, as `legs` and `coverage`. A
+  placement that names no legs runs the parallel one alone, and one that does
+  not ask for coverage collects none.
+
+**Trade-offs.** A defect that only the main thread's stack hides now shows on
+one placement, not on four. On the coverage placement the `-t N` leg's
+workers still write listings; starting workers on demand (test runner TRD14)
+keeps those few for a small package.
+
+**Revisit when** a defect is found that only a dropped `-t 1` leg would have
+caught, or coverage starts to gate.
+
 ## Questions
 
 Every question was resolved by the owner on 2026-11-06; each entry records the

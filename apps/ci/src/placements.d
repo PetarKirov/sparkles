@@ -43,6 +43,14 @@ struct Placement
     uint shards;
     uint timeoutMinutes;
     string[string] runners; /// Runner label per CI provider (`github`, `circleci`).
+    /// Which `--test` legs run (`ci` CIC11): `-t 1`, on each worker's main
+    /// thread, and `-t N`. Default: the parallel leg alone (OD22).
+    bool serialLeg;
+    /// ditto
+    bool parallelLeg = true;
+    /// Whether the placement builds with `-cov` and reports coverage: one
+    /// placement does (OD22).
+    bool coverage;
 }
 
 /// The placements file.
@@ -131,8 +139,31 @@ Expected!(Placements, string) parsePlacements(string json) @safe
         }
         if (parsed.find(name) !is null)
             return err!Placements("two placements are called " ~ name);
+        bool serialLeg, parallelLeg = true, coverage;
+        if ("legs" in entry)
+        {
+            if (entry["legs"].type != JSONType.array || (() @trusted => entry["legs"].array.length)() == 0)
+                return err!Placements(format("placement %s's legs must be a non-empty list", name));
+            parallelLeg = false;
+            foreach (leg; (() @trusted => entry["legs"].array)())
+            {
+                if (leg.type == JSONType.string && leg.str == "serial")
+                    serialLeg = true;
+                else if (leg.type == JSONType.string && leg.str == "parallel")
+                    parallelLeg = true;
+                else
+                    return err!Placements(format("placement %s has an unknown leg; legs are serial and parallel", name));
+            }
+        }
+        if ("coverage" in entry)
+        {
+            if (entry["coverage"].type != JSONType.true_ && entry["coverage"].type != JSONType.false_)
+                return err!Placements(format("placement %s's coverage must be true or false", name));
+            coverage = entry["coverage"].type == JSONType.true_;
+        }
         parsed.placements ~= Placement(name, entry["system"].str, entry["compiler"].str, mode,
-            cast(uint) entry["shards"].integer, cast(uint) entry["timeoutMinutes"].integer, runners);
+            cast(uint) entry["shards"].integer, cast(uint) entry["timeoutMinutes"].integer, runners,
+            serialLeg, parallelLeg, coverage);
     }
     if ("pinBuildBudgetMinutes" in root)
     {
@@ -170,6 +201,16 @@ unittest
         ~ one.replace(`"shards":2`, `"shards":17`) ~ `]}`).hasError);
     assert(parsePlacements(`{"schema":"sparkles.ci.placements","version":1,"placements":[`
         ~ one.replace(`"mode":"test"`, `"mode":"bench"`) ~ `]}`).hasError);
+
+    // Legs and coverage: the parallel leg alone and no coverage unless asked.
+    assert(!p.serialLeg && p.parallelLeg && !p.coverage);
+    const both = parsePlacements(`{"schema":"sparkles.ci.placements","version":1,"placements":[`
+        ~ one.replace(`"shards":2`, `"shards":2,"legs":["serial","parallel"],"coverage":true`) ~ `]}`);
+    assert(both.hasValue && both.value.placements[0].serialLeg && both.value.placements[0].coverage);
+    assert(parsePlacements(`{"schema":"sparkles.ci.placements","version":1,"placements":[`
+        ~ one.replace(`"shards":2`, `"shards":2,"legs":["fast"]`) ~ `]}`).hasError);
+    assert(parsePlacements(`{"schema":"sparkles.ci.placements","version":1,"placements":[`
+        ~ one.replace(`"shards":2`, `"shards":2,"legs":[]`) ~ `]}`).hasError);
 }
 
 /**

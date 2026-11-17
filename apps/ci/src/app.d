@@ -4138,6 +4138,23 @@ private int runDubTestsMode(bool failFast, bool coverage, in string[] requested,
         return 1;
     if (where.shard.length && !narrowToShard(repoRoot, requested, skipped, where, subPackages))
         return 1;
+    // A placement chooses its legs and whether it collects coverage (OD22).
+    bool serialLeg = true, parallelLeg = true;
+    if (where.placement.length && !sanitize)
+    {
+        auto loaded = loadPlacements(repoRoot);
+        const p = loaded.hasError ? null : loaded.value.find(where.placement);
+        if (p is null)
+        {
+            error(i"$(loaded.hasError ? loaded.error : "ci/placements.json has no placement " ~ where.placement)");
+            return 1;
+        }
+        serialLeg = p.serialLeg;
+        parallelLeg = p.parallelLeg;
+        if (coverage && !p.coverage)
+            info(i"$(where.placement) collects no coverage; testing without -cov");
+        coverage = coverage && p.coverage;
+    }
     info(i"$(subPackages.length) sub-package(s) to test");
     if (sanitize)
         info(i"sanitize: ASan; one -t $(parallelTestThreads(hwParallelism())) leg on 4 MiB workers");
@@ -4176,12 +4193,16 @@ private int runDubTestsMode(bool failFast, bool coverage, in string[] requested,
     // page. One leg also halves a job that rebuilds every package with ASan.
     // The plain legs leave the `@slow` tests to `--test-slow`, which CI runs
     // as jobs of their own; under ASan they still run, in the one leg.
-    const legs = sanitize
-        ? [TestLeg("sanitize -t " ~ parallelN.to!string, ["-t", parallelN.to!string], false)]
-        : [
-            TestLeg("-t 1", ["-t", "1", "--skip-slow"], true),
-            TestLeg("-t " ~ parallelN.to!string, ["-t", parallelN.to!string, "--skip-slow"], false),
-        ];
+    TestLeg[] legs;
+    if (sanitize)
+        legs = [TestLeg("sanitize -t " ~ parallelN.to!string, ["-t", parallelN.to!string], false)];
+    else
+    {
+        if (serialLeg)
+            legs ~= TestLeg("-t 1", ["-t", "1", "--skip-slow"], true);
+        if (parallelLeg)
+            legs ~= TestLeg("-t " ~ parallelN.to!string, ["-t", parallelN.to!string, "--skip-slow"], false);
+    }
     const extraEnv = sanitize ? sanitizeChildEnv() : (string[string]).init;
 
     // One task per package leg, in a run record (observability OD21): the

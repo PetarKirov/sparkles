@@ -40,6 +40,9 @@ let
     # committed copies only seed the first one.
     "docs/public/badges/merged-prs.json"
     "docs/public/badges/merged-green.json"
+    # Each placement reads name first, and its `legs` are a short array the
+    # two formatters disagree on (CIC14, OD22).
+    "ci/placements.json"
   ];
 
   filesToExcludeRegex =
