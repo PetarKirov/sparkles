@@ -273,6 +273,44 @@ struct CliParams
         ~ "sub-packages out, so a CI shard can take every package the others do not list."))
     string[] skipPackages;
 
+    @(Option(`perf-push`,
+        description: "Append this machine's run records to refs/perf/data, signed with --signing-key "
+        ~ "or git's user.signingkey (observability OBH6). A record of a dirty tree needs --allow-dirty."))
+    bool perfPush;
+
+    @(Option(`allow-dirty`, description: "With --perf-push: push records of a dirty tree too."))
+    bool allowDirty;
+
+    @(Option(`signing-key`,
+        description: "With --perf-push or --perf-append: the SSH key that signs the history's commit."))
+    string signingKey;
+
+    @(Option(`perf-import-github-run`,
+        description: "Build a run record from each test job's log of this GitHub Actions run, with gh, "
+        ~ "as origin `imported`, for --perf-push to publish: seeds the history (needs --repo)."))
+    string perfImportGithubRun;
+
+    @(Option(`perf-append`,
+        description: "Append the run records under --perf-records, the artifacts of run --perf-run-id "
+        ~ "attempt --perf-run-attempt, to refs/perf/data under --landed-commit (observability OBH4). "
+        ~ "The identity and --perf-run-date come from the provider's API, never from the records."))
+    bool perfAppend;
+
+    @(Option(`perf-records`, description: "With --perf-append: the directory the records were downloaded to."))
+    string perfRecords;
+
+    @(Option(`perf-run-id`, description: "With --perf-append: the run whose records these are."))
+    string perfRunId;
+
+    @(Option(`perf-run-attempt`, description: "With --perf-append: that run's attempt."))
+    string perfRunAttempt = "1";
+
+    @(Option(`perf-run-date`, description: "With --perf-append: the run's start date, YYYY-MM-DD, in UTC."))
+    string perfRunDate;
+
+    @(Option(`landed-commit`, description: "With --perf-append: the commit of main the records describe."))
+    string landedCommit;
+
     @(Option(`list-placements`,
         description: "Print ci/placements.json's shards as a CI provider's matrix, with the "
         ~ "refs/perf/data commit every shard reads (CIC14). With --github-output, also set it as "
@@ -646,6 +684,9 @@ enum ProgramMode
     checkPinCache,
     recordTask,
     listPlacements,
+    perfPush,
+    perfImport,
+    perfAppend,
     checkBlobPaths,
     gcReport,
     checkWasmModules,
@@ -809,6 +850,8 @@ int ciMain(string[] args)
         return runCheckOpaqueRecipes();
     if (mode == ProgramMode.checkCredits)
         return runCheckCredits();
+    if (mode == ProgramMode.perfPush || mode == ProgramMode.perfImport || mode == ProgramMode.perfAppend)
+        return runPerfPublish(mode, cli);
     if (mode == ProgramMode.listPlacements)
         return runListPlacements(cli.provider, cli.githubOutput, cli.historyRemote);
     if (mode == ProgramMode.recordTask)
@@ -1172,6 +1215,12 @@ private ProgramMode resolveProgramMode(in CliParams cli)
         return ProgramMode.checkOpaqueRecipes;
     if (cli.checkCredits)
         return ProgramMode.checkCredits;
+    if (cli.perfPush)
+        return ProgramMode.perfPush;
+    if (cli.perfImportGithubRun.length)
+        return ProgramMode.perfImport;
+    if (cli.perfAppend)
+        return ProgramMode.perfAppend;
     if (cli.listPlacements)
         return ProgramMode.listPlacements;
     if (cli.recordTask.length)
@@ -1220,6 +1269,9 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.checkPinCache:      return "--check-pin-cache";
         case ProgramMode.recordTask:         return "--record-task";
         case ProgramMode.listPlacements:     return "--list-placements";
+        case ProgramMode.perfPush:           return "--perf-push";
+        case ProgramMode.perfImport:         return "--perf-import-github-run";
+        case ProgramMode.perfAppend:         return "--perf-append";
         case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
         case ProgramMode.gcReport:           return "--gc-report";
         case ProgramMode.checkWasmModules:   return "--check-wasm-modules";
@@ -1815,6 +1867,9 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkPinCache:
             case ProgramMode.recordTask:
             case ProgramMode.listPlacements:
+            case ProgramMode.perfPush:
+            case ProgramMode.perfImport:
+            case ProgramMode.perfAppend:
             case ProgramMode.checkBlobPaths:
             case ProgramMode.checkWasmModules:
             case ProgramMode.stageDocsWasm:
@@ -7008,6 +7063,74 @@ private int runListPlacements(string provider, string githubOutput, string histo
     const matrix = placementMatrix(loaded.value, provider, tip);
     stdout.writeln(matrix);
     if (githubOutput.length)
-        append(githubOutput, "matrix=" ~ matrix ~ "\n");
+    {
+        // One matrix per mode as well: a job cannot filter a matrix it is given.
+        string lines = "matrix=" ~ matrix ~ "\n";
+        foreach (m; ["test", "sanitize", "extracted"])
+            lines ~= "matrix-" ~ m ~ "=" ~ placementMatrix(loaded.value, provider, tip, m) ~ "\n";
+        append(githubOutput, lines);
+    }
+    return 0;
+}
+
+/// `--perf-push`, `--perf-import-github-run` and `--perf-append`.
+private int runPerfPublish(ProgramMode mode, const ref CliParams cli)
+{
+    import std.path : buildPath;
+    import perf_history : canonicalRemote;
+    import perf_publish : appendRun, configuredSigningKey, importGithubRun, pushLocal, pushRemote;
+    import sparkles.base.expected : Expected, ok;
+
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+    {
+        error(i"Could not detect repository root");
+        return 1;
+    }
+    const signers = buildPath(repoRoot, "nix", "perf-data-signers");
+    Expected!(string, string) done = ok("");
+    final switch (mode)
+    {
+        case ProgramMode.perfImport:
+            if (cli.repo.length == 0)
+            {
+                error(i"--perf-import-github-run needs --repo OWNER/NAME");
+                return 2;
+            }
+            done = importGithubRun(cli.repo, cli.perfImportGithubRun);
+            break;
+        case ProgramMode.perfPush:
+            const key = cli.signingKey.length ? cli.signingKey : configuredSigningKey(repoRoot);
+            if (key.length == 0)
+            {
+                error(i"--perf-push needs --signing-key or git's user.signingkey");
+                return 2;
+            }
+            done = pushLocal(cli.allowDirty, key, cli.historyRemote.length ? cli.historyRemote : pushRemote,
+                signers);
+            break;
+        case ProgramMode.perfAppend:
+            if (cli.perfRecords.length == 0 || cli.perfRunId.length == 0 || cli.perfRunDate.length != 10
+                || cli.landedCommit.length < 12 || cli.signingKey.length == 0)
+            {
+                error(i"--perf-append needs --perf-records, --perf-run-id, --perf-run-date YYYY-MM-DD, --landed-commit and --signing-key");
+                return 2;
+            }
+            done = appendRun(cli.perfRecords, cli.perfRunId, cli.perfRunAttempt, cli.perfRunDate, cli.landedCommit,
+                cli.signingKey, cli.historyRemote.length ? cli.historyRemote : canonicalRemote, signers);
+            break;
+        // Every other mode is dispatched elsewhere.
+        static foreach (m; __traits(allMembers, ProgramMode))
+            static if (m != "perfImport" && m != "perfPush" && m != "perfAppend")
+                case __traits(getMember, ProgramMode, m):
+                    assert(0);
+    }
+    if (done.hasError)
+    {
+        error(i"$(done.error)");
+        return 1;
+    }
+    foreach (line; done.value.lineSplitter)
+        info(i"$(line)");
     return 0;
 }
