@@ -28,6 +28,11 @@ static immutable string[] toolchainInputs = [
     "nix/packages/**",
 ];
 
+/// The root package's default directories: resolution probes them for the
+/// root recipe, so a plan depends on their absence (BGP1). Patterns, since
+/// a probe is no file read.
+static immutable string[] rootDefaults = ["source", "source/**", "src", "src/**", "views", "views/**"];
+
 /// The files besides the recipes that planning reads: the dependency locks
 /// the registry and dub's selections come from.
 static immutable string[] lockfiles = ["dub.selections.json", "nix/dub-lock.json", "nix/ci-dub-lock.json"];
@@ -52,7 +57,7 @@ FocusOptions repositoryFocus(BuildPlatform platform, RegistrySources registry,
     string[string] environment = null) @safe pure nothrow
 {
     FocusOptions options;
-    options.workspace = WorkspaceInputs(read: lockfiles.dup, patterns: toolchainInputs.dup,
+    options.workspace = WorkspaceInputs(read: lockfiles.dup, patterns: (toolchainInputs ~ rootDefaults).dup,
         moduleRoots: moduleRoots.dup);
     options.plannerPackage = plannerPackage;
     options.plannerLibraries = plannerLibraries;
@@ -114,6 +119,8 @@ unittest
         "apps/ci/src/app.d", "apps/ci/src/ci_main.d", "apps/ci/dub.sdl",
         // A top-level directory a module could be found in.
         "sparkles/base/buffer.d", "std/stdio.d",
+        // The root package's default directories, which resolution probes.
+        "source", "src/app.d", "views",
     ])
         assert(inputs.inWorkspace(path), path);
 
