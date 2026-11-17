@@ -64,7 +64,7 @@ module plan_graph;
 
 import std.algorithm : canFind, endsWith, filter, map, sort, startsWith;
 import std.array : array, join, replace, split;
-import std.conv : text, to;
+import std.conv : octal, text, to;
 import std.file : dirEntries, readText, SpanMode;
 import std.path : absolutePath, buildNormalizedPath, buildPath, dirName;
 import std.process : environment;
@@ -1224,9 +1224,17 @@ int runPackage(string root, string only, string into, string cache)
     mkdirRecurse(into);
     // Generators and tests run with the environment they are given here,
     // declared whole (BGX1): the driver's own.
+    // Oracle 11 step 1 (BGX1): a `dub` first on their `PATH` that records
+    // each call and fails, so a test that runs dub is seen.
+    import std.file : exists, readText, setAttributes, write;
+
+    const trap = buildPath(into, "dub-trap");
+    mkdirRecurse(trap);
+    write(buildPath(trap, "dub"), "#!/bin/sh\necho \"$@\" >> '" ~ buildPath(trap, "calls") ~ "'\nexit 1\n");
+    setAttributes(buildPath(trap, "dub"), octal!755);
     EnvEntry[] declared;
     foreach (name, value; environment.toAA)
-        declared ~= EnvEntry(name, value);
+        declared ~= EnvEntry(name, name == "PATH" ? trap ~ ":" ~ value : value);
     declared.sort!((a, b) => a.name < b.name);
     const layout = RunLayout(root, into, cache);
     auto nodes = executionNodes(p.graph, layout, declared);
@@ -1238,5 +1246,11 @@ int runPackage(string root, string only, string into, string cache)
     writeln(p.graph.actions.length, " actions; exit ", r.exitCode);
     if (cache.length)
         writeln("store ", cache, ": ", stats.summary);
+    if (exists(buildPath(trap, "calls")))
+    {
+        stderr.writeln("plan-graph: BGX1: a test ran dub: ", readText(buildPath(trap, "calls")));
+        return 1;
+    }
+    writeln("BGX1: no test ran dub");
     return r.exitCode;
 }
