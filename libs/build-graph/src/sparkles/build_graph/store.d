@@ -508,6 +508,18 @@ struct Store(D)
                 st.ctimeNs, "\nrecorded ", recordedNs, "\ndigest ", hexOf(digest), "\n"));
     }
 
+    /// The digest record an evicted `resultKey` left (BGS5), or null.
+    ResultRecord* record(string resultKey)
+    {
+        string source;
+        if (!readAll(v, "records/" ~ resultKey, source))
+            return null;
+        auto r = new ResultRecord;
+        if (!parseRecord(source, *r) || r.resultKey != resultKey)
+            return null;
+        return r;
+    }
+
     /// Whether `resultKey`'s result is published.
     bool published(string resultKey)
     {

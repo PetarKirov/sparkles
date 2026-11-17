@@ -296,6 +296,13 @@ import sparkles.build_graph.store : Manifest, ManifestEntry, OutputRecord, Resul
     cacheDirTag, declaredKeyOf, formatVersion, hexOf, layoutVersion, parseHex, readAll, readBytes, resultKey,
     statPath, resolvedPath;
 
+// A producer a digest record served, and what its publication needs (BGS5).
+private struct Recorded
+{
+    string declared;
+    string preimage;
+}
+
 /// What a run did with each kind of action: reused it from the store, or
 /// executed it.
 struct RunStats
@@ -489,6 +496,8 @@ struct ActionDriver
     private const(Action)*[string] planned;
     private string[string] outputsDigestOf; // by task id: what a consumer's key holds (BGK1)
     private ubyte[32][string] digests;      // file digests read this run, by manifest path
+    private Recorded[string] recorded;      // producers only a digest record served (BGS5)
+    private ProcessAction[string] concreteProcess; // each process action as it runs
     private bool clocked;      // whether the store's probe read its file system's clock (BGK5)
     private long clockNs;
     private ulong clockDevice;
@@ -516,6 +525,10 @@ struct ActionDriver
         if (g !is null)
             foreach (ref a; g.actions)
                 planned[a.id.text] = &a;
+        foreach (ref n; nodes)
+            n.action.match!(
+                (ref const ProcessAction p) { concreteProcess[n.id.text] = ProcessAction(p.argv.dup, p.envDelta.dup, p.cwd); },
+                (ref const _) {});
         if (layout.cache.length && layout.runDirectory.startsWith(layout.cache ~ "/"))
         {
             // A run reads its producers' outputs through the links into the
@@ -612,11 +625,29 @@ struct ActionDriver
                     stats.count(kind, true);
                     return TaskOutcome(Succeeded());
                 }
+            // BGS5: a result only its digest record holds serves its
+            // consumers' keys; its bytes are made when one that misses needs
+            // them.
+            if (auto r = recordedResult(**a, declared))
+            {
+                recorded[id.text] = Recorded(declared, preimage);
+                outputsDigestOf[id.text] = r.outputsDigest;
+                stats.count(kind, true);
+                stats.miss("record-served");
+                ctx.output(OutputStream.stderr, "served from its digest record (BGS5)");
+                return TaskOutcome(Succeeded());
+            }
             // BGS8: every miss is classified and explained.
             const miss = explainMiss(**a, declared, preimage);
             stats.miss(miss[0]);
             ctx.output(OutputStream.stderr, "miss (" ~ miss[0] ~ "): " ~ miss[1]);
         }
+        if (stored && a !is null)
+            if (const why = materializeInputs(**a, (string m) => ctx.output(OutputStream.stderr, m)))
+            {
+                ctx.output(OutputStream.stderr, why);
+                return TaskOutcome(Failed(FailureReason.contract));
+            }
         if (!makeDirectories(id))
             return TaskOutcome(Failed(FailureReason.contract));
         auto outcome = process.run(ctx);
@@ -654,23 +685,35 @@ struct ActionDriver
         }
         if (!declared.length)
             return outcome;
+        if (!publishRun(id, **a, declared, preimage, record, (string m) => ctx.output(OutputStream.stderr, m)))
+            return TaskOutcome(Failed(FailureReason.contract));
+        return outcome;
+    }
+
+    /*
+    Publishes the outputs `id` just made under its declared key, a compile's
+    through its manifest. False only when BGK8 fails the compile.
+    */
+    private bool publishRun(TaskId id, ref const Action a, string declared, string preimage,
+        ref ResultRecord record, scope void delegate(string) note)
+    {
         Manifest manifest;
-        const hasManifest = withManifest(**a);
-        if ((*a).kind == ActionKind.compile && !hasManifest)
-            ctx.output(OutputStream.stderr, "conservatively keyed: no dependency output (BGK6)");
+        const hasManifest = withManifest(a);
+        if (a.kind == ActionKind.compile && !hasManifest)
+            note("conservatively keyed: no dependency output (BGK6)");
         if (hasManifest)
         {
             string why;
             if (!readManifest(id, manifest, why))
             {
-                ctx.output(OutputStream.stderr, "not published: " ~ why);
-                return outcome;
+                note("not published: " ~ why);
+                return true;
             }
             // BGK8: a read outside the declared roots fails the compile.
-            if (const outside = outsideRoots(**a, manifest))
+            if (const outside = outsideRoots(a, manifest))
             {
-                ctx.output(OutputStream.stderr, "read outside its declared roots: " ~ outside);
-                return TaskOutcome(Failed(FailureReason.contract));
+                note("read outside its declared roots: " ~ outside);
+                return false;
             }
             record.resultKey = resultKey(declared, manifest);
         }
@@ -679,10 +722,10 @@ struct ActionDriver
         const name = layout.outOf(id);
         auto parent = run_.walk(relativeToRun(parentOf(name)));
         if (parent.hasError)
-            return outcome;
+            return true;
         const published = store.publish(parent.value, baseNameOf(name), record, linkTo(name));
         if (store.note.length)
-            ctx.output(OutputStream.stderr, store.note);
+            note(store.note);
         if (published !is null)
         {
             store.recordPreimage(id.text, preimage);
@@ -690,7 +733,104 @@ struct ActionDriver
                 store.useManifest(declared, manifest);
             outputsDigestOf[id.text] = published.outputsDigest;
         }
-        return outcome;
+        return true;
+    }
+
+    // The digest record `a`'s declared key leads to, for a process action
+    // whose result was evicted (BGS5).
+    private const(ResultRecord)* recordedResult(ref const Action a, string declared)
+    {
+        const isProcess = a.action.match!((ref const ProcessAction _) => true, (ref const _) => false);
+        if (!isProcess)
+            return null;
+        if (!withManifest(a))
+            return store.record(declared);
+        foreach (ref m; store.manifests(declared))
+            if (holds(m))
+                if (auto r = store.record(resultKey(declared, m)))
+                    return r;
+        return null;
+    }
+
+    /*
+    BGS5: makes the outputs of each producer `a` consumes that only a digest
+    record served, before `a` runs: each runs now, from its concrete command,
+    after its own such producers, and is published. A producer whose outputs
+    differ from its record is reported nondeterministic. Returns why one
+    could not be made, or null.
+    */
+    private string materializeInputs(ref const Action a, scope void delegate(string) note)
+    {
+        import std.process : Config, execute;
+
+        foreach (producer; producersOf(a))
+        {
+            auto r = producer in recorded;
+            if (r is null)
+                continue;
+            const rec = *r;
+            recorded.remove(producer);
+            auto pa = producer in planned;
+            auto concrete = producer in concreteProcess;
+            if (pa is null || concrete is null)
+                return "cannot make " ~ producer ~ ": it is not planned";
+            if (const why = materializeInputs(**pa, note))
+                return why;
+            const id = (**pa).id;
+            if (!makeDirectories(id))
+                return "cannot make " ~ producer ~ "'s directories";
+            string[string] env;
+            foreach (e; concrete.envDelta)
+                env[e.name] = e.value;
+            const ran = (() @trusted => execute(concrete.argv, env, Config.newEnv, size_t.max,
+                concrete.cwd))();
+            cast(void) run_.writeFileAtomic(relativeToRun(layout.outOf(id)) ~ "/output.log", ran.output);
+            if (ran.status != 0)
+                return "cannot make " ~ producer ~ ": it exited " ~ text(ran.status);
+            stats.count(text((**pa).kind), false);
+            ResultRecord record;
+            record.task = producer;
+            record.toolchain = layout.toolchain;
+            record.declaredKey = rec.declared;
+            record.outputs = outputsOf(id);
+            const digest = record.outputsDigest;
+            if (digest != outputsDigestOf.get(producer, digest))
+                note("nondeterministic: " ~ producer ~ " differs from its digest record (BGS5)");
+            outputsDigestOf[producer] = digest;
+            if (!publishRun(id, **pa, rec.declared, rec.preimage, record, note))
+                return producer ~ " read outside its declared roots";
+        }
+        return null;
+    }
+
+    // The task ids `a`'s arguments name as `$IN(<id>)`.
+    private static string[] producersOf(ref const Action a) @safe
+    {
+        string[] ids;
+        void scan(string arg)
+        {
+            size_t i;
+            while (i < arg.length)
+            {
+                if (arg[i .. $].startsWith("$IN("))
+                {
+                    size_t close = i + 4;
+                    while (close < arg.length && arg[close] != ')')
+                        ++close;
+                    const id = arg[i + 4 .. close];
+                    if (!ids.canFind(id))
+                        ids ~= id;
+                    i = close + 1;
+                }
+                else
+                    ++i;
+            }
+        }
+        a.action.match!(
+            (ref const ProcessAction p) { foreach (x; p.argv) scan(x); foreach (e; p.envDelta) scan(e.value); },
+            (ref const InProcessAction i) { foreach (x; i.arguments) scan(x); },
+            (ref const _) {});
+        return ids;
     }
 
     // Whether `a`'s result may be reused: a test's never is (BGX2, E3).
