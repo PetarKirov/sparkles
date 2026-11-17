@@ -75,7 +75,7 @@ FocusOptions repositoryFocus(BuildPlatform platform, RegistrySources registry,
 unittest
 {
     import std.conv : text;
-    import std.path : buildNormalizedPath, buildPath;
+    import std.path : absolutePath, buildNormalizedPath, buildPath;
     import std.process : environment;
 
     import sparkles.build_primitives.resolve.tree : systemTree;
@@ -89,8 +89,9 @@ unittest
     if (sources is null)
         skipTest("SPARKLES_DUB_SOURCES is not set");
 
-    // This file is apps/ci/src/repository_inputs.d.
-    const root = buildNormalizedPath(__FILE_FULL_PATH__, "../../../..");
+    // This file is apps/ci/src/repository_inputs.d. The build graph maps the
+    // root to `.` in `__FILE_FULL_PATH__` (BGA5) and runs a test there (BGX1).
+    const root = buildNormalizedPath(__FILE_FULL_PATH__.absolutePath, "../../../..");
     const host = ["linux", "posix"];
     auto driver = systemTree();
     const locked = readDubLocks([root.buildPath("nix", "dub-lock.json"), root.buildPath("nix", "ci-dub-lock.json")],
