@@ -1,12 +1,10 @@
 name "dub-manifest-nix-wasm"
-description "PROTOTYPE (#452): parseDubManifest as a Nix builtins.wasm module"
+description "The dub recipe schema for Nix's builtins.wasm, and its native oracle"
 authors "Petar Kirov"
 copyright "Copyright © 2026, Petar Kirov"
 license "BSL-1.0"
 
 targetPath "build"
-targetType "executable"
-targetName "spk-dub-manifest"
 
 dependency "sparkles:dub-manifest" path="../../.."
 dependency "sparkles:wired" path="../../.."
@@ -15,9 +13,31 @@ importPaths "src"
 sourcePaths "src"
 
 dflags "-preview=in" "-preview=dip1000"
-// The `env` host functions are imports the Nix evaluator provides.
-lflags "--allow-undefined" platform="wasi"
 
+// The module: `dub build :dub-manifest-nix-wasm --arch=wasm32-unknown-wasip1
+// -c wasm -b wasm-lto`, a WASI command module (docs/specs/wired/wasm WW3).
+// The `env` host functions are imports the Nix evaluator provides.
+configuration "wasm" {
+    targetType "executable"
+    targetName "spk-dub-manifest"
+    lflags "--allow-undefined" platform="wasi"
+}
+
+// The same answers natively, as JSON, for the Nix check (WW10).
+configuration "oracle" {
+    targetType "executable"
+    targetName "spk-dub-manifest-oracle"
+}
+
+configuration "unittest" {
+    dependency "sparkles:test-runner" path="../../.."
+    excludedSourceFiles "src/app.d"
+
+    dflags "-checkaction=context" "-allinst"
+}
+
+// The shipped module (TCM8's pattern): link-time optimization across the
+// program, druntime and Phobos, then `wasm-opt -Oz` in the Nix build.
 buildType "wasm-lto" {
     buildOptions "optimize" "inline"
     dflags "-flto=full" "-defaultlib=phobos2-ldc-lto,druntime-ldc-lto" platform="wasi"

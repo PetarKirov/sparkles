@@ -144,5 +144,52 @@
               --wasi-shim ${browserWasiShim} \
               | tee "$out"
           '';
+
+      # The dub recipe schema for Nix's `builtins.wasm` (docs/specs/wired/wasm,
+      # WW3): a WASI command module, not a reactor.
+      packages.dub-manifest-nix-wasm = buildWasmModule {
+        pname = "dub-manifest-nix-wasm";
+        appDir = "libs/dub-manifest/nix-wasm";
+        targetName = "spk-dub-manifest";
+        description = "The dub recipe schema as a Nix builtins.wasm module";
+      };
+
+      # The same answers computed natively, for the agreement check (WW10).
+      packages.dub-manifest-nix-oracle = config.legacyPackages.buildSparklesApp {
+        pname = "dub-manifest-nix-oracle";
+        version = "0.1.0";
+        appDir = "libs/dub-manifest/nix-wasm";
+        dubBuildFlags = [ "--config=oracle" ];
+        installPhase = ''
+          runHook preInstall
+          install -Dm755 build/spk-dub-manifest-oracle $out/bin/spk-dub-manifest-oracle
+          runHook postInstall
+        '';
+        meta = {
+          description = "The dub recipe module's answers, computed natively";
+          mainProgram = "spk-dub-manifest-oracle";
+          platforms = lib.platforms.linux ++ lib.platforms.darwin;
+        };
+      };
+
+      # The oracle's answers for every tracked `dub.sdl` and `dub.json` and for
+      # the failure fixtures. The agreement check, run by an evaluator with
+      # `builtins.wasm`, compares the module's answers with these.
+      packages.dub-manifest-nix-answers =
+        let
+          root = ../..;
+          recipes = lib.fileset.toSource {
+            inherit root;
+            fileset = lib.fileset.fileFilter (f: f.name == "dub.sdl" || f.name == "dub.json") root;
+          };
+          oracle = lib.getExe config.packages.dub-manifest-nix-oracle;
+        in
+        pkgs.runCommand "dub-manifest-nix-answers" { } ''
+          mkdir $out
+          cd ${recipes}
+          find . -name dub.sdl -o -name dub.json | sed 's|^\./||' | LC_ALL=C sort > $out/recipes.txt
+          ${oracle} . $(cat $out/recipes.txt) > $out/recipes.json
+          ${oracle} --fixtures ${../../libs/dub-manifest/nix-wasm/fixtures.json} > $out/fixtures.json
+        '';
     };
 }
