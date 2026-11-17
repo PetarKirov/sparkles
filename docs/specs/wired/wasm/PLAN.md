@@ -115,6 +115,11 @@ TCM9 corpus extended.
 
 ## W7 — npm package
 
-Obligations: WW12; WW13, WW14, D6. Planned when W4 has landed; each first
-refines its section of the specification, then follows the module
-contract's gates (TCM8 size record, TCM9 agreement).
+Done: `libs/wired/wired-wasm/npm` (`@sparkles-pkgs/wired`: an ES module with
+TypeScript declarations over the site's module, D6), the flake package
+npm-wired and its node tests, and the release workflow's publishing job
+through trusted publishing. Before the first release: create the package on
+npmjs.com and configure `release.yml` as its trusted publisher, which only
+the owner can do.
+
+Obligations: WW13, WW14, D6.

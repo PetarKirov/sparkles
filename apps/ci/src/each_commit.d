@@ -30,7 +30,7 @@ configuration `dub test` never compiles, which is exactly where a commit that
 passes its tests can still fail to build.
 +/
 immutable string[] defaultEachCommitPackages = ["hue", "ui-gallery", "diagram",
-    "text-wasm", "table-wasm", "dub-manifest-nix-wasm"];
+    "text-wasm", "table-wasm", "wired-wasm", "dub-manifest-nix-wasm"];
 
 /++
 The packages whose default configuration is a WebAssembly module
@@ -38,7 +38,7 @@ The packages whose default configuration is a WebAssembly module
 built for `wasm32-unknown-wasip1` by an
 LDC that has the WASI runtime, which `$SPARKLES_WASI_LDC` names.
 +/
-immutable string[] wasiPackages = ["text-wasm", "table-wasm", "dub-manifest-nix-wasm"];
+immutable string[] wasiPackages = ["text-wasm", "table-wasm", "wired-wasm", "dub-manifest-nix-wasm"];
 
 /// The variable naming the WASI-enabled `ldc2` (the `ci` package sets it).
 enum wasiCompilerVariable = "SPARKLES_WASI_LDC";
@@ -137,7 +137,8 @@ string[] selectPackages(in string[] requested, in string[] subPackagePaths,
 unittest
 {
     const paths = ["apps/hue", "apps/ui-gallery", "libs/ui", "apps/diagram",
-        "libs/base/text-wasm", "libs/core-cli/table-wasm", "libs/dub-manifest/dub-manifest-nix-wasm"];
+        "libs/base/text-wasm", "libs/core-cli/table-wasm", "libs/wired/wired-wasm",
+        "libs/dub-manifest/dub-manifest-nix-wasm"];
     string[] unknown;
     const chosen = selectPackages(["ui", "hue", "hue", "gallery"], paths, unknown);
     assert(chosen == ["libs/ui", "apps/hue"], "in request order, once each");

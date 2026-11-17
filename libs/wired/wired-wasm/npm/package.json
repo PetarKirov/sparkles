@@ -1,0 +1,30 @@
+{
+  "name": "@sparkles-pkgs/wired",
+  "version": "0.0.0-dev",
+  "description": "JSON, SDL and dub recipes, parsed, written and decoded by sparkles:wired compiled to WebAssembly",
+  "license": "BSL-1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PetarKirov/sparkles.git",
+    "directory": "libs/wired/wired-wasm/npm"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./spk-wired.wasm": "./spk-wired.wasm"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "spk-wired.wasm"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@bjorn3/browser_wasi_shim": "0.4.2"
+  }
+}
