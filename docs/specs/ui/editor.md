@@ -619,6 +619,18 @@ repetitions whose bounds multiply past 100 000 copies. `std.regex`'s
 multi-line `^` tests the character at a position instead of the one before
 it, so the engine spells `^` as look-behind.
 
+**EDS7: The find bar.** A find bar **must** hold its query and replacement
+as single-line editors (EDT8), the three EDS1 switches, and the matches of
+the document it last searched. Matches **must** be recomputed only when
+the text, the document, the query or a switch has changed, within a
+budget (EDS5), and a truncated result **must** say so. Its summary
+**must** read `n of total` when the selection is a match, the count
+otherwise, `No results` when there are none, and the pattern's error in
+place of a count (EDS2). Every opening **must** change its epoch, so an
+answer meant for an earlier bar (a clipboard read) can be refused. Its
+view **must** take every control's hit identity from the caller and show
+each switch's state, the focused field carrying the caret.
+
 ## 10. Decisions {#decisions}
 
 **ED-D1: Two definitions of a word.** Readline kills with `Ctrl-W` back to
@@ -714,6 +726,7 @@ reach abandoned branches.
 | EDS4                   | replacement is one revision                            | full    | `replaceAll`, `replaceCurrent`, `ReplaceResult`; tests `editor.search.replaceAllIsOneUndo`, `editor.search.replaceWithGroups`, `editor.search.replaceCurrent`, `editor.search.protectedSpansSkipped`                                                                                                                                                                                                                                             |
 | EDS5                   | work is bounded                                        | full    | `SearchBudget`, `SearchResult.resumeAt`; test `editor.search.budgetResume`                                                                                                                                                                                                                                                                                                                                                                       |
 | EDS6                   | patterns cannot run away                               | full    | `maxPatternLength`, `maxRepetitionWork`; tests `editor.search.pathologicalRegex`, `editor.search.lineStartAnchor`                                                                                                                                                                                                                                                                                                                                |
+| EDS7                   | the find bar                                           | full    | `FindBar`, `FindOption`, `FindBar.refresh`, `FindBar.summary`, `viewFindBar`, `FindBarHits`; tests `editor.search.findBar.refresh`, `ui.findBar.view`; the editor app's bar (`editor.app.findAndReplace`)                                                                                                                                                                                                                                        |
 
 ### Oracles
 
@@ -744,7 +757,7 @@ pattern of `libs/diff/src/sparkles/diff/myers.d`.
 | E2        | Composition, the SDL3 IME, the wsi conversion, input-method placement                                                      | partial   | EDI3, EDI6, EDI7, EDI8, `INP24`, composition in EDR1                                                                                                 |
 | E3        | Write-wave consumers                                                                                                       | delivered | EDU1–EDU3, EDR3                                                                                                                                      |
 | E4        | Android soft keyboard                                                                                                      | delivered | EDI9                                                                                                                                                 |
-| E5        | Search and replace                                                                                                         | delivered | EDS1–EDS6                                                                                                                                            |
+| E5        | Search and replace                                                                                                         | delivered | EDS1–EDS7                                                                                                                                            |
 
 E0 to E2 are delivered as one stack of pull requests after this
 specification is accepted. Live composition on native wsi windows arrives

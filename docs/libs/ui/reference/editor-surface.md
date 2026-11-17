@@ -1,9 +1,9 @@
 # Editor surface components
 
 The pieces an editing surface builds around an `EditorField`: hits and
-drag selection over the rows it painted. Each takes the field or the
-state it acts on and the hit identities its caller assigns; none owns
-commands or a theme.
+drag selection over the rows it painted, and the find bar. Each takes the
+field or the state it acts on and the hit identities its caller assigns;
+none owns commands or a theme.
 
 ## Painted rows and pointer hits
 
@@ -29,7 +29,29 @@ field.context.options.wrapCells)` and, for each `VisualRow` it draws as a
 calls `painted.add(node, line, row)`. The editor app's document view and
 the tests `editor.view.paintedRows.caretAtPoint`,
 `editor.view.paintedRows.bidi`, `editor.view.dragSelection` and
-`editor.view.paintedRows.caretCell` do exactly this. The host keeps `painted` with the frames it lays out. On a press it checks
+`editor.view.paintedRows.caretCell` do exactly this. The host keeps
+`painted` with the frames it lays out. On a press it checks
 `answersFor`, then asks `caretAtPoint(…, exact: true)` and calls
 `drag.press` and `drag.moveTo`; on a drag, `caretAtPoint(…, exact: false)`
 and `drag.moveTo`; on release, `drag.release`.
+
+## The find bar
+
+The state is `sparkles.ui.editor.search.FindBar` (ui spec `EDS7`); the
+view is `sparkles.ui.components.find_bar`.
+
+| Symbol                                                    | Meaning                                                                                                 |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `FindOption`                                              | The switches: `regex`, `caseSensitive`, `wholeWord`                                                     |
+| `FindBar.show(replace, seed, target)`                     | Open the bar (with the replacement field when `replace`), seeding the query; changes `epoch`            |
+| `FindBar.close()`, `toggle(option)`, `focused()`          | Hide it keeping its fields; flip a switch; the field holding the keyboard                               |
+| `FindBar.refresh(text, document, budget)`                 | Recompute `result` and `pattern` when the text, document, query or a switch changed                     |
+| `FindBar.summary(start, end)`, `ordinalAt(position)`      | `2 of 5`, `5 matches`, `No results` or the pattern's error; the 1-based match at or after a position    |
+| `FindBarHits`                                             | The hit identity of each control: previous, next, close, replace one, replace all, the switches, fields |
+| `viewFindBar(b, bar, selectionStart, selectionEnd, opts)` | The bar as one column node: the query row and, when replacing, the replacement row                      |
+| `findBarRows(bar)`                                        | The rows the view takes: one, two when replacing                                                        |
+
+The host routes keys to `bar.focused` while the bar is open, refreshes it
+before each frame and maps the hits it assigned to its own commands, which
+call `selectNextMatch`, `replaceCurrent`, `replaceAll` or
+`selectAllMatches` with `bar.pattern`.

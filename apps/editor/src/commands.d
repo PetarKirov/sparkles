@@ -5,6 +5,8 @@ import sparkles.input.events : chord, Key, KeyEvent, unparseChordPath;
 import sparkles.ui.command_bindings : effectiveCommandShortcut;
 import sparkles.ui.command_palette : PaletteCommand, PaletteEntry;
 import sparkles.ui.editor.keys : EditorAction, EditorTarget, editorBindings;
+/// The find bar's switches, as `findOption` arguments.
+public import sparkles.ui.editor.search : FindOption;
 import sparkles.ui.keymap : Binding, bind, terminalScope;
 import examples : Example;
 import settings : IndentChoice, label, PresentationToggle;
@@ -16,8 +18,6 @@ enum Command : ubyte { none, palette, guide, newTab, nextTab, previousTab, inspe
     find, replace, findNext, findPrevious, closeFind, findOption, findFocus, replaceOne, replaceAll, selectMatches,
     settings, fonts, allFonts, selectFont }
 enum Scope : ubyte { @terminalScope modalModifiers, application, document, dialog, closing, recovery, find }
-/// The find bar's switches, as `findOption` arguments.
-enum FindOption : ubyte { regex, caseSensitive, wholeWord }
 alias CommandId = PaletteCommand!Command;
 alias CommandBinding = Binding!(Command, Scope);
 

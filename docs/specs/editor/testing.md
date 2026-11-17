@@ -1084,7 +1084,8 @@ only when the text, query or a switch changes, within the default search
 budget, and reports a truncated result as `10000+`. A clipboard reply
 reaches a bar field only while that bar (its epoch) and field are current.
 
-`editor.findBar.refresh` covers the cached result and its summary.
+`editor.search.findBar.refresh` covers the cached result and its summary, and
+`ui.findBar.view` the drawn controls and their hit identities (ui `EDS7`).
 `editor.app.findAndReplace` types a query into the bar, checks both matches
 are painted, steps with Enter, switches to the replacement with Tab,
 replaces all, undoes once to restore both, checks an invalid regular

@@ -14,7 +14,8 @@ import sparkles.ui.components.editor : DragSelection, drawIndentGuides, editorLi
 import sparkles.ui.components.gutter : blankCell, GutterCell, GutterChannel, lineNumberCell, lineNumberWidth, withGutterCells;
 import sparkles.ui.editor.presentation : bracketMarks, CaretPosition, matchMarks, trailingWhitespaceMarks;
 import std.array : Appender, appender;
-import find_bar : FindBar;
+import sparkles.ui.components.find_bar : FindBarHits, FindBarViewOptions, findBarRows, viewFindBar;
+import sparkles.ui.editor.search : FindBar;
 import document_font : DocumentFontService;
 import sparkles.ui_app.specimen_font : SpecimenFontRequest;
 import sparkles.ui.components.settings_pane : SettingsGeometry, settingsGeometryFor, SettingsPane;
@@ -1069,43 +1070,17 @@ struct EditorApp
     /**
     The find bar (`EAP5`, `EAP7`): the query with its switches, its match
     summary and Previous/Next/Close, and, when replacing, the replacement
-    with Replace and All. The focused field shows the host's cursor.
+    with Replace and All (`viewFindBar`). Each control's hit is a command,
+    `findHitBase + Command`; the focused field shows the host's cursor.
     */
     private uint findBar(ref Builder b) @safe
     {
-        uint control(string label, Command command, bool on = false)
-            => b.add(Widget(kind: WidgetKind.text, text: label, hitId: findHitBase + command,
-                slot: on ? Slot.selection : Slot.docs, paintBackground: on, padding: Insets(0, 1, 0, 1)));
-        uint option(string label, FindOption which, bool on)
-            => b.add(Widget(kind: WidgetKind.text, text: label, hitId: findOptionHitBase + which,
-                slot: on ? Slot.selection : Slot.muted, paintBackground: on, padding: Insets(0, 1, 0, 1)));
-        uint field(ref EditorField input, bool focused, string placeholder)
-        {
-            const node = editorView(b, input.state, EditorViewOptions(visibleLines: 1, placeholder: placeholder,
-                caretVisible: focused, hostCursor: true));
-            b.nodes[node].width = SizeSpec.grow();
-            b.nodes[node].slot = Slot.surfaceSunken;
-            b.nodes[node].paintBackground = true;
-            b.nodes[node].hitId = findFieldHit + (&input is &finder.replacement);
-            return node;
-        }
         const primary = document.field.state.selection.primary;
-        const summary = finder.summary(primary.start, primary.end);
-        uint[] query = [b.add(Widget(kind: WidgetKind.text, text: "Find", slot: Slot.muted)),
-            field(finder.query, !finder.onReplacement, "Search…"),
-            option(".*", FindOption.regex, finder.options.regex),
-            option("Aa", FindOption.caseSensitive, finder.options.caseSensitive),
-            option("W", FindOption.wholeWord, finder.options.wholeWord),
-            b.add(Widget(kind: WidgetKind.text, text: summary,
-                slot: finder.pattern.error.length ? Slot.error : Slot.muted)),
-            control("↑", Command.findPrevious), control("↓", Command.findNext), control("×", Command.closeFind)];
-        uint[] rows = [b.add(Widget(kind: WidgetKind.row, children: query, gap: 1, height: SizeSpec.fixed(1)))];
-        if (finder.replacing)
-            rows ~= b.add(Widget(kind: WidgetKind.row, gap: 1, height: SizeSpec.fixed(1), children: [
-                b.add(Widget(kind: WidgetKind.text, text: "Into", slot: Slot.muted)),
-                field(finder.replacement, finder.onReplacement, "Replacement…"),
-                control("Replace", Command.replaceOne), control("All", Command.replaceAll)]));
-        return b.add(Widget(kind: WidgetKind.column, children: rows, width: SizeSpec.grow()));
+        const hits = FindBarHits(previous: findHitBase + Command.findPrevious, next: findHitBase + Command.findNext,
+            close: findHitBase + Command.closeFind, replaceOne: findHitBase + Command.replaceOne,
+            replaceAll: findHitBase + Command.replaceAll, optionBase: findOptionHitBase,
+            queryField: findFieldHit, replacementField: findFieldHit + 1);
+        return viewFindBar(b, finder, primary.start, primary.end, FindBarViewOptions(hits: hits));
     }
 
     /// The tree nodes of the document rows last painted, top to bottom.
@@ -2283,7 +2258,7 @@ struct EditorApp
             {
                 finder.refresh(document.field.state.text, document.id);
                 children ~= findBar(b);
-                findRows = finder.replacing ? 2 : 1;
+                findRows = findBarRows(finder);
             }
             const reserved = headerRows + tabRows + 3 + extraRows + paletteHeight + findRows;
             const visible = host.size.height > reserved ? cast(size_t) host.size.height - reserved : 1;
