@@ -269,7 +269,7 @@ struct Store(D)
         auto v = dir.walkAll("v" ~ layoutVersion.text);
         if (v.hasError)
             return false;
-        foreach (sub; ["results", "manifests", "leases", "staging", "trash"])
+        foreach (sub; ["results", "manifests", "leases", "staging", "trash", "preimages"])
             if (v.value.walkAll(sub).hasError)
                 return false;
         s.v = move(v.value);
@@ -386,6 +386,34 @@ struct Store(D)
         return published;
     }
 
+    /// Records `preimage`, the declared key's, as the one `task` last
+    /// published (BGS8); a newer one replaces it.
+    void recordPreimage(string task, scope const(char)[] preimage)
+    {
+        auto dir = v.walkAll("preimages");
+        if (!dir.hasError)
+            cast(void) dir.value.writeFileAtomic(taskFileName(task),
+                "format " ~ formatVersion.text ~ "\ntask " ~ task ~ "\n" ~ preimage);
+    }
+
+    /// The preimage `task` last published, without its header; null when
+    /// none is recorded.
+    string preimage(string task)
+    {
+        string source;
+        if (!readAll(v, "preimages/" ~ taskFileName(task), source))
+            return null;
+        const header = "format " ~ formatVersion.text ~ "\ntask " ~ task ~ "\n";
+        return source.startsWith(header) ? source[header.length .. $] : null;
+    }
+
+    /// Whether `resultKey`'s result is published.
+    bool published(string resultKey)
+    {
+        string source;
+        return readAll(v, "results/" ~ resultKey ~ "/record", source);
+    }
+
     /// Leases `resultKey` for the rest of this process's run (BGS4).
     void lease(string resultKey)
     {
@@ -440,6 +468,58 @@ struct Store(D)
 enum cacheDirTag = "Signature: 8a477f597d28d172789f06886806bc55\n"
     ~ "# This directory is a cache of sparkles' build graph: results anyone can rebuild.\n"
     ~ "# For information about cache directory tags, see https://bford.info/cachedir/\n";
+
+// A task id as one file name: its digest, since an id holds `:`.
+private string taskFileName(string task) @safe pure
+{
+    import sparkles.base.hash.blake3 : blake3;
+
+    return hexOf(blake3(task));
+}
+
+/**
+BGS8: the components two preimages disagree on, by name (`arg`, `env`,
+`input libs/a.d`, …), in the newer's order, comma-separated: each line of
+one that the other lacks.
+*/
+string preimageDifferences(scope const(char)[] older, scope const(char)[] newer) @safe pure
+{
+    import std.string : lineSplitter;
+
+    bool[string] before, after;
+    foreach (line; older.lineSplitter)
+        before[line.idup] = true;
+    foreach (line; newer.lineSplitter)
+        after[line.idup] = true;
+    string s;
+    bool[string] named;
+    void name(scope const(char)[] line)
+    {
+        // `input <digest> <path>` names its path; any other, its keyword.
+        string n;
+        if (line.startsWith("input ") && line.length > 6 + 65)
+            n = ("input " ~ line[6 + 65 .. $]).idup;
+        else
+        {
+            size_t space = 0;
+            while (space < line.length && line[space] != ' ')
+                ++space;
+            n = line[0 .. space].idup;
+        }
+        if (n !in named)
+        {
+            named[n] = true;
+            s ~= (s.length ? ", " : "") ~ n;
+        }
+    }
+    foreach (line; newer.lineSplitter)
+        if (line !in before)
+            name(line);
+    foreach (line; older.lineSplitter)
+        if (line !in after)
+            name(line);
+    return s;
+}
 
 /// The outputs two records disagree on, comma-separated; empty when none.
 string differences(const ref ResultRecord a, const ref ResultRecord b) @safe pure
@@ -596,4 +676,17 @@ private bool word(scope const(char)[] line, string keyword, out string rest) @sa
     assert(list.length == 2 && list[0] == m && list[1].files[0].path == "x.d");
     assert(parseManifestList("format 0\n--\nabsent a\n") is null);
     assert(resultKey("d", m) != resultKey("e", m));
+}
+
+/// BGS8: a declared miss names the components whose lines differ, an input
+/// by its path.
+@("build_graph.store.preimageDifferences")
+@safe pure unittest
+{
+    enum d1 = "0000000000000000000000000000000000000000000000000000000000000001";
+    enum d2 = "0000000000000000000000000000000000000000000000000000000000000002";
+    const older = "format 1\nkind compile\narg -O\nenv PATH=\ninput " ~ d1 ~ " libs/a.d\n";
+    const newer = "format 1\nkind compile\narg -O3\nenv PATH=\ninput " ~ d2 ~ " libs/a.d\n";
+    assert(preimageDifferences(older, newer) == "arg, input libs/a.d");
+    assert(preimageDifferences(older, older) == "");
 }
