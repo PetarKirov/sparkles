@@ -11,7 +11,7 @@ module docs_wasm;
 import std.conv : octal;
 
 /// The modules the site loads, as `.#docs-wasm` installs them.
-immutable string[] docsWasmModules = ["spk-text.wasm", "spk-table.wasm"];
+immutable string[] docsWasmModules = ["spk-text.wasm", "spk-table.wasm", "spk-wired.wasm"];
 
 /// Where the site serves them from, relative to the repository root.
 enum docsWasmDir = "docs/public";

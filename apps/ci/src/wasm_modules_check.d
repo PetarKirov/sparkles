@@ -5,7 +5,8 @@ with the same D functions run natively (docs/specs/toolchain/wasm-modules.md,
 
 A fixed corpus goes through both. Natively, through the functions the
 modules export: `visibleWidthOf` and `segmentInto` for the text module,
-`tableRender` for the table module. In the modules, under node, through the
+`tableRender` for the table module, `wiredRun` for the wired module
+(docs/specs/wired/wasm, WW12). In the modules, under node, through the
 site's own loader (docs/.vitepress/theme/wasi.ts, `TCM7`): WASI preview 1 on
 @bjorn3/browser_wasi_shim with a real clock, `_initialize` called once before
 any export. The check names every case whose results differ: a miscompile,
@@ -19,6 +20,7 @@ import std.json : JSONType, JSONValue, parseJSON;
 import sparkles.base.wasm : segmentInto;
 import spk_table_wasm : tableRender;
 import spk_text_wasm : visibleWidthOf;
+import spk_wired_wasm : wiredRun;
 
 /// A text for the text module: its width, and its units in `slots` triples.
 struct TextCase
@@ -33,6 +35,14 @@ struct TableCase
 {
     string name;
     string spec;
+    uint outCap = 64 * 1024;
+}
+
+/// A request for the wired module, answered into `outCap` bytes.
+struct WiredCase
+{
+    string name;
+    string request;
     uint outCap = 64 * 1024;
 }
 
@@ -79,15 +89,34 @@ immutable TableCase[] tableCorpus = [
     TableCase("output buffer too small", `{"cells": [["a", "bb"], ["ccc", "d"]], "props": {}}`, 16),
 ];
 
+/// ditto: each operation in each format, text that does not parse, a
+/// malformed request, and a response too large for its buffer.
+immutable WiredCase[] wiredCorpus = [
+    WiredCase("sdl parse", `{"op": "parse", "format": "sdl", "text": "a 1 2.5 \"s\" true null k=\"v\" {\n  b 2026/11/17 12:30:00\n}\n"}`),
+    WiredCase("sdl format", `{"op": "format", "format": "sdl", "text": "a   1\n// c\nb \"x\" {\nc\n}\n"}`),
+    WiredCase("sdl error", `{"op": "parse", "format": "sdl", "text": "a \"unterminated\n"}`),
+    WiredCase("json parse", `{"op": "parse", "format": "json", "text": "{\"b\": [1, -2, 2.5e3, 18446744073709551615], \"a\": {\"\u00e9\": null}}"}`),
+    WiredCase("json format", `{"op": "format", "format": "json", "text": "[1,{\"a\":[true,false]},\"\u6f22\"]"}`),
+    WiredCase("json error", `{"op": "parse", "format": "json", "text": "{\n  \"a\": ]"}`),
+    WiredCase("recipe sdl", `{"op": "recipe", "format": "sdl", "text": "name \"x\"\ndependency \"sparkles:base\" path=\"../..\"\nconfiguration \"library\" {\n  targetType \"library\"\n}\n"}`),
+    WiredCase("recipe json", `{"op": "recipe", "format": "json", "text": "{\"name\": \"j\", \"dependencies\": {\"x\": \"~>1\"}}"}`),
+    WiredCase("recipe error", `{"op": "recipe", "format": "sdl", "text": "targetTyp \"x\"\n"}`),
+    WiredCase("fault", `{"op": "parse", "format": "yaml", "text": ""}`),
+    WiredCase("response too large", `{"op": "format", "format": "sdl", "text": "a 1\n"}`, 4),
+];
+
 /// The request the node host reads: the corpus, as JSON.
 string requestJson() @safe
 {
-    JSONValue[] texts, tables;
+    JSONValue[] texts, tables, wireds;
     foreach (c; textCorpus)
         texts ~= JSONValue(["text": JSONValue(c.text), "slots": JSONValue(long(c.slots))]);
     foreach (c; tableCorpus)
         tables ~= JSONValue(["spec": JSONValue(c.spec), "outCap": JSONValue(long(c.outCap))]);
-    return JSONValue(["texts": JSONValue(texts), "tables": JSONValue(tables)]).toString;
+    foreach (c; wiredCorpus)
+        wireds ~= JSONValue(["request": JSONValue(c.request), "outCap": JSONValue(long(c.outCap))]);
+    return JSONValue(["texts": JSONValue(texts), "tables": JSONValue(tables),
+        "wireds": JSONValue(wireds)]).toString;
 }
 
 /// One text through the native functions, in the host's result shape.
@@ -112,6 +141,16 @@ JSONValue nativeTable(const TableCase c) @safe
     return JSONValue(["rc": JSONValue(long(n)), "output": JSONValue(output[0 .. length].idup)]);
 }
 
+/// One request through the native function, in the host's result shape:
+/// the length or `-1`, and the response when it fits.
+JSONValue nativeWired(const WiredCase c) @safe
+{
+    const response = wiredRun(c.request);
+    const fits = response.length <= c.outCap;
+    return JSONValue(["rc": JSONValue(fits ? long(response.length) : -1L),
+        "output": JSONValue(fits ? response : "")]);
+}
+
 /// A case whose module result differs from the native one.
 struct Mismatch
 {
@@ -129,6 +168,7 @@ Mismatch[] compare(const JSONValue results) @safe
 {
     Mismatch[] found;
     const texts = results["texts"].arrayNoRef, tables = results["tables"].arrayNoRef;
+    const wireds = "wireds" in results ? results["wireds"].arrayNoRef : null;
     foreach (i, c; textCorpus)
     {
         const native = nativeText(c);
@@ -143,20 +183,29 @@ Mismatch[] compare(const JSONValue results) @safe
         if (native != wasm)
             found ~= Mismatch("table", c.name, native.toString, wasm.toString);
     }
+    foreach (i, c; wiredCorpus)
+    {
+        const native = nativeWired(c);
+        const wasm = i < wireds.length ? wireds[i] : JSONValue(null);
+        if (native != wasm)
+            found ~= Mismatch("wired", c.name, native.toString, wasm.toString);
+    }
     return found;
 }
 
 @("wasm_modules_check.compare.agreesWithItself")
 @safe unittest
 {
-    JSONValue[] texts, tables;
+    JSONValue[] texts, tables, wireds;
     foreach (c; textCorpus)
         texts ~= nativeText(c);
     foreach (c; tableCorpus)
         tables ~= nativeTable(c);
+    foreach (c; wiredCorpus)
+        wireds ~= nativeWired(c);
     // Through text, as the host's reply arrives.
-    const reply = (JSONValue[] t, JSONValue[] u) => parseJSON(
-        JSONValue(["texts": JSONValue(t), "tables": JSONValue(u)]).toString);
+    const reply = (JSONValue[] t, JSONValue[] u) => parseJSON(JSONValue(["texts": JSONValue(t),
+        "tables": JSONValue(u), "wireds": JSONValue(wireds)]).toString);
     assert(compare(reply(texts, tables)).length == 0);
 
     // A changed width, a missing table: two mismatches, named.
@@ -184,7 +233,7 @@ Mismatch[] compare(const JSONValue results) @safe
 /++
 The node host: each module instantiated by the site's loader, `wasi.ts` beside
 the host, then the request's cases through the exports. Arguments: the text
-module, the table module, the request file and the file the JSON reply is
+module, the table module, the wired module, the request file and the file the JSON reply is
 written to; stdout and stderr stay the modules'.
 +/
 enum string nodeHost = q{
@@ -193,9 +242,9 @@ import { instantiateModule } from "./wasi.ts";
 
 const load = (path) => instantiateModule(readFileSync(path));
 
-const [textPath, tablePath, requestPath, replyPath] = process.argv.slice(2);
+const [textPath, tablePath, wiredPath, requestPath, replyPath] = process.argv.slice(2);
 const request = JSON.parse(readFileSync(requestPath, "utf8"));
-const text = await load(textPath), table = await load(tablePath);
+const text = await load(textPath), table = await load(tablePath), wired = await load(wiredPath);
 const encoder = new TextEncoder(), decoder = new TextDecoder();
 
 function put(x, s) {
@@ -223,7 +272,15 @@ const tables = request.tables.map(({ spec, outCap }) => {
     return { rc, output: decoder.decode(new Uint8Array(table.memory.buffer, out, k)) };
 });
 
-writeFileSync(replyPath, JSON.stringify({ texts, tables }));
+const wireds = request.wireds.map(({ request: r, outCap }) => {
+    const length = put(wired, r);
+    const base = wired.spk_buf_ptr();
+    const out = base + 128 * 1024;
+    const rc = wired.spk_wired_run(base, length, out, outCap);
+    return { rc, output: rc >= 0 ? decoder.decode(new Uint8Array(wired.memory.buffer, out, rc)) : "" };
+});
+
+writeFileSync(replyPath, JSON.stringify({ texts, tables, wireds }));
 };
 
 /++
@@ -232,7 +289,8 @@ Runs the corpus through the modules at `textModule` and `tableModule` under
 at `shim`, and compares with the native functions. Returns the process exit
 status: `0` when every case agrees.
 +/
-int runCheckWasmModules(string textModule, string tableModule, string loader, string shim)
+int runCheckWasmModules(string textModule, string tableModule, string wiredModule, string loader,
+    string shim)
 {
     import std.file : copy, exists, mkdirRecurse, readText, rmdirRecurse, symlink, tempDir, write;
     import std.path : absolutePath, buildPath;
@@ -240,11 +298,11 @@ int runCheckWasmModules(string textModule, string tableModule, string loader, st
     import std.conv : text;
     import std.stdio : stderr, writeln;
 
-    foreach (path; [textModule, tableModule, loader, shim])
+    foreach (path; [textModule, tableModule, wiredModule, loader, shim])
         if (path.length == 0 || !path.exists)
         {
             stderr.writeln("--check-wasm-modules: '", path, "' does not exist ",
-                "(pass --text-module, --table-module, --wasi-loader and --wasi-shim)");
+                "(pass --text-module, --table-module, --wired-module, --wasi-loader and --wasi-shim)");
             return 1;
         }
 
@@ -261,7 +319,7 @@ int runCheckWasmModules(string textModule, string tableModule, string loader, st
     symlink(absolutePath(shim), buildPath(dir, "node_modules", "@bjorn3", "browser_wasi_shim"));
     write(request, requestJson());
 
-    const run = execute(["node", "--no-warnings", host, textModule, tableModule, request, reply]);
+    const run = execute(["node", "--no-warnings", host, textModule, tableModule, wiredModule, request, reply]);
     if (run.status != 0)
     {
         stderr.writeln("--check-wasm-modules: the node host failed (", run.status, "):\n", run.output);
@@ -273,10 +331,12 @@ int runCheckWasmModules(string textModule, string tableModule, string loader, st
         writeln(found.canFindCase("text", c.name) ? " ✗ " : " ✓ ", "text: ", c.name);
     foreach (c; tableCorpus)
         writeln(found.canFindCase("table", c.name) ? " ✗ " : " ✓ ", "table: ", c.name);
+    foreach (c; wiredCorpus)
+        writeln(found.canFindCase("wired", c.name) ? " ✗ " : " ✓ ", "wired: ", c.name);
     foreach (m; found)
         stderr.writeln(m.module_, ": ", m.name, "\n  native: ", m.native, "\n  wasm:   ", m.wasm);
-    writeln(textCorpus.length + tableCorpus.length - found.length, "/",
-        textCorpus.length + tableCorpus.length, " cases agree");
+    const cases = textCorpus.length + tableCorpus.length + wiredCorpus.length;
+    writeln(cases - found.length, "/", cases, " cases agree");
     return found.length ? 1 : 0;
 }
 

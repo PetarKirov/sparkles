@@ -80,6 +80,7 @@ subPackage "libs/vulkan"
 subPackage "libs/vulkan-wsi"
 subPackage "libs/wsi"
 subPackage "libs/wired"
+subPackage "libs/wired/wired-wasm"
 subPackage "libs/wired-sdl-select"
 
 // BEGIN managed build types — apps/ci/tools/standardize-build-settings.d

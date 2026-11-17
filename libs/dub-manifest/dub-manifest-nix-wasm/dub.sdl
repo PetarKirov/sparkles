@@ -23,6 +23,13 @@ configuration "wasm" {
     lflags "--allow-undefined" platform="wasi"
 }
 
+// The conversion and the in-memory host alone, for the site's module, which
+// answers recipes as this module does (`sparkles:wired-wasm`, WW12).
+configuration "library" {
+    targetType "library"
+    excludedSourceFiles "src/app.d"
+}
+
 // The same answers natively, as JSON, for the Nix check (WW10).
 configuration "oracle" {
     targetType "executable"
