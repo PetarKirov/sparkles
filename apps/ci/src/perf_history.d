@@ -540,7 +540,9 @@ private string writeTree(string gitDir, string base, ref Node node) @trusted
     string listing;
     foreach (name; existing.keys.sort)
         listing ~= existing[name] ~ "\t" ~ name ~ "\n";
-    return git(gitDir, ["mktree"], null, listing).output.strip;
+    // `--missing`: a partial clone holds the trees but not the blobs it never
+    // read, and the remote has them, so mktree must not ask for them.
+    return git(gitDir, ["mktree", "--missing"], null, listing).output.strip;
 }
 
 /**
@@ -617,7 +619,7 @@ Expected!(string[], string) appendRecords(string gitDir, string remote, string s
             files["README.md"] = readme;
         foreach (a; records)
         {
-            if (parent.length && git(gitDir, ["cat-file", "-e", parent ~ ":" ~ a.dir]).ok)
+            if (parent.length && git(gitDir, ["rev-parse", "--verify", "--quiet", parent ~ ":" ~ a.dir]).ok)
                 continue; // a repeated append is a no-op
             foreach (path, content; a.record.files)
                 files[a.dir ~ "/" ~ path] = content;
@@ -669,9 +671,13 @@ unittest
     const signers = buildPath(root, "signers");
     write(signers, "ci namespaces=\"git\" " ~ readText(buildPath(root, "good.pub")).split(" ")[0 .. 2].join(" ")
         ~ "\n");
-    const remote = buildPath(root, "remote.git");
-    mkdirRecurse(remote);
-    assert(git(remote, ["init", "--quiet", "--bare"]).ok);
+    // A `file://` remote that honours `--filter`, as GitHub does: the clones
+    // then hold no blob they did not ask for, and tree building must cope.
+    const remoteDir = buildPath(root, "remote.git");
+    mkdirRecurse(remoteDir);
+    assert(git(remoteDir, ["init", "--quiet", "--bare"]).ok);
+    assert(git(remoteDir, ["config", "uploadpack.allowFilter", "true"]).ok);
+    const remote = "file://" ~ remoteDir;
 
     enum run = `{"schema":"sparkles.perf.run","version":1,"run":"%s","origin":"ci",`
         ~ `"invocation":{"command":"--test","options":[],"placement":"%s"}}`;
