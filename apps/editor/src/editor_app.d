@@ -44,6 +44,7 @@ import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.host : canReadClipboard, withPreedit;
+import sparkles.ui_app.clipboard_router : ClipboardRefusal, ClipboardRouter, PasteOutcome;
 import sparkles.ui_app.run_app : AppTheme;
 import sparkles.ui_app.gui_options : GuiOptions, resolveTheme;
 import sparkles.ui_app.run_app : appThemeOf;
@@ -144,6 +145,40 @@ private struct ClipboardRead
     uint request;
     /// The find bar's epoch and field (`2 * epoch + replacement`); 0 for none.
     ulong find;
+}
+
+/// The clipboard router's hooks: which input a reply may still reach, and how.
+private struct ClipboardHooks
+{
+    EditorApp* app;
+
+    bool valid(in ClipboardRead owner) @safe => app.clipboardOwnerValid(owner);
+
+    /// A paste nobody requested belongs to the input focused when it arrives.
+    ClipboardRead unsolicited() @safe
+    {
+        auto palette = app.commands.palette.active;
+        return ClipboardRead(app.document.id,
+            palette ? app.commands.palette.snapshot.ticket.value : 0,
+            app.pathDialog ? app.dialogEpoch : 0, 0,
+            !app.pathDialog && !palette && app.finding ? 2 * app.finder.epoch + app.finder.onReplacement : 0);
+    }
+
+    void deliver(in ClipboardRead owner, scope const(char)[] text) @safe
+    {
+        if (owner.dialog) app.pathInput.paste(text, owner.request, MonoTime.currTime);
+        else if (owner.find)
+            (owner.find & 1 ? app.finder.replacement : app.finder.query).paste(text, owner.request, MonoTime.currTime);
+        else if (owner.palette)
+            app.apply(app.commands.paste(text, owner.request, app.context, MonoTime.currTime));
+        else
+            foreach (tab; app.tabs) if (tab.id == owner.document)
+            {
+                tab.field.paste(text, owner.request, MonoTime.currTime);
+                tab.followCaret = true;
+                break;
+            }
+    }
 }
 
 /// Closing a requester invalidates its reply even when the next tab reuses the local number.
@@ -501,12 +536,7 @@ struct EditorApp
     private EditorTarget target = EditorTarget.terminal;
     private LanternState lantern;
     private LabelArena guideLabels;
-    private char[] pasteBytes;
-    private bool collectingPaste;
-    private uint pasteRequest;
-    private ClipboardRead pasteOwner;
-    private ClipboardRead[uint] clipboardReads;
-    private uint nextClipboardRead;
+    private ClipboardRouter!ClipboardRead clipboardReads;
     private HighlightSession highlighting;
     private ResolvedTheme syntaxTheme;
     string themeName;
@@ -1439,55 +1469,9 @@ struct EditorApp
 
     private void receivePaste(in PasteEvent chunk) @safe
     {
-        if (chunk.request && !(chunk.request in clipboardReads))
-        {
-            if (collectingPaste && pasteRequest == chunk.request)
-            {
-                collectingPaste = false;
-                pasteBytes.length = 0;
-            }
-            return;
-        }
-        if (!collectingPaste || chunk.request != pasteRequest)
-        {
-            if (collectingPaste && pasteRequest) clipboardReads.remove(pasteRequest);
-            pasteBytes.length = 0;
-            collectingPaste = true;
-            pasteRequest = chunk.request;
-            pasteOwner = chunk.request ? clipboardReads[chunk.request]
-                : ClipboardRead(document.id,
-                    commands.palette.active ? commands.palette.snapshot.ticket.value : 0,
-                    pathDialog ? dialogEpoch : 0, 0,
-                    !pathDialog && !commands.palette.active && finding ? 2 * finder.epoch + finder.onReplacement : 0);
-        }
-        if (!clipboardOwnerValid(pasteOwner))
-        {
-            if (pasteRequest) clipboardReads.remove(pasteRequest);
-            collectingPaste = false;
-            pasteBytes.length = 0;
+        auto hooks = (() @trusted => ClipboardHooks(&this))(); // the hooks never outlive this call
+        if (clipboardReads.receive(chunk, hooks) == PasteOutcome.cancelled)
             status = "Paste cancelled because its input target changed.";
-            return;
-        }
-        pasteBytes ~= chunk.text[];
-        if (!chunk.last) return;
-        collectingPaste = false;
-        scope (exit)
-        {
-            pasteBytes.length = 0;
-            if (pasteRequest) clipboardReads.remove(pasteRequest);
-        }
-        if (pasteOwner.dialog) pathInput.paste(pasteBytes, pasteOwner.request, MonoTime.currTime);
-        else if (pasteOwner.find)
-            (pasteOwner.find & 1 ? finder.replacement : finder.query).paste(pasteBytes, pasteOwner.request, MonoTime.currTime);
-        else if (pasteOwner.palette)
-            apply(commands.paste(pasteBytes, pasteOwner.request, context, MonoTime.currTime));
-        else
-            foreach (tab; tabs) if (tab.id == pasteOwner.document)
-            {
-                tab.field.paste(pasteBytes, pasteOwner.request, MonoTime.currTime);
-                tab.followCaret = true;
-                break;
-            }
     }
 
     private bool clipboardOwnerValid(in ClipboardRead owner) @safe
@@ -1513,24 +1497,13 @@ struct EditorApp
     private uint routeClipboard(H)(ref H host, ClipboardRead owner, uint request)
     {
         owner.request = request;
-        if (!clipboardOwnerValid(owner)) return 0;
-        uint[64] stale;
-        size_t count;
-        foreach (ticket, pending; clipboardReads)
-            if (!clipboardOwnerValid(pending)) stale[count++] = ticket;
-        foreach (ticket; stale[0 .. count]) clipboardReads.remove(ticket);
-        if (clipboardReads.length == stale.length)
-        {
+        auto hooks = (() @trusted => ClipboardHooks(&this))(); // the hooks never outlive this call
+        const ticket = clipboardReads.route(host, owner, hooks);
+        if (ticket.refusal == ClipboardRefusal.full)
             status = "The clipboard request could not be tracked; retry after pending reads finish.";
-            return 0;
-        }
-        uint ticket;
-        static if (__traits(compiles, host.allocateClipboardRequest()))
-            ticket = host.allocateClipboardRequest();
-        else if (nextClipboardRead != uint.max) ticket = ++nextClipboardRead;
-        if (!ticket) { status = "Clipboard request identities are exhausted."; return 0; }
-        clipboardReads[ticket] = owner;
-        return ticket;
+        else if (ticket.refusal == ClipboardRefusal.exhausted)
+            status = "Clipboard request identities are exhausted.";
+        return ticket.request;
     }
 
     /// The active document, lazily creating an untitled tab.
