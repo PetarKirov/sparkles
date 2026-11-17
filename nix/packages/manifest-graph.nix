@@ -12,39 +12,62 @@
       root = ../..;
       fromRoot = lib.path.append root;
 
+      # The dub recipe module the recipe table reads through where the
+      # evaluator has `builtins.wasm` (docs/specs/wired/wasm WW7, WW8); null
+      # keeps every evaluation on the regular-expression reader.
+      nixWasmModule = null;
+
       # Compute the source closure of an app from its dub manifests, so the
       # fileset stays in sync with the actual dependency graph instead of a
       # hand-maintained list. Given the app's repo-relative dir, read its
       # `dub.sdl` and transitively every referenced `libs/<name>/dub.sdl`,
       # collecting each package's `src` dir.
       #
-      # Two kinds of edge are followed, both truncated at the `unittest`
-      # configuration (an app/library build never compiles unittest-only
-      # dependencies):
+      # The recipes are read through one table per evaluation (recipe-facts.nix,
+      # docs/specs/wired/wasm WW9): by the dub recipe module where the evaluator
+      # has `builtins.wasm`, by regular expressions otherwise.
+      #
+      # Two kinds of edge are followed, from the top level and from every
+      # configuration declared before `unittest` (an app/library build never
+      # compiles unittest-only dependencies, and the configurations after it,
+      # such as `allocation-audit`, are test configurations too):
       #   * `dependency "sparkles:<name>" path="..."` — real dub dependencies;
       #   * sibling source refs `../<name>/src` / `../../libs/<name>/src` on
       #     `importPaths`/`sourcePaths` — how `base`/`core-cli` pull in the
       #     source-included `math` and test-runner shim (they can't
       #     `dependency` them: dub would reject the resulting cycle).
-      # Both map `<name>` → `libs/<name>`. In every manifest the `unittest`
-      # block is last and runs to EOF, so truncating at it is exact for that
-      # block. `configuration "testing"` in `build-primitives` sits above it
-      # and still names `sparkles:test-utils`; that edge stays in this fileset
-      # and is dropped by `shippedComponentNames`, which is what the
-      # build-info document lists.
+      # Both map `<name>` → `libs/<name>`. `configuration "testing"` in
+      # `build-primitives` sits above `unittest` and still names
+      # `sparkles:test-utils`; that edge stays in this fileset and is dropped by
+      # `shippedComponentNames`, which is what the build-info document lists.
       matchAll = re: s: map builtins.head (builtins.filter builtins.isList (builtins.split re s));
-      matchAllPairs = re: s: builtins.filter builtins.isList (builtins.split re s);
 
-      readManifest =
+      recipes = import ../lib/recipe-facts.nix {
+        inherit root;
+        module = nixWasmModule;
+      };
+
+      # The edges of a scope list, in the order the walks have always taken
+      # them: every dependency, then every sibling ref, then every lib ref.
+      edgesOf =
+        scopes:
+        lib.concatMap (s: s.deps) scopes
+        ++ lib.concatMap (s: s.siblingRefs) scopes
+        ++ lib.concatMap (s: s.libRefs) scopes;
+
+      # The fileset walk's edges of the recipe in `relDir`.
+      closureRefs =
         relDir:
         let
-          f = root + "/${relDir}/dub.sdl";
+          f = recipes.facts relDir;
+          stop = lib.lists.findFirstIndex (n: n == "unittest") null f.configurations;
+          configs = if stop == null then f.configurations else lib.take stop f.configurations;
         in
-        if builtins.pathExists f then
-          builtins.head (builtins.split ''configuration "unittest"'' (builtins.readFile f))
-        else
-          "";
+        edgesOf ([ f.preamble ] ++ map (n: f.scopes.${n}) configs);
 
+      # `refsIn text` for builders that read a recipe embedded in a `.d` file
+      # (android/examples.nix); outside the table, as recipe-facts.nix reads
+      # `dub.sdl` files only.
       refsOf =
         text:
         matchAll ''dependency "sparkles:([a-z-]+)"'' text
@@ -64,7 +87,7 @@
           if builtins.elem name seen then
             grow seen rest
           else
-            grow (seen ++ [ name ]) (rest ++ refsOf (readManifest (libDir name)));
+            grow (seen ++ [ name ]) (rest ++ closureRefs (libDir name));
 
       # A library's directory: `libs/<name>`, or, for a package nested in
       # another's (`sparkles:table-wasm` in libs/core-cli/table-wasm), the
@@ -82,96 +105,44 @@
         ++ lib.optional (builtins.pathExists (root + "/${libDir n}/src-engine")) "${libDir n}/src-engine";
 
       sparklesSrcClosure =
-        appDir: [ "${appDir}/src" ] ++ lib.concatMap libSrcDirs (grow [ ] (refsOf (readManifest appDir)));
+        appDir: [ "${appDir}/src" ] ++ lib.concatMap libSrcDirs (grow [ ] (closureRefs appDir));
 
       # What an application build links. The fileset walk follows every
       # configuration above `unittest`, so it still carries `ui-app`'s `tui`
       # arm and `build-primitives`' `testing` arm. This walk follows the
-      # preamble plus one configuration: the first, unless a selected recipe
+      # top level plus one configuration: the first, unless a selected recipe
       # names another with `subConfiguration`. An import-path edge does not
       # activate the target's dependencies. The test-runner shim is that
       # import path so UDA names resolve; the application build does not link
-      # it. `//` comments quote dependency lines and are not edges.
-      stripLineComments =
-        text:
-        lib.concatMapStrings (line: builtins.head (builtins.split "//" line) + "\n") (
-          lib.splitString "\n" text
-        );
-
-      recipeOf =
-        relDir:
+      # it.
+      #
+      # The scopes of the recipe in `relDir` as built with configuration
+      # `cfg`, or with its first configuration when `cfg` is null.
+      selectedScopes =
+        relDir: cfg:
         let
-          f = root + "/${relDir}/dub.sdl";
+          f = recipes.facts relDir;
+          name = if cfg != null then cfg else firstConfig relDir;
         in
-        if builtins.pathExists f then stripLineComments (builtins.readFile f) else "";
+        [ f.preamble ] ++ lib.optional (name != null) (f.scopes.${name} or recipes.emptyScope);
 
       firstConfig =
-        text:
+        relDir:
         let
-          parts = builtins.split ''configuration "([A-Za-z0-9-]+)"'' text;
+          names = (recipes.facts relDir).configurations;
         in
-        if builtins.length parts < 2 then null else builtins.head (builtins.elemAt parts 1);
+        if names == [ ] then null else builtins.head names;
 
-      preambleOf = text: builtins.head (builtins.split ''configuration "'' text);
+      # The first choice of each dependency wins, the top level's first.
+      subOverrides = scopes: lib.foldr (s: acc: acc // s.subConfigurations) { } scopes;
 
-      # The body inside `configuration "name" { ... }`, braces respected.
-      configBody =
-        text: name:
-        let
-          parts = builtins.split (''configuration "'' + name + ''" \{'') text;
-          after = if builtins.length parts < 3 then "" else builtins.elemAt parts 2;
-          step =
-            depth: acc: rest:
-            if rest == [ ] || depth == 0 then
-              acc
-            else
-              let
-                h = builtins.head rest;
-                t = builtins.tail rest;
-              in
-              if builtins.isList h then
-                let
-                  ch = builtins.head h;
-                in
-                if ch == "{" then
-                  step (depth + 1) (acc + ch) t
-                else if ch == "}" && depth == 1 then
-                  acc
-                else if ch == "}" then
-                  step (depth - 1) (acc + ch) t
-                else
-                  step depth (acc + ch) t
-              else
-                step depth (acc + h) t;
-        in
-        step 1 "" (builtins.split "([{}])" after);
-
-      # `cfg == null` selects the first configuration. Preamble dependencies
-      # are on in every configuration.
-      selectedRecipe =
-        text: cfg:
-        let
-          name = if cfg != null then cfg else firstConfig text;
-          body = if name == null then "" else configBody text name;
-        in
-        preambleOf text + "\n" + body;
-
-      subOverrides =
-        text:
-        lib.listToAttrs (
-          map (p: {
-            name = builtins.elemAt p 0;
-            value = builtins.elemAt p 1;
-          }) (matchAllPairs ''subConfiguration "sparkles:([a-z-]+)" "([A-Za-z0-9-]+)"'' text)
-        );
-
-      depRefs = text: matchAll ''dependency "sparkles:([a-z-]+)"'' text;
+      depRefs = scopes: lib.concatMap (s: s.deps) scopes;
 
       # `test-runner` is the UDA import path, not a linked library.
       pathRefs =
-        text:
+        scopes:
         lib.filter (n: n != "test-runner") (
-          matchAll ''\.\./([a-z-]+)/src'' text ++ matchAll ''\.\./\.\./libs/([a-z-]+)/src'' text
+          lib.concatMap (s: s.siblingRefs) scopes ++ lib.concatMap (s: s.libRefs) scopes
         );
 
       # `seen.${name}` is the configuration walked, or "" for the default.
@@ -197,23 +168,23 @@
             growShipped seen rest
           else
             let
-              file = recipeOf (libDir name);
-              cfg = if head.cfg != null then head.cfg else firstConfig file;
-              text = selectedRecipe file (if head.link then cfg else null);
-              overrides = subOverrides text;
+              dir = libDir name;
+              cfg = if head.cfg != null then head.cfg else firstConfig dir;
+              scopes = selectedScopes dir (if head.link then cfg else null);
+              overrides = subOverrides scopes;
               more =
                 (lib.optionals head.link (
                   map (n: {
                     name = n;
                     cfg = overrides.${n} or null;
                     link = true;
-                  }) (depRefs text)
+                  }) (depRefs scopes)
                 ))
                 ++ map (n: {
                   name = n;
                   cfg = null;
                   link = false;
-                }) (pathRefs text);
+                }) (pathRefs scopes);
               marked = if head.link then (if cfg == null then "" else cfg) else "import";
             in
             growShipped (seen // { ${name} = marked; }) (rest ++ more);
@@ -221,19 +192,19 @@
       shippedComponentNames =
         appDir:
         let
-          text = selectedRecipe (recipeOf appDir) null;
-          overrides = subOverrides text;
+          scopes = selectedScopes appDir null;
+          overrides = subOverrides scopes;
           seed =
             map (n: {
               name = n;
               cfg = overrides.${n} or null;
               link = true;
-            }) (depRefs text)
+            }) (depRefs scopes)
             ++ map (n: {
               name = n;
               cfg = null;
               link = false;
-            }) (pathRefs text);
+            }) (pathRefs scopes);
         in
         builtins.attrNames (growShipped { } seed);
 
@@ -250,7 +221,7 @@
         (fs.maybeMissing (fromRoot "${dir}/dub.selections.json"))
       ];
 
-      subPackageDirs = matchAll ''subPackage "([^"]+)"'' (builtins.readFile (root + "/dub.sdl"));
+      subPackageDirs = recipes.rootFacts.subPackages;
 
       manifestFileset = fs.unions (
         [

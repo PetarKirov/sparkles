@@ -29,6 +29,9 @@ new package builds for `wasm32-unknown-wasip1` with the flake's WASI LDC;
 
 ## W2 — The Nix module
 
+Done: `libs/dub-manifest/nix-wasm` (`dub-manifest-nix-wasm`), its oracle and
+`agreement.nix`; evidence in [SPEC §8](./SPEC.md#delivered-evidence).
+
 Obligations: WW2–WW6, WW15 for the module package. The entry layer of the
 prototype, completed: the `{ text; name; }` argument, `dub.json` by name,
 WW5's error values, and a native unit test of the value conversion against
@@ -44,10 +47,16 @@ and none aborts evaluation.
 
 ## W3 — The recipe table and the fallback
 
+Done: `nix/lib/recipe-facts.nix`, `manifest-graph.nix` reading through it,
+`facts-agreement.nix`, `ci --check-nix-wasm` and the `nix-wasm` CI job;
+evidence in [SPEC §8](./SPEC.md#delivered-evidence).
+
 Obligations: WW7, WW9, WW10, WW11. `manifest-graph.nix` reads through the
 table; the regular-expression reader becomes the table's fallback
 producer, stripping comments and reading every configuration; the
-agreement check runs over every recipe, with WW10's seeded fixtures.
+agreement check runs over every recipe, with WW10's seeded fixtures: a
+dependency quoted in a comment, and a top-level dependency after a
+configuration.
 
 Gate: the flake's outputs evaluate to the same derivations before and after
 (the table changes how recipes are read, not what is built); WW11's

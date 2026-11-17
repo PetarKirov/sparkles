@@ -174,19 +174,25 @@ differ in which scopes they follow, not in how scopes are read.
 
 **WW10: Agreement check.** _(Owner: `sparkles:ci`.)_ A check run by Nix
 **must** compute the facts of every recipe the root `dub.sdl` declares with
-both readers and fail on any difference, naming the directory and the fact.
-It runs only where the module can run (WW7, WW8); elsewhere it reports
-itself as not run, never as passed. A seeded divergence (a recipe whose
-dependency appears only in a comment, and one whose `unittest`
-configuration is not last) **must** be among its fixtures, so the check is
-seen to catch what the regular-expression reader gets wrong.
+both readers and fail on any difference, naming the directory. It runs
+only where the module can run (WW7, WW8); elsewhere it reports itself as
+not run, never as passed. Seeded fixtures on which the readers
+`manifest-graph.nix` used before the table were wrong **must** be among its
+inputs, and the check **must** confirm that older reader still disagrees
+with the module on each, so it is seen to catch what it is for: a
+dependency quoted in a `//` comment, and a top-level `dependency` written
+after a configuration, which reading the text before the first
+`configuration` lost. (A `unittest` configuration that is not last is not
+one: both readers stop at it.)
 
-**WW11: Evaluation cost.** _(Owner: Sparkles' Nix code.)_ With the table of
-WW9, evaluating every package of the flake through the Nix path **must not**
-take longer than through the fallback with the same table, plus the
-module's one-time compilation; [§8](#_8-prototype-evidence) has the
-measurement method. A slower module is a defect to fix before WW7's
-choice favours it.
+**WW11: Evaluation cost.** _(Owner: Sparkles' Nix code.)_ Reading every
+recipe the root declares through the table **must not** take longer with
+the module than with the fallback, its compilation cached; and evaluating
+every package of the flake through the table **must not** take longer than
+through the readers it replaced. [§8](#_8-prototype-evidence) has the
+measurements. The whole-flake time is the second clause's and not the
+first's because the recipes are a small share of it: its spread between
+runs is larger than either reader's cost.
 
 ## 4. The documentation playground
 
@@ -323,3 +329,28 @@ table in both.
 What the prototype does not establish: WW5's error values, WW8's delivery,
 the shipped-components walk's facts (it compared only the fileset walk's
 edges and the `subPackage` list), JSON recipes, and anything of WW12–WW15.
+
+### Delivered evidence
+
+Determinate Nix 3.24.2 with `wasm-builtin`, x86_64-linux; the module built
+by the flake (`dub-manifest-nix-wasm`, 1.21 MB). `nix run .#check-nix-wasm`
+runs both checks; CI runs it in the `nix-wasm` job.
+
+| Requirement     | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| WW3–WW6         | `dub_manifest_nix.respond.recipe`, `.namesChooseTheFormat`, `.errorsAreValues`, `.faults`, `dub_manifest_nix.toNix.omitsEmptyFields`; `libs/dub-manifest/nix-wasm/agreement.nix`: the module and the native oracle agree on all 169 tracked `dub.sdl` files (the tree holds no JSON recipe) and 11 fixtures (failures to lex, parse, decode a value, and validate; JSON syntax and schema; embedded and missing recipes) |
+| WW9, WW10       | `libs/dub-manifest/nix-wasm/facts-agreement.nix`: both readers' facts agree on the root and its 75 sub-package recipes and on 2 seeded fixtures, on each of which the older reader disagrees with the module; `runCheckNixWasm`                                                                                                                                                                                          |
+| WW9 (no change) | every package, check and dev shell evaluates to the same derivation with the table as without it, except the stamped `hue` and `terminal` (whose build-info carries the revision) and `hue-apk-repo` (which hashes the tree); `hue`'s unstamped build is the same store path either way                                                                                                                                  |
+
+WW11, best and median of three, every package, check and dev shell of the
+flake on x86_64-linux:
+
+| Reader                                     | Whole flake     | Peak RSS | Every recipe through the table |
+| ------------------------------------------ | --------------- | -------- | ------------------------------ |
+| Before the table (regular expressions)     | 13.62 s (13.90) | 1.74 GB  | —                              |
+| The table, regular expressions             | 12.84 s (12.88) | 1.67 GB  | 0.10 s                         |
+| The table, regular expressions, `--impure` | 13.27 s (13.56) | 1.67 GB  | —                              |
+| The table, the module, `--impure`          | 13.51 s (13.63) | 1.68 GB  | 0.08 s                         |
+
+The module's run needs `--impure` while it is supplied by path; the table
+alone is faster with it than with the regular expressions.
