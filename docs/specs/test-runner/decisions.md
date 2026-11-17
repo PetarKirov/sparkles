@@ -346,3 +346,49 @@ package's sources at `libs/<name>/src`.
 
 **Revisit when** the counters need `sparkles:base` again: they would then
 have to leave the harness's closure, or `sparkles:base` would.
+
+## TRD14: Workers start on demand (accepted)
+
+**Question.** The runner started `min(T, tests)` workers at once. A worker is
+a process, and in a coverage build each writes every module's listing when it
+ends. `ci --test` runs the `-t N` leg at the host's thread count, so a package
+whose tests take milliseconds paid for 25 process starts and 25 coverage
+dumps: `versions`' 167 tests, 33 ms of work, took 2.0 s at `-t 25` and 0.3 s
+at `-t 1`, and 6.8 s in `ci`, where the dumps merge into the serial leg's
+listings. How many workers should a run start?
+
+**Alternatives.**
+
+- **All at once** (the old rule): the cost grows with `T`, not with the work.
+- **A fixed number of tests per worker:** blind to how long tests take; 167
+  quick tests would still get nine workers.
+- **Recorded durations:** the runner has no history of its own, and a test's
+  first run would have none.
+- **On demand, from the run's own pace:** start one worker, and every 50 ms
+  start as many more as leave each at least one worker's cost of the
+  remaining work. Also double them while no test has finished for longer than
+  that cost, which the pace alone cannot show.
+
+**Choice.** On demand, accepted by the owner on 2026-11-17
+([TRS1](./process-model.md#_5-scheduling-and-coverage)). A worker's cost is
+taken as 250 ms: a process start, its hello, and a coverage dump. With more
+than one thread, `startTestWorkers` returns one coordinator thread that
+starts the workers and joins them.
+
+**Evidence.**
+
+| Package, run                      | Before | After  |
+| --------------------------------- | ------ | ------ |
+| `versions` with coverage, `-t 25` | 2.02 s | 0.33 s |
+| `ui`, `-t 25`                     | 6.6 s  | 7.0 s  |
+
+On `ui`, the pace rule alone gave 8.0 s: 702 quick tests finished on one
+worker, then one test held it while 87 waited. The stall rule recovers all but
+the wait before a stall counts.
+
+**Trade-offs.** A large package reaches full parallelism a few ticks later
+than before, about 0.4 s on `ui`, and a run whose first tests are quick and
+whose last are slow waits one start cost before more workers join.
+
+**Revisit when** the build graph's run records give the runner per-test
+durations, which would let it start the right number at once.
