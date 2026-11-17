@@ -535,7 +535,7 @@ capability matrix):
 
 Three consequences for the runner's design:
 
-1. **The CI matrix row** already runs `ci --example-files` on `macos-latest`; because
+1. **The CI matrix row** already runs `ci examples standalone` on `macos-latest`; because
    the probes are `platforms "linux"`, that row `⊘`-skips them — correct and
    intentional. A `--sanitize` runner mode's darwin leg would have to pin the
    cc-fallback toolchain and normalize `abort_on_error`/`MallocNanoZone` per-child.

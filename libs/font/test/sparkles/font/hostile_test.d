@@ -2,7 +2,7 @@
 Hostile input (FTB1–FTB3, testing.md § Hostile input): limits, and a seeded
 mutation corpus run through every public read operation. Passing means no
 assertion and no out-of-bounds read; any `FontError` is acceptable. Under
-`ci --test-sanitize` the same run is checked by AddressSanitizer.
+`ci test --sanitize address` the same run is checked by AddressSanitizer.
 */
 module sparkles.font.hostile_test;
 

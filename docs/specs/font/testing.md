@@ -304,7 +304,7 @@ hinted `z`, `H`, `T` and `E` end in rows as dark as the rows inside them
   return `cycle`.
 - **Mutation corpus.** Seeded byte mutations (bit flips, truncations, offset
   rewrites) of every committed fixture and three bundled faces, run through
-  every public read operation under AddressSanitizer (`ci --test-sanitize`).
+  every public read operation under AddressSanitizer (`ci test --sanitize address`).
   Seeds and any minimized failing input are committed. Passing means no
   sanitizer report and no assertion failure; any `Expected` error is acceptable.
 - **No assertions on data** (`FTB2`): the mutation run is also executed in the
@@ -477,7 +477,7 @@ for `FTD12` table checksums brought to the listed ones by a final word.
 | ----------------------------------------- | -------------------------------------------------------------------- |
 | `dub test :font`                          | parser, variation, metrics, outlines, raster, hostile-input fixtures |
 | `dub test :font --config=engine-unittest` | the above plus shaping and every HarfBuzz/FreeType differential      |
-| `ci --test-sanitize`                      | the mutation corpus under AddressSanitizer                           |
+| `ci test --sanitize address`              | the mutation corpus under AddressSanitizer                           |
 | local, `xvfb`                             | consumer screenshot goldens                                          |
 
 Linux is the primary configuration. macOS runs the `library` tests in CI;
@@ -491,7 +491,7 @@ checked, on the configuration that ran them.
 
 | Question                                                       | Evidence                                                                      | Result                                                                                                                                                                                      |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Can D drive HarfBuzz with no C shim?                           | [`harfbuzz-shape-features.d`][ex-shape], [`outline-sink-raster.d`][ex-raster] | Yes: opaque handles plus five plain structs, run by `ci --example-files`.                                                                                                                   |
+| Can D drive HarfBuzz with no C shim?                           | [`harfbuzz-shape-features.d`][ex-shape], [`outline-sink-raster.d`][ex-raster] | Yes: opaque handles plus five plain structs, run by `ci examples standalone`.                                                                                                               |
 | Is an accumulation rasterizer small enough to own?             | [`outline-sink-raster.d`][ex-raster]                                          | A 71-line core renders correct coverage for Noto Sans and Maple Mono at 28 px. Spike S2 extends it to every glyph of four faces at four sizes (§ Raster oracle).                            |
 | Do programming ligatures break a cell grid?                    | [`ligature-cells.d`][ex-ligature], 160 sequences in eight faces               | No glyph-count change and no off-cell advance in Cascadia Code, JetBrains Mono, Fira Code and Maple Mono, plain and Nerd Font builds; ink reaches up to 6 cells past its own cell (`FTX7`). |
 | Does variation change contour topology?                        | [`outline-sink-raster.d`][ex-raster] on Noto Sans `g` at `wght` 100 and 900   | No for that glyph: 2 moves, 8 lines, 31 quadratics at both ends. `FTO4` makes it a corpus-wide property.                                                                                    |

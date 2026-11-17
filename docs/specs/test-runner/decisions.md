@@ -351,7 +351,7 @@ have to leave the harness's closure, or `sparkles:base` would.
 
 **Question.** The runner started `min(T, tests)` workers at once. A worker is
 a process, and in a coverage build each writes every module's listing when it
-ends. `ci --test` runs the `-t N` leg at the host's thread count, so a package
+ends. `ci test` runs the `-t N` leg at the host's thread count, so a package
 whose tests take milliseconds paid for 25 process starts and 25 coverage
 dumps: `versions`' 167 tests, 33 ms of work, took 2.0 s at `-t 25` and 0.3 s
 at `-t 1`, and 6.8 s in `ci`, where the dumps merge into the serial leg's

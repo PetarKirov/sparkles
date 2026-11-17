@@ -14,7 +14,7 @@ joining; describing all vibe-core tasks as necessarily detached would be mislead
 > [!NOTE]
 > Each source tab imports a complete executable tutorial with error handling and
 > cleanup. Run it with `dub run --single <file> -b checked`. Contract examples
-> linked after each group retain the behavioral assertions. `ci --verify` checks
+> linked after each group retain the behavioral assertions. `ci examples verify` checks
 > every displayed output and independently executes those contract counterparts.
 > See [Running the examples](./running-examples.md) for prerequisites.
 

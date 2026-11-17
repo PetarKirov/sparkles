@@ -400,7 +400,7 @@ dub test :ui            # 322 tests
 dub test :hue           # 215 (+2 skipped without the twoslash extractor)
 dub test :ui-gallery    # 122
 dub test :syntax        # 123
-nix run .#ci -- --test  # 34/34 sub-packages passed (2026-08-12)
+nix run .#ci -- test  # 34/34 sub-packages passed (2026-08-12)
 ```
 
 - **Pure/unit**: `RecordingCanvas` degrade test (twin of

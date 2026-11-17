@@ -294,8 +294,8 @@ unittest
     import core.time : msecs;
 
     assert(renderTaskLine(TaskItem(label: "clean tree"), plain) == "○ clean tree");
-    assert(renderTaskLine(TaskItem(label: "ci --test", status: TaskStatus.running), plain, 2)
-        == "⠹ ci --test");
+    assert(renderTaskLine(TaskItem(label: "ci test", status: TaskStatus.running), plain, 2)
+        == "⠹ ci test");
     assert(renderTaskLine(
         TaskItem(label: "on main", status: TaskStatus.ok, elapsed: 1500.msecs), plain)
         == "✔ on main (1.5s)");
@@ -333,7 +333,7 @@ unittest
     auto tasks = TaskReporter(&region, plain);
 
     const a = tasks.add("working tree clean");
-    const b = tasks.add("ci --test");
+    const b = tasks.add("ci test");
     tasks.start(a);
     tasks.succeed(a);
     tasks.start(b);
@@ -343,7 +343,7 @@ unittest
     // Piped output: exactly the transition lines, no escapes, no frames.
     assert(!bytes.canFind('\x1b'));
     assert(bytes.startsWith("✔ working tree clean"));
-    assert(bytes.canFind("✖ ci --test tests failed"));
+    assert(bytes.canFind("✖ ci test tests failed"));
     assert(bytes.canFind("\n  last line of output\n")); // follow-up detail line
 }
 
@@ -383,7 +383,7 @@ unittest
     auto tasks = TaskReporter(&region, plain);
     tasks.tailLines = 2;
 
-    const a = tasks.add("ci --test");
+    const a = tasks.add("ci test");
     tasks.start(a);
     tasks.output(a, "one");
     tasks.output(a, "two");
@@ -397,7 +397,7 @@ unittest
     // The pure renderer places the tail under the running row, indented+muted.
     const lines = renderTaskList(tasks.items, plain);
     assert(lines.length == 3);
-    assert(lines[0].canFind("ci --test"));
+    assert(lines[0].canFind("ci test"));
     assert(lines[1] == "  two" && lines[2] == "  three");
 
     // Nothing from the tail graduates: completion clears it and the final
@@ -405,7 +405,7 @@ unittest
     bytes = null;
     tasks.succeed(a);
     assert(tasks.items[a].tail.length == 0);
-    assert(bytes.canFind("✔ ci --test"));
+    assert(bytes.canFind("✔ ci test"));
     assert(!bytes.canFind("two"));
     region.finish();
 }

@@ -12,7 +12,7 @@ differ, and gives you a runnable D program for every mapping.
 > and cleanup. Assertion-heavy contract examples are linked after each comparison.
 > D files run with `dub run --single <file> -b checked`; Node.js files run with
 > `node <file>`. The labelled output tabs belong to the immediately preceding source.
-> `ci --verify` checks both tutorial outputs and independently runs the contract
+> `ci examples verify` checks both tutorial outputs and independently runs the contract
 > counterparts with assertions enabled. Linux prerequisites
 > and dependency versions are documented in [Running the examples](./running-examples.md).
 

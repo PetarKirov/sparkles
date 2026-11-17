@@ -1139,7 +1139,7 @@ reads `hueLanguages` to decide hue-vs-Shiki per fence.
 struct JsonReport
 {
     /// How the report was produced.
-    string tool = "ci --audit-fences";
+    string tool = "ci docs fences-audit";
     /// `site`, `all` or `excluded`.
     string auditScope;
     /// The grammar search path the classification was made against.

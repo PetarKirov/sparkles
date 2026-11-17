@@ -137,7 +137,7 @@ defines (`M4`, `D5`) is dangling.
 `checkDecisionCoverage` plus the unittest that asserts on it, because the check needs the case
 parser and giving `apps/ci` a dependency on `sparkles:dmd-fmt` would drag the DMD frontend into
 the CI helper's build closure — paid on every CI run, for a check `dub test :dmd-fmt` (and so
-`ci --test`) already performs.
+`ci test`) already performs.
 
 **Deferred:** gate 2 above, the per-value variant coverage. It needs a machine-readable list of
 each key's admissible values, which `FormatConfig` does not carry yet; until it does, a `variants=`
@@ -263,7 +263,7 @@ D9 rule from being aspirational.
 ### TST12 — No generator, two gates
 
 Because the published page _is_ the fixture, there is nothing to generate and nothing to keep in
-sync. What remains is two gates, both `ci` subcommands in the shape of `--check-docs-sidebar`:
+sync. What remains is two gates, both `ci` subcommands in the shape of `ci check sidebar`:
 
 - **The coverage gate** — every decision scored Adopt/Adapt/Opt-in has a case or a ledger entry,
   and every case's `id=` names a real decision (TST2). Coverage in both directions, and it runs

@@ -25,7 +25,7 @@ its name (D3).
 
 Gate: `dub test` of the new package and of `build-primitives` pass; the
 new package builds for `wasm32-unknown-wasip1` with the flake's WASI LDC;
-`ci --build-each-commit` builds both; the spec-evidence check resolves.
+`ci commits build-each` builds both; the spec-evidence check resolves.
 
 ## W2 — The Nix module
 
@@ -48,7 +48,7 @@ and none aborts evaluation.
 ## W3 — The recipe table and the fallback
 
 Done: `nix/lib/recipe-facts.nix`, `manifest-graph.nix` reading through it,
-`facts-agreement.nix`, `ci --check-nix-wasm` and the `nix-wasm` CI job;
+`facts-agreement.nix`, `ci check nix-wasm` and the `nix-wasm` CI job;
 evidence in [SPEC §8](./SPEC.md#delivered-evidence).
 
 Obligations: WW7, WW9, WW10, WW11. `manifest-graph.nix` reads through the
@@ -72,7 +72,7 @@ in the agreement check only.
 Done. The pin names `64433fcf7`, the branch tip it was built from: `nix/nix-wasm-pin.json`, the fetch in
 `manifest-graph.nix`, `apps/ci/tools/pin-nix-wasm.d` (builds a revision's module,
 commits it to the orphan branch `nix-wasm-modules` and writes the pin), and
-`ci --check-nix-wasm` rebuilding the pinned revision and running both
+`ci check nix-wasm` rebuilding the pinned revision and running both
 agreement checks with the pinned module.
 
 Obligations: WW8, D2. A pin file names a revision and the module's hash;
@@ -93,20 +93,20 @@ exception's readers are now the fallback of WW7.
 
 Done: `sparkles.wired.wasm_portability` (4 `@wasm` tests) and
 `sparkles.build_primitives.dub_manifest_wasm` (3), run by `ci
---test-extracted`; the Nix module joins `ci --build-each-commit`'s
+ci test --special-modes all`; the Nix module joins `ci commits build-each`'s
 WebAssembly packages. The first run found a 64-bit-only index in the SDL
 lexer's month table, fixed before them.
 
 Obligations: WW15. `@wasm` tests over each format's reader, writer, typed
 codec and errors, and the recipe schema's forms and rejections; run them
-under `ci --test-extracted`.
+under `ci test --special-modes all`.
 
 ## W6 — Playground
 
 Done: `libs/wired/wired-wasm` (`spk-wired.wasm`, 1552 KB after `wasm-opt -Oz`),
 `WiredPlayground.vue` on `docs/libs/wired/how-to/try-in-the-browser.md`,
-the module in `docs-wasm` and `--stage-docs-wasm`, and 11 requests in
-`ci --check-wasm-modules`'s corpus (TCM9), all agreeing with `wiredRun`
+the module in `docs-wasm` and `ci docs stage-wasm`, and 11 requests in
+`ci check wasm-modules`'s corpus (TCM9), all agreeing with `wiredRun`
 run natively.
 
 Obligations: WW12. A reactor on the module contract's interface with one

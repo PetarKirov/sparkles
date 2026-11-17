@@ -208,7 +208,7 @@ piece of work.
 ```bash
 dub test :base -- -i CustomFloat                                          # everything below
 dub test :base                                                            # with float_conv's own pins
-nix run .#ci -- --verify --files docs/specs/base/custom-float.md          # the example above
+nix run .#ci -- examples verify --include-files docs/specs/base/custom-float.md          # the example above
 ```
 
 - `CFL1`: `CustomFloat.widenIsExact` (every pattern of every ≤16-bit format

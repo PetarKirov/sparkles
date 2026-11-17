@@ -100,8 +100,8 @@ A checklist. Each step assumes the toolchain from `nix develop` / `direnv`.
    tree.
 
    ```bash
-   nix run .#ci -- --test --fail-fast          # dub test for every sub-package
-   nix run .#ci -- --verify --files README.md  # README examples match output
+   nix run .#ci -- test --fail-fast          # dub test for every sub-package
+   nix run .#ci -- examples verify --include-files README.md  # README examples match output
    ```
 
    Lint (link check, formatting) runs via the pre-commit hooks; make sure the

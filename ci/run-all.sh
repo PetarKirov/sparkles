@@ -7,16 +7,16 @@
 # .circleci/config.yml:
 #
 #   1. Flake checks (nix flake check)
-#   2. DUB sub-package unit tests under LDC (ci --test)
-#   3. DUB sub-package unit tests under DMD (ci --test)
-#   4. Standalone example files (ci --example-files)
+#   2. DUB sub-package unit tests under LDC (ci test)
+#   3. DUB sub-package unit tests under DMD (ci test)
+#   4. Standalone example files (ci examples standalone)
 #   5. OS-API windowing examples (X11 + Wayland + cursor-shapes)
-#   6. Extracted test modes (ci --test-extracted: --better-c, --wasm)
-#   7. Sanitizer tests (ci --test-sanitize; Linux LDC only)
+#   6. Extracted test modes (ci test --special-modes all: --better-c, --wasm)
+#   7. Sanitizer tests (ci test --sanitize address; Linux LDC only)
 #   8. Nix desktop packages & runnable examples (all-desktop, run-all-examples)
 #   9. Android APK closure (all-android; x86_64-linux only)
 #  10. Lint & local link check (prek run --all-files)
-#  11. Markdown runnable example verification (ci --verify)
+#  11. Markdown runnable example verification (ci examples verify)
 #  12. Documentation site build (yarn docs:build)
 #
 # Usage:
@@ -228,7 +228,7 @@ fi
 
 if [ "$skip_tests" -eq 0 ]; then
   run_stage "Unit tests (LDC)" \
-    env DC=ldc2 "${repo_root}/ci/run-batch.sh" 20m ci --test --fail-fast
+    env DC=ldc2 "${repo_root}/ci/run-batch.sh" 20m ci test --fail-fast
 fi
 
 # --- Stage 3: DUB Unit Tests (DMD) -----------------------------------------
@@ -236,7 +236,7 @@ fi
 if [ "$skip_tests" -eq 0 ] && [ "$skip_dmd" -eq 0 ]; then
   if ci_have dmd; then
     run_stage "Unit tests (DMD)" \
-      env DC=dmd "${repo_root}/ci/run-batch.sh" 20m ci --test --fail-fast
+      env DC=dmd "${repo_root}/ci/run-batch.sh" 20m ci test --fail-fast
   else
     ci_notice "Skipping DMD test suite pass (dmd not found on PATH)"
   fi
@@ -246,7 +246,7 @@ fi
 
 if [ "$skip_examples" -eq 0 ]; then
   run_stage "Standalone example files" \
-    "${repo_root}/ci/run-batch.sh" 20m ci --example-files --fail-fast
+    "${repo_root}/ci/run-batch.sh" 20m ci examples standalone --fail-fast
 fi
 
 # --- Stage 5: OS-API Windowing Examples ------------------------------------
@@ -272,7 +272,7 @@ fi
 
 if [ "$skip_tests" -eq 0 ]; then
   run_stage "Extracted test modes (--better-c, --wasm)" \
-    env DC=ldc2 "${repo_root}/ci/run-batch.sh" 20m ci --test-extracted --fail-fast
+    env DC=ldc2 "${repo_root}/ci/run-batch.sh" 20m ci test --special-modes all --fail-fast
 fi
 
 # --- Stage 7: Sanitizer tests (Linux LDC) ----------------------------------
@@ -280,9 +280,9 @@ fi
 if [ "$skip_tests" -eq 0 ]; then
   if [ "$(uname -s)" = "Linux" ]; then
     run_stage "Sanitizer tests (ASan, stackovf)" \
-      env DC=ldc2 "${repo_root}/ci/run-batch.sh" 45m ci --test-sanitize --fail-fast
+      env DC=ldc2 "${repo_root}/ci/run-batch.sh" 45m ci test --sanitize address --fail-fast
   else
-    ci_notice "Skipping --test-sanitize (Linux LDC only: nixpkgs LDC has no ASan runtime on Darwin)"
+    ci_notice "Skipping ci test --sanitize address (Linux LDC only: nixpkgs LDC has no ASan runtime on Darwin)"
   fi
 fi
 
@@ -324,7 +324,7 @@ fi
 
 if [ "$skip_examples" -eq 0 ] && ci_have nix; then
   run_stage "Markdown runnable examples verification" \
-    "${repo_root}/ci/run-batch.sh" 35m nix run .#ci -- --verify --fail-fast --include-files '**.md' --exclude-files 'libs/syntax/test/data/**' 'libs/source-view/test/data/**'
+    "${repo_root}/ci/run-batch.sh" 35m nix run .#ci -- examples verify --fail-fast --include-files '**.md' --exclude-files 'libs/syntax/test/data/**' 'libs/source-view/test/data/**'
 fi
 
 # --- Stage 12: Documentation Site Build ------------------------------------

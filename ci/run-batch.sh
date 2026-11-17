@@ -2,7 +2,7 @@
 #
 # Run a long batch command the way a CI runner wants it.
 #
-#   ci/run-batch.sh 20m ci --example-files --fail-fast
+#   ci/run-batch.sh 20m ci examples standalone --fail-fast
 #
 # Three wrappers, each fixing something CircleCI does differently:
 #

@@ -18,20 +18,20 @@ dependency "sparkles:event-horizon" path="../.."
 dependency "sparkles:wired" path="../.."
 // `writeInTreeDeps` selects in-tree dependencies at any depth.
 dependency "sparkles:wired-sdl-select" path="../.."
-// The fence audit (`--audit-fences`) folds fence labels through
+// The fence audit (`ci docs fences-audit`) folds fence labels through
 // `sparkles.syntax.ts.registry.canonicalLanguage` / `isPlainTextLabel` and
 // enumerates the grammar bundle through `GrammarRegistry`, rather than
 // duplicating the alias table here.
 dependency "sparkles:syntax" path="../.."
 // The docs-site sidebar/srcExclude data schema (sidebar.json /
-// docs-config.json) moved into the doc-site library; `--check-docs-sidebar`
-// and `--audit-fences` read it from there. Pure D, but note it is a
+// docs-config.json) moved into the doc-site library; `ci check sidebar`
+// and `ci docs fences-audit` read it from there. Pure D, but note it is a
 // sourceLibrary whose closure includes sparkles:twoslash and sparkles:ui.
 dependency "sparkles:docs" path="../.."
-// `--build-each-commit` drives git on a scratch worktree it names: `runGit`
+// `ci commits build-each` drives git on a scratch worktree it names: `runGit`
 // keeps an inherited `GIT_DIR` (a rebase `exec` step) from redirecting it.
 dependency "sparkles:build-primitives" path="../.."
-// `--check-wasm-modules` runs the WebAssembly modules' functions natively.
+// `ci check wasm-modules` runs the WebAssembly modules' functions natively.
 dependency "sparkles:text-wasm" path="../.."
 dependency "sparkles:table-wasm" path="../.."
 dependency "sparkles:wired-wasm" path="../.."

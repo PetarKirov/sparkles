@@ -3,7 +3,7 @@ Pre-flight gating.
 
 Before any tag is created (unless `--no-verify`), the tool reproduces the green
 checks from `docs/guidelines/release.md`: a clean working tree, on `main`, and a
-passing `ci --test` / `ci --verify`. Failures are collected and returned so
+passing `ci test` / `ci examples verify`. Failures are collected and returned so
 `app.d` can refuse to tag; per-check progress is reported through
 $(LREF PreflightProgress) callbacks so the app can drive a live checklist, and
 child `ci` output streams through the `output` callback as it is produced
@@ -82,12 +82,12 @@ PreflightResult runPreflight(
     }
     else
     {
-        step("ci --test",
-            () => runCi(ci, ["--test", "--fail-fast"], repoRoot, "ci --test",
+        step("ci test",
+            () => runCi(ci, ["test", "--fail-fast"], repoRoot, "ci test",
                 progress.output));
-        step("ci --verify README.md",
-            () => runCi(ci, ["--verify", "--files", "README.md"], repoRoot,
-                "ci --verify", progress.output));
+        step("ci examples verify README.md",
+            () => runCi(ci, ["examples", "verify", "--include-files", "README.md"], repoRoot,
+                "ci examples verify", progress.output));
     }
 
     return PreflightResult(

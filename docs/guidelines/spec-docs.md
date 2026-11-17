@@ -300,7 +300,7 @@ verification claim. Historical evidence remains historical after relevant change
 until revalidated. Commit hashes establish provenance, not correctness by themselves.
 
 A symbol, file or sub-package named in a requirement table's `Traces to` or
-`Evidence` column must exist in the tree: `ci --check-spec-evidence` resolves every
+`Evidence` column must exist in the tree: `ci check spec-evidence` resolves every
 one, as a pre-commit hook and in CI. Rename code and the rows citing it fail until
 they follow. A row whose status says it is not delivered yet (`not started`,
 `planned`, …) is exempt: its column names the design, not code that exists. See [the hook](./AGENTS.md#pre-commit-hooks-prek) for the backlog it
@@ -426,7 +426,7 @@ Review golden-output changes against the contract rather than blessing output bl
 Run applicable checks from the repository root:
 
 ```bash
-dub run :ci -- --check-docs-sidebar
+dub run :ci -- check sidebar
 yarn docs:build
 ```
 

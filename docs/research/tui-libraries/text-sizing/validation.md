@@ -176,10 +176,10 @@ across different fonts is not the same contract as cell-allocation equality.
 Run from the repository root; the in-tree CI helper avoids a stale installed copy:
 
 ```bash
-dub run :ci -- --verify --files docs/research/tui-libraries/text-sizing/validation.md
-dub run :ci -- --check-docs-sidebar
-dub run :ci -- --check-vcs-urls
-dub run :ci -- --check-blob-paths
+dub run :ci -- examples verify --include-files docs/research/tui-libraries/text-sizing/validation.md
+dub run :ci -- check sidebar
+dub run :ci -- check vcs-urls
+dub run :ci -- check blob-paths
 yarn docs:build
 ```
 

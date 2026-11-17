@@ -231,8 +231,8 @@ constraint in `footer-indexed-formats` is the one that will decide it.
 Each deep-dive owns its own primary sources and pinned citations; this umbrella
 cites none of its own. Grounding state at the last review: **590 GitHub blob
 citations across the tree, 495 verified to resolve at their pinned commit**
-against local clones (`ci --check-blob-paths`), every GitHub URL pinned to a
-40-character SHA (`ci --check-vcs-urls`), and **154 individually-recorded claims
+against local clones (`ci check blob-paths`), every GitHub URL pinned to a
+40-character SHA (`ci check vcs-urls`), and **154 individually-recorded claims
 that could not be verified**, each either dropped or explicitly marked on the
 page that raised it.
 

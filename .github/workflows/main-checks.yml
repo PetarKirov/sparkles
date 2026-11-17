@@ -14,7 +14,7 @@
 #
 # So: when the tree that landed equals the tree the pull request built, that
 # pull request's checks are a report about this exact content under a different
-# SHA, and `ci --mirror-checks` files them against the landed commit — names,
+# SHA, and `ci github mirror-checks` files them against the landed commit — names,
 # conclusions and links to the original jobs intact, provenance in each check's
 # summary. Nothing untested is claimed, and nothing is re-run.
 #
@@ -22,7 +22,7 @@
 # produced content nothing has built, and there is nothing honest to mirror.
 # Then, and only then, this calls the real `CI` workflow -- inline, so its jobs
 # report against this very commit. Measured over all
-# 333 merged pull requests (`ci --ci-stats --merges`): 75.7% mirrorable, 24.3%
+# 333 merged pull requests (`ci stats --merges`): 75.7% mirrorable, 24.3%
 # rebuilt — about 2.7 full runs a week against ~11 merges.
 name: Main branch checks
 
@@ -37,7 +37,7 @@ on:
   # convenient. `dry_run` defaults to true so pressing the button is safe:
   # nothing is filed and nothing is rebuilt, it just reports the decision.
   #
-  # `--mirror-checks` skips names the commit already carries, so a live re-run
+  # `ci github mirror-checks` skips names the commit already carries, so a live re-run
   # against a commit that was mirrored before adds nothing.
   workflow_dispatch:
     inputs:
@@ -100,7 +100,7 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
         run: |
           # shellcheck disable=SC2086 # DRY_RUN is one optional flag or empty
-          nix run .#ci-minimal -- --mirror-checks \
+          nix run .#ci-minimal -- github mirror-checks \
             --repo "$GITHUB_REPOSITORY" \
             --sha "$SHA" \
             --skip-check deploy \
@@ -206,7 +206,7 @@ jobs:
           git config --global "http.https://github.com/.extraheader" \
             "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           mkdir -p "$RUNNER_TEMP/records"
-          nix run .#ci-minimal -- --perf-append --perf-records "$RUNNER_TEMP/records" \
-            --perf-run-id "$RUN_ID" --perf-run-attempt "$ATTEMPT" --perf-run-date "$DATE" \
+          nix run .#ci-minimal -- perf append --records "$RUNNER_TEMP/records" \
+            --run-id "$RUN_ID" --run-attempt "$ATTEMPT" --run-date "$DATE" \
             --landed-commit "$SHA" --signing-key "$key" \
             --history-remote "https://github.com/$GITHUB_REPOSITORY.git"

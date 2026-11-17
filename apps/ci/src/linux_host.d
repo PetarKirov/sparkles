@@ -14,7 +14,7 @@ paths too; until then this dispatcher disables `external-builders` so a
 gated VM is not a hard failure, and relies on substitutes.
 
 $(B What runs in the guest is CI's dev shell, not just the `ci` binary.)
-`ci --test` links raylib, tree-sitter, libghostty-vt, SDL3 and the rest of
+`ci test` links raylib, tree-sitter, libghostty-vt, SDL3 and the rest of
 `devShells.ci`'s packages, so the guest needs that whole environment. The
 shell's output (`nix-shell-env`) is a derivation no cache holds for every
 system, and there is no builder to make it — but it is a $(I trivial)
@@ -172,7 +172,7 @@ bool alreadyOnHostSystem(string nixSystem) @safe pure nothrow @nogc
 }
 
 /**
-Strip `--host-system` / `--host-ci-rev` / `--linux-host-probe` from an argv
+Strip `--host-system` / `--host-ci-rev` from an argv
 so the inner Linux `ci` does not try to dispatch again (and so a cached Linux
 `ci` that does not yet know these flags is not fed them).
 */
@@ -183,8 +183,6 @@ string[] stripHostSystemArgs(in string[] args) @safe pure
     for (size_t i = 0; i < args.length; ++i)
     {
         const a = args[i];
-        if (a == "--linux-host-probe")
-            continue;
         if (a == "--host-system" || a == "--host-ci-rev")
         {
             if (i + 1 < args.length)
@@ -275,11 +273,11 @@ bool containerStatusIsRunning(string statusText) @safe pure
 @safe pure unittest
 {
     const stripped = stripHostSystemArgs([
-        "ci", "--test", "--host-system", "aarch64-linux", "--fail-fast",
-        "--linux-host-probe", "--host-system=x86_64-linux", "--no-coverage",
+        "ci", "test", "--host-system", "aarch64-linux", "--fail-fast",
+        "--host-system=x86_64-linux", "--no-coverage",
         "--host-ci-rev", "origin/main", "--host-ci-rev=HEAD",
     ]);
-    assert(stripped == ["ci", "--test", "--fail-fast", "--no-coverage"]);
+    assert(stripped == ["ci", "test", "--fail-fast", "--no-coverage"]);
 }
 
 @("linux_host.storePathsFromNixStdout.ignoresSavedSettings")
@@ -768,7 +766,7 @@ string[] containerRunCommand(
     const cmd = containerRunCommand(
         parseLinuxHostTarget("aarch64-linux"),
         "/private/tmp/sparkles-linux-host-1/enter.sh",
-        ["ci", "--test", "--host-system", "aarch64-linux", "--fail-fast"],
+        ["ci", "test", "--host-system", "aarch64-linux", "--fail-fast"],
         "/src",
         "/src/libs/base",
         LinuxHostSize(8, 16),
@@ -783,7 +781,7 @@ string[] containerRunCommand(
     assert(cmd.canFind("/private/tmp/sparkles-linux-host-1:/private/tmp/sparkles-linux-host-1:ro"));
     assert(cmd.canFind("/src/libs/base"));
     assert(cmd.canFind("DC=ldc2"));
-    assert(cmd[$ - 3 .. $] == ["/private/tmp/sparkles-linux-host-1/enter.sh", "--test", "--fail-fast"]);
+    assert(cmd[$ - 3 .. $] == ["/private/tmp/sparkles-linux-host-1/enter.sh", "test", "--fail-fast"]);
     assert(!cmd.canFind("--host-system"));
 }
 
@@ -791,12 +789,12 @@ string[] containerRunCommand(
 @safe pure unittest
 {
     const inMain = containerRunCommand(
-        parseLinuxHostTarget("aarch64-linux"), "/private/tmp/x/enter.sh", ["ci", "--test"],
+        parseLinuxHostTarget("aarch64-linux"), "/private/tmp/x/enter.sh", ["ci", "test"],
         "/src", "/src", LinuxHostSize(4, 8), "", "/src/.git");
     assert(!inMain.canFind("/src/.git:/src/.git:ro"));
 
     const linked = containerRunCommand(
-        parseLinuxHostTarget("aarch64-linux"), "/private/tmp/x/enter.sh", ["ci", "--test"],
+        parseLinuxHostTarget("aarch64-linux"), "/private/tmp/x/enter.sh", ["ci", "test"],
         "/src-wt", "/src-wt", LinuxHostSize(4, 8), "", "/src/.git");
     assert(linked.canFind("/src/.git:/src/.git:ro"));
 }
@@ -807,7 +805,7 @@ string[] containerRunCommand(
     const cmd = containerRunCommand(
         parseLinuxHostTarget("x86_64-linux"),
         "/private/tmp/x/enter.sh",
-        ["ci", "--test"],
+        ["ci", "test"],
         "/src", "/src",
         LinuxHostSize(4, 8),
         "/nix/store/darwin-ldc/bin/ldc2",

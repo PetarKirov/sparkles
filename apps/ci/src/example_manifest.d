@@ -1,7 +1,7 @@
 /**
  * Reading a standalone example's embedded dub single-file manifest.
  *
- * `--example-files` runs each tracked example with `dub run --single`. Some
+ * `ci examples standalone` runs each tracked example with `dub run --single`. Some
  * examples are platform-specific (e.g. the `io_uring` examples depend on the
  * Linux-only io_uring binding, `sparkles.event_horizon.sys.uring`). dub's
  * `platforms` directive is only advisory — it does not stop dub from

@@ -4,17 +4,17 @@
 
 ## At a glance
 
-|                                | [Determinate native builder][detsys] | [Apple `container`][container] | [nix-darwin linux-builder][darwin] | [IOHK nix-linux-builder][iohk] |
-| ------------------------------ | ------------------------------------ | ------------------------------ | ---------------------------------- | ------------------------------ |
-| Job                            | realize Linux drvs                   | run Linux processes            | realize Linux drvs                 | realize Linux drvs             |
-| Transport                      | VZ via `determinate-nixd`            | VZ, one VM per container       | QEMU SSH or VZ SSH                 | VZ via `external-builders`     |
-| `aarch64-linux`                | yes (gated)                          | `--arch arm64`                 | yes                                | yes                            |
-| `x86_64-linux`                 | yes (gated)                          | `--arch amd64 --rosetta`       | VZ+Rosetta / QEMU TCG              | Rosetta                        |
-| Runs `ci --test` in a worktree | no                                   | **yes**                        | only if you SSH in and install dub | no                             |
-| Builds uncached Linux drvs     | **yes**, if granted                  | not by itself                  | **yes**                            | **yes**, ungated               |
-| Persistent guest store         | opaque                               | no (ephemeral container)       | **yes**                            | host store via VirtioFS        |
-| Setup on this host             | configured, **HTTP 400**             | **works** (1.1.0)              | `/etc/nix/machines` missing        | not installed                  |
-| Interactive fail shell         | no                                   | `container exec` / machine     | `ssh builder@linux-builder`        | `nix-linux-shell`              |
+|                              | [Determinate native builder][detsys] | [Apple `container`][container] | [nix-darwin linux-builder][darwin] | [IOHK nix-linux-builder][iohk] |
+| ---------------------------- | ------------------------------------ | ------------------------------ | ---------------------------------- | ------------------------------ |
+| Job                          | realize Linux drvs                   | run Linux processes            | realize Linux drvs                 | realize Linux drvs             |
+| Transport                    | VZ via `determinate-nixd`            | VZ, one VM per container       | QEMU SSH or VZ SSH                 | VZ via `external-builders`     |
+| `aarch64-linux`              | yes (gated)                          | `--arch arm64`                 | yes                                | yes                            |
+| `x86_64-linux`               | yes (gated)                          | `--arch amd64 --rosetta`       | VZ+Rosetta / QEMU TCG              | Rosetta                        |
+| Runs `ci test` in a worktree | no                                   | **yes**                        | only if you SSH in and install dub | no                             |
+| Builds uncached Linux drvs   | **yes**, if granted                  | not by itself                  | **yes**                            | **yes**, ungated               |
+| Persistent guest store       | opaque                               | no (ephemeral container)       | **yes**                            | host store via VirtioFS        |
+| Setup on this host           | configured, **HTTP 400**             | **works** (1.1.0)              | `/etc/nix/machines` missing        | not installed                  |
+| Interactive fail shell       | no                                   | `container exec` / machine     | `ssh builder@linux-builder`        | `nix-linux-shell`              |
 
 ## Consensus
 

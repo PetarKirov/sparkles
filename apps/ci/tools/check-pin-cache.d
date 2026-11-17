@@ -199,7 +199,7 @@ or plan the CI builds of those that are not.
                             list the missing outputs, and write matrix and
                             any as job outputs.
     --costs <file>          The recorded build costs
-                            (ci --write-pin-costs writes it; default: none).
+                            (ci cache pin-costs writes it; default: none).
     --github-output <file>  Append the plan's outputs to this file (the job's
                             $GITHUB_OUTPUT) rather than printing them.
     -h, --help              Show this help.

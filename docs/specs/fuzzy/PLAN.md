@@ -181,4 +181,4 @@ Fast iteration uses `dub test :base`, `dub test :event-horizon`,
 `dub test :fuzzy`, and `dub test :hue`. Before a milestone is declared done,
 run its checked/benchmark gates, the Linux allocation audit
 (`dub test :fuzzy --config=allocation-audit`), the docs build/sidebar checks,
-and `nix run .#ci -- --test --fail-fast`.
+and `nix run .#ci -- test --fail-fast`.

@@ -1,5 +1,5 @@
 /++
-`--check-opaque-recipes`: the recipe entries no input set can hold
+`ci check opaque-recipes`: the recipe entries no input set can hold
 ([design](../../../docs/specs/build-primitives/build-graph/fileset-native-workspace.md)
 BGW3, BGW4), each with what it costs and what to write instead.
 

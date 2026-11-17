@@ -74,7 +74,7 @@ docs/.vitepress/cache/
 **/.yarn/build-state.yml
 
 # The site's WebAssembly modules: built from the tree (nix build .#docs-wasm) and
-# staged by docs:dev / docs:build (`ci --stage-docs-wasm`), never committed (TCM3)
+# staged by docs:dev / docs:build (`ci docs stage-wasm`), never committed (TCM3)
 docs/public/spk-text.wasm
 docs/public/spk-table.wasm
 docs/public/spk-wired.wasm

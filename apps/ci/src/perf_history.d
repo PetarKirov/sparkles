@@ -680,7 +680,7 @@ unittest
     const remote = "file://" ~ remoteDir;
 
     enum run = `{"schema":"sparkles.perf.run","version":1,"run":"%s","origin":"ci",`
-        ~ `"invocation":{"command":"--test","options":[],"placement":"%s"}}`;
+        ~ `"invocation":{"command":"test","options":[],"placement":"%s"}}`;
     Append rec(string id, string placement, ulong wall) => Append("runs/2026/11/17/0123456789ab-" ~ id,
         RecordFiles(id, ["run.json": format(run, id, placement),
             "tasks/0.json": format(`{"tasks":[{"id":"test:base:unittest:serial","metrics":{"task.wall":%d}}]}`,

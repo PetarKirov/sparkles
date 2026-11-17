@@ -83,7 +83,7 @@ Committed fixtures and the byte builder for hostile input.
 reported; the HarfBuzz differential suite for parsing passes in the test-only
 `sparkles:font-oracle` package, which links HarfBuzz so that `sparkles:font`'s
 own configurations never do (`FTA7`); the mutation corpus runs clean under
-AddressSanitizer, as `ci --test-sanitize` builds it.
+AddressSanitizer, as `ci test --sanitize address` builds it.
 
 **State.** Done on 2026-10-06; the evidence and its remaining gaps are in
 [`testing.md`](./testing.md#evidence-ledger).

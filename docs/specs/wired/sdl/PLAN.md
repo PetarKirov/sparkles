@@ -264,7 +264,7 @@ report no change on the current tree; on fixture recipes with comments,
 CRLF and unusual layout, each tool's diff is exactly the intended lines.
 Where the old tools were right, their output is the oracle; where they were
 wrong — a commented `buildType "checked"`, a `}` not in column zero, a whole
-file stripped — the fixture pins the fix. `ci --test` is green.
+file stripped — the fixture pins the fix. `ci test` is green.
 
 ### S16 — One-pass reader
 
@@ -307,7 +307,7 @@ text, and a `case` label on a raw `switch`; and, as negative fixtures,
 concatenated prose holding a marker, and the
 same comparisons on `node.name`, a `foreach` variable over a JSON object, a
 lambda parameter over `valuesOf`, and a local initialized from
-`qualifiedName.localName`. `ci --check-adhoc-sdl` passes on the tree with
+`qualifiedName.localName`. `ci check adhoc-sdl` passes on the tree with
 no allowlist entry that the rule covers; any entry left states why no rule
 can tell it from SDL work. The legacy-setting removal in
 `standardize-build-settings` matches nodes by name, values and attributes,
@@ -529,14 +529,14 @@ index. The re-lexed region is usually a single line.
 
 Every gate from S11 to S18 holds on this branch, delivered as one pull request.
 
-| Milestone | Gate                                                                                           | Evidence                                                                                                                                                                                                                                                           |
-| --------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| S11       | three rows under `-b bench`, verified against committed fingerprints; first results committed  | `sdl.parse`, `sdl.decode`, `sdl.encode` in `libs/wired/bench/runtime/src/sparkles/wired_bench/sdl.d`; datasets pinned in `nix/packages/wired-bench-datasets.nix`; `results/2026-10-27-ryzen9-7940hx-x86-64-v4-sdl-baseline.json`                                   |
-| S12       | TXE oracles; dmd-fmt tests unchanged; line-index tests unchanged plus SDL newlines and columns | `sparkles.base.text.edits` (concatenation reference, pairwise validity, monotonic mapping, `@nogc`); dmd-fmt's `mapCursor` tests; `sparkles.base.text.lineindex`                                                                                                   |
-| S13       | positions, errors and conformance unchanged; extents and comments against annotated fixtures   | `sdl.reader.layout.positionsMatchTheScan`, `.extentFixtures`, `.commentsInSourceOrder`; `sdl.conformance.pinnedDub`; SPEC §4.1, §4.2 and §7 amended                                                                                                                |
-| S14       | SDE1–SDE5, SDE7, SDE8, SDE10; `edit` row; host lines past a lone CR or U+2028                  | `sdl.editor.*`, including `properties.repositoryRecipes` (SDE1 and SDE2 over every recipe, mutation-checked), `nogc`, `replacementsSurviveGrowthAndMoves`, `embeddedRecipe`; `sdl.edit`; `readDubManifest.hostLinesPastLoneCrAndU2028`                             |
-| S15       | tools report no change on the tree; old-tool defects pinned; SDE9 audit and re-inventory       | `standardize-build-settings --check`: 0 of 152; `add-checked-buildtype`: 0 of 119; `buildSettings.normalize.lossless`, `addChecked.withChecked`; `ci --check-adhoc-sdl` with six reviewed exceptions; [editing §7](./editing.md#7-migration-coverage) re-inventory |
-| S16–S18   | each optimization's before and after on every row; no regression                               | the table below; SDP7 suites green throughout                                                                                                                                                                                                                      |
+| Milestone | Gate                                                                                           | Evidence                                                                                                                                                                                                                                                         |
+| --------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S11       | three rows under `-b bench`, verified against committed fingerprints; first results committed  | `sdl.parse`, `sdl.decode`, `sdl.encode` in `libs/wired/bench/runtime/src/sparkles/wired_bench/sdl.d`; datasets pinned in `nix/packages/wired-bench-datasets.nix`; `results/2026-10-27-ryzen9-7940hx-x86-64-v4-sdl-baseline.json`                                 |
+| S12       | TXE oracles; dmd-fmt tests unchanged; line-index tests unchanged plus SDL newlines and columns | `sparkles.base.text.edits` (concatenation reference, pairwise validity, monotonic mapping, `@nogc`); dmd-fmt's `mapCursor` tests; `sparkles.base.text.lineindex`                                                                                                 |
+| S13       | positions, errors and conformance unchanged; extents and comments against annotated fixtures   | `sdl.reader.layout.positionsMatchTheScan`, `.extentFixtures`, `.commentsInSourceOrder`; `sdl.conformance.pinnedDub`; SPEC §4.1, §4.2 and §7 amended                                                                                                              |
+| S14       | SDE1–SDE5, SDE7, SDE8, SDE10; `edit` row; host lines past a lone CR or U+2028                  | `sdl.editor.*`, including `properties.repositoryRecipes` (SDE1 and SDE2 over every recipe, mutation-checked), `nogc`, `replacementsSurviveGrowthAndMoves`, `embeddedRecipe`; `sdl.edit`; `readDubManifest.hostLinesPastLoneCrAndU2028`                           |
+| S15       | tools report no change on the tree; old-tool defects pinned; SDE9 audit and re-inventory       | `standardize-build-settings --check`: 0 of 152; `add-checked-buildtype`: 0 of 119; `buildSettings.normalize.lossless`, `addChecked.withChecked`; `ci check adhoc-sdl` with six reviewed exceptions; [editing §7](./editing.md#7-migration-coverage) re-inventory |
+| S16–S18   | each optimization's before and after on every row; no regression                               | the table below; SDP7 suites green throughout                                                                                                                                                                                                                    |
 
 Retired instructions per input byte (`--perf`, `-b bench`, Ryzen 9 7940HX,
 LDC 1.42), the SDP2 metric. The S11 column precedes S13; S13 changed no row.
@@ -574,7 +574,7 @@ sense above.
 | Full attributed DUB scalar/parser/recipe corpus | `sdl.conformance.pinnedDub`: every string literal in the `unittest` blocks of DUB's SDLang lexer, parser, AST, and token modules and its recipe module (570 unique inputs) plus 21 original fixtures, compared on tokens, payloads, and trees |
 | Fuzz and regression seeds                       | `sdl.reader.multiByteDeterministicFuzzSmoke`, `sdl.writer.laws.generatedDocuments`, `sdl.lexer.pinnedDubCorpusRegressions`                                                                                                                    |
 | Typed properties                                | `wired.sdl.codec.roundTripLaw.generated`, `wired.sdl.codec.audit.roundTripPredicate`                                                                                                                                                          |
-| `dub test :wired` (debug)                       | green, 275 tests; the full `ci --test` passes all 59 packages                                                                                                                                                                                 |
+| `dub test :wired` (debug)                       | green, 275 tests; the full `ci test` passes all 59 packages                                                                                                                                                                                   |
 | `dub build :wired -b checked`                   | green                                                                                                                                                                                                                                         |
 | Document and typed round-trip laws              | the law tests above and `sdl.writer.laws.canonicalTargetsFullProfile`                                                                                                                                                                         |
 | JSON conformance and byte goldens unchanged     | `conformance.jsonTestSuite` and `conformance.nativejsonBenchmark` run against `$JSON_TEST_SUITE`; JSON goldens pass unchanged                                                                                                                 |
@@ -583,7 +583,7 @@ sense above.
 | API grep against SPEC §2/§11, no DUB type       | `sdl.conformance.publicSurface`; every public name is named in the SPEC, and the role projection is package-internal                                                                                                                          |
 | DDoc                                            | every public declaration and member is documented (compiler JSON audit)                                                                                                                                                                       |
 | Source attributes                               | no whole-function or whole-template `@trusted` remains; each trust wraps one operation; typed decode and encode are `@safe pure` (`wired.sdl.codec.safePure`)                                                                                 |
-| Allocator ownership                             | `sdl.reader.allocatorFailureRollbackEveryBlock`; the sanitizer suite (`ci --test-sanitize`) is clean                                                                                                                                          |
+| Allocator ownership                             | `sdl.reader.allocatorFailureRollbackEveryBlock`; the sanitizer suite (`ci test --sanitize address`) is clean                                                                                                                                  |
 | Library documentation                           | [tutorial](../../../libs/wired/tutorial/sdl-getting-started.md), four how-to guides, [reference](../../../libs/wired/reference/sdl.md), and [explanation](../../../libs/wired/explanation/sdl-design.md)                                      |
 
 Running the full corpus found three disagreements with DUB, all fixed: `-.5`

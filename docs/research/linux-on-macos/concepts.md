@@ -2,7 +2,7 @@
 
 Three different jobs share the phrase "Linux on macOS". Mixing them up is
 how `nix build nixpkgs#legacyPackages.aarch64-linux.hello` succeeding is
-mistaken for `ci --test` having run on Linux.
+mistaken for `ci test` having run on Linux.
 
 ## Substitute
 
@@ -57,7 +57,7 @@ the ABI and syscall table differ. `file` on the substituted `hello` is
 not a run. To execute you need a Linux kernel:
 
 - Determinate / nix-darwin builders execute **only as a derivation
-  builder**. There is no interactive `ci --test` shell.
+  builder**. There is no interactive `ci test` shell.
 - Apple `container` (and Containerization) boot a Linux VM per
   container. Bind-mount `/nix/store` and the ELF's interpreter
   (`ld-linux-*.so.1`, itself in the store) works. Observed:
@@ -70,10 +70,10 @@ not a run. To execute you need a Linux kernel:
 
   The same for the x86_64 `hello` with `--arch amd64 --rosetta`.
 
-`ci --test` is execute, not build: it is `dub test` in a writable
+`ci test` is execute, not build: it is `dub test` in a writable
 working tree, using a D compiler on `PATH`. The Linux `packages.ci`
 wrapper puts `ldc`, `dub`, and `git` on `PATH`. Combined with a store
-bind-mount, that _is_ a Linux `ci --test`.
+bind-mount, that _is_ a Linux `ci test`.
 
 ## The store bind-mount
 
@@ -89,7 +89,7 @@ image for `/build` because Apple's VirtioFS does not honour Linux
 
 ## Enter a dev shell without building it
 
-`ci --test` on CI runs inside `devShells.ci`: raylib, tree-sitter,
+`ci test` on CI runs inside `devShells.ci`: raylib, tree-sitter,
 libghostty-vt, SDL3, elfutils and the rest are on `PKG_CONFIG_PATH` and the
 linker path because stdenv's setup hooks put them there. The `ci` wrapper
 alone is not that environment — the first Linux run here died linking

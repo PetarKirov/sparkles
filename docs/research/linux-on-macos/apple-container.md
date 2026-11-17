@@ -78,7 +78,7 @@ available if a custom kernel is installed.
 5. **Availability.** Installed (`~/.nix-profile/bin/container`), works
    after `container system start --enable-kernel-install`.
 6. **Interactive vs derivation.** Interactive and one-shot commands.
-   The right tool for `ci --test`.
+   The right tool for `ci test`.
 
 ## Strengths
 

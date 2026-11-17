@@ -1,7 +1,7 @@
 /**
  * Shared helpers for the `examples/valgrind-*.d` probes.
  *
- * Deliberately one directory *above* `examples/`: `ci --example-files` globs
+ * Deliberately one directory *above* `examples/`: `ci examples standalone` globs
  * `docs/research/sanitizers/examples/*.d`, and a git pathspec's `*` matches
  * `/` too — so anything under `examples/`, including a subdirectory, is picked
  * up and run as an example. This file has no `main` and no `dub.sdl` header,

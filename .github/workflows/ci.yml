@@ -64,9 +64,9 @@ concurrency:
 jobs:
   # The test shards come from data, not from this file (CIC14, apps/ci PLAN
   # M3a). `ci/placements.json` declares each placement: its system, compiler,
-  # test mode, shard count and runner. `ci --list-placements` turns that into
+  # test mode, shard count and runner. `ci placements list` turns that into
   # one matrix per mode, and names the `refs/perf/data` commit every shard
-  # packs from. Each shard then runs `ci --test --placement P --shard K/N`,
+  # packs from. Each shard then runs `ci test --placement P --shard K/N`,
   # which packs the placement's packages longest first by the median wall time
   # of their last five recorded runs (observability OD21), so no workflow
   # names a package and a package added to dub.sdl is tested without editing
@@ -93,7 +93,7 @@ jobs:
 
       - name: List the placements and their history
         id: plan
-        run: nix run .#ci-minimal -- --list-placements --github-output "$GITHUB_OUTPUT"
+        run: nix run .#ci-minimal -- placements list --github-output "$GITHUB_OUTPUT"
 
   test:
     name: test (${{ matrix.placement }}, ${{ matrix.shard }})
@@ -131,7 +131,7 @@ jobs:
             ${{ matrix.system }}-dub-
 
       - name: Test the shard's packages
-        run: ci --test --fail-fast --placement "$PLACEMENT" --shard "$SHARD" --history-tip "$TIP"
+        run: ci test --fail-fast --placement "$PLACEMENT" --shard "$SHARD" --history-tip "$TIP"
         env:
           # The compiler the placement tests with; both are on PATH via the
           # `ci` dev shell, and `ci` itself embeds dmd.
@@ -269,7 +269,7 @@ jobs:
         if: runner.os == 'Linux'
         run: dub test :terminal --compiler=${{ matrix.DC }} -c unittest-raylib
 
-      # `ci --test` without the `ci` helper: `dub test` per allowlisted
+      # `ci test` without the `ci` helper: `dub test` per allowlisted
       # sub-package, `-t 1` then `-t 0`, under Git Bash so the script shares
       # ci/lib/common.sh with CircleCI's bash.exe.
       - name: Build and test with dub (Windows)
@@ -300,7 +300,7 @@ jobs:
           if [ "$RUNNER_OS" = Linux ]; then
             dub run --single apps/ci/tools/prepare-event-horizon-comparisons.d --temp-build -b checked
           fi
-          ci --example-files --fail-fast
+          ci examples standalone --fail-fast
 
       # sparkles:shaders' agreement evidence (SHV7, SHF4): a probe unit compiled
       # by shader-compile runs on Mesa's software rasterizer under Xvfb, and its
@@ -333,7 +333,7 @@ jobs:
 
       # OS-API research examples (docs/research/.../os-apis). These are multi-file
       # dub packages (ImportC), not single-file, so they are outside `ci
-      # --example-files`; build/run the Linux ones here in the devshell. X11 opens a
+      # ci examples standalone`; build/run the Linux ones here in the devshell. X11 opens a
       # real window under xvfb; Wayland has no compositor in CI so it prints SKIP and
       # exits 0. (macOS/iOS/Android are verified out of band — see the surveys.)
       - name: Build & run OS-API windowing examples (X11 + Wayland)
@@ -417,13 +417,13 @@ jobs:
           done
 
   # The `@slow` unittests (sparkles:test-runner's marker for tests that take
-  # minutes, such as the font oracle's corpus sweeps). `ci --test` leaves them
+  # minutes, such as the font oracle's corpus sweeps). `ci test` leaves them
   # out (`--skip-slow`), and they run here instead: one job per test and per
   # `test` leg, so a sweep runs beside the suite rather than adding its minutes
   # to every leg of it. Before this, `:font-oracle` alone took ~35 of the
   # aarch64-linux leg's 120 minutes and pushed macOS past its 90.
   #
-  # The matrix comes from the sources (`ci --list-slow-tests`), so it exists
+  # The matrix comes from the sources (`ci slow-tests list`), so it exists
   # before anything is built; `.#ci-minimal` suffices for that scan. Each job
   # then checks that its package's test binary lists the same slow tests as
   # the scan did, so a test the scan misses fails here instead of going unrun.
@@ -446,7 +446,7 @@ jobs:
 
       - name: Scan the sources for @slow tests
         id: list
-        run: nix run .#ci-minimal -- --list-slow-tests
+        run: nix run .#ci-minimal -- slow-tests list
 
   slow-tests:
     name: slow (${{ matrix.leg.system }}, ${{ matrix.leg.DC }}, ${{ matrix.slow.test }})
@@ -455,7 +455,7 @@ jobs:
       fail-fast: false
       matrix:
         # The `test` job's Nix legs. Windows is left out as it is from
-        # `ci --test`: ci/test-windows.sh runs its own package list.
+        # `ci test`: ci/test-windows.sh runs its own package list.
         leg:
           - { runner: ubuntu-latest, system: x86_64-linux, DC: ldc2 }
           - { runner: ubuntu-latest, system: x86_64-linux, DC: dmd }
@@ -495,13 +495,13 @@ jobs:
             ${{ matrix.leg.system }}-dub-
 
       - name: Run the slow test
-        run: ci --test-slow --packages "$SLOW_PACKAGE" --tests "$SLOW_TEST"
+        run: ci test --slow --from "$SLOW_PACKAGE" --tests "$SLOW_TEST"
         env:
           DC: ${{ matrix.leg.DC }}
           SLOW_PACKAGE: ${{ matrix.slow.package }}
           SLOW_TEST: ${{ matrix.slow.test }}
 
-  # The test runner's extracted-test modes. `--test` does not cover these: a
+  # The test runner's extracted-test modes. `ci test` does not cover these: a
   # @betterC test runs as an ordinary unittest there, and only `--better-c`
   # additionally extracts it, compiles it without druntime, and runs the
   # result — so a break in the extraction, the -betterC codegen, or the wasm32
@@ -546,11 +546,11 @@ jobs:
 
       # Both modes normally *skip* when their toolchain is missing, which is
       # right on a contributor's machine and exactly wrong here. `ci
-      # --test-extracted` passes the runner's `--require-toolchain`, turning
+      # ci test --special-modes all` passes the runner's `--require-toolchain`, turning
       # any such skip into a failure — without it a missing wasm-ld would
       # leave this job green having run nothing.
       - name: Run --better-c and --wasm for every sub-package that uses them
-        run: ci --test-extracted --fail-fast --placement "$PLACEMENT"
+        run: ci test --special-modes all --fail-fast --placement "$PLACEMENT"
         env:
           DC: ldc2
           PLACEMENT: ${{ matrix.placement }}
@@ -617,7 +617,7 @@ jobs:
             x86_64-linux-asan-dub-
 
       - name: Run tests under ASan
-        run: ci --test-sanitize --fail-fast --placement "$PLACEMENT" --shard "$SHARD" --history-tip "$TIP"
+        run: ci test --sanitize address --fail-fast --placement "$PLACEMENT" --shard "$SHARD" --history-tip "$TIP"
         env:
           DC: ldc2
           PLACEMENT: ${{ matrix.placement }}
@@ -920,7 +920,7 @@ jobs:
         run: |
           # The pre-commit shell exposes the packaged verifier, not DUB.
           nix develop .#ci --command dub run --single apps/ci/tools/prepare-event-horizon-comparisons.d --temp-build -b checked
-          nix run .#ci -- --verify --fail-fast --include-files '**.md' --exclude-files 'libs/syntax/test/data/**' 'libs/source-view/test/data/**'
+          nix run .#ci -- examples verify --fail-fast --include-files '**.md' --exclude-files 'libs/syntax/test/data/**' 'libs/source-view/test/data/**'
 
       - name: Save lychee cache
         if: always()
@@ -1257,12 +1257,12 @@ jobs:
           use-nix-cache: false
 
       - name: Every cited symbol resolves
-        run: nix run .#ci-minimal -- --check-spec-evidence
+        run: nix run .#ci-minimal -- check spec-evidence
 
       # Same shape of check, same job: it reads the credits document and the
       # build inputs, nothing more (docs/specs/terminal/pages.md TPG14).
       - name: Every shipped component is credited
-        run: nix run .#ci-minimal -- --check-credits
+        run: nix run .#ci-minimal -- check credits
 
   # TC23 (docs/specs/toolchain/SPEC.md): a lock update merges only once the
   # toolchain it names is in the R2 cache, the cache of record, for every
@@ -1302,7 +1302,7 @@ jobs:
         id: plan
         run: |
           # Each pin's cost is the median of its recorded builds on refs/perf/data.
-          nix run .#ci-minimal -- --write-pin-costs "$RUNNER_TEMP/pin-costs.json"
+          nix run .#ci-minimal -- cache pin-costs "$RUNNER_TEMP/pin-costs.json"
           nix run .#toolchain-pin-check -- --plan --costs "$RUNNER_TEMP/pin-costs.json" \
             --github-output "$GITHUB_OUTPUT"
 
@@ -1351,7 +1351,7 @@ jobs:
           read -ra pins <<< "$PINS"
           for i in "${!installables[@]}"; do
             start=$SECONDS
-            nix run .#ci-minimal -- --record-task "pin-build:${pins[$i]}" \
+            nix run .#ci-minimal -- perf record "pin-build:${pins[$i]}" \
               --placement "pin-build-$SYSTEM" -- \
               ci/with-cache.sh nix build --no-link --print-build-logs "${installables[$i]}"
             printf '%s on %s: built in %d min\n' "${pins[$i]}" "$RUNNER_OS/$RUNNER_ARCH" \

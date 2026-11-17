@@ -1,5 +1,5 @@
 /**
-`ci --test --watch` and `ci --build --watch` (design BGW13–BGW15): after
+`ci test --watch` and `ci test --build-only --watch` (design BGW13–BGW15): after
 each change, the packages whose input sets the change reaches are tested
 or built again, as a run of the task executor, and nothing else.
 

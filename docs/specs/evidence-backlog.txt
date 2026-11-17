@@ -1,7 +1,7 @@
-# Spec evidence that resolves nowhere, as of when `ci --check-spec-evidence`
+# Spec evidence that resolves nowhere, as of when `ci check spec-evidence`
 # became a gate. Each line is `file id token`, and the list may only shrink:
 # fix a row (cite what satisfies it, or give an undelivered one its true
 # status) and delete its line. A new unresolved citation fails the check,
 # and so does a line here that resolves now. After a batch of fixes,
-# `ci --check-spec-evidence --update-spec-evidence-backlog` rewrites it; a
+# `ci fix spec-evidence-backlog` rewrites it; a
 # line that rewrite ADDS is a new stale citation, to fix instead.

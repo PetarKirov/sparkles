@@ -16,7 +16,7 @@ The concurrency substrate macOS actually runs on: a user-space queue library who
 > **Platform.** Darwin (macOS, iOS, tvOS, watchOS) is the native target and the only one where the kernel half exists. `swift-corelibs-libdispatch` builds the same source on Linux (epoll + a user-space thread-pool monitor) and Windows (a bespoke backend) — see [Portability](#portability-the-same-source-without-the-kernel-half). This page is read against the tree at [`f92e811`][sc-tree], cross-checked against the macOS 14.4 SDK headers and measured on macOS 26.6 / Apple M4 Max.
 
 > [!IMPORTANT]
-> Six standalone D programs in `examples/` back the claims below. They are macOS-gated (`platforms "osx"`) and run on the macOS leg of `ci --example-files`, so a behavioural claim on this page that stops holding turns CI red. Each asserts its invariant rather than merely printing it.
+> Six standalone D programs in `examples/` back the claims below. They are macOS-gated (`platforms "osx"`) and run on the macOS leg of `ci examples standalone`, so a behavioural claim on this page that stops holding turns CI red. Each asserts its invariant rather than merely printing it.
 
 ---
 
@@ -496,7 +496,7 @@ Every claim above with a number attached comes from `examples/`:
 | [`source-timer-leeway.d`](./examples/source-timer-leeway.d)     | Leeway drift bounded above, never early                                                 |
 | [`target-queue-funnel.d`](./examples/target-queue-funnel.d)     | Retargeting converts concurrent lanes into one serial context                           |
 
-They run under `nix run .#ci -- --example-files` on macOS and are skipped by the platform gate on Linux.
+They run under `nix run .#ci -- examples standalone` on macOS and are skipped by the platform gate on Linux.
 
 ---
 

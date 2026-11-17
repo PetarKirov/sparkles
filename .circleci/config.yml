@@ -36,7 +36,7 @@ executors:
       # `nproc` and /proc/meminfo report the *host's* resources here, not the
       # 4 vCPU / 15 GB this class actually gets — the limit is a cgroup, not a
       # right-sized VM. `ci` sizes its *markdown*-example pool from those
-      # numbers (the `--verify` path in the lint job; `--example-files` is a
+      # numbers (the `ci examples verify` path in the lint job; `ci examples standalone` is a
       # sequential loop and unaffected), so without this it fans out to its
       # 12-job cap on 4 real cores. Pin it to the class instead.
       SPARKLES_CI_JOBS: 4
@@ -232,17 +232,17 @@ jobs:
           # are on PATH via the `default` devShell.
           name: Build and test with dub
           command: >-
-            ci/run-batch.sh 20m ci --test --fail-fast --placement x86_64-linux-<< parameters.dc >>
+            ci/run-batch.sh 20m ci test --fail-fast --placement x86_64-linux-<< parameters.dc >>
             --shard "$((CIRCLE_NODE_INDEX + 1))/$CIRCLE_NODE_TOTAL"
           no_output_timeout: 20m
       - run:
           name: Build and run examples
-          command: if [ "$CIRCLE_NODE_INDEX" = 0 ]; then ci/run-batch.sh 20m ci --example-files --fail-fast; fi
+          command: if [ "$CIRCLE_NODE_INDEX" = 0 ]; then ci/run-batch.sh 20m ci examples standalone --fail-fast; fi
           no_output_timeout: 20m
       - when:
           # OS-API research examples (docs/research/.../os-apis). These are
           # multi-file dub packages (ImportC), not single-file, so they fall
-          # outside `ci --example-files`. X11 opens a real window under xvfb;
+          # outside `ci examples standalone`. X11 opens a real window under xvfb;
           # Wayland has no compositor here, so it prints SKIP and exits 0.
           # (macOS/iOS/Android are verified out of band — see the surveys.)
           condition:
@@ -288,16 +288,16 @@ jobs:
       - run:
           name: Build and test with dub
           command: >-
-            ci/run-batch.sh 20m ci --test --fail-fast --placement aarch64-darwin-ldc2
+            ci/run-batch.sh 20m ci test --fail-fast --placement aarch64-darwin-ldc2
             --shard "$((CIRCLE_NODE_INDEX + 1))/$CIRCLE_NODE_TOTAL"
           no_output_timeout: 20m
       - run:
           name: Build and run examples
-          command: if [ "$CIRCLE_NODE_INDEX" = 0 ]; then ci/run-batch.sh 20m ci --example-files --fail-fast; fi
+          command: if [ "$CIRCLE_NODE_INDEX" = 0 ]; then ci/run-batch.sh 20m ci examples standalone --fail-fast; fi
           no_output_timeout: 20m
       - save_dub_cache
 
-  # The test runner's extracted-test modes. `--test` does not cover these: a
+  # The test runner's extracted-test modes. `ci test` does not cover these: a
   # @betterC test runs as an ordinary unittest there, and only `--better-c`
   # additionally extracts it, compiles it without druntime, and runs the
   # result — so a break in the extraction, the -betterC codegen, or the wasm32
@@ -318,11 +318,11 @@ jobs:
       - run:
           # Both modes normally *skip* when their toolchain is missing, which
           # is right on a contributor's machine and exactly wrong here.
-          # `--test-extracted` passes the runner's `--require-toolchain`,
+          # `ci test --special-modes all` passes the runner's `--require-toolchain`,
           # turning any such skip into a failure — without it a missing wasm-ld
           # would leave this job green having run nothing.
           name: Run --better-c and --wasm for every sub-package that uses them
-          command: ci/run-batch.sh 20m ci --test-extracted --fail-fast
+          command: ci/run-batch.sh 20m ci test --special-modes all --fail-fast
           no_output_timeout: 20m
       - save_dub_cache
 
@@ -345,7 +345,7 @@ jobs:
       - run:
           name: Run tests under ASan
           command: >-
-            ci/run-batch.sh 45m ci --test-sanitize --fail-fast --placement x86_64-linux-sanitize
+            ci/run-batch.sh 45m ci test --sanitize address --fail-fast --placement x86_64-linux-sanitize
             --shard "$((CIRCLE_NODE_INDEX + 1))/$CIRCLE_NODE_TOTAL"
           no_output_timeout: 45m
       - save_asan_dub_cache
@@ -489,7 +489,7 @@ jobs:
           no_output_timeout: 35m
       - run:
           name: Verify markdown runnable examples
-          command: ci/run-batch.sh 35m nix run .#ci -- --verify --fail-fast --include-files '**.md' --exclude-files 'libs/syntax/test/data/**' 'libs/source-view/test/data/**'
+          command: ci/run-batch.sh 35m nix run .#ci -- examples verify --fail-fast --include-files '**.md' --exclude-files 'libs/syntax/test/data/**' 'libs/source-view/test/data/**'
           no_output_timeout: 35m
       - save_cache:
           # lychee's cache must keep growing, and CircleCI never overwrites an

@@ -150,7 +150,7 @@ source links, issues, papers). Cross-cutting grounding:
   and the schema source of a local `effect-smol` checkout, pinned at commit
   `3a1128c7684e04d34d9f541f77adaac38a513056`.
 - The [wired baseline][wired-baseline] embeds runnable probes (compiled and run
-  by `ci --verify`) for its load-bearing claims.
+  by `ci examples verify`) for its load-bearing claims.
 - The survey's synthesis and delta live in [comparison.md][comparison]; shared
   vocabulary in [concepts.md][concepts].
 

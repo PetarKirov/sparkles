@@ -20,7 +20,7 @@ names, so `REV` must be on that flake's remote. It then commits the module
 to the orphan branch `nix-wasm-modules` as `REV/spk-dub-manifest.wasm`, and
 rewrites the pin with that commit's raw URL and the module's hash. Without
 `--push`, the branch commit stays local, and the URL it writes resolves only
-after the commit is pushed. `ci --check-nix-wasm` rebuilds the pinned
+after the commit is pushed. `ci check nix-wasm` rebuilds the pinned
 revision and requires the published bytes.
 
 Move the pin, in the same pull request, whenever the agreement check fails

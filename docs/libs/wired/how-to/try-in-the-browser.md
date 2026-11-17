@@ -26,7 +26,7 @@ this page.
 
 The page loads `spk-wired.wasm`, built by `nix build .#wired-wasm` from
 `libs/wired/wired-wasm` and checked against the same functions run
-natively by `ci --check-wasm-modules`. Its single export, `spk_wired_run`,
+natively by `ci check wasm-modules`. Its single export, `spk_wired_run`,
 takes one JSON request and writes one JSON response; the
 [specification](../../../specs/wired/wasm/SPEC.md) describes both, and the
 npm package `@sparkles-pkgs/wired` wraps the same module for JavaScript.

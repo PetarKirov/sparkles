@@ -135,7 +135,7 @@ sources.
 
 ## Examples
 
-Two runnable programs, compiled and run by `ci --example-files`:
+Two runnable programs, compiled and run by `ci examples standalone`:
 
 - [`mutex-throughput.d`][ex-mutex] — throughput, fairness, and futex waits and
   wakes per acquisition for a three-state futex word, a parking lock with and

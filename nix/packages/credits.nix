@@ -15,7 +15,7 @@
 # `docs/scripts/build-credits.sh` copies `licenses/` into the docs tree for
 # `yarn docs:build` (it is git-ignored there), and the APK builders copy the
 # whole bundle as assets — the same derivation, so the two cannot disagree
-# (TPG16). `ci --check-credits` checks the parts against the build inputs.
+# (TPG16). `ci check credits` checks the parts against the build inputs.
 { inputs, lib, ... }:
 {
   perSystem =

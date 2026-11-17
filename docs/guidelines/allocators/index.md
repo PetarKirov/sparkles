@@ -16,7 +16,7 @@ runnable example that CI compiles, runs, and diffs against the printed output.
 All quotes and claims in this document are cited to the Phobos sources as
 `std/experimental/allocator/<file>:<line>`, pinned at phobos commit
 `6be6c3809` (July 2026). The runnable snippets are verified by
-`ci --verify --files docs/guidelines/allocators/index.md` against the repo
+`ci examples verify --include-files docs/guidelines/allocators/index.md` against the repo
 toolchain (LDC 1.41, DMD 2.111 frontend).
 
 The package has lived in `std.experimental` since 2015 (DMD 2.069) and is

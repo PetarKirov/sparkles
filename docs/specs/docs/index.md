@@ -123,7 +123,7 @@ Three findings shaped this spec:
 | [Site discovery](./discovery.md) | `DSC*` — `hue site`: link-driven page discovery from the docs' markdown, `manifest.json` as the contract with the VitePress build, the `/src/…` route model, and site-level twoslash                         |
 | [API doc generator](./apidoc.md) | `APD*` — the D API reference generator on `sparkles:dmd-lsp`: the symbol model, the semantic walk, the DDoc prose pipeline, fixtures + goldens, route collisions, symbol pages, search index, type graph     |
 | [Components](./components.md)    | `FLW*` — the flow-mode HTML emitter in `sparkles:ui` and the migration of doc-site chrome (nav, sidebar tree, breadcrumbs, toggle) onto widget-defined components                                            |
-| [Glossary](./glossary.md)        | `GLS*` — the glossary's data format: the entry schema, ids and owners, how a page links a term, the rules `ci --check-glossary` enforces, and the glossary page, term lists and hover cards                  |
+| [Glossary](./glossary.md)        | `GLS*` — the glossary's data format: the entry schema, ids and owners, how a page links a term, the rules `ci check glossary` enforces, and the glossary page, term lists and hover cards                    |
 
 ## Related specs
 

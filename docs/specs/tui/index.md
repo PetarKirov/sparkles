@@ -253,7 +253,7 @@ grounded in Notcurses and libvaxis.
 | `release`                      | Could adopt E1/W3/W4 for an interactive stage/preflight view (it renders through the line-based `LiveRegion`)                                  |
 | `ci`                           | W2 (scrollback of example runs), I3 (resize)                                                                                                   |
 | test runner                    | Consumes the pure producers in `ui.components`; an in-memory backend (B2) would make widget tests golden                                       |
-| `docs`/`examples`              | Every landed widget ships a runnable example (`ci --verify`)                                                                                   |
+| `docs`/`examples`              | Every landed widget ships a runnable example (`ci examples verify`)                                                                            |
 
 ## 6. Execution
 

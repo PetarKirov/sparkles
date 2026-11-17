@@ -144,7 +144,7 @@ in (dateUtc.length >= 10 && commit.length >= 12)
 }
 
 /**
-`--perf-append`: append the records under `recordsRoot`, downloaded from the
+`ci perf append`: append the records under `recordsRoot`, downloaded from the
 artifacts of run `runId`, attempt `attempt`, which started on `runDate`, under
 the landed commit `landedCommit` (OBH4). The identity and date are the
 provider's, never the records' (OBH5).
@@ -158,7 +158,7 @@ Expected!(string, string) appendRun(string recordsRoot, string runId, string att
     try
         lastAttempt = attempt.to!uint;
     catch (Exception)
-        return err!string("--perf-run-attempt " ~ attempt ~ " is not a number");
+        return err!string("--run-attempt " ~ attempt ~ " is not a number");
     auto admitted = admitRunRecords(records, runId, lastAttempt, dropped);
     string report;
     foreach (d; dropped)
@@ -179,7 +179,7 @@ Expected!(string, string) appendRun(string recordsRoot, string runId, string att
 }
 
 /**
-`--perf-push`: append this machine's records, signed with the maintainer's
+`ci perf push`: append this machine's records, signed with the maintainer's
 key (OBH6). A record of a dirty tree is refused unless `allowDirty`; a record
 from CI is never pushed from here.
 */
@@ -291,7 +291,7 @@ unittest
 }
 
 /**
-The tasks a `ci --test`, `--test-sanitize` or `--test-extracted` job log
+The tasks a `ci test` job log (ordinary, `--sanitize address` or `--special-modes`)
 holds: each top-level `╭──╼ [i/N] <package> › dub test :<package> -- <args>`
 box and the `Δtᵢ` of the `╰──╼` line that closes it. `-t 1` is the serial
 leg; `--better-c` and `--wasm` are the extracted modes.
@@ -365,9 +365,9 @@ unittest
 }
 
 /**
-`--perf-import-github-run RUN`: build a record per test job of GitHub Actions
+`ci perf import RUN`: build a record per test job of GitHub Actions
 run `RUN` from its logs, with `gh`, under this machine's records as origin
-`imported`, for `--perf-push` to publish. Returns a report of what it wrote.
+`imported`, for `ci perf push` to publish. Returns a report of what it wrote.
 */
 Expected!(string, string) importGithubRun(string repo, string run) @trusted
 {
@@ -410,8 +410,8 @@ Expected!(string, string) importGithubRun(string repo, string run) @trusted
         f.shard = placement[1];
         f.os = placement[0].canFind("darwin") ? "darwin" : "linux";
         f.compiler = placement[0].endsWith("dmd") ? "dmd" : "ldc2";
-        f.command = placement[0].canFind("sanitize") ? "--test-sanitize"
-            : placement[0].canFind("extracted") ? "--test-extracted" : "--test";
+        f.command = placement[0].canFind("sanitize") ? "test --sanitize address"
+            : placement[0].canFind("extracted") ? "test --special-modes" : "test";
         const id = githubRunId(run, attempt, cols[1], 1);
         const start = cols[2].length >= 19 ? cols[2][0 .. 19] ~ "Z" : "1970-01-01T00:00:00Z";
         const files = encodeRecord(id, "imported", start, f, tasks, ["imported from the job log of " ~ cols[1]]);

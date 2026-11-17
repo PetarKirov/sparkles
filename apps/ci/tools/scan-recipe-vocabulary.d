@@ -20,10 +20,10 @@ $(LIST
         `subPackage` blocks included;
     * every package `nix/dub-lock.json` and `nix/ci-dub-lock.json` pin, read
         from the flake's `dub-sources` output, with their sub-packages;
-    * the single-file examples `ci --example-files` runs (the globs of
+    * the single-file examples `ci examples standalone` runs (the globs of
         `standaloneExampleGlobs` in `apps/ci/src/app.d`);
     * the single-file programs in the `d` fences of tracked Markdown files,
-        which `ci --verify` runs.
+        which `ci examples verify` runs.
 )
 
 SDL is parsed with sparkles:wired's `sdlDubRecipe` profile, which accepts what
@@ -495,7 +495,7 @@ string[] gitLsFiles(string[] pathspecs)
 }
 
 /// The globs of `standaloneExampleGlobs` in `apps/ci/src/app.d`, read from the
-/// source so that the scan follows the list `ci --example-files` runs.
+/// source so that the scan follows the list `ci examples standalone` runs.
 string[] exampleGlobs()
 {
     const source = readText("apps/ci/src/app.d");

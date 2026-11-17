@@ -495,11 +495,11 @@ it is vectorised across channels, not across pixels.
 
 Nothing below was changed; this is the list for whoever wires the examples in.
 
-1. Add `docs/research/images/mir-algorithm/examples/*.d` to the `--example-files`
+1. Add `docs/research/images/mir-algorithm/examples/*.d` to the `ci examples standalone`
    defaults in `apps/ci/src/app.d` (the list near line 1300, the option help text and
    the module DDoc).
 2. Add `mir-algorithm` `3.22.4` and `mir-core` `1.7.4` to `nix/ci-dub-lock.json`
-   (example-only dependencies), so `ci --example-files` resolves them offline.
+   (example-only dependencies), so `ci examples standalone` resolves them offline.
 3. `git add --chmod=+x` the three programs (shebang files).
 4. Register this page in `docs/.vitepress/sidebar.json`; the `.d` links already pass
    through the `/\.d$/` `ignoreDeadLinks` rule.

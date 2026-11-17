@@ -1,6 +1,6 @@
 # Garbage-collect the R2 binary cache (cache.sparkles.petar-kirov.dev).
 #
-# R2 never evicts, so without this the bucket only grows. `ci --gc-r2` keeps
+# R2 never evicts, so without this the bucket only grows. `ci cache gc-r2` keeps
 # the gc-roots of the trees of `main`'s last 30 commits (written by
 # ci/gc-root.sh and ci/push-pin-set-r2.sh), everything younger than 14 days,
 # and their closures, and deletes the rest. See ci/README.md, "Garbage-
@@ -63,7 +63,7 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          DRY_RUN: ${{ (github.event_name == 'pull_request' || inputs.dry_run) && '--dry-run' || '' }}
+          DRY_RUN: ${{ (github.event_name == 'pull_request' || inputs.dry_run) && '--no-delete' || '' }}
         run: |
           # shellcheck disable=SC2086 # DRY_RUN is one optional flag or empty
-          nix run .#ci-minimal -- --gc-r2 --keep-commits 30 --grace-days 14 $DRY_RUN
+          nix run .#ci-minimal -- cache gc-r2 --keep-commits 30 --grace-days 14 $DRY_RUN

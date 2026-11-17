@@ -1,5 +1,5 @@
 /++
-`ci --gc-report`: where a program's GC allocations come from, and what of them
+`ci gc-report`: where a program's GC allocations come from, and what of them
 stays live, from a `sparkles.profiling.gc_sampler` recording.
 
 A run of a program that links the sampler, with
@@ -7,7 +7,7 @@ A run of a program that links the sampler, with
 report symbolizes its stacks (`addr2line`, which the dev shell provides) and
 attributes every sampled byte to its allocation site — the first frame in the
 repository — and inclusively to every repository function on its stack. With
-`--gc-baseline` it subtracts a shorter run of the same scenario, which leaves
+`--baseline` it subtracts a shorter run of the same scenario, which leaves
 the steady cost: a 1200-frame drag minus a 200-frame one is a thousand frames
 without their start-up. A recording's live census splits what survived the
 last collection into what the collector scans and what it does not: the
@@ -292,7 +292,7 @@ private string normalizeHex(string digits) @safe pure
     return digits[i .. $];
 }
 
-/// `ci --gc-report`: prints the report; returns the exit status.
+/// `ci gc-report`: prints the report; returns the exit status.
 RunExpected!void runGcReport(string path, string baselinePath, size_t top)
 {
     import std.file : getcwd, readText;

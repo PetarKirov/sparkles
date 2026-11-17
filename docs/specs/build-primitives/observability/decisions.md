@@ -458,12 +458,12 @@ O5. Should the data path come first?
 **Choice.** Alternative 3, on the owner's acceptance of 2026-11-17. The slice is
 a subset of O2 and O5, and changes no requirement:
 
-- **Records:** `ci --test`, `--test-sanitize` and `--test-extracted` write a
+- **Records:** `ci test`, `ci test --sanitize address` and `ci test --special-modes all` write a
   record (OBD1, OBD4–OBD7, OBD11–OBD12) holding one task per package run, with
   its task id, series key, outcome and `task.wall`, and the facts of OBR7 that
   exist before the build graph: source, host and run. They pass the privacy scan
   (OBP1–OBP4). A command that `ci` does not run, such as a toolchain pin build,
-  is recorded through `ci --record-task ID -- COMMAND`.
+  is recorded through `ci perf record ID -- COMMAND`.
 - **History:** CI appends records as OBH3–OBH5 state, signed as OBH8 states;
   readers verify signatures (OBH8) and fetch lazily (OBH9–OBH10). Compaction
   (OBH7), `ci perf show`, `history` and the gate stay with O2, O5 and O6.
@@ -486,7 +486,7 @@ the series continue.
 
 ## OD22: One placement runs the serial leg and collects coverage (accepted)
 
-**Question.** `ci --test` ran every package twice, at `-t 1` and at `-t N`, on
+**Question.** `ci test` ran every package twice, at `-t 1` and at `-t N`, on
 every placement, and built each one with `-cov`, so coverage was collected
 in both legs of three placements. The coverage only fills a table in the
 job's log; nothing gates on it. Does every placement need both legs and

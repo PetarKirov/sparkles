@@ -333,7 +333,7 @@ solved-constraint drawing that the modern systems inherit.
 ## The probes
 
 The catalog's claims about geometry and timing are backed by four dependency-free
-runnable D programs (compiled and run by `ci --example-files`):
+runnable D programs (compiled and run by `ci examples standalone`):
 
 | Probe                                                 | Grounds                                                                                    |
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------------ |

@@ -493,7 +493,7 @@ every one parsed, under the `sdlDubRecipe` profile or as JSON:
 - the root `dub.sdl` and its 63 sub-packages;
 - the 8 packages the two DUB locks pin, with their 11 sub-packages, from the
   flake's `dub-sources`;
-- the 289 single-file examples `ci --example-files` runs;
+- the 289 single-file examples `ci examples standalone` runs;
 - the 184 single-file programs in tracked Markdown fences.
 
 The vocabulary is in [testing.md](./testing.md#the-recipe-vocabulary).
@@ -614,7 +614,7 @@ checked:
   (`ci/test-windows.sh`), and the tree already holds two such links.
 - **The docs build:** the catalog has not moved, so the page is unchanged.
 
-The specification package was rejected: `ci --test` names a sub-package
+The specification package was rejected: `ci test` names a sub-package
 after its directory, so a package in `docs/specs/ui-app` would run as
 `ui-app` a second time, and a source library with no sources cannot be the
 root of `dub test`.
@@ -633,7 +633,7 @@ remains.
 
 ## D25: The migration comparison snippets (accepted)
 
-**Question.** `ci --example-files` runs
+**Question.** `ci examples standalone` runs
 `docs/libs/event-horizon/tutorial/snippets/`, 70 of whose programs depend on
 other event loops: vibe-core, eventcore, libasync and Photon from the
 registry, and Collie, Kiss and Hunt by `path` into `snippets/.deps/`, which
@@ -653,10 +653,10 @@ as refused by both. Are they in scope?
   online, until it is pinned.
 
 **Choice.** Leave them out of scope for E1, and pin them when
-`ci --example-files` moves onto the build graph. They compare other
+`ci examples standalone` moves onto the build graph. They compare other
 libraries' behaviour; none is a dependency of this repository's packages.
 
-**Revisit when** `ci --example-files` moves onto the build graph, or a
+**Revisit when** `ci examples standalone` moves onto the build graph, or a
 comparison snippet's dependency becomes a dependency of a package in scope.
 
 ## D30: Deterministic build failures are cached (accepted)
@@ -1152,7 +1152,7 @@ closed as a reference:
   the determinism check is exempt from every result memo (CIC13).
 
 **Trade-offs.** The PR's generated workflows and store-path steps are not
-taken now; they return at M13, built from `--list-placements`, when the
+taken now; they return at M13, built from `ci placements list`, when the
 workflow shape stops changing.
 
 **Revisit when** M13 generates the workflows.
@@ -1285,7 +1285,7 @@ Input sets are keyed by package and configuration, and a request's closure
 is the set of pairs its resolution chose (`Resolution.configurations`). A
 query with no request of its own, such as `--since` with no target, asks over
 the requests the command would make: for `ci`, the test root of each package
-`ci --test` runs and each build configuration of each application. The
+`ci test` runs and each build configuration of each application. The
 union over every configuration was rejected as that fallback because it
 over-selects for every such query.
 

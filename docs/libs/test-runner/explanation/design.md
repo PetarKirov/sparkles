@@ -150,14 +150,14 @@ The runner no longer uses `TaskPool` for the default suite:
   `executeTest` calls (the runner's own tests) reuse the outer watermark.
 
 `-t 1` runs each test on the worker's main thread, so a developer can debug without the
-tight stack; `ci --test` always follows it with a `-t N` (`N ≥ 2`) leg.
+tight stack; `ci test` always follows it with a `-t N` (`N ≥ 2`) leg.
 
 Under AddressSanitizer (`LDC_AddressSanitizer`) the watermark is disabled:
 ASan owns SIGSEGV for its shadow map, and its redzones inflate every frame,
 so the 384 KiB budget is not measurable there anyway. Workers are sized at
 4 MiB instead of 512 KiB so a body that fits the budget cannot reach a guard
 page and abort the whole binary; the budget itself is only enforced by the
-plain `ci --test` legs.
+plain `ci test` legs.
 
 ## Live progress: three displays, one policy
 

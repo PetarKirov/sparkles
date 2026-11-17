@@ -18,15 +18,15 @@
 
       # `ci` execs a D compiler at runtime to build the examples, so it lands in
       # ci's runtime closure (and every consumer's — pre-commit devShell, lint
-      # CI). Prefer DMD on x86_64-linux for `--example-files` / `--test`: no
+      # CI). Prefer DMD on x86_64-linux for `ci examples standalone` / `ci test`: no
       # LLVM backend, so ~half LDC's closure. DMD only targets
       # x86_64/i686-linux + x86_64-darwin; keep LDC elsewhere. `--wasm`
-      # (via `--test-extracted --require-toolchain`) still needs LDC +
+      # (via `ci test --special-modes all --require-toolchain`) still needs LDC +
       # wasm-ld + a runtime, so those go on PATH even when DMD is the
       # default compiler.
       ciCompiler = if system == "x86_64-linux" then pkgs.dmd else pkgs.ldc;
 
-      # The LDC with the WASI runtimes: `--build` and `--build-each-commit`
+      # The LDC with the WASI runtimes: `ci test --build-only` and `ci commits build-each`
       # compile the WebAssembly modules with it (`$SPARKLES_WASI_LDC`).
       wasiLdc = inputs'.dlang-nix.packages.ldc-sparkles;
 
@@ -144,7 +144,7 @@
         pname = "ci";
         version = "0.1.0";
 
-        # `--audit-fences` classifies fence labels against the grammar bundle, so
+        # `ci docs fences-audit` classifies fence labels against the grammar bundle, so
         # `ci` now links sparkles:syntax -> sparkles:tree-sitter, whose ImportC
         # shim `#include`s <tree_sitter/api.h>. That header is found through
         # pkg-config (dub#3085 feeds `--cflags` to ImportC), so the resolver has
@@ -155,9 +155,9 @@
 
         # Runtime deps subtracted from buildSparklesApp's default scrub set:
         # - `ciCompiler` — shells out via PATH (see postFixup)
-        # - `pkgs.ldc` / `pkgs.lld` / `pkgs.nodejs` — `--test-extracted --wasm`
+        # - `pkgs.ldc` / `pkgs.lld` / `pkgs.nodejs` — `ci test --special-modes wasm`
         # - `wasiLdc` — the WebAssembly modules' builds
-        # - `pkgs.curl.out` — `--ci-stats` uses std.net.curl; Phobos bakes an
+        # - `pkgs.curl.out` — `ci stats` uses std.net.curl; Phobos bakes an
         #   absolute libcurl path
         # - `pkgs.tree-sitter` — `libs "tree-sitter"` in libs/tree-sitter
         buildInputs = [
@@ -192,7 +192,7 @@
             # The examples link C libraries (the cpu-pmu research probes' `libs
             # "dw" "elf"` / `libs "pfm"`). Inside the devshell the shellHook
             # exports their paths (nix/shells); carry them in the wrapper too so
-            # `nix run .#ci -- --example-files` links them outside any shell.
+            # `nix run .#ci -- examples standalone` links them outside any shell.
             inherit (d-toolchain) libraryPath;
             exampleLibArgs = lib.optionalString (
               libraryPath != ""
@@ -226,14 +226,14 @@
       # `packages.ci` is 1.4 GiB on x86_64-linux, and essentially none of it is
       # linked: the wrapper above puts the LDC with its LLVM (1.0 GiB), DMD
       # (529 MiB), lld (378 MiB, shared with the LDC's LLVM), nodejs (204 MiB)
-      # and git on PATH so `--example-files` can compile markdown examples.
+      # and git on PATH so `ci examples standalone` can compile markdown examples.
       # That is right for the job that runs examples and wrong for one that
       # files a check run: `main-checks.yml` sits on the merge path, so a
       # gigabyte-sized substitution there is paid on every merge to buy nothing.
       #
       # So: no `postFixup`, and `buildInputs` narrowed to the two genuine
       # runtime references — libcurl, whose absolute path Phobos bakes into
-      # `std.net.curl`, and tree-sitter, which `--audit-fences` links. Everything
+      # `std.net.curl`, and tree-sitter, which `ci docs fences-audit` links. Everything
       # else returns to the scrub set it was exempted from.
       #
       # It builds `apps/ci` under its own name, so it names its `appDir`, from
@@ -256,7 +256,7 @@
         meta = {
           description = ''
             Repository CI helper, unwrapped: the API-driven subcommands
-            (--mirror-checks, --report-link-rot, --ci-stats) with no compiler
+            (ci github mirror-checks, ci github link-rot-issue, ci stats) with no compiler
             toolchain in its closure
           '';
           mainProgram = finalAttrs.pname;

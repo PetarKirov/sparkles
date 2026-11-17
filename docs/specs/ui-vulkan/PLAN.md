@@ -53,8 +53,8 @@ amendments it implies elsewhere: the window-system plan's M7 and `INT3`/`INT4`,
 
 **Gate.** The owner accepts the decisions marked `proposed`; a cold read of
 the specification's opening restates its problem and scope; an adversarial
-review's findings are dispositioned; `ci --check-docs-sidebar`,
-`ci --check-spec-evidence` and the docs build pass.
+review's findings are dispositioned; `ci check sidebar`,
+`ci check spec-evidence` and the docs build pass.
 
 ## V1: Device memory and resources
 

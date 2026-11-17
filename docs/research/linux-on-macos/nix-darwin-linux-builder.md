@@ -85,7 +85,7 @@ on GitHub Releases break the bootstrap cycle. **Not gated.**
 - QEMU on macOS is slower than VZ; DNS over SLiRP needs a public
   nameserver workaround.
 - Persistent disk grows; `ephemeral` wipes it.
-- Does not by itself run `ci --test` in a working tree.
+- Does not by itself run `ci test` in a working tree.
 
 ## Key design decisions and trade-offs
 

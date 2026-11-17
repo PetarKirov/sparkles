@@ -27,7 +27,7 @@ configuration "wasm" {
 }
 
 // The exported function as native D, for the agreement check that compares
-// the module with it (`ci --check-wasm-modules`, TCM9).
+// the module with it (`ci check wasm-modules`, TCM9).
 configuration "library" {
     targetType "library"
 }

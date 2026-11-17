@@ -143,7 +143,7 @@ When the field's key capabilities landed. Coarse dates are `[literature]`.
 ## The runnable probes
 
 Dependency-free `dub` single-file programs under [`examples/`][ex-bez]; CI
-compiles and runs each (`ci --example-files`). They ground the survey's geometry
+compiles and runs each (`ci examples standalone`). They ground the survey's geometry
 and timing claims in code.
 
 | Probe                        | Demonstrates                                                           | Backs                                |

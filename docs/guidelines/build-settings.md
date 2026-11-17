@@ -439,7 +439,7 @@ Important boundaries:
 
 | Check                                                       | Result                                                         |
 | ----------------------------------------------------------- | -------------------------------------------------------------- |
-| Repository suite, `ci --test --no-coverage --fail-fast`     | **58/58 packages passed**                                      |
+| Repository suite, `ci test --no-coverage --fail-fast`       | **58/58 packages passed**                                      |
 | `versions` with DMD, including DMD-selected probes          | 167 passed                                                     |
 | `versions` with `unittest-debug`                            | 167 passed                                                     |
 | `versions` with ordinary coverage                           | 167 passed                                                     |

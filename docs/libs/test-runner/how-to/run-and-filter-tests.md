@@ -47,7 +47,7 @@ megabyte-sized stack local that SIGSEGVs on a developer Mac. Crossing a
 suite continues. Put large scratch on the heap (`Unique`, `HeapBuffer`);
 do not `T x;` a workspace in a unittest.
 
-`ci --test` runs each package twice after one compile: `-t 1`, then
+`ci test` runs each package twice after one compile: `-t 1`, then
 `-t N` with `N = max(2, hwParallelism())`.
 
 ## The runner's own tests

@@ -140,7 +140,7 @@ all, so its `*` crosses `/`. Today `src/*.d` matches `src/deep/main.d` and
 That is a narrowing, and it brings us into agreement with `.gitignore`,
 ripgrep and minimatch — which matters specifically for
 `docs/.vitepress/docs-config.json`'s `srcExclude`, since that list is evaluated
-by VitePress for the site build and by us for `ci --audit-fences`, and the two
+by VitePress for the site build and by us for `ci docs fences-audit`, and the two
 can disagree today. Every current entry begins `**/` and is unaffected.
 
 → [O1][rec-o1], with a CI-verified runnable example.

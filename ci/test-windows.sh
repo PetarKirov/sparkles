@@ -6,10 +6,10 @@
 #   ci/test-windows.sh              # the allowlist below
 #   ci/test-windows.sh wsi base     # just these
 #
-# Every other leg runs `ci --test`, the repo's own D helper. Its closure needs
-# tree-sitter through pkg-config (sparkles:syntax, behind --audit-fences), which
+# Every other leg runs `ci test`, the repo's own D helper. Its closure needs
+# tree-sitter through pkg-config (sparkles:syntax, behind ci docs fences-audit), which
 # the hosted Windows runner cannot supply — no Nix there — so this is the
-# helper's `--test` mode reduced to what a plain LDC + dub install can do. The
+# helper's `ci test` command reduced to what a plain LDC + dub install can do. The
 # two legs per package are kept for the helper's reason: a stack-heavy test
 # cannot hide on the main thread. Coverage is not: it is a report, not a gate.
 #

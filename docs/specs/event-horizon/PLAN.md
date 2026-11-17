@@ -13,9 +13,9 @@ completion vocabulary (§4), the callback tier (§5), buffers (§6), the fiber t
 (§10), scheduler topologies (§11), the `Effect!T` veneer sketch (§12), and the
 public API (§16). Spec examples that need not-yet-implemented modules are parked
 with `<!-- md-example-skip -->` directives; the implementation milestones
-unpark them and make them pass under `nix run .#ci -- --verify`.
+unpark them and make them pass under `nix run .#ci -- examples verify`.
 
-Gate: `nix run .#ci -- --verify --files docs/specs/event-horizon/SPEC.md` and
+Gate: `nix run .#ci -- examples verify --include-files docs/specs/event-horizon/SPEC.md` and
 `yarn docs:build` are green.
 
 ## M2 — Scaffold + ring substrate
@@ -41,7 +41,7 @@ plus the datagram pair `sendTo`/`recvFrom` in callback style with owned-buffer
 transfer (SPEC §5–§6). Callback-style echo-server example.
 
 Gate: unittests + the callback echo example verified by
-`nix run .#ci -- --verify`; first benchmark baseline recorded under
+`nix run .#ci -- examples verify`; first benchmark baseline recorded under
 `libs/event-horizon/bench/`.
 
 ## M4 — Fiber scheduler + direct-style I/O (tier B)

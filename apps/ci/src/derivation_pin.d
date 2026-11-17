@@ -1485,7 +1485,7 @@ private Expected!(void, string) checkTargets(Target[] targets, string cache) @sy
 }
 
 /**
- * TC23's gate as a `ci` mode (`ci --check-pin-cache`): every pinned system's
+ * TC23's gate as a `ci` mode (`ci check pin-cache`): every pinned system's
  * toolchain entries (`toolchain-*`) are in `cache`. The other entries change
  * with ordinary pull requests and are pinned after they merge, so the gate
  * leaves them to `toolchain-pin --check`.

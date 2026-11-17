@@ -186,7 +186,7 @@ explains why a darwin port is a new file, not a `platforms` toggle); the `ci`
 helper `⊘`-skips them on the macOS CI row. Run them with:
 
 ```bash
-dub run :ci -- -x --files 'docs/research/sanitizers/examples/*.d'
+dub run :ci -- examples standalone --include-files 'docs/research/sanitizers/examples/*.d'
 ```
 
 ## Quick navigation

@@ -209,7 +209,7 @@ This review did not examine:
 - Publication validation: this page has not been added to
   `docs/.vitepress/sidebar.json` or to the `srcExclude` list in
   `docs/.vitepress/docs-config.json` (where the fuzzy review is listed), so
-  `ci --check-docs-sidebar` will report it until one of them is.
+  `ci check sidebar` will report it until one of them is.
 
 ## Dispositions
 

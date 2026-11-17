@@ -1,18 +1,18 @@
-# `ci --ci-stats` — GitHub Actions CI usage statistics
+# `ci stats` — GitHub Actions CI usage statistics
 
-_Audience: developers and coding agents building against or consuming the `ci` tool. This document is normative — it states what the `--ci-stats` subcommand does (and, for sections marked as targets, what it is specified to do once the corresponding PLAN milestone lands). For the delivery plan see [PLAN.md](./PLAN.md)._
+_Audience: developers and coding agents building against or consuming the `ci` tool. This document is normative — it states what the `ci stats` subcommand does (and, for sections marked as targets, what it is specified to do once the corresponding PLAN milestone lands). For the delivery plan see [PLAN.md](./PLAN.md)._
 
 Sections describing unimplemented behaviour carry an explicit **(target — Mn)** marker.
 
 ## 1. Overview
 
-`ci --ci-stats` queries the GitHub REST (and optionally GraphQL) API to produce human-readable statistics on CI job execution for a repository:
+`ci stats` queries the GitHub REST (and optionally GraphQL) API to produce human-readable statistics on CI job execution for a repository:
 
 - Overall per-job timing: count, min, max, mean, median, p95, total wall-clock time.
 - Aggregated "CI minutes" (and optionally ceiling-to-minute billed minutes) broken down by runner type (derived from job `labels`).
 - Supporting views: top slow jobs, per-workflow breakdowns where useful, and live progress during fetch.
 
-The command is a subcommand of the existing `sparkles:ci` tool (invoked as `dub run :ci -- --ci-stats ...` or `nix run .#ci -- --ci-stats ...`). It follows the same logging, pre-flight, and output conventions as other `ci` modes.
+The command is a subcommand of the existing `sparkles:ci` tool (invoked as `dub run :ci -- stats ...` or `nix run .#ci -- stats ...`). It follows the same logging, pre-flight, and output conventions as other `ci` modes.
 
 All network I/O uses `std.net.curl`. Auth is via `--github-token` (with `GITHUB_TOKEN` environment fallback). No dependency on the `gh` CLI binary is required.
 
@@ -28,18 +28,18 @@ Live terminal progress uses the `LiveRegion` / `TaskReporter` + `drawTableLines`
 | Source root     | `apps/ci/src/`         |
 | Entry point     | `src/app.d` (extended) |
 
-| Module / file                                | Responsibility                                                                                                                          |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/ci/src/app.d`                          | CLI surface extension, mode dispatch, top-level orchestration for `--ci-stats`                                                          |
-| `apps/ci/src/ci_stats.d` (or `ci_stats/*.d`) | Data models, `fetchAndDeserializeJson` policy, REST/GraphQL call helpers, pure stats pipelines, rendering, the `--ci-stats` entry point |
-| (future) promoted helpers                    | Any generally-useful pieces (fetch shell, duration stats, remote helpers) moved to `sparkles:base` / `core-cli` / `build-primitives`    |
+| Module / file                                | Responsibility                                                                                                                        |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/ci/src/app.d`                          | CLI surface extension, mode dispatch, top-level orchestration for `ci stats`                                                          |
+| `apps/ci/src/ci_stats.d` (or `ci_stats/*.d`) | Data models, `fetchAndDeserializeJson` policy, REST/GraphQL call helpers, pure stats pipelines, rendering, the `ci stats` entry point |
+| (future) promoted helpers                    | Any generally-useful pieces (fetch shell, duration stats, remote helpers) moved to `sparkles:base` / `core-cli` / `build-primitives`  |
 
 Pure logic is separated from I/O: JSON→domain transformations and all statistical functions are standalone `@safe` (or attribute-inferred) functions. Only thin wrappers perform curl requests.
 
 ## 3. CLI surface
 
 ```text
-ci --ci-stats
+ci stats
    [--repo OWNER/REPO]
    [--github-token TOKEN | $GITHUB_TOKEN]
    [--limit N] [--since YYYY-MM-DD]

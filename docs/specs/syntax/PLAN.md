@@ -155,13 +155,13 @@ TOML front-matter), depth-capped recursion. Deferred (seams kept):
 - **Per milestone:** `dub test :syntax` / `:tree-sitter` / `:base` green; M4's
   include-path proof `env -u NIX_CFLAGS_COMPILE -u CPATH -u C_INCLUDE_PATH dub test
 :tree-sitter --force`; `nix build .#ts-grammars` and inspect the layout.
-- **Suite:** `nix run .#ci -- --test --fail-fast`; degraded-environment proof:
+- **Suite:** `nix run .#ci -- test --fail-fast`; degraded-environment proof:
   `SPARKLES_TS_GRAMMAR_PATH= dub test :syntax` → grammar tests skip (⊘), suite green.
 - **Idiom conformance:** attributes explicit on non-templates / inferred on templates;
   `Expected` on all fallible engine paths; `@nogc` proofs for the stream fold and both
   renderers; tests in feature modules with `@("name")` UDAs.
 - **Docs:** `yarn docs:build` green; README examples via
-  `nix run .#ci -- --verify --files README.md`; this spec pair becomes the library's
+  `nix run .#ci -- examples verify --include-files README.md`; this spec pair becomes the library's
   design-history reference next to `docs/libs/syntax/`.
 
 ## 4. Deferrals / non-goals

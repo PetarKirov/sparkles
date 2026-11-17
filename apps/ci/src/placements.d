@@ -28,9 +28,9 @@ import sparkles.base.expected : Expected, err, ok;
 /// What a placement runs: the `ci` test mode, and the task-id mode it records.
 enum PlacementMode : ubyte
 {
-    test, /// `--test`; tasks `test:<package>:unittest:<leg>`
-    sanitize, /// `--test-sanitize`; tasks `test:<package>:sanitize:<leg>`
-    extracted, /// `--test-extracted`; tasks `test:<package>:betterc|wasm:<leg>`
+    test, /// `ci test`; tasks `test:<package>:unittest:<leg>`
+    sanitize, /// `ci test --sanitize address`; tasks `test:<package>:sanitize:<leg>`
+    extracted, /// `ci test --special-modes all`; tasks `test:<package>:betterc|wasm:<leg>`
 }
 
 /// One placement of `ci/placements.json`.
@@ -43,7 +43,7 @@ struct Placement
     uint shards;
     uint timeoutMinutes;
     string[string] runners; /// Runner label per CI provider (`github`, `circleci`).
-    /// Which `--test` legs run (`ci` CIC11): `-t 1`, on each worker's main
+    /// Which `ci test` legs run (`ci` CIC11): `-t 1`, on each worker's main
     /// thread, and `-t N`. Default: the parallel leg alone (OD22).
     bool serialLeg;
     /// ditto

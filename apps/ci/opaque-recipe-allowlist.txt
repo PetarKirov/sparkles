@@ -1,4 +1,4 @@
-# Reviewed exceptions to `ci --check-opaque-recipes`: recipe entries no input
+# Reviewed exceptions to `ci check opaque-recipes`: recipe entries no input
 # set can hold (fileset-native workspace design, BGW3 and BGW4). Each makes
 # every request that builds it selected by any change, so prefer removing it
 # or stating it as a directive or a typed generator. One per line:

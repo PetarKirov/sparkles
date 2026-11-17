@@ -190,7 +190,7 @@ dub --root /path/to/wt test :core-cli   # operate on another worktree
 
 1. `dub build :core-cli` loads the **root** `sparkles` package to discover sub-packages, then via `getSubPackage(rootPackage, "core-cli", …)` ([`source/dub/commandline.d`][cli]) switches the working package to `core-cli` and builds _it_ as if it were the root.
 2. `dub test :versions` does the same for `versions`. Because `versions` path-depends on `:core-cli`, `dub` resolves and **recompiles `core-cli` again** for this build — there is no shared "already built `core-cli`" artifact reused across the two invocations beyond the content-addressed package cache (below).
-3. There is no command that says "build/test _all_ members." The Sparkles `apps/ci` helper exists precisely to fill that hole: it iterates the sub-packages and runs `dub test` for each (`nix run .#ci -- --test`). That orchestration lives in hand-written D, _outside_ `dub`.
+3. There is no command that says "build/test _all_ members." The Sparkles `apps/ci` helper exists precisely to fill that hole: it iterates the sub-packages and runs `dub test` for each (`nix run .#ci -- test`). That orchestration lives in hand-written D, _outside_ `dub`.
 
 ---
 

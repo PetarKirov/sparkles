@@ -61,7 +61,7 @@ Two grounding modes are used, and each deep-dive states which:
 ## Experiment environment (the runnable probes)
 
 The four `examples/*.d` probes are dependency-free and were compiled/run with
-LDC 1.41 on Linux 6.18.26 (x86_64), and pass under `ci --example-files` (4/4).
+LDC 1.41 on Linux 6.18.26 (x86_64), and pass under `ci examples standalone` (4/4).
 They ground the geometry/timing claims independently of any surveyed engine.
 
 ## Open / not locally verifiable (see `index.md` register)

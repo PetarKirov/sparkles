@@ -27,7 +27,7 @@ dub run --single docs/libs/event-horizon/tutorial/snippets/tutorial/eh_timers.d 
 node docs/libs/event-horizon/tutorial/snippets/tutorial/node_timers.mjs
 # The standalone contract version remains runnable too:
 dub run --single docs/libs/event-horizon/tutorial/snippets/eh_timers.d -b checked
-dub run :ci -- --verify --include-files 'docs/libs/event-horizon/tutorial/coming-from-*.md'
+dub run :ci -- examples verify --include-files 'docs/libs/event-horizon/tutorial/coming-from-*.md'
 ```
 
 Run a D source from its original location: its relative dependencies resolve
@@ -81,7 +81,7 @@ assertion-heavy programs in `snippets/` after each comparison. The other six
 pages still display their original contract programs until their conversion is
 complete. Both kinds are standalone single-file programs, not source fragments.
 
-For a converted page, `ci --verify` executes each displayed tutorial, checks its
+For a converted page, `ci examples verify` executes each displayed tutorial, checks its
 output, and independently runs its contract counterpart with assertions enabled.
 It rejects missing counterparts, mixed suites, symlink aliases and attempts to
 revert a converted page to contract imports. Full source paths—not basenames—

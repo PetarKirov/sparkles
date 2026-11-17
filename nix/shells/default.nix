@@ -34,8 +34,8 @@
 
       # ── Package tiers ──────────────────────────────────────────────────
       #
-      # `ciPackages` is the floor: exactly what `ci --test`,
-      # `ci --example-files` and `ci --test-extracted` need in order to *run*
+      # `ciPackages` is the floor: exactly what `ci test`,
+      # `ci examples standalone` and `ci test --special-modes all` need in order to *run*
       # rather than skip. Everything else is interactive-only and lives in
       # `devPackages`, because CI pays for it in download time on every cold
       # runner — chromium alone is a 1.7 GiB closure, and nothing in CI opens
@@ -49,7 +49,7 @@
         pkgs.delta
 
         # `shader-compile`, which sparkles:ui's `gpu-effects` configuration runs
-        # as a pre-generate step — so every build on `ui-raylib`, `ci --test`
+        # as a pre-generate step — so every build on `ui-raylib`, `ci test`
         # included, needs it: the dcompute-enabled LDC compiles a package's
         # `@compute` modules to SPIR-V, spirv-tools validate and optimise it,
         # spirv-cross turns it into GLSL and glslang proves each file. (glslang
@@ -87,8 +87,8 @@
           exec ${pkgs.nodejs}/bin/corepack yarn "$@"
         '')
 
-        # CI helper — the `ci --test` / `ci --example-files` the jobs invoke.
-        pkgs.curl # libcurl, linked by its --ci-stats subcommand
+        # CI helper — the `ci test` / `ci examples standalone` the jobs invoke.
+        pkgs.curl # libcurl, linked by its ci stats subcommand
         config.packages.ci
         # `ci` and the tests that build git fixtures exec git. CI found the
         # runner image's; the shell supplies its own, minimal so it brings no
@@ -107,7 +107,7 @@
 
       ]
       # The Nix C API `sparkles:nix` binds (nix/shells/nix-c-api.nix): `ci
-      # --test` links `:nix`, so this is the CI floor, not the interactive tier.
+      # test` links `:nix`, so this is the CI floor, not the interactive tier.
       ++ nixCApi.libs
       ++ [
         # tree-sitter runtime for sparkles:tree-sitter / sparkles:syntax
@@ -148,14 +148,14 @@
         # event-naming probe links `libs "pfm"`. Neither library is found
         # by `nix shell` alone (no setup hooks run), so they're shell
         # packages here with LIBRARY_PATH/LD_LIBRARY_PATH exports below.
-        # `ci --example-files` builds these, so a missing library is a
+        # `ci examples standalone` builds these, so a missing library is a
         # link error, not a skip.
         pkgs.elfutils
         pkgs.libpfm
 
         # Sanitizers research probes (docs/research/sanitizers/examples):
         # the valgrind-*.d probes exec `valgrind` from PATH (never link it)
-        # and print a SKIP line when it is absent. `ci --example-files`
+        # and print a SKIP line when it is absent. `ci examples standalone`
         # runs them, so this is here to keep three examples from silently
         # degrading to SKIP in CI — the `nix run .#ci` wrapper deliberately
         # omits it to keep the .#ci closure small.
@@ -202,7 +202,7 @@
 
         # `dbus-daemon`, exec'd by apps/terminal's D-Bus tests (`dbus_conn`,
         # `desktop_bus`) as a private bus with a fake notification server
-        # and portal. Without it they skip, so `ci --test` needs it.
+        # and portal. Without it they skip, so `ci test` needs it.
         pkgs.dbus
       ]
       ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
@@ -261,7 +261,7 @@
         # Headless Chromium for the sparkles:twoslash visual-regression check
         # (libs/twoslash/examples/visual-check.mjs): it lays out the rendered
         # HTML overlay and asserts popup geometry. Dev-only ($CHROME_BIN
-        # exported below) — it is a .mjs, so neither `ci --example-files`
+        # exported below) — it is a .mjs, so neither `ci examples standalone`
         # (which globs .d) nor any other job runs it.
         pkgs.chromium
 
@@ -278,13 +278,13 @@
         # packaged helper retains the bundle through its runtime closure.
         export SPARKLES_DUB_SOURCES=${config.packages.dub-sources}
         # The LDC with the WASI runtimes: the test runner's `--wasm` and the
-        # WebAssembly modules' builds (`ci --build`).
+        # WebAssembly modules' builds (`ci test --build-only`).
         export SPARKLES_WASI_LDC=${lib.getExe' inputs'.dlang-nix.packages.ldc-sparkles "ldc2"}
         # The pinned test runner executable (test-runner process-model TRN2):
         # every test binary started here delegates its run to it.
         export SPARKLES_TEST_RUNNER=${lib.getExe config.packages.test-runner}
-        ${lib.getExe config.packages.ci} --seed-dub-cache >/dev/null 2>&1 || {
-          echo 'Failed to seed DUB sources; run ci --seed-dub-cache for details.' >&2
+        ${lib.getExe config.packages.ci} cache seed-dub >/dev/null 2>&1 || {
+          echo 'Failed to seed DUB sources; run ci cache seed-dub for details.' >&2
           return 1
         }
 

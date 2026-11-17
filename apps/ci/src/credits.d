@@ -666,7 +666,7 @@ ShippedToken[] scanShipped(scope FileReader read, ref string[] problems) @safe
 bool isInTree(string token) @safe pure nothrow @nogc
     => token.startsWith("sparkles:");
 
-/// What `--check-credits` found.
+/// What `ci check credits` found.
 struct CreditsReport
 {
     string[] problems;       /// unreadable inputs, stale readers, malformed parts

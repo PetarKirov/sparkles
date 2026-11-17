@@ -1,5 +1,5 @@
 /++
-`ci --ci-stats` — GitHub Actions CI usage statistics subcommand.
+`ci stats` — GitHub Actions CI usage statistics subcommand.
 
 See `docs/specs/ci/stats/SPEC.md` (normative contract) and `PLAN.md` (milestones).
 

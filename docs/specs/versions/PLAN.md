@@ -310,7 +310,7 @@ phase('Build & fix')   serial loop
 phase('Sum types')     any.d (AnyVersion/AnyRange + compareAny → Nullable!int)
 phase('README')        rewrite README with 3 runnable examples
 phase('DDoc')          parallel: one agent per public module adds DDoc
-phase('Verify')        serial loop: nix run .#ci -- --verify --files README.md
+phase('Verify')        serial loop: nix run .#ci -- examples verify --include-files README.md
 ```
 
 ### WF-M6 — `docs-rewrite`
@@ -357,7 +357,7 @@ isVersionScheme!ThisStruct);`, so any conformance regression is a
    purl-spec test suite (vendored or fetched at CI time) runs end-to-end
    if available; otherwise a curated subset.
 
-5. **M5.** `nix run .#ci -- --verify --files README.md` passes for the
+5. **M5.** `nix run .#ci -- examples verify --include-files README.md` passes for the
    three runnable examples. `dub build :versions` succeeds in release
    configuration and the documented public API matches the produced
    symbol surface (verified via a `-Xf=docs.json` introspection check).

@@ -98,7 +98,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          nix run .#ci-minimal -- --report-link-rot \
+          nix run .#ci-minimal -- github link-rot-issue \
             --repo "$GITHUB_REPOSITORY" \
             --report lychee-report.txt \
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \

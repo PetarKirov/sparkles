@@ -9,7 +9,7 @@
 #
 # A root is the object `gc-roots/<tree>/<label>-<system>`, one store path
 # per line. It is keyed by the git *tree* of the checkout, not the commit: the
-# bucket's garbage collection (`ci --gc-r2`) keeps the roots of the trees of
+# bucket's garbage collection (`ci cache gc-r2`) keeps the roots of the trees of
 # the last commits on `main`, so a pull request's roots become `main`'s the
 # moment it lands with its tree unchanged — exactly when `main-checks.yml`
 # mirrors its checks rather than rebuilding. The label and system keep jobs

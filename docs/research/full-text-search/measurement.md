@@ -30,7 +30,7 @@ cited by `comparison.md` (Phase 7) rather than restated there.
 ## Corpora
 
 Measurements run against a **fixed corpus**, never the working tree — otherwise
-the numbers in the prose drift with every commit and `ci --verify` goes red for
+the numbers in the prose drift with every commit and `ci examples verify` goes red for
 the wrong reason. Six shapes, because they stress different layers:
 
 | Corpus         | Shape                                         | What it isolates                                              |

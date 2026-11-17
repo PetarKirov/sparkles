@@ -8,9 +8,9 @@ of truth for both the site and the repo tooling:
 $(LIST
     $(ITEM `docs/.vitepress/config.mts` imports them and passes them straight
         to `themeConfig.sidebar` / `srcExclude`)
-    $(ITEM `ci --check-docs-sidebar` (`apps/ci/src/docs_sidebar.d`) checks the sidebar
+    $(ITEM `ci check sidebar` (`apps/ci/src/docs_sidebar.d`) checks the sidebar
         against the published pages in both directions)
-    $(ITEM `ci --audit-fences` (`apps/ci/src/fence_audit.d`) uses the same `srcExclude`
+    $(ITEM `ci docs fences-audit` (`apps/ci/src/fence_audit.d`) uses the same `srcExclude`
         to decide which files the site builds)
 )
 

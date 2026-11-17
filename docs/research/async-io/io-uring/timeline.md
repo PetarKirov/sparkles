@@ -476,7 +476,7 @@ Each row links a runnable, standalone [`during`][during]-based D program in the 
 directory next to this file. They build against the copy of `during` vendored into
 `sparkles:event-horizon-sys` (`sparkles.event_horizon.sys.uring`). Every example demonstrates its feature against the _live_ kernel
 and degrades to a `SKIP` (exit 0) on kernels that lack it, so the whole set stays green from
-the 5.1 baseline up to a bleeding-edge tree. Run them all with `ci --example-files`, or one at
+the 5.1 baseline up to a bleeding-edge tree. Run them all with `ci examples standalone`, or one at
 a time with `dub run --single <file>`.
 
 | Example                                | Since     | Demonstrates                                                         |

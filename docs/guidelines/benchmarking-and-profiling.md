@@ -354,7 +354,7 @@ for n in 200 1200; do
   SPARKLES_GC_SAMPLES=/tmp/drag-$n.gcs hue --gui --window-system x11 \
     --debug resize-sweep,frames=$n SPEC.md --DRT-gcopt=gc:sampler
 done
-ci --gc-report /tmp/drag-1200.gcs --gc-baseline /tmp/drag-200.gcs
+ci gc-report /tmp/drag-1200.gcs --baseline /tmp/drag-200.gcs
 ```
 
 The report attributes the bytes to their allocation site (the first frame in

@@ -4,7 +4,7 @@ The [`examples/`](#sources) tree holds thirteen runnable, CI-verified D programs
 isolates **one** design decision for a future Sparkles units library and proves it end to
 end — the intended compile-time failures are turned into passing
 `static assert(!__traits(compiles, …))` checks, so every program compiles, runs, and is
-exercised by `dub run :ci -- --example-files` on each pass. This page evaluates them side
+exercised by `dub run :ci -- examples standalone` on each pass. This page evaluates them side
 by side across a fixed set of axes and ends with what a Sparkles library should take from
 each, mapped to the [comparison capstone][comparison]'s open decisions.
 
@@ -184,7 +184,7 @@ tag vs nominal) and the **basis** (closed vector vs open generators).
 ## Sources
 
 The thirteen prototypes under `examples/` (each linked individually above) — each
-CI-verified by `dub run :ci -- --example-files` and cross-linked to the system and theory
+CI-verified by `dub run :ci -- examples standalone` and cross-linked to the system and theory
 pages it models — together with the [comparison capstone][comparison] (Part IV open
 decisions and the "Composition with `sparkles:math`" subsection) this evaluation feeds. No
 claim here is not already grounded in a runnable prototype.
