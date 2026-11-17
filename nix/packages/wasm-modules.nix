@@ -191,5 +191,22 @@
           ${oracle} . $(cat $out/recipes.txt) > $out/recipes.json
           ${oracle} --fixtures ${../../libs/dub-manifest/nix-wasm/fixtures.json} > $out/fixtures.json
         '';
+
+      # `nix run .#check-nix-wasm` from a checkout, on an evaluator with
+      # `builtins.wasm` (WW10): the module and the recipe table checked against
+      # the native oracle and the regular-expression reader.
+      apps.check-nix-wasm = {
+        type = "app";
+        program = lib.getExe (
+          pkgs.writeShellApplication {
+            name = "check-nix-wasm";
+            text = ''
+              exec ${lib.getExe config.packages.ci-minimal} --check-nix-wasm \
+                --nix-wasm-module ${config.packages.dub-manifest-nix-wasm}/spk-dub-manifest.wasm \
+                --nix-wasm-answers ${config.packages.dub-manifest-nix-answers} "$@"
+            '';
+          }
+        );
+      };
     };
 }

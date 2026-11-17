@@ -35,6 +35,7 @@ nix run .#ci -- --check-adhoc-sdl
 nix run .#ci -- --check-opaque-recipes
 nix run .#ci -- --check-credits
 nix run .#ci -- --check-wasm-modules --text-module FILE --table-module FILE --wasi-loader FILE --wasi-shim DIR
+nix run .#ci -- --check-nix-wasm --nix-wasm-module FILE --nix-wasm-answers DIR [--nix-wasm-pinned FILE] [--nix-wasm-evaluator NIX]
 nix run .#ci -- --stage-docs-wasm
 nix run .#ci -- --check-blob-paths [--clone-root DIR] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --gc-report FILE [--gc-baseline FILE] [--gc-top N]
@@ -70,6 +71,7 @@ $(LIST
     $(ITEM `--check-adhoc-sdl` — verify no D source reads, edits or detects SDL by matching text: a text-matching call whose arguments hold an SDL marker fails unless `apps/ci/sdl-audit-allowlist.txt` lists it with a reason (lossless editing SDE9; see the `sdl_audit` module))
     $(ITEM `--check-credits` — verify the credits document (`docs/credits/`) against the build inputs: every dub package, native library, static archive, bundled font and grammar bundle the applications link or ship has a part, every part names something shipped, and each application page includes exactly its own parts (see the `credits` module))
     $(ITEM `--check-wasm-modules` — run a fixed corpus through the documentation site's WebAssembly modules under `node` and through the same D functions natively, and fail on any difference (docs/specs/toolchain/wasm-modules.md, TCM9; see `wasm_modules_check`))
+    $(ITEM `--check-nix-wasm` — on an evaluator with `builtins.wasm`, compare the dub recipe module's answers with the native oracle's and the recipe table's facts from the module with the regular-expression reader's, for the tree's module and the pinned one (docs/specs/wired/wasm, WW10; see `nix_wasm_check`))
     $(ITEM `--stage-docs-wasm` — build the documentation site's WebAssembly modules (`nix build .#docs-wasm`) and copy them into `docs/public/` (TCM3; see `docs_wasm`))
     $(ITEM `--check-blob-paths` — verify every SHA-pinned GitHub blob citation names a path that exists at that commit, using local clones under `--clone-root` (default `$REPOS`). Complements `--check-vcs-urls`, which only checks the ref; a wrong path is a 404 no ref check can see. $(B Local only) — a citation whose repository is not cloned is reported as unchecked, never failed, so this is not wired into CI or a pre-commit hook)
     $(ITEM `--gc-report FILE` — summarize a GC recording (`sparkles.profiling.gc_sampler`; a run with `SPARKLES_GC_SAMPLES=FILE` and `--DRT-gcopt=gc:sampler`): bytes allocated by site and inclusively by function, the collections' pauses, and what stayed live after the last one, scanned or not. `--gc-baseline` subtracts a shorter run of the same scenario, leaving the steady cost)
@@ -528,6 +530,28 @@ struct CliParams
         description: "With --check-wasm-modules: the @bjorn3/browser_wasi_shim package directory."))
     string wasiShim;
 
+    @(Option(`check-nix-wasm`,
+        description: "On an evaluator with builtins.wasm, check the dub recipe module (--nix-wasm-module) "
+        ~ "against the native oracle's answers (--nix-wasm-answers) and the regular-expression reader "
+        ~ "(docs/specs/wired/wasm, WW10)."))
+    bool checkNixWasm;
+
+    @(Option(`nix-wasm-module`,
+        description: "With --check-nix-wasm: the module (spk-dub-manifest.wasm)."))
+    string nixWasmModule;
+
+    @(Option(`nix-wasm-answers`,
+        description: "With --check-nix-wasm: the oracle's answers (the dub-manifest-nix-answers package)."))
+    string nixWasmAnswers;
+
+    @(Option(`nix-wasm-pinned`,
+        description: "With --check-nix-wasm: the pinned module, checked as well."))
+    string nixWasmPinned;
+
+    @(Option(`nix-wasm-evaluator`,
+        description: "With --check-nix-wasm: the evaluator to run (default: nix)."))
+    string nixWasmEvaluator = "nix";
+
     @(Option(`stage-docs-wasm`,
         description: "Build the documentation site's WebAssembly modules (nix build .#docs-wasm) "
         ~ "and copy them into docs/public/."))
@@ -696,6 +720,7 @@ enum ProgramMode
     checkBlobPaths,
     gcReport,
     checkWasmModules,
+    checkNixWasm,
     stageDocsWasm,
     ciStats,
     mirrorChecks,
@@ -868,6 +893,12 @@ int ciMain(string[] args)
         return runCheckPinCache();
     if (mode == ProgramMode.checkWasmModules)
         return runCheckWasmModules(cli.textModule, cli.tableModule, cli.wasiLoader, cli.wasiShim);
+    if (mode == ProgramMode.checkNixWasm)
+    {
+        import nix_wasm_check : runCheckNixWasm;
+        return runCheckNixWasm(detectRepoRoot(), cli.nixWasmEvaluator, cli.nixWasmModule,
+            cli.nixWasmAnswers, cli.nixWasmPinned);
+    }
     if (mode == ProgramMode.stageDocsWasm)
         return stageDocsWasm(detectRepoRoot());
 
@@ -1244,6 +1275,9 @@ private ProgramMode resolveProgramMode(in CliParams cli)
     if (cli.checkWasmModules)
         return ProgramMode.checkWasmModules;
 
+    if (cli.checkNixWasm)
+        return ProgramMode.checkNixWasm;
+
     if (cli.stageDocsWasm)
         return ProgramMode.stageDocsWasm;
 
@@ -1286,6 +1320,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
         case ProgramMode.gcReport:           return "--gc-report";
         case ProgramMode.checkWasmModules:   return "--check-wasm-modules";
+        case ProgramMode.checkNixWasm:       return "--check-nix-wasm";
         case ProgramMode.stageDocsWasm:      return "--stage-docs-wasm";
         case ProgramMode.ciStats:            return "--ci-stats";
         case ProgramMode.mirrorChecks:       return "--mirror-checks";
@@ -1884,6 +1919,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.perfAppend:
             case ProgramMode.checkBlobPaths:
             case ProgramMode.checkWasmModules:
+            case ProgramMode.checkNixWasm:
             case ProgramMode.stageDocsWasm:
                 rc = 1;
                 break;
