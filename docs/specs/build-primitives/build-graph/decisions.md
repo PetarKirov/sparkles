@@ -15,8 +15,9 @@ D18–D21, the E0 spike results, on 2026-11-02; and D22–D25, from E1, on
 marked accepted were accepted on 2026-11-06. D44, routing the graph's file
 access through the capability VFS, was accepted on 2026-11-07, and D56,
 planning's source scans on DMD's lexer and parser, and D57, pruning's scan
-scope, and D58, the layout lint's gate, on 2026-11-16; D59, what planning's trace holds, on 2026-11-17. Records marked
-**proposed** await the owner's decision.
+scope, and D58, the layout lint's gate, on 2026-11-16; and D59, what
+planning's trace holds, and D60, a single-file generator's `git`, on
+2026-11-17. Records marked **proposed** await the owner's decision.
 
 ## D1: Own the build instead of isolating dub (accepted)
 
@@ -1677,7 +1678,7 @@ BGF3):
 resolver stops probing the default directories of a root recipe that no
 target builds.
 
-## D60: A single-file generator runs where `git` fails (proposed)
+## D60: A single-file generator runs where `git` fails (accepted)
 
 **Question.** The `dmd` registry package's `dmd:lexer` runs its `config.d`
 through dub (`"$DUB_EXE" --single config.d -- generated/dub VERSION /etc`),
@@ -1695,8 +1696,8 @@ which after relocation (D18) is resolved against the action's working
 directory, so `git` could describe whatever repository holds that, and the
 output would vary with the run.
 
-**Choice.** Proposed on 2026-11-17, for the owner to confirm (BGG1, BGG3,
-BGA4): a `git` that fails. A single-file generator runs with a `PATH`
+**Choice.** Decided by the owner on 2026-11-17 (BGG1, BGG3, BGA4): a `git`
+that fails. A single-file generator runs with a `PATH`
 naming one directory, made by an in-process action, that holds a script for
 each of `failingTools` (`git`) whose interpreter line names `Tools.fail`
 (the toolchain's `false`), so it exits non-zero. The program falls back to
