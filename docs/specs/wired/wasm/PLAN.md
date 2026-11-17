@@ -69,6 +69,12 @@ in the agreement check only.
 
 ## W4 — The pinned module
 
+Done, the pin last: `nix/nix-wasm-pin.json`, the fetch in
+`manifest-graph.nix`, `apps/ci/tools/pin-nix-wasm.d` (builds a revision's module,
+commits it to the orphan branch `nix-wasm-modules` and writes the pin), and
+`ci --check-nix-wasm` rebuilding the pinned revision and running both
+agreement checks with the pinned module.
+
 Obligations: WW8, D2. A pin file names a revision and the module's hash;
 the module built at that revision is published and fetched by hash during
 evaluation; a check rebuilds the pinned revision and requires a
