@@ -134,6 +134,8 @@ nor verified; removing the directive makes the example required again:
 module app;
 
 // std.* modules
+import perf_record : testTaskId;
+import perf_run : RunRecorder;
 import watch_mode : runWatchMode, WatchAction;
 import std.algorithm : any, canFind, countUntil, filter, joiner, map, min, sort, startsWith;
 import std.array : array, join, split;
@@ -269,6 +271,15 @@ struct CliParams
         ~ "sub-packages out, so a CI shard can take every package the others do not list."))
     string[] skipPackages;
 
+    @(Option(`placement`,
+        description: "With --test, --test-sanitize or --test-extracted: the placement of "
+        ~ "ci/placements.json this run belongs to, recorded in its run record."))
+    string placement;
+
+    @(Option(`shard`,
+        description: "With --placement: which of the placement's shards this run is, as K/N."))
+    string shard;
+
     @(Option(`list-slow-tests`,
         description: "Print the @slow unittests as the JSON matrix of the slow-tests CI job "
         ~ "(also appended to $GITHUB_OUTPUT as `matrix`)."))
@@ -386,6 +397,12 @@ struct CliParams
         ~ "every component an application links or ships has a part, every part names "
         ~ "something shipped, and each application page includes exactly its parts."))
     bool checkCredits;
+
+    @(Option(`record-task`,
+        description: "Run the command given after `--` and record it as the task ID in a run "
+        ~ "record, with its wall time and outcome (observability OD21): a step `ci` does not run "
+        ~ "itself, such as a toolchain pin build. Exits with the command's status."))
+    string recordTask;
 
     @(Option(`check-pin-cache`,
         description: "Verify that Sparkles' Cachix cache serves every pinned system's toolchain "
@@ -602,6 +619,7 @@ enum ProgramMode
     checkOpaqueRecipes,
     checkCredits,
     checkPinCache,
+    recordTask,
     checkBlobPaths,
     gcReport,
     checkWasmModules,
@@ -765,6 +783,8 @@ int ciMain(string[] args)
         return runCheckOpaqueRecipes();
     if (mode == ProgramMode.checkCredits)
         return runCheckCredits();
+    if (mode == ProgramMode.recordTask)
+        return runRecordTask(cli.recordTask, cli.positionals, cli.placement, cli.shard);
     if (mode == ProgramMode.checkPinCache)
         return runCheckPinCache();
     if (mode == ProgramMode.checkWasmModules)
@@ -801,14 +821,17 @@ int ciMain(string[] args)
     if (mode == ProgramMode.runDubTests)
         return cli.watch
             ? runWatchMode(WatchAction.test, cli.failFast)
-            : runDubTestsMode(cli.failFast, coverage, cli.packages, cli.skipPackages);
+            : runDubTestsMode(cli.failFast, coverage, cli.packages, cli.skipPackages,
+                cli.placement, cli.shard);
 
     if (mode == ProgramMode.runSanitizeTests)
         return runDubTestsMode(cli.failFast, coverage, cli.packages, cli.skipPackages,
+            cli.placement, cli.shard,
             sanitize: true);
 
     if (mode == ProgramMode.runExtractedTests)
-        return runExtractedTestsMode(cli.failFast, cli.packages, cli.skipPackages);
+        return runExtractedTestsMode(cli.failFast, cli.packages, cli.skipPackages,
+            cli.placement, cli.shard);
 
     if (mode == ProgramMode.listSlowTests)
         return runListSlowTestsMode();
@@ -1033,7 +1056,7 @@ private string validateCliMode(
     if (cli.checkCommitScope && positionalArgs.length > 1)
         return "--check-commit-scope accepts at most one argument (a path or '-' for stdin)";
 
-    if (positionalArgs.length > 0 && !cli.checkCommitScope)
+    if (positionalArgs.length > 0 && !cli.checkCommitScope && !cli.recordTask.length)
         return "Positional file arguments are no longer supported; use --include-files (alias --files)";
 
     return null;
@@ -1121,6 +1144,8 @@ private ProgramMode resolveProgramMode(in CliParams cli)
         return ProgramMode.checkOpaqueRecipes;
     if (cli.checkCredits)
         return ProgramMode.checkCredits;
+    if (cli.recordTask.length)
+        return ProgramMode.recordTask;
     if (cli.checkPinCache)
         return ProgramMode.checkPinCache;
 
@@ -1163,6 +1188,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.checkOpaqueRecipes: return "--check-opaque-recipes";
         case ProgramMode.checkCredits:       return "--check-credits";
         case ProgramMode.checkPinCache:      return "--check-pin-cache";
+        case ProgramMode.recordTask:         return "--record-task";
         case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
         case ProgramMode.gcReport:           return "--gc-report";
         case ProgramMode.checkWasmModules:   return "--check-wasm-modules";
@@ -1756,6 +1782,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkOpaqueRecipes:
             case ProgramMode.checkCredits:
             case ProgramMode.checkPinCache:
+            case ProgramMode.recordTask:
             case ProgramMode.checkBlobPaths:
             case ProgramMode.checkWasmModules:
             case ProgramMode.stageDocsWasm:
@@ -3905,6 +3932,20 @@ sub-package has is an error rather than a smaller run: a CI shard lists its
 packages by hand, and a typo there would otherwise pass having tested
 nothing, or test a package twice.
 */
+
+/// The options of a test run that change what it runs, as its run record's
+/// `invocation.options` holds them (observability OBR7): not `--fail-fast`.
+private string[] recordedOptions(in string[] requested, in string[] skipped, bool coverage) @safe pure
+{
+    string[] options;
+    if (requested.length)
+        options ~= ["--packages"] ~ requested.dup;
+    if (skipped.length)
+        options ~= ["--skip-packages"] ~ skipped.dup;
+    if (coverage)
+        options ~= "--coverage";
+    return options;
+}
 private bool requestedSubPackages(string repoRoot, in string[] requested,
     in string[] skipped, out string[] chosen)
 {
@@ -3930,7 +3971,7 @@ private bool requestedSubPackages(string repoRoot, in string[] requested,
 }
 
 private int runDubTestsMode(bool failFast, bool coverage, in string[] requested,
-    in string[] skipped, bool sanitize = false)
+    in string[] skipped, string placement, string shard, bool sanitize = false)
 {
     if (sanitize)
     {
@@ -3989,6 +4030,7 @@ private int runDubTestsMode(bool failFast, bool coverage, in string[] requested,
     {
         string label;
         string[] runnerArgs; /// the test binary's, after `--`
+        bool serial; /// `-t 1`: the run record's `serial` leg
     }
     // Sanitize runs the parallel leg only: the watermark the `-t 1` leg
     // exists to contrast with is off under ASan (see `stack_budget.d`), and
@@ -3997,12 +4039,20 @@ private int runDubTestsMode(bool failFast, bool coverage, in string[] requested,
     // The plain legs leave the `@slow` tests to `--test-slow`, which CI runs
     // as jobs of their own; under ASan they still run, in the one leg.
     const legs = sanitize
-        ? [TestLeg("sanitize -t " ~ parallelN.to!string, ["-t", parallelN.to!string])]
+        ? [TestLeg("sanitize -t " ~ parallelN.to!string, ["-t", parallelN.to!string], false)]
         : [
-            TestLeg("-t 1", ["-t", "1", "--skip-slow"]),
-            TestLeg("-t " ~ parallelN.to!string, ["-t", parallelN.to!string, "--skip-slow"]),
+            TestLeg("-t 1", ["-t", "1", "--skip-slow"], true),
+            TestLeg("-t " ~ parallelN.to!string, ["-t", parallelN.to!string, "--skip-slow"], false),
         ];
     const extraEnv = sanitize ? sanitizeChildEnv() : (string[string]).init;
+
+    // One task per package leg, in a run record (observability OD21): the
+    // placements pack their shards from the history of these wall times.
+    auto recorder = RunRecorder.open(repoRoot, sanitize ? "--test-sanitize" : "--test",
+        recordedOptions(requested, skipped, coverage), placement, shard);
+    scope (exit)
+        if (const degradation = recorder.finish())
+            warning(i"$(degradation)");
 
     packageLoop: foreach (i, pkg; subPackages)
     {
@@ -4018,10 +4068,13 @@ private int runDubTestsMode(bool failFast, bool coverage, in string[] requested,
             // (the dev shell provides both dmd and ldc). Example verification keeps
             // `ci`'s own embedded compiler; only the test suite is compiler-matrixed.
             auto testCmd = dubTestCommand(repoRoot, pkgName);
+            recorder.begin();
             auto lines = PackageTestStream(testCmd, leg.runnerArgs, cov, extraEnv, 250.msecs, &onSample);
             streamResultBox(header, lines,
                 () => resultVerdict(lines.result.status == 0),
                 (LogDelta d) => resultFooterRight(lines.result.usage, d));
+            recorder.end(testTaskId(pkgName, sanitize ? "sanitize" : "unittest", leg.serial),
+                lines.result.status == 0);
             monitor.sample();
 
             if (cov.enabled && !lines.result.coverageCollected && lines.result.status == 0
@@ -4260,7 +4313,8 @@ private ExtractedModes extractedModesOf(string repoRoot, string packagePath)
 /// wasm-ld, no wasm runtime), which is right for a contributor's machine and
 /// exactly wrong here — without it a missing linker would leave this reporting
 /// success having run nothing.
-private int runExtractedTestsMode(bool failFast, in string[] requested, in string[] skipped)
+private int runExtractedTestsMode(bool failFast, in string[] requested, in string[] skipped,
+    string placement, string shard)
 {
     info(i"resolving repository root");
     const repoRoot = detectRepoRoot();
@@ -4312,6 +4366,12 @@ private int runExtractedTestsMode(bool failFast, in string[] requested, in strin
         monitor.sample();
     }
 
+    auto recorder = RunRecorder.open(repoRoot, "--test-extracted",
+        recordedOptions(requested, skipped, false), placement, shard);
+    scope (exit)
+        if (const degradation = recorder.finish())
+            warning(i"$(degradation)");
+
     int failures = 0;
     size_t processed = 0;
     string[] failedJobs;
@@ -4329,12 +4389,15 @@ private int runExtractedTestsMode(bool failFast, in string[] requested, in strin
             repoRoot, job.packageName, testBuildType(false),
             [job.flag, "--require-toolchain"]);
 
+        recorder.begin();
         auto lines = executeMonitoredLines(
             cmd, 250.msecs, &onSample, ChildStdin.empty, Duration.zero,
             withLdcDflags(null));
         streamResultBox(header, lines,
             () => resultVerdict(lines.result.status == 0),
             (LogDelta d) => resultFooterRight(lines.result.usage, d));
+        recorder.end(testTaskId(job.packageName, job.flag == "--better-c" ? "betterc" : "wasm", true),
+            lines.result.status == 0);
         monitor.sample();
 
         processed = i + 1;
@@ -6797,4 +6860,35 @@ PackageCommand packageBuildCommand(string repoRoot, string pkgDir, string wasiCo
     return PackageCommand("build",
         dubBuildCommand(repoRoot, pkgDir, pkgName, targetBuildArgs(pkgName, wasiCompiler)),
         withLdcDflags(null));
+}
+
+/// `--record-task ID -- COMMAND…`: run the command with this process's
+/// standard streams, record it as task `ID` (its wall time and outcome) in a
+/// run record, and exit with its status. A record that cannot be written is a
+/// warning, never a change of status (observability OBD11).
+private int runRecordTask(string taskId, string[] command, string placement, string shard)
+{
+    import std.process : spawnProcess, wait;
+
+    if (command.length == 0)
+    {
+        error(i"--record-task $(taskId) needs a command after --");
+        return 2;
+    }
+    const repoRoot = detectRepoRoot();
+    auto recorder = RunRecorder.open(repoRoot is null ? "." : repoRoot, "--record-task", [taskId],
+        placement, shard);
+    int status;
+    recorder.begin();
+    try
+        status = wait(spawnProcess(command));
+    catch (Exception e)
+    {
+        error(i"--record-task $(taskId): $(e.msg)");
+        status = 127;
+    }
+    recorder.end(taskId, status == 0);
+    if (const degradation = recorder.finish())
+        warning(i"$(degradation)");
+    return status;
 }
