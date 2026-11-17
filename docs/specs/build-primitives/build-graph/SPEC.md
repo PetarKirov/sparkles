@@ -407,6 +407,9 @@ requests them as variant options. The declared environment **must**:
 - fix the variables that change diagnostics (`TERM`, `NO_COLOR`) and the
   target (`MACOSX_DEPLOYMENT_TARGET`);
 - set `PATH` explicitly, empty for `compile`, `archive` and `link` actions.
+- set `TMPDIR` to the action's own measurement directory, since the C driver
+  an LDC link runs writes temporary files there
+  ([D39](./decisions.md#d39-a-spike-on-write-and-network-isolation-accepted)).
 
 A compile or link **must** name its C compiler driver and its linker by
 absolute path (`-gcc=` and `--linker=` on LDC). They are the files toolchain
