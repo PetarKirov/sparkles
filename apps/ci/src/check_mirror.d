@@ -121,6 +121,9 @@ struct MirrorOutcome
     int pullRequest;
     /// How many check runs were copied across.
     size_t copied;
+    /// The pull request head the validating run built, whose run records the
+    /// history takes for this commit (observability OBH4); empty when none.
+    string headSha;
     /// One line, suitable for a workflow log and a step summary.
     string reason;
 }
@@ -313,6 +316,7 @@ Result!MirrorOutcome mirrorChecks(alias fetchJson)(
         return success(MirrorOutcome(
             mirrored: covered,
             pullRequest: pr.number,
+            headSha: pr.head.sha,
             reason: covered
                 ? sha[0 .. 7] ~ " already carries " ~ existing.value.checkRuns.length.to!string
                     ~ " checks of its own; nothing to add from #" ~ pr.number.to!string
@@ -349,6 +353,7 @@ Result!MirrorOutcome mirrorChecks(alias fetchJson)(
     return success(MirrorOutcome(
         mirrored: copied > 0,
         pullRequest: pr.number,
+        headSha: pr.head.sha,
         copied: copied,
         reason: "#" ~ pr.number.to!string ~ " built the same tree ("
             ~ landedTree[0 .. 7] ~ "); mirrored " ~ copied.to!string ~ " checks",
@@ -389,7 +394,8 @@ void publishOutcome(in MirrorOutcome outcome)
         }
     }
 
-    appendTo("GITHUB_OUTPUT", "mirrored=" ~ (outcome.mirrored ? "true" : "false") ~ "\n");
+    appendTo("GITHUB_OUTPUT", "mirrored=" ~ (outcome.mirrored ? "true" : "false") ~ "\n"
+        ~ "head-sha=" ~ outcome.headSha ~ "\n");
     appendTo("GITHUB_STEP_SUMMARY",
         (outcome.mirrored ? "### Checks mirrored\n\n" : "### Nothing to mirror\n\n")
         ~ outcome.reason ~ "\n");

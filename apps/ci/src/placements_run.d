@@ -59,8 +59,6 @@ Expected!(ShardChoice, string) chooseShard(string repoRoot, string[] allPackages
     const p = loaded.value.find(placementName);
     if (p is null)
         return err!ShardChoice("ci/placements.json has no placement " ~ placementName);
-    if (n != p.shards)
-        return err!ShardChoice(format("placement %s has %d shards, not %d", placementName, p.shards, n));
 
     ShardChoice choice;
     ulong[string][] records;
@@ -105,11 +103,12 @@ Expected!(ShardChoice, string) chooseShard(string repoRoot, string[] allPackages
 
 /**
 The placements as a CI provider's matrix: one entry per shard of every
-placement the provider has a runner for, with the history tip every shard
+placement the provider has a runner for, and of `mode` when one is given, with
+the history tip every shard
 reads. `{"tip": …, "include": [{"placement", "system", "compiler", "mode",
 "shard", "runner", "timeout"}, …]}`.
 */
-string placementMatrix(in Placements placements, string provider, string tip) @safe
+string placementMatrix(in Placements placements, string provider, string tip, string mode = null) @safe
 {
     import std.json : JSONValue;
 
@@ -117,7 +116,7 @@ string placementMatrix(in Placements placements, string provider, string tip) @s
     foreach (p; placements.placements)
     {
         const runner = p.runners.get(provider, null);
-        if (runner is null)
+        if (runner is null || (mode.length && p.mode.to!string != mode))
             continue;
         foreach (k; 1 .. p.shards + 1)
         {
