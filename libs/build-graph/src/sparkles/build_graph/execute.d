@@ -100,7 +100,10 @@ TaskNode[] executionNodes(ref const ActionGraph g, const RunLayout layout, const
                 q.cwd = p.cwd.length ? expand(p.cwd, layout, id) : layout.root;
                 if (q.cwd.length && !q.cwd.startsWith("/"))
                     q.cwd = layout.root ~ "/" ~ q.cwd;
-                q.envDelta = build ? buildEnvironment() : declared.dup;
+                // A typed generator states its environment over a build's (§7).
+                q.envDelta = build ? buildEnvironment()
+                    : a.kind == ActionKind.generate && p.envDelta.length ? plannedEnvironment(p.envDelta, layout, id)
+                    : declared.dup;
                 q.completeEnvironment = true;
                 q.stdin = p.stdin;
                 q.timeout = p.timeout;
@@ -118,6 +121,18 @@ TaskNode[] executionNodes(ref const ActionGraph g, const RunLayout layout, const
         (() @trusted { n.action = concrete; })();
     }
     return nodes;
+}
+
+// A build's environment with `planned`'s entries, expanded, in their place.
+private EnvEntry[] plannedEnvironment(const EnvEntry[] planned, const RunLayout layout, TaskId self) @safe
+{
+    EnvEntry[] env;
+    foreach (e; buildEnvironment())
+        if (!planned.canFind!(p => p.name == e.name))
+            env ~= e;
+    foreach (e; planned)
+        env ~= EnvEntry(e.name, expand(e.value, layout, self));
+    return env;
 }
 
 /// `arg` with the run's placeholders replaced, for the action `self`.
@@ -379,6 +394,40 @@ struct ActionDriver
         return TaskOutcome(Succeeded());
     }
 
+    /*
+    The failing tools a single-file generator finds on its `PATH` (§7): its
+    arguments are the output directory, the failing program by absolute
+    path, then the names, each an executable script whose interpreter line
+    names the program, which so runs in its place (a VFS link takes only a
+    relative target, VFO3).
+    */
+    TaskOutcome generateFailingTools(ref TaskContext!Sched ctx, const ref InProcessAction a) @system
+    {
+        import sparkles.build_primitives.task.model : FailureReason, Failed, OutputStream, Succeeded;
+        import sparkles.base.vfs.types : Access, Disposition, OpenMode;
+
+        if (a.arguments.length < 2)
+        {
+            ctx.output(OutputStream.stderr, "generate:failing-tools: too few arguments");
+            return TaskOutcome(Failed(FailureReason.exitStatus, 1));
+        }
+        auto dir = run_.walkAll(a.arguments[0][layout.runDirectory.length + 1 .. $]);
+        if (dir.hasError)
+            return TaskOutcome(Failed(FailureReason.exitStatus, 1));
+        enum script = OpenMode(Access.write, Disposition.createOrTruncate, executable: true);
+        const line = "#!" ~ a.arguments[1] ~ "\n";
+        foreach (name; a.arguments[2 .. $])
+        {
+            auto file = dir.value.openFile!script(name);
+            if (file.hasError || file.value.write(cast(const(ubyte)[]) line).hasError)
+            {
+                ctx.output(OutputStream.stderr, "generate:failing-tools: cannot write " ~ name);
+                return TaskOutcome(Failed(FailureReason.exitStatus, 1));
+            }
+        }
+        return TaskOutcome(Succeeded());
+    }
+
     private bool readWorktree(string path, out string text_) @safe
     {
         import sparkles.base.vfs.types : OpenMode;
@@ -449,6 +498,8 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
         return RunResult(exitCode: 2);
     driver.processes.register("generate:test-root-module",
         (ref TaskContext!Sched ctx, const ref InProcessAction a) => driver.generateTestRoot(ctx, a));
+    driver.processes.register("generate:failing-tools",
+        (ref TaskContext!Sched ctx, const ref InProcessAction a) => driver.generateFailingTools(ctx, a));
     auto reporter = PlainReporter!W(&writer, &graph, PlainOptions(timings: false));
     auto sink = new EventChannel;
     MonotonicClock clock;

@@ -1676,3 +1676,38 @@ BGF3):
 **Revisit when** `pkg-config` is read in process (BGK9), or when the
 resolver stops probing the default directories of a root recipe that no
 target builds.
+
+## D60: A single-file generator runs where `git` fails (proposed)
+
+**Question.** The `dmd` registry package's `dmd:lexer` runs its `config.d`
+through dub (`"$DUB_EXE" --single config.d -- generated/dub VERSION /etc`),
+and the program asks `git describe` for the compiler's version, falling back
+to its `VERSION` file. The graph builds the program (BGG1, BGG6) and runs it
+with a complete environment, whose `PATH` is empty (BGA4), and BGG3 says a
+generator searches no `PATH`. With nothing on it, Phobos's `execute` throws
+for the missing program and `config.d` fails instead of falling back. Give it
+the real `git`, change the program, or give it a `git` that fails?
+
+**Evidence.** In a registry checkout, which is no repository, `git describe`
+fails, so dub's own run writes the `VERSION` file's contents. Given the real
+`git`, the program would run it in the directory `__FILE_FULL_PATH__` names,
+which after relocation (D18) is resolved against the action's working
+directory, so `git` could describe whatever repository holds that, and the
+output would vary with the run.
+
+**Choice.** Proposed on 2026-11-17, for the owner to confirm (BGG1, BGG3,
+BGA4): a `git` that fails. A single-file generator runs with a `PATH`
+naming one directory, made by an in-process action, that holds a script for
+each of `failingTools` (`git`) whose interpreter line names `Tools.fail`
+(the toolchain's `false`), so it exits non-zero. The program falls back to
+its `VERSION` file, as under dub in a registry checkout, and its output is a
+function of its declared inputs. A VFS link takes only a relative target
+(VFO3), hence a script rather than a link to `false`.
+
+**Trade-offs.** The list names the tools one known program runs, not every
+tool a program might run: another single-file generator that runs a tool not
+on the list still fails, as BGG3 wants, but by an exception rather than a
+clear error.
+
+**Revisit when** a single-file generator needs a tool to succeed, or the
+upstream `config.d` stops calling `git`.

@@ -12,9 +12,11 @@ $(LIST
         * one `link` per request whose root is a test root or an application,
         of the root's object and the archives it links, in link order;
         * one `test` per test root's link;
-        * a `generate` before a compile that needs one: the test-root module,
-        and a dub pre-generate command, which is not yet a typed generator
-        (§7, E3).
+        * a `generate` before a compile that needs one: the test-root module, in
+        process, and a recognized pre-generate command (§7), whose tool is
+        built first and whose output the compile reads in place of the
+        string import root it fills. The shader compiler stays dub's command,
+        in its package, until its direct invocation is planned.
 )
 
 A compile reads its dependencies' sources through import paths and waits for
@@ -45,7 +47,8 @@ import std.conv : text;
 import sparkles.build_graph.variants : Role, Variant, VariantPlan;
 import sparkles.build_primitives.resolve.configure : Resolution;
 import sparkles.build_primitives.resolve.settings : BuildOption, BuildSettings, TargetType;
-import sparkles.build_primitives.task.action : InProcessAction, ProcessAction, SandboxPolicy, TaskAction;
+import sparkles.build_primitives.task.action : EnvEntry, InProcessAction, ProcessAction, SandboxPolicy,
+    TaskAction;
 import std.sumtype : match;
 import sparkles.build_primitives.task.model : EdgeCondition, EdgeReason, PlanExpected, PresentationKey,
     ResourceClaim, TaskEdge, TaskId, TaskKind, TaskNode, planErr, planOk, qualifiedNameSegment, taskId;
@@ -122,7 +125,19 @@ struct Tools
     /// them. Empty leaves the compiler's choice.
     string cc;
     string linker; /// ditto
+    /// A program that exits non-zero, by absolute path: what a generator
+    /// finds under each of `failingTools` on its `PATH` (§7). Empty gives
+    /// generators an empty `PATH`.
+    string fail;
 }
+
+/**
+The programs a single-file generator may run but must not depend on: on its
+`PATH` each is `Tools.fail`. `dmd`'s `config.d` asks `git describe` for the
+compiler's version and falls back to its `VERSION` file, as it does in a
+registry checkout, which has no repository (D60).
+*/
+immutable string[] failingTools = ["git"];
 
 /**
 A coverage attempt (CIC7): request `coverage` builds a package's test binary
@@ -188,6 +203,71 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
         g.edges ~= TaskEdge(from, to, EdgeCondition.onSuccess, EdgeReason.packageDependency);
     }
 
+    // §7: a generator's action, made once, after its tool's build and the
+    // directory of failing tools it runs with.
+    TaskId[size_t] generatorOf;
+    TaskId shim;
+    TaskId generatorAction(size_t gi)
+    {
+        if (auto made_ = gi in generatorOf)
+            return *made_;
+        const gen = &plan.generators[gi];
+        import std.digest.sha : sha256Of;
+        const d = hexOf(sha256Of(gen.directory ~ "\n" ~ gen.command))[0 .. 12];
+        string[] arguments;
+        foreach (arg; gen.arguments)
+            arguments ~= relative(arg, root);
+        TaskId id;
+        if (gen.tool == size_t.max)
+        {
+            // The shader compiler, until its direct invocation is planned
+            // from its own request: dub's command, in its package.
+            id = taskId("generate", "shader-compile", "generator", plan.variants[0].toolchain.vendor, d).value;
+            add(Action(ActionKind.generate, id, size_t.max,
+                TaskAction(ProcessAction(argv: ["sh", "-c", gen.command], cwd: relative(gen.directory, root))),
+                [DeclaredOutput(".", true)], defaultWeight(ActionKind.generate)));
+            generatorOf[gi] = id;
+            return id;
+        }
+        const t = &plan.variants[gen.tool];
+        const toolCompile = add(Action(ActionKind.compile, actionId(ActionKind.compile, *t), gen.tool,
+            TaskAction(ProcessAction(argv: compileArgv(*t, root, tools, TaskId.init, null),
+                sandbox: SandboxPolicy.taskDirectory)),
+            [DeclaredOutput(objectName(*t))], defaultWeight(ActionKind.compile)));
+        const linkWeight = defaultWeight(ActionKind.link);
+        const toolLink = add(Action(ActionKind.link, actionId(ActionKind.link, *t), gen.tool,
+            TaskAction(ProcessAction(argv: linkArgv(*t, root, tools, toolCompile, null, linkWeight),
+                sandbox: SandboxPolicy.taskDirectory)),
+            [DeclaredOutput(binaryName(*t))], linkWeight));
+        edge(toolCompile, toolLink);
+        EnvEntry[] env = [EnvEntry("PATH", "")];
+        if (tools.fail.length)
+        {
+            if (shim.empty)
+            {
+                shim = taskId("generate", "failing-tools", "generator", t.toolchain.vendor,
+                    hexOf(sha256Of(tools.fail ~ "\n" ~ failingTools.join("\n")))[0 .. 12]).value;
+                DeclaredOutput[] outs;
+                foreach (name; failingTools)
+                    outs ~= DeclaredOutput(name);
+                add(Action(ActionKind.generate, shim, size_t.max,
+                    TaskAction(InProcessAction("generate:failing-tools", ["$OUT", tools.fail] ~ failingTools)),
+                    outs, defaultWeight(ActionKind.generate)));
+            }
+            env = [EnvEntry("PATH", "$IN(" ~ shim.text ~ ")")];
+        }
+        id = taskId("generate", qualifiedNameSegment(t.package_), "generator", t.toolchain.vendor, d).value;
+        add(Action(ActionKind.generate, id, gen.tool,
+            TaskAction(ProcessAction(argv: [inputPath(toolLink, binaryName(*t))] ~ arguments, envDelta: env,
+                sandbox: SandboxPolicy.taskDirectory)),
+            [DeclaredOutput(".", true)], defaultWeight(ActionKind.generate)));
+        edge(toolLink, id);
+        if (!shim.empty)
+            edge(shim, id);
+        generatorOf[gi] = id;
+        return id;
+    }
+
     foreach (ri, ref r; resolutions)
     {
         if (ri >= plan.requests.length)
@@ -208,18 +288,17 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
                     [DeclaredOutput("dub_test_root.d")], defaultWeight(ActionKind.generate));
                 before ~= add(gen);
             }
-            foreach (n, cmd; v.settings.preGenerateCommands)
+            GeneratedRoot[] generated;
+            foreach (gi; v.generators)
             {
-                auto gen = Action(ActionKind.generate,
-                    actionId(ActionKind.generate, *v, n + (v.role == Role.testRoot ? 1 : 0)), vi,
-                    TaskAction(ProcessAction(argv: ["sh", "-c", cmd], cwd: relative(v.directory, root))),
-                    [DeclaredOutput(".", true)], defaultWeight(ActionKind.generate));
-                before ~= add(gen);
+                const gen = generatorAction(gi);
+                before ~= gen;
+                generated ~= GeneratedRoot(plan.generators[gi].output, gen);
             }
             const generatedRoot = before.length && v.role == Role.testRoot && r.testRoot.generated
                 ? before[0] : TaskId.init;
             auto c = Action(ActionKind.compile, actionId(ActionKind.compile, *v), vi,
-                TaskAction(ProcessAction(argv: compileArgv(*v, root, tools, generatedRoot),
+                TaskAction(ProcessAction(argv: compileArgv(*v, root, tools, generatedRoot, generated),
                     sandbox: SandboxPolicy.taskDirectory)),
                 [DeclaredOutput(objectName(*v))], defaultWeight(ActionKind.compile));
             compileOf[vi] = add(c);
@@ -439,8 +518,17 @@ string[] testRootArguments(ref const Variant v, string root, const string[] test
     return arguments ~ tested;
 }
 
+// A string import root a generator fills, and the generator's action: the
+// compile reads the action's output in the root's place (BGG2).
+struct GeneratedRoot
+{
+    string root;
+    TaskId producer;
+}
+
 // The compiler's arguments for a variant's one compile.
-string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId generatedRoot) @safe
+string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId generatedRoot,
+    const GeneratedRoot[] generated) @safe
 {
     const s = &v.settings;
     const ldc = v.platform.compiler == "ldc";
@@ -462,7 +550,13 @@ string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId
     foreach (p; s.importPaths)
         argv ~= "-I=" ~ relative(p, root);
     foreach (p; s.stringImportPaths)
-        argv ~= "-J=" ~ relative(p, root);
+    {
+        string path = relative(p, root);
+        foreach (ref g; generated)
+            if (trimmed(p) == g.root)
+                path = "$IN(" ~ g.producer.text ~ ")";
+        argv ~= "-J=" ~ path;
+    }
     foreach (id; s.versions)
         argv ~= (ldc ? "-d-version=" : "-version=") ~ id;
     foreach (id; s.debugVersions)
@@ -516,6 +610,13 @@ string[] linkArgv(ref const Variant v, string root, const Tools tools, TaskId co
         argv ~= "-L" ~ f;
     argv ~= "-L--threads=" ~ text(threads);
     return argv;
+}
+
+string trimmed(string path) @safe pure nothrow @nogc
+{
+    while (path.length > 1 && path[$ - 1] == '/')
+        path = path[0 .. $ - 1];
+    return path;
 }
 
 bool isLinkerInput(string f) @safe pure nothrow @nogc
@@ -755,3 +856,52 @@ version (unittest)
                 return x.prerequisite;
         assert(0);
     }
+
+/// A single-file generator (§7): its tool is built as an application, it runs
+/// with its output as `$OUT` and failing tools on its `PATH`, and the compile
+/// that reads its string import root reads that output instead (BGG2).
+@("build_graph.actions.planActions.singleFileGenerator")
+@safe unittest
+{
+    import std.algorithm.searching : count;
+
+    auto tree = memoryTree([
+        "/r/dub.sdl": "name \"r\"\nsubPackage \"t\"\nsubPackage \"g\"\n",
+        "/r/t/dub.sdl": "name \"t\"\ndependency \"r:g\" path=\"..\"\n"
+            ~ "configuration \"library\" {\n}\nconfiguration \"unittest\" {\n}\n",
+        "/r/t/source/t.d": "module t;\n",
+        "/r/g/dub.sdl": "name \"g\"\nstringImportPaths \"gen\"\n"
+            ~ "preGenerateCommands `\"$DUB_EXE\" \"--compiler=$DC\" --single \"${PACKAGE_DIR}/tool.d\" -- "
+            ~ "\"${PACKAGE_DIR}/gen\" \"${PACKAGE_DIR}/VERSION\"`\n",
+        "/r/g/source/g.d": "module g;\n",
+        "/r/g/tool.d": "/+ dub.sdl:\n    name \"tool\"\n+/\nmodule tool;\nvoid main() {}\n",
+    ]);
+    auto r = resolve(ResolveRequest(directory: "/r", subPackage: ":t", buildType: "unittest",
+        platform: BuildPlatform(["linux", "posix"], ["x86_64"], "ldc", "ldc2", 2111, "1.41.0"), testRoot: true), tree);
+    assert(r.hasValue, r.hasError ? r.error.message : null);
+    const plan = planVariants([r.value], PlanOptions(ToolchainIdentity("ldc", "toolchain-1")), tree);
+    assert(plan.hasValue, plan.hasError ? plan.error.message : null);
+    assert(plan.value.generators.length == 1 && plan.value.generators[0].output == "/r/g/gen");
+    auto g = planActions(plan.value, [r.value], "/r", Tools(fail: "/bin/false"));
+    assert(g.hasValue, g.hasError ? g.error.message : null);
+
+    const(Action)* of(string prefix)
+    {
+        foreach (ref a; g.value.actions)
+            if (a.id.text.startsWith(prefix))
+                return &a;
+        assert(false, prefix);
+    }
+    const gen = of("generate:r.tool:generator:");
+    const argv = gen.action.match!((ref const ProcessAction p) => p.argv, (_) => null);
+    assert(argv.length == 3 && argv[0].startsWith("$IN(link:r.tool:application:") && argv[1 .. $] == ["$OUT", "g/VERSION"],
+        text(argv));
+    const env = gen.action.match!((ref const ProcessAction p) => p.envDelta, (_) => null);
+    assert(env.length == 1 && env[0].name == "PATH" && env[0].value.startsWith("$IN(generate:failing-tools:"));
+
+    const compile = of("compile:r.g:library:");
+    const cargv = compile.action.match!((ref const ProcessAction p) => p.argv, (_) => null);
+    assert(cargv.canFind("-J=$IN(" ~ gen.id.text ~ ")"), text(cargv));
+    assert(g.value.edges.canFind!(e => e.prerequisite == gen.id && e.dependent == compile.id));
+    assert(g.value.actions.count!(a => a.kind == ActionKind.generate && a.id.text.startsWith("generate:r.tool")) == 1);
+}

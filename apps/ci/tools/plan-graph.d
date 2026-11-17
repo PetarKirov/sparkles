@@ -1157,7 +1157,8 @@ int runPackage(string root, string only, string into)
     import sparkles.build_graph.execute : RunLayout, executionNodes, runActions;
     import sparkles.build_primitives.task.action : EnvEntry;
 
-    const tools = Tools(compiler: onPath("ldc2"), archiver: onPath("ar"), cc: onPath("cc"), linker: onPath("ld.lld"));
+    const tools = Tools(compiler: onPath("ldc2"), archiver: onPath("ar"), cc: onPath("cc"), linker: onPath("ld.lld"),
+        fail: onPath("false"));
     if (tools.compiler is null || tools.archiver is null || tools.cc is null || tools.linker is null)
     {
         stderr.writeln("plan-graph: ldc2, ar, cc and ld.lld must be on PATH");
