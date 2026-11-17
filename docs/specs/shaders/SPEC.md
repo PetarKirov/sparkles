@@ -154,7 +154,7 @@ side of a program, the _device_ the GPU side.
 | [Entry points](./entry-points.md)     | stages, parameters, built-in variables, outputs, linking stages, handles       | `SHF1`–`SHF9`                 |
 | [Resources](./resources.md)           | uniforms, blocks, push constants, images, interface structs, layout, bindings  | `SHR1`–`SHR8`                 |
 | [Profiles](./profiles.md)             | capabilities, profiles, `@profiles`, the manifest, the three capability checks | `SHC1`–`SHC10`                |
-| [Build step](./build.md)              | the build step, its outputs and outcomes; the stamp and build integration      | `SHP1`–`SHP10`, `SHB1`–`SHB7` |
+| [Build step](./build.md)              | the build step, its outputs and outcomes; the stamp and build integration      | `SHP1`–`SHP11`, `SHB1`–`SHB7` |
 | [Toolchain](./toolchain.md)           | the pinned compiler and tools, reproducibility, platforms                      | `SHT1`–`SHT4`                 |
 | [CPU executor](./executor.md)         | the outline of the executor that runs GPU semantics on the CPU                 | `SHX1`–`SHX3`                 |
 
