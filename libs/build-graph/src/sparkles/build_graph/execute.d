@@ -584,6 +584,7 @@ struct ActionDriver
 
         ResultRecord record;
         record.task = id.text;
+        record.toolchain = layout.toolchain;
         record.declaredKey = declared;
         record.outputs = outputsOf(id);
         outputsDigestOf[id.text] = record.outputsDigest;
@@ -1198,4 +1199,82 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
     const m = testRootModule(["a.b", "a.c"]);
     assert(m.canFind("static import a.b;\nstatic import a.c;\n"));
     assert(m.canFind("alias allModules = TypeTuple!(\n    a.b,\n    a.c\n);"));
+}
+
+/// The store's lifecycle on a real directory (oracle 17's first steps):
+/// publication, the least recently used result evicted with its record
+/// kept, verification finding a flipped byte, removal by task, and garbage
+/// collection emptying `trash/`.
+@("build_graph.execute.storeLifecycle")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : Access, Disposition, OpenMode, Rights, ResolvePolicy, SymlinkPolicy,
+        DotDotPolicy;
+    import sparkles.event_horizon.sys : BlockingVfs;
+    import std.process : environment, thisProcessID;
+
+    auto vfs = new BlockingVfs;
+    auto tmp = openRoot!(Rights.all)(vfs, environment.get("TMPDIR", "/tmp"), ambientAuthority(),
+        ResolvePolicy(SymlinkPolicy.beneath, DotDotPolicy.reject));
+    assert(!tmp.hasError);
+    const name = text("sparkles-store-lifecycle-", thisProcessID);
+    cast(void) tmp.value.removeTree(name);
+    auto top = tmp.value.walkAll(name);
+    assert(!top.hasError);
+    scope (exit)
+        cast(void) tmp.value.removeTree(name);
+    auto build = top.value.walkAll("build");
+    Store!(typeof(build.value)) store;
+    assert(Store!(typeof(build.value)).open(build.value, "1-1", store));
+
+    import sparkles.base.hash.blake3 : blake3;
+
+    // Two results of 100 bytes, published from a run directory beside the store.
+    auto out_ = top.value.walkAll("runs/r/out");
+    ResultRecord publishOne(string task, char fill)
+    {
+        auto dir = out_.value.walkAll(task);
+        char[100] bytes = fill;
+        assert(!dir.value.writeFileAtomic("f", bytes[]).hasError);
+        ResultRecord r;
+        r.task = task;
+        r.resultKey = task ~ "-key";
+        r.outputs = [OutputRecord("f", 100, false, blake3(cast(const(ubyte)[]) bytes[]))];
+        assert(store.publish(out_.value, task, r, "../../../build/v1/results/{}/out") !is null, store.note);
+        return r;
+    }
+
+    publishOne("a", 'a');
+    publishOne("b", 'b');
+    store.releaseLeases();
+    store.lease("a-key"); // `a` is now the more recently used
+    store.releaseLeases();
+    assert(store.entries.length == 2);
+
+    bool dead(string) => false;
+    const report = store.evict(150, 1 << 20, &dead);
+    assert(report.evicted == ["b-key"] && report.resultBytes == 100, text(report));
+    assert(store.find("b-key") is null && store.find("a-key") !is null);
+    store.releaseLeases();
+    string record;
+    assert(readAll(build.value, "v1/records/b-key", record) && record.canFind("output "));
+
+    // A flipped byte, same size: only verification sees it (BGS6).
+    auto published = build.value.walk("v1/results/a-key/out");
+    char[100] flipped = 'a';
+    flipped[50] = 'z';
+    assert(!published.value.writeFileAtomic("f", flipped[]).hasError);
+    assert(store.find("a-key") !is null);
+    store.releaseLeases();
+    assert(store.verify() == ["a-key"]);
+    assert(store.find("a-key") is null);
+
+    // Removal by task, then garbage collection.
+    publishOne("c", 'c');
+    store.releaseLeases();
+    string[] held;
+    assert(store.remove((ref const ResultRecord r) => r.task == "c", &dead, held) == ["c-key"] && !held.length);
+    assert(store.collectGarbage(&dead) >= 2);
+    assert(store.entries.length == 0);
 }

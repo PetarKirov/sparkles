@@ -68,6 +68,7 @@ import std.conv : octal, text, to;
 import std.file : dirEntries, readText, SpanMode;
 import std.path : absolutePath, buildNormalizedPath, buildPath, dirName;
 import std.process : environment;
+import std.string : indexOf;
 import std.stdio : stderr, writeln;
 import std.sumtype : match;
 
@@ -100,6 +101,14 @@ int main(string[] args)
 
     if (traceTarget.length)
         return tracedPlan(root, traceTarget[0]["--trace-target=".length .. $]);
+    const cacheOps = args.filter!(a => a.startsWith("--cache-op=")).array;
+    if (cacheOps.length)
+    {
+        const cacheArg = args.filter!(a => a.startsWith("--cache=")).array;
+        const xdg = environment.get("XDG_CACHE_HOME", buildPath(environment.get("HOME", "/"), ".cache"));
+        return cacheOp(cacheArg.length ? absolutePath(cacheArg[0]["--cache=".length .. $]) : buildPath(xdg, "sparkles"),
+            cacheOps[0]["--cache-op=".length .. $]);
+    }
     const runOnly = args.filter!(a => a.startsWith("--run=")).array;
     if (runOnly.length)
     {
@@ -1253,6 +1262,9 @@ int runPackage(string root, string only, string into, string cache)
     writeln(p.graph.actions.length, " actions; exit ", r.exitCode);
     if (cache.length)
         writeln("store ", cache, ": ", stats.summary);
+    // BGS5: eviction after the run, off its publish path.
+    if (cache.length)
+        cast(void) cacheOp(cache, "evict");
     if (exists(buildPath(trap, "calls")))
     {
         stderr.writeln("plan-graph: BGX1: a test ran dub: ", readText(buildPath(trap, "calls")));
@@ -1314,4 +1326,100 @@ Toolchain toolchainOf(const Tools tools)
         : paths.join("\n");
     t.identity = hexOf(sha256Of(listing));
     return t;
+}
+
+// Whether a lease holder, `<pid>-<start>`, still runs (BGS4).
+bool holderAlive(string holder)
+{
+    import core.sys.posix.signal : kill;
+    import std.conv : ConvException, to;
+
+    const dash = holder.indexOf('-');
+    if (dash <= 0)
+        return false;
+    try
+        return kill(holder[0 .. dash].to!int, 0) == 0;
+    catch (ConvException)
+        return false;
+}
+
+/**
+BGS7's operations on the store beneath `cache`, the test-only driver's
+`ci cache`: `size`, `list`, `gc`, `verify`, `evict[=<results bytes>]`,
+and `remove-key=`, `remove-task=`, `remove-package=` or
+`remove-toolchain=` a value.
+*/
+int cacheOp(string cache, string op)
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : DotDotPolicy, ResolvePolicy, Rights, SymlinkPolicy;
+    import sparkles.build_graph.store : ResultRecord, Store;
+    import sparkles.event_horizon.sys : BlockingVfs;
+    import std.process : thisProcessID;
+
+    auto vfs = new BlockingVfs;
+    auto top = openRoot!(Rights.all)(vfs, cache, ambientAuthority(),
+        ResolvePolicy(SymlinkPolicy.beneath, DotDotPolicy.reject));
+    if (top.hasError)
+    {
+        stderr.writeln("plan-graph: no store at ", cache);
+        return 2;
+    }
+    auto build = top.value.walkAll("build");
+    Store!(typeof(build.value)) store;
+    if (build.hasError || !Store!(typeof(build.value)).open(build.value, text(thisProcessID, "-0"), store))
+    {
+        stderr.writeln("plan-graph: cannot open the store at ", cache);
+        return 2;
+    }
+    const value = op.indexOf('=') >= 0 ? op[op.indexOf('=') + 1 .. $] : null;
+    const name = op.indexOf('=') >= 0 ? op[0 .. op.indexOf('=')] : op;
+    bool alive(string holder) => holderAlive(holder); // a delegate, as the store takes
+    switch (name)
+    {
+        case "size":
+            ulong bytes;
+            const entries = store.entries;
+            foreach (ref e; entries)
+                bytes += e.bytes;
+            writeln(entries.length, " results, ", bytes, " bytes; records ", store.recordBytes, " bytes");
+            return 0;
+        case "list":
+            foreach (ref e; store.entries)
+                writeln(e.key, " ", e.bytes, " ", e.recency, " ", e.task);
+            return 0;
+        case "gc":
+            writeln(store.collectGarbage(&alive), " entries collected");
+            return 0;
+        case "verify":
+            const corrupt = store.verify();
+            foreach (k; corrupt)
+                writeln("corrupt: ", k);
+            writeln(corrupt.length, " corrupt");
+            return corrupt.length ? 1 : 0;
+        case "evict":
+            const bound = value.length ? value.to!ulong : 20UL << 30;
+            const r = store.evict(bound, 1UL << 30, &alive);
+            writeln(r.evicted.length, " evicted, ", r.leased.length, " held by leases, ", r.recordsDropped,
+                " records dropped; ", r.resultBytes, " result bytes, ", r.recordBytes, " record bytes");
+            return 0;
+        case "remove-key", "remove-task", "remove-package", "remove-toolchain":
+            bool which(ref const ResultRecord r)
+            {
+                const parts = r.task.split(":");
+                return name == "remove-key" ? r.resultKey == value
+                    : name == "remove-task" ? r.task == value
+                    : name == "remove-package" ? parts.length > 1 && parts[1] == value.replace(":", ".")
+                    : r.toolchain == value;
+            }
+            string[] held;
+            const removed = store.remove(&which, &alive, held);
+            foreach (k; held)
+                writeln("held by a live lease: ", k);
+            writeln(removed.length, " removed");
+            return held.length ? 1 : 0;
+        default:
+            stderr.writeln("plan-graph: unknown cache operation ", op);
+            return 2;
+    }
 }

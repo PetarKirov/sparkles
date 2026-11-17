@@ -34,7 +34,9 @@ determinism check (BGS5–BGS9) are not here yet.
 */
 module sparkles.build_graph.store;
 
+import std.algorithm.iteration : splitter;
 import std.algorithm.searching : startsWith;
+import std.array : array;
 import std.conv : text;
 
 import sparkles.base.vfs.types : Access, Disposition, EntryKind, OpenMode, Rights;
@@ -48,6 +50,26 @@ enum uint formatVersion = 1;
 
 /// How many manifests a declared key keeps (BGK3).
 enum size_t manifestBound = 16;
+
+/// One published result, as inspection lists it (BGS7).
+struct StoreEntry
+{
+    string key;       ///
+    string task;      /// the task that published it
+    string toolchain; ///
+    ulong bytes;      /// its outputs' bytes
+    long recency;     /// when a lease on it was last created, in ns since the epoch
+}
+
+/// What an eviction did (BGS5).
+struct EvictionReport
+{
+    string[] evicted;      /// the result keys evicted, their records kept
+    string[] leased;       /// the ones a live lease held back: the overshoot
+    size_t recordsDropped; /// records and preimages dropped for the second bound
+    ulong resultBytes;     /// the results' bytes afterwards
+    ulong recordBytes;     /// the records' bytes afterwards
+}
 
 /// One output of a result: a regular file beneath its `out/`.
 struct OutputRecord
@@ -88,6 +110,7 @@ struct Manifest
 struct ResultRecord
 {
     string task;          /// the task id that published it
+    string toolchain;     /// the toolchain identity it was built with (§8)
     string declaredKey;   ///
     string resultKey;     ///
     int status;           /// the exit status
@@ -96,7 +119,7 @@ struct ResultRecord
     /// The record's text.
     string text() const @safe pure
     {
-        string s = "format " ~ formatVersion.text ~ "\ntask " ~ task ~ "\ndeclared " ~ declaredKey
+        string s = "format " ~ formatVersion.text ~ "\ntask " ~ task ~ "\ntoolchain " ~ toolchain ~ "\ndeclared " ~ declaredKey
             ~ "\nresult " ~ resultKey ~ "\nstatus " ~ status.text ~ "\n";
         foreach (ref o; outputs)
             s ~= "output " ~ hexOf(o.digest) ~ " " ~ o.size.text ~ " " ~ (o.executable ? "x" : "-")
@@ -131,6 +154,8 @@ bool parseRecord(scope const(char)[] source, out ResultRecord r) @safe pure
             formatSeen = rest == formatVersion.text;
         else if (word(line, "task", rest))
             r.task = rest;
+        else if (word(line, "toolchain", rest))
+            r.toolchain = rest;
         else if (word(line, "declared", rest))
             r.declaredKey = rest;
         else if (word(line, "result", rest))
@@ -269,7 +294,7 @@ struct Store(D)
         auto v = dir.walkAll("v" ~ layoutVersion.text);
         if (v.hasError)
             return false;
-        foreach (sub; ["results", "manifests", "leases", "staging", "trash", "preimages"])
+        foreach (sub; ["results", "manifests", "leases", "staging", "trash", "preimages", "recency", "records"])
             if (v.value.walkAll(sub).hasError)
                 return false;
         s.v = move(v.value);
@@ -346,7 +371,7 @@ struct Store(D)
 
         note = null;
         const key = record.resultKey;
-        const stage = text(key[0 .. 16], "-", holder, "-", staged++);
+        const stage = text(key[0 .. key.length < 16 ? $ : 16], "-", holder, "-", staged++);
         auto staging = v.walk("staging");
         if (staging.hasError)
             return failed("no staging directory");
@@ -414,7 +439,9 @@ struct Store(D)
         return readAll(v, "results/" ~ resultKey ~ "/record", source);
     }
 
-    /// Leases `resultKey` for the rest of this process's run (BGS4).
+    /// Leases `resultKey` for the rest of this process's run (BGS4), and
+    /// marks the result used now: its recency is when a lease on it was
+    /// last created (BGS5, D38).
     void lease(string resultKey)
     {
         foreach (k; leased)
@@ -427,6 +454,282 @@ struct Store(D)
         auto f = dir.value.openFile!mode(holder);
         if (!f.hasError)
             leased ~= resultKey;
+        auto recency = v.walkAll("recency");
+        if (!recency.hasError)
+            cast(void) recency.value.writeFileAtomic(resultKey, "");
+    }
+
+    /// Every published result, with its output bytes and recency (BGS7).
+    StoreEntry[] entries()
+    {
+        import sparkles.base.vfs.types : StatMask;
+
+        StoreEntry[] all;
+        foreach (key; names("results"))
+        {
+            string source;
+            ResultRecord r;
+            if (!readAll(v, "results/" ~ key ~ "/record", source) || !parseRecord(source, r))
+                continue;
+            StoreEntry e = StoreEntry(key, r.task, r.toolchain);
+            foreach (ref o; r.outputs)
+                e.bytes += o.size;
+            auto recency = v.walk("recency");
+            auto st = recency.hasError ? typeof(recency.value.statAt(key, StatMask.mtime))(recency.error)
+                : recency.value.statAt(key, StatMask.mtime);
+            if (st.hasError)
+            {
+                auto results = v.walk("results");
+                if (!results.hasError)
+                    st = results.value.statAt(key, StatMask.mtime);
+            }
+            if (!st.hasError)
+                e.recency = st.value.mtimeNs;
+            all ~= e;
+        }
+        return all;
+    }
+
+    /// The bytes of the records the store keeps: manifest lists, digest
+    /// records and preimages (BGS5's second bound).
+    ulong recordBytes()
+    {
+        ulong n;
+        foreach (dir; ["manifests", "records", "preimages"])
+        {
+            auto d = v.walk(dir);
+            if (d.hasError)
+                continue;
+            foreach (name; names(dir))
+            {
+                auto st = d.value.statAt(name);
+                if (!st.hasError)
+                    n += st.value.size;
+            }
+        }
+        return n;
+    }
+
+    /// Whether another process holds a live lease on `resultKey`: `alive`
+    /// says whether a lease's holder still runs. A dead holder's lease is
+    /// reclaimed (BGS4).
+    bool leasedByOthers(string resultKey, scope bool delegate(string holder) alive)
+    {
+        auto dir = v.walk("leases/" ~ resultKey);
+        if (dir.hasError)
+            return false;
+        bool live;
+        foreach (h; names("leases/" ~ resultKey))
+        {
+            if (h == holder)
+                continue;
+            if (alive(h))
+                live = true;
+            else
+                cast(void) dir.value.unlinkAt(h);
+        }
+        return live;
+    }
+
+    /**
+    Garbage collection (BGS5): empties `trash/`, removes the staging entries
+    and leases of holders that no longer run. Returns how many entries went.
+    */
+    size_t collectGarbage(scope bool delegate(string holder) alive)
+    {
+        size_t n;
+        auto trash = v.walk("trash");
+        if (!trash.hasError)
+            foreach (name; names("trash"))
+                if (!trash.value.removeTree(name).hasError)
+                    ++n;
+        auto staging = v.walk("staging");
+        if (!staging.hasError)
+            foreach (name; names("staging"))
+            {
+                // `<key prefix>-<pid>-<start>-<n>`: its producer's holder name.
+                const parts = name.splitter('-').array;
+                if (parts.length >= 4 && !alive(parts[$ - 3] ~ "-" ~ parts[$ - 2]) && !staging.value.removeTree(name).hasError)
+                    ++n;
+            }
+        foreach (key; names("leases"))
+            cast(void) leasedByOthers(key, alive);
+        return n;
+    }
+
+    /**
+    Verification (BGS6, BGS7): rehashes every recorded output of the results
+    `keys` names, or of every result when null. A result that differs is
+    moved to `trash/`. Returns the keys found corrupt.
+    */
+    string[] verify(const string[] keys = null)
+    {
+        import sparkles.base.hash.blake3 : blake3;
+
+        string[] corrupt;
+        foreach (key; keys !is null ? keys.dup : names("results"))
+        {
+            string source;
+            ResultRecord r;
+            if (!readAll(v, "results/" ~ key ~ "/record", source) || !parseRecord(source, r))
+                continue;
+            foreach (ref o; r.outputs)
+            {
+                ubyte[] bytes;
+                if (!readBytes(v, "results/" ~ key ~ "/out/" ~ o.path, bytes) || bytes.length != o.size
+                    || blake3(bytes) != o.digest)
+                {
+                    corrupt ~= key;
+                    discard(key, "output " ~ o.path ~ " does not match its digest");
+                    break;
+                }
+            }
+        }
+        return corrupt;
+    }
+
+    /**
+    Removal (BGS7): moves to `trash/` every result whose record `which`
+    selects, waiting for none: a result another live process leases is left,
+    and reported in `held`. Returns the keys removed.
+    */
+    string[] remove(scope bool delegate(const ref ResultRecord) which,
+        scope bool delegate(string holder) alive, out string[] held)
+    {
+        string[] removed;
+        foreach (key; names("results"))
+        {
+            string source;
+            ResultRecord r;
+            if (!readAll(v, "results/" ~ key ~ "/record", source) || !parseRecord(source, r) || !which(r))
+                continue;
+            if (leasedByOthers(key, alive))
+            {
+                held ~= key;
+                continue;
+            }
+            if (moveToTrash(key))
+                removed ~= key;
+        }
+        return removed;
+    }
+
+    /**
+    Eviction (BGS5): while the results' output bytes exceed `resultsBound`,
+    or the records' bytes `recordsBound`, removes the least recently used
+    first, down to 90 % of the bound. A result with a live lease is skipped
+    and its overshoot reported. An evicted result keeps its record under
+    `records/<key>`: its outputs' digests and sizes and its status.
+    */
+    EvictionReport evict(ulong resultsBound, ulong recordsBound, scope bool delegate(string holder) alive)
+    {
+        import std.algorithm.sorting : sort;
+
+        EvictionReport report;
+        auto all = entries().sort!((a, b) => a.recency < b.recency).release;
+        ulong total;
+        foreach (ref e; all)
+            total += e.bytes;
+        report.resultBytes = total;
+        if (total > resultsBound)
+        {
+            const target = resultsBound / 10 * 9;
+            foreach (ref e; all)
+            {
+                if (total <= target)
+                    break;
+                if (leasedByOthers(e.key, alive))
+                {
+                    report.leased ~= e.key;
+                    continue;
+                }
+                string source;
+                cast(void) readAll(v, "results/" ~ e.key ~ "/record", source);
+                if (!moveToTrash(e.key))
+                    continue;
+                // Step 3: a lease that appeared meanwhile brings it back.
+                if (leasedByOthers(e.key, alive))
+                {
+                    auto trash = v.walk("trash");
+                    auto results = v.walk("results");
+                    if (!trash.hasError && !results.hasError)
+                        cast(void) trash.value.renameAt(lastTrashed, results.value, e.key);
+                    report.leased ~= e.key;
+                    continue;
+                }
+                auto records = v.walkAll("records");
+                if (!records.hasError && source.length)
+                    cast(void) records.value.writeFileAtomic(e.key, source);
+                auto recency = v.walk("recency");
+                if (!recency.hasError)
+                    cast(void) recency.value.unlinkAt(e.key);
+                total -= e.bytes;
+                report.evicted ~= e.key;
+            }
+        }
+        report.resultBytes = total;
+        // The records' bound: the oldest preimages and digest records first.
+        ulong records = recordBytes();
+        if (records > recordsBound)
+        {
+            import sparkles.base.vfs.types : StatMask;
+
+            const target = recordsBound / 10 * 9;
+            foreach (dir; ["records", "preimages"])
+            {
+                auto d = v.walk(dir);
+                if (d.hasError)
+                    continue;
+                foreach (name; names(dir))
+                {
+                    if (records <= target)
+                        break;
+                    auto st = d.value.statAt(name);
+                    if (!st.hasError && !d.value.unlinkAt(name).hasError)
+                    {
+                        records -= st.value.size;
+                        ++report.recordsDropped;
+                    }
+                }
+            }
+        }
+        report.recordBytes = records;
+        return report;
+    }
+
+    // The names in `<store>/<dir>`, sorted.
+    private string[] names(string dir)
+    {
+        import std.algorithm.sorting : sort;
+
+        string[] result;
+        auto d = v.walk(dir);
+        if (d.hasError)
+            return null;
+        auto listing = d.value.list();
+        if (listing.hasError)
+            return null;
+        while (true)
+        {
+            auto more = listing.value.next();
+            if (more.hasError || !more.value)
+                break;
+            result ~= listing.value.front.name.idup;
+        }
+        return result.sort.release;
+    }
+
+    private string lastTrashed;
+
+    // Renames `results/<key>` into `trash/` under a unique name.
+    private bool moveToTrash(string key)
+    {
+        auto results = v.walk("results");
+        auto trash = v.walk("trash");
+        if (results.hasError || trash.hasError)
+            return false;
+        lastTrashed = text(key, "-", holder, "-", staged++);
+        return !results.value.renameAt(key, trash.value, lastTrashed).hasError;
     }
 
     /// Ends every lease this process holds (BGS4).
