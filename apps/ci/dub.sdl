@@ -34,6 +34,7 @@ dependency "sparkles:docs" path="../.."
 // `ci commits build-each` drives git on a scratch worktree it names: `runGit`
 // keeps an inherited `GIT_DIR` (a rebase `exec` step) from redirecting it.
 dependency "sparkles:build-primitives" path="../.."
+dependency "sparkles:build-graph" path="../.."
 // `ci check wasm-modules` runs the WebAssembly modules' functions natively.
 dependency "sparkles:text-wasm" path="../.."
 dependency "sparkles:table-wasm" path="../.."

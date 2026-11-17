@@ -1885,3 +1885,105 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
     string text_;
     assert(readAll(top.value, resolvedPath(top.value, "b/l"), text_) && text_ == "x");
 }
+
+/**
+BGS7's operations on the store beneath the cache directory `cache`, as
+`ci cache store` exposes them, reporting to `writer`: `size`, `list`, `gc`,
+`verify`, `evict` (to the default bound, or `evict=<bytes>`), and
+`remove-key=`, `remove-task=`, `remove-package=` or `remove-toolchain=` a
+value. A removal waits for no lease another live process holds; it leaves
+that result and names it. Returns the command's exit status: 0, 1 when
+verification found a corrupt result or a lease held a removal back, and 2
+for an unknown operation or a store that cannot be opened.
+*/
+int storeOperation(W)(string cache, string op, ref W writer)
+{
+    import std.conv : to;
+    import std.range.primitives : put;
+    import std.string : indexOf;
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : DotDotPolicy, ResolvePolicy, Rights, SymlinkPolicy;
+    import sparkles.event_horizon.sys : BlockingVfs;
+
+    void line(string s)
+    {
+        put(writer, s);
+        put(writer, "\n");
+    }
+    auto vfs = new BlockingVfs;
+    auto top = openRoot!(Rights.all)(vfs, cache, ambientAuthority(),
+        ResolvePolicy(SymlinkPolicy.beneath, DotDotPolicy.reject));
+    if (top.hasError)
+    {
+        line("no store at " ~ cache);
+        return 2;
+    }
+    auto build = top.value.walkAll("build");
+    Store!(typeof(build.value)) store;
+    if (build.hasError || !Store!(typeof(build.value)).open(build.value, leaseHolder(), store))
+    {
+        line("cannot open the store at " ~ cache);
+        return 2;
+    }
+    const eq = op.indexOf('=');
+    const name = eq >= 0 ? op[0 .. eq] : op;
+    const value = eq >= 0 ? op[eq + 1 .. $] : null;
+    bool alive(string holder) => holderRuns(holder);
+    switch (name)
+    {
+        case "size":
+            ulong bytes;
+            const entries = store.entries;
+            foreach (ref e; entries)
+                bytes += e.bytes;
+            line(text(entries.length, " results, ", bytes, " bytes; records ", store.recordBytes, " bytes"));
+            return 0;
+        case "list":
+            foreach (ref e; store.entries)
+                line(text(e.key, " ", e.bytes, " ", e.recency, " ", e.task));
+            return 0;
+        case "gc":
+            line(text(store.collectGarbage(&alive), " entries collected"));
+            return 0;
+        case "verify":
+            const corrupt = store.verify();
+            foreach (k; corrupt)
+                line("corrupt: " ~ k);
+            line(text(corrupt.length, " corrupt"));
+            return corrupt.length ? 1 : 0;
+        case "evict":
+            ulong bound = 20UL << 30;
+            try
+                if (value.length)
+                    bound = value.to!ulong;
+            catch (Exception)
+            {
+                line("evict takes a byte count: " ~ value);
+                return 2;
+            }
+            const r = store.evict(bound, 1UL << 30, &alive);
+            line(text(r.evicted.length, " evicted, ", r.leased.length, " held by leases, ", r.recordsDropped,
+                " records dropped; ", r.resultBytes, " result bytes, ", r.recordBytes, " record bytes"));
+            return 0;
+        case "remove-key", "remove-task", "remove-package", "remove-toolchain":
+            bool which(ref const ResultRecord r)
+            {
+                import std.array : split;
+
+                const parts = r.task.split(":");
+                return name == "remove-key" ? r.resultKey == value
+                    : name == "remove-task" ? r.task == value
+                    : name == "remove-package" ? parts.length > 1 && parts[1] == value.replace(":", ".")
+                    : r.toolchain == value;
+            }
+            string[] held;
+            const removed = store.remove(&which, &alive, held);
+            foreach (k; held)
+                line("held by a live lease: " ~ k);
+            line(text(removed.length, " removed"));
+            return held.length ? 1 : 0;
+        default:
+            line("unknown cache operation " ~ op);
+            return 2;
+    }
+}

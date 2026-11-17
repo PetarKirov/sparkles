@@ -792,6 +792,34 @@ struct CacheCommand
         RunExpected!void run() => runSeedDubCache();
     }
 
+    @(Command("store",
+        shortDescription: "Inspect or repair the build graph's store (build graph BGS7)",
+        description: "Runs one operation on the store beneath $XDG_CACHE_HOME/sparkles: size, list, "
+        ~ "gc, verify, evict (to the default bound, or evict=<bytes>), or remove-key=, remove-task=, "
+        ~ "remove-package= or remove-toolchain= a value. Exits 1 when verification finds a corrupt "
+        ~ "result or a lease holds a removal back, and 2 for an unknown operation.",
+    ))
+    struct Store
+    {
+        @(Argument("operation", description: "The operation: size, list, gc, verify, evict[=<bytes>], "
+            ~ "or remove-key=, remove-task=, remove-package= or remove-toolchain=<value>."))
+        string operation;
+
+        RunExpected!void run()
+        {
+            import std.path : buildPath;
+            import std.process : environment;
+            import std.stdio : stdout;
+            import sparkles.build_graph.execute : storeOperation;
+
+            const home = environment.get("HOME", "/");
+            const xdg = environment.get("XDG_CACHE_HOME", buildPath(home, ".cache"));
+            auto writer = stdout.lockingTextWriter;
+            const status = storeOperation(buildPath(xdg, "sparkles"), operation, writer);
+            return status == 0 ? ranOk() : failRun("ci cache store " ~ operation ~ " failed", status);
+        }
+    }
+
     @(Command("pin-costs",
         shortDescription: "Write the toolchain build plan's cost file (TC23)",
         description: "Each pin's median recorded build time on refs/perf/data, and "
