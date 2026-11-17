@@ -510,6 +510,18 @@ _Rationale:_ a Phobos `assert` records its source file's store path, so every
 binary that links Phobos keeps the whole toolchain alive in its Nix closure
 ([D40](./decisions.md#d40-toolchain-store-paths-are-remapped-accepted)).
 
+**BGA12: Every action has a time limit.** Each process action the graph runs
+**must** carry a limit on its run time, after which the executor kills it and
+reports it as timed out. By default a test's limit is 20 minutes and every
+other action's is 30, so only a hang reaches one. A caller may set other
+limits, or none. A limit is not part of any key: changing it rebuilds nothing,
+and a timed-out action is never published (BGA9).
+
+_Rationale:_ a test that waits forever on a connection its sandbox never
+delivers held a whole-repository run for five and a half hours, with every
+other action finished. A limit turns a hang into a failure that names the
+action.
+
 ## 5. Keys and the input manifest
 
 Each action has a **key**, a SHA-256 digest that identifies its result. A

@@ -54,6 +54,8 @@ the task-DAG executor, with the toolchain from `PATH` named by absolute path
 (`build_graph/execute.d`), reusing and publishing results in the store beneath the
 cache directory (`$XDG_CACHE_HOME/sparkles` by default, §6), and prints what
 it executed and what it reused.
+`--test-timeout=<n>s|m|h` replaces a test's 20-minute limit (BGA12); `0` sets
+none.
 
 Needs the dev shell's `SPARKLES_DUB_SOURCES` for the registry packages, and
 `strace` (the dev shell's, on Linux) for the trace steps. `--trace-target=F`
@@ -62,6 +64,7 @@ its read set to `F`.
 */
 module plan_graph;
 
+import core.time : Duration, hours, minutes, seconds;
 import std.algorithm : canFind, endsWith, filter, map, sort, startsWith;
 import std.array : array, join, replace, split;
 import std.conv : octal, text, to;
@@ -71,6 +74,7 @@ import std.process : environment;
 import std.string : indexOf;
 import std.stdio : stderr, writeln;
 import std.sumtype : match;
+import std.typecons : Nullable;
 
 import sparkles.build_graph.actions : ActionGraph, ActionKind, CoverageAttempt, Tools, planActions,
     taskNodes;
@@ -143,6 +147,16 @@ int main(string[] args)
         runJobs = jobs.length ? jobs[0]["--jobs=".length .. $].to!uint : 0;
         traceCompiles = args.canFind("--trace-compiles");
         noDependencyOutput = args.canFind("--no-dependency-output");
+        foreach (a; args.filter!(a => a.startsWith("--test-timeout=")))
+        {
+            const t = parseLimit(a["--test-timeout=".length .. $]);
+            if (t.isNull)
+            {
+                stderr.writeln("plan-graph: ", "--test-timeout takes <n>s, <n>m, <n>h or 0, not " ~ a);
+                return 2;
+            }
+            testTimeout = t.get;
+        }
         oracle3Only = args.canFind("--oracle3-only");
         return runPackage(root, name == "all" ? null : name, runDir, cache, args.canFind("--check-determinism"),
             args.canFind("--confine-tests") ? Confinement.tests : args.canFind("--confine") ? Confinement.builds
@@ -1227,8 +1241,38 @@ __gshared bool noDependencyOutput;
 /// Oracle 3 over an earlier traced run, running nothing (`--oracle3-only`).
 __gshared bool oracle3Only;
 
+/// `<n>s`, `<n>m`, `<n>h` or `0` as a duration, or null.
+Nullable!Duration parseLimit(string s)
+{
+    import std.ascii : isDigit;
+    import std.algorithm.searching : all;
+
+    if (s == "0")
+        return Nullable!Duration(Duration.zero);
+    if (s.length < 2 || !s[0 .. $ - 1].all!isDigit)
+        return Nullable!Duration.init;
+    const n = s[0 .. $ - 1].to!long;
+    switch (s[$ - 1])
+    {
+        case 's': return Nullable!Duration(n.seconds);
+        case 'm': return Nullable!Duration(n.minutes);
+        case 'h': return Nullable!Duration(n.hours);
+        default: return Nullable!Duration.init;
+    }
+}
+
+unittest
+{
+    assert(parseLimit("90s").get == 90.seconds && parseLimit("2h").get == 2.hours);
+    assert(parseLimit("0").get == Duration.zero);
+    assert(parseLimit("m").isNull && parseLimit("5d").isNull && parseLimit("-1m").isNull);
+}
+
 /// The weight a run admits at once; 0 for one per processor.
 __gshared uint runJobs;
+
+/// A test's limit (`--test-timeout=`, BGA12); `Duration.max` keeps the default.
+__gshared Duration testTimeout = Duration.max;
 
 /// What a run confines (D39's spike).
 enum Confinement
@@ -1268,6 +1312,8 @@ int runPackage(string root, string only, string into, string cache, bool checkDe
     // compiler's own tree remapped (BGA11).
     const toolchain = toolchainOf(tools);
     tools.config = toolchain.config;
+    if (testTimeout != Duration.max)
+        tools.testLimit = testTimeout;
     if (toolchain.root.length)
         tools.prefixMaps = [toolchain.root ~ "=/ldc"];
     auto p = planRepository(root, false, only, tools, toolchain.identity);
