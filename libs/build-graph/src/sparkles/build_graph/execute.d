@@ -52,6 +52,10 @@ struct RunLayout
     string cache;
     /// The toolchain identity (§8), which every declared key covers (BGK1).
     string toolchain;
+    /// BGS9: the determinism check. Every keyed action runs, lookup
+    /// bypassed, publishing nothing; its outputs are compared with the
+    /// result its key leads to, and a result that differs is removed.
+    bool check;
 
     /// The output directory of action `id`: its `$OUT`.
     string outOf(TaskId id) const @safe pure nothrow => runDirectory ~ "/out/" ~ idPath(id);
@@ -286,7 +290,7 @@ import sparkles.build_primitives.task.model : TaskOutcome;
 import sparkles.build_primitives.task.process : ProcessDriver, ProcessDriverOptions;
 import sparkles.event_horizon.sched : Sched;
 import sparkles.build_graph.store : Manifest, ManifestEntry, OutputRecord, ResultRecord, Store,
-    preimageDifferences,
+    preimageDifferences, differences,
     cacheDirTag, declaredKeyOf, formatVersion, hexOf, layoutVersion, parseHex, readAll, readBytes, resultKey,
     statPath;
 
@@ -343,6 +347,23 @@ private string leaseHolder() @safe
     import std.datetime.systime : Clock;
 
     return text((() @trusted => getpid())(), "-", Clock.currStdTime);
+}
+
+/// Whether a lease holder, `<pid>-<start>`, still runs (BGS4).
+bool holderRuns(string holder) @trusted nothrow
+{
+    import core.sys.posix.signal : kill;
+
+    int pid;
+    foreach (c; holder)
+    {
+        if (c == '-')
+            break;
+        if (c < '0' || c > '9')
+            return false;
+        pid = pid * 10 + (c - '0');
+    }
+    return pid > 0 && kill(pid, 0) == 0;
 }
 
 private string parentOf(string path) @safe pure nothrow @nogc
@@ -561,7 +582,10 @@ struct ActionDriver
         if (stored && a !is null && reusable(**a))
             if (declaredPreimage(**a, preimage))
                 declared = declaredKeyOf(preimage);
-        if (declared.length)
+        const(ResultRecord)* checked;
+        if (declared.length && layout.check)
+            checked = lookup(**a, declared);
+        else if (declared.length)
         {
             if (auto hit = lookup(**a, declared))
                 if (adopt(id, *hit))
@@ -588,6 +612,27 @@ struct ActionDriver
         record.declaredKey = declared;
         record.outputs = outputsOf(id);
         outputsDigestOf[id.text] = record.outputsDigest;
+        if (layout.check)
+        {
+            // Cold and unshared: compared, never published (BGS9).
+            if (checked !is null)
+            {
+                const differing = differences(*checked, record);
+                if (differing.length)
+                {
+                    stats.miss("nondeterministic");
+                    ctx.output(OutputStream.stderr, "nondeterministic: result " ~ checked.resultKey
+                        ~ " differs in " ~ differing ~ "; removed");
+                    string[] held;
+                    const key = checked.resultKey;
+                    cast(void) store.remove((ref const ResultRecord r) => r.resultKey == key,
+                        (string h) => holderRuns(h), held);
+                }
+                else
+                    stats.miss("deterministic");
+            }
+            return outcome;
+        }
         if (!declared.length)
             return outcome;
         Manifest manifest;
