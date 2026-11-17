@@ -12,7 +12,7 @@ import sparkles.ui.components.command_palette : PaletteViewOptions, viewCommandP
 import sparkles.ui.components.scroll_body : ScrollBody, scrollSeconds;
 import sparkles.ui.components.editor : drawIndentGuides, editorLineSpans, editorView, EditorViewOptions, layoutColumn, markSpans, TextMark, VisualRow, visualRows;
 import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell, GutterChannel, withGutterCells;
-import sparkles.ui.editor.presentation : matchingBracket, trailingWhitespace;
+import sparkles.ui.editor.presentation : CaretPosition, matchingBracket, trailingWhitespace;
 import find_bar : FindBar;
 import document_font : DocumentFontService;
 import sparkles.ui_app.specimen_font : SpecimenFontRequest;
@@ -499,8 +499,7 @@ struct EditorApp
     SettingsPane!EditorSettings settingsPane;
     private int[2] lastSize = [80, 24];
     // The status bar's column, for the text and caret it was counted at.
-    private Text columnText;
-    private size_t columnHead = size_t.max, columnValue = 1;
+    private CaretPosition caretPosition;
     /// The find and replace bar (EAP5, EAP7).
     FindBar finder;
     bool quitRequested;
@@ -1247,26 +1246,11 @@ struct EditorApp
     */
     private string statusPosition() @safe
     {
-        import sparkles.base.text.seek : nextGraphemeBoundary;
         const state = &document.field.state;
-        const head = state.selection.primary.head;
-        const line = state.text.lineOf(head);
-        // Counted once per text and caret: a long line's column is not walked per frame.
-        if (head != columnHead || state.text != columnText)
-        {
-            const start = state.text.lineStart(line);
-            auto bytes = new char[head - start];
-            state.text.copyTo(start, head, bytes);
-            size_t count = 1;
-            for (size_t at = 0; at < bytes.length; at = nextGraphemeBoundary(bytes, at))
-                ++count;
-            columnHead = head;
-            columnText = Text(state.text);
-            columnValue = count;
-        }
-        const column = columnValue;
+        caretPosition.refresh(state.text, state.selection.primary.head);
+        const line = caretPosition.line, column = caretPosition.column;
         const ranges = state.selection.ranges.length;
-        return text("Ln ", line + 1, ", Col ", column,
+        return text("Ln ", line, ", Col ", column,
             ranges > 1 ? text("  •  ", ranges, " selections") : "",
             "  •  ", document.language.length && document.language != "text" ? document.language : "Plain text");
     }

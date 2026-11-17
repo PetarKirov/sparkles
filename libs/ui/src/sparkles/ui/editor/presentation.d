@@ -1,7 +1,8 @@
 /**
-Code-editor presentation facts (`EAP5`): the bracket matching the caret and
-the trailing whitespace a line carries. Each is a pure, bounded query over the
-retained text, so a view can ask once per frame without owning a scan.
+Code-editor presentation facts (`EAP5`): the bracket matching the caret, the
+trailing whitespace a line carries, and the caret's line and column. Each is
+a pure, bounded query over the retained text, so a view can ask once per
+frame without owning a scan.
 
 Brackets are matched by bytes, not by syntax: a bracket inside a string or
 comment counts like any other. The scan stops after `limit` bytes, and a
@@ -131,4 +132,56 @@ size_t[2] trailingWhitespace(in Text text, size_t line) pure nothrow @nogc
     assert(clean[0] == clean[1]);
     assert(trailingWhitespace(text, 2) == [12, 14]);
     assert(trailingWhitespace(text, 3) == [17, 18]);
+}
+
+/**
+The caret's line and column as a status line reads them: both 1-based, the
+column counted in grapheme clusters from the line start. The column is
+recounted only when the text or the caret moved, so a steady frame on a long
+line walks nothing.
+*/
+struct CaretPosition
+{
+    /// The 1-based line and grapheme column of the last `refresh`.
+    size_t line = 1, column = 1;
+
+    private Text counted;
+    private size_t head = size_t.max;
+
+    /// Recount for the caret at byte `caret` of `text`, when either changed.
+    void refresh(in Text text, size_t caret) pure nothrow @nogc
+    {
+        import sparkles.base.buffer : UniqueBuffer;
+        import sparkles.base.text.seek : nextGraphemeBoundary;
+        if (caret == head && text == counted) return;
+        const at = caret < text.length ? caret : text.length;
+        const index = text.lineOf(at);
+        const start = text.lineStart(index);
+        UniqueBuffer!(char, 256) bytes;
+        bytes.length = at - start;
+        text.copyTo(start, at, bytes[]);
+        size_t clusters = 1;
+        for (size_t i = 0; i < bytes.length; i = nextGraphemeBoundary(bytes[], i))
+            ++clusters;
+        line = index + 1;
+        column = clusters;
+        counted = Text(text);
+        head = caret;
+    }
+}
+
+/// Columns count grapheme clusters, not bytes; the count follows the caret.
+@("editor.presentation.caretPosition")
+@safe pure nothrow @nogc unittest
+{
+    const text = Text("ab\néx");
+    CaretPosition position;
+    position.refresh(text, 0);
+    assert(position.line == 1 && position.column == 1);
+    position.refresh(text, 2);
+    assert(position.line == 1 && position.column == 3);
+    position.refresh(text, 6);
+    assert(position.line == 2 && position.column == 2, "e + combining acute is one cluster");
+    position.refresh(text, 7);
+    assert(position.column == 3);
 }
