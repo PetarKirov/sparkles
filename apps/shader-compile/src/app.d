@@ -242,6 +242,8 @@ int main(string[] args)
     string configuration = "shaders";
     string outDir;
     string ldc = "ldc2-vulkan";
+    string described;
+    string[] tools;
     bool ifStale, keep, quiet;
 
     auto help = getopt(args, config.passThrough,
@@ -249,6 +251,8 @@ int main(string[] args)
         "config", "Its device configuration: the one whose dflags name a dcompute target (default: shaders).", &configuration,
         "out", "Where the generated shaders land (required): `<entry>.frag` and `<entry>.es.frag` for the OpenGL profiles, `<entry>.vert.spv` and `<entry>.frag.spv` for Vulkan.", &outDir,
         "ldc", "The dcompute-enabled LDC (default: `ldc2-vulkan` on PATH).", &ldc,
+        "described", "The device configuration as `dub describe` would report it, read from this file instead of running dub: a build graph's direct invocation.", &described,
+        "tool", "`<name>=<path>`: run the SPIR-V or GLSL tool `<name>` (`spirv-val`, `glslangValidator`, …) at `<path>` rather than from PATH. Repeatable.", &tools,
         "if-stale", "Do nothing while `--out`'s stamp says its inputs are unchanged — the build step's mode.", &ifStale,
         "keep", "Keep the scratch directory (SPIR-V, disassembly) and print its path.", &keep,
         "quiet", "Only report problems.", &quiet);
@@ -268,6 +272,16 @@ int main(string[] args)
         stderr.writeln("shader-compile: --out is required; see --help");
         return 2;
     }
+    foreach (t; tools)
+    {
+        const eq = t.indexOf('=');
+        if (eq <= 0)
+        {
+            stderr.writeln("shader-compile: --tool takes `<name>=<path>`, not `", t, "`");
+            return 2;
+        }
+        toolPaths[t[0 .. eq]] = t[eq + 1 .. $];
+    }
 
     // Fresh output needs neither dub nor a compiler: this is the path every
     // build of a dependent takes once the shaders exist.
@@ -284,9 +298,10 @@ int main(string[] args)
             "`sparkles/main` build.", ldc);
         return 3;
     }
+    // dub only describes the configuration, which `--described` already holds.
     foreach (tool; ["dub", "spirv-val", "spirv-opt", "spirv-dis", "spirv-as", "spirv-cross",
             "glslangValidator"])
-        if (tryExecute([tool, "--version"]).status == 127)
+        if ((tool != "dub" || !described.length) && tryExecute([tool, "--version"]).status == 127)
         {
             stderr.writefln("shader-compile: `%s` is not on PATH. The dev shell (`nix develop`) " ~
                 "and `nix run .#shader-compile` carry dub and the SPIR-V and GLSL tools.", tool);
@@ -296,17 +311,34 @@ int main(string[] args)
     // Without `$DFLAGS`: dub folds it into the dflags it reports, and it
     // tunes the host build that runs this step (`ci` adds `-linkonce-templates`, the
     // sanitizer job `-fsanitize=address`), which the device compiler must not see.
-    const described = tryExecute(["dub", "describe", "--root=" ~ packageDir,
-        "--config=" ~ configuration, "--compiler=" ~ ldc], captureStderr: false,
-        env: withoutHostFlags(environment.toAA));
-    if (described.status != 0)
+    string description;
+    if (described.length)
     {
-        stderr.writeln(described.output);
-        stderr.writefln("shader-compile: `dub describe --config=%s` failed in %s, so there is " ~
-            "no device configuration to read", configuration, packageDir);
-        return 2;
+        // A build graph's direct invocation: it resolved the configuration
+        // itself, and the tool reads no recipe and runs no dub.
+        try
+            description = readText(described);
+        catch (FileException e)
+        {
+            stderr.writefln("shader-compile: cannot read --described=%s: %s", described, e.msg);
+            return 2;
+        }
     }
-    const build = parseDescribe(described.output);
+    else
+    {
+        const run_ = tryExecute(["dub", "describe", "--root=" ~ packageDir,
+            "--config=" ~ configuration, "--compiler=" ~ ldc], captureStderr: false,
+            env: withoutHostFlags(environment.toAA));
+        if (run_.status != 0)
+        {
+            stderr.writeln(run_.output);
+            stderr.writefln("shader-compile: `dub describe --config=%s` failed in %s, so there is " ~
+                "no device configuration to read", configuration, packageDir);
+            return 2;
+        }
+        description = run_.output;
+    }
+    const build = parseDescribe(description);
     if (!build.hasTarget)
     {
         stderr.writefln("shader-compile: %s's configuration `%s` describes no build target: " ~
@@ -446,7 +478,10 @@ int run(in DeviceBuild build, in Unit unit, in string[2][] inputs, string outDir
         // translate from the recipe's.
         const target = targetFor(profile, build.target);
         const spv = buildPath(dir, prefix ~ "_" ~ target.replace("-", "") ~ "_64.spv");
+        // A named spirv-opt is the one the compiler runs over the SPIR-V, so
+        // the compilation does not depend on what PATH holds (`SHP11`).
         const compiled = tryExecute([ldc, "-O2"]
+            ~ ("spirv-opt" in toolPaths ? ["-mdcompute-spirv-opt=" ~ toolPaths["spirv-opt"]] : null)
             ~ compileFlags.map!(f => f.startsWith("-mdcompute-targets=")
                 ? "-mdcompute-targets=" ~ target : f).array
             ~ profileFlags(profile) ~ ["-mdcompute-file-prefix=" ~ prefix, "-od=" ~ dir]
@@ -1218,9 +1253,15 @@ private struct Run
     string output;
 }
 
+// The tools `--tool` names, by name: run at their paths, never from PATH.
+private __gshared string[string] toolPaths;
+
 private Run tryExecute(string[] cmd, bool captureStderr = true,
     const string[string] env = null)
 {
+    if (cmd.length)
+        if (auto path = cmd[0] in toolPaths)
+            cmd = [*path] ~ cmd[1 .. $];
     import std.process : Config;
 
     // A given environment replaces the inherited one outright (`newEnv`), so a

@@ -302,6 +302,42 @@ dflags "-mdcompute-targets=vulkan-999"`);
         assert(a.out_.buildPath(name).readText == b.out_.buildPath(name).readText, name);
 }
 
+@("shaderCompile.cli.describedRunsNoDubAndSearchesNoPath")
+@system unittest
+{
+    if (const tool = missingTool())
+        return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
+
+    // `SHP11`: given the configuration's description and every tool by path,
+    // the step runs with a `PATH` that holds nothing, so neither dub nor a tool
+    // is found by searching, and generates what a described run generates.
+    auto described = Fixture.create("described");
+    auto searched = Fixture.create("searched");
+    const description = execute(["dub", "describe", "--root=" ~ described.pkg, "--config=shaders",
+        "--compiler=ldc2-vulkan"], withoutHostFlags(environment.toAA), Config.newEnv);
+    assert(description.status == 0, description.output);
+    const file = described.root.buildPath("device.json");
+    file.write(description.output[description.output.indexOf('{') .. $]);
+
+    string[] args = ["--described=" ~ file, "--ldc=" ~ onPath("ldc2-vulkan")];
+    foreach (tool; toolchain[2 .. $])
+        args ~= "--tool=" ~ tool ~ "=" ~ onPath(tool);
+    described.env = ["PATH": described.root.buildPath("empty")];
+    const r = described.run(args);
+    assert(r.status == 0, r.diagnostics);
+    const s = searched.run();
+    assert(s.status == 0, s.diagnostics);
+    assert(described.outputs == searched.outputs, described.outputs.to!string);
+    foreach (name; described.outputs.filter!(n => n != stampName))
+        assert(described.out_.buildPath(name).readText == searched.out_.buildPath(name).readText, name);
+
+    // Without the tools named, the empty `PATH` finds none of them.
+    auto bare = Fixture.create("bare");
+    bare.env = ["PATH": bare.root.buildPath("empty")];
+    const missing = bare.run("--described=" ~ file, "--ldc=" ~ onPath("ldc2-vulkan"));
+    assert(missing.status == 3 && missing.diagnostics.canFind("spirv-val"), missing.diagnostics);
+}
+
 @("shaderCompile.cli.stockCompilerIsAToolchainError")
 @system unittest
 {

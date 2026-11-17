@@ -9,7 +9,8 @@ reviewed: 2026-10-20
 How a package's device modules become shaders during its build. `SHP1`–`SHP10`
 and `SHB1`–`SHB7` are the accepted contract of 2026-10-16, revised for one
 compilation per [profile](./profiles.md): `SHP1`, `SHP3`–`SHP8` and `SHP10`
-change, the rest stand. This page is part of the [specification](./SPEC.md).
+change, the rest stand. `SHP11`, the build graph's direct invocation, joins
+them. This page is part of the [specification](./SPEC.md).
 
 ## The build step
 
@@ -150,6 +151,25 @@ fragment stage is decided by what it can compile, not by matching its
 messages about the unit, which name neither cause reliably; the minimal
 shader is tried only once the unit has failed, so a successful run pays
 nothing for it.
+
+**SHP11: Direct invocation.** With `--described=<file>`, the build step
+**must** read the device configuration from that file, which holds what
+`dub describe` would report of it (the root package, each package's
+directory, and each target's import paths, versions, dflags and source
+files), and **must not** run dub. With `--tool=<name>=<path>`, it **must**
+run the SPIR-V or GLSL tool `<name>` at `<path>`, never from `PATH`, and the
+device compiler runs the `spirv-opt` it names over an optimised compilation's
+SPIR-V (`-mdcompute-spirv-opt`), so the compilation does not depend on `PATH`
+either. Without
+`--if-stale`, it decides no freshness. Together they are the build graph's
+invocation ([build graph BGG3](../build-primitives/build-graph/SPEC.md#_7-generators)):
+the graph resolves the configuration itself, writes the file, names every
+tool by absolute path, and leaves staleness to its cache. `SHP1`'s rules
+apply to the configuration the file describes, and `SHP10`'s third outcome
+no longer counts dub among the tools.
+
+_Rationale:_ a step that runs dub reads recipes the graph cannot declare as
+inputs, and one that searches `PATH` runs tools its key does not name.
 
 ## Build integration
 
