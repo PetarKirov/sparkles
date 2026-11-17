@@ -5,7 +5,7 @@ import sparkles.text_buffer.text : Text;
 import sparkles.ui.components.scroll_body : ScrollBody;
 import sparkles.ui.editor.field : EditorFieldOf;
 import sparkles.ui.editor.layout : LayoutContext;
-import document_text : DocumentBytes, encodeDocument;
+import sparkles.base.text.envelope : encodeEnvelope, LineEnding, TextEnvelope;
 
 /// A tab owns its reference-counted field; arrays contain tab references, never Text values.
 class Document
@@ -27,7 +27,7 @@ class Document
     size_t countedWrap = size_t.max;
     string language = "text";
     bool bom;
-    string predominant = "\n";
+    LineEnding predominant;
     string path, savedBytes;
     bool saving;
     string durabilityWarning;
@@ -44,5 +44,5 @@ class Document
 
     /// Exact file bytes; the envelope is separate from the editable text.
     string encodedBytes() const @safe pure nothrow
-        => encodeDocument(DocumentBytes(field.text, bom, predominant));
+        => encodeEnvelope(TextEnvelope(field.text, bom, predominant));
 }

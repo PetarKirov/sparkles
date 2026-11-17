@@ -5,7 +5,7 @@ import sparkles.base.expected : Expected, err, ok;
 import sparkles.event_horizon.raw_pool : CpuJob, RawCompletion, RawCpuPool, RawPoolResult;
 import sparkles.text_buffer.text : Text;
 import document_files : readRegularBytes, saveAtomic, SaveAuthorization, SaveReceipt;
-import document_text : decodeDocument, DocumentBytes, encodeDocument;
+import sparkles.base.text.envelope : decodeEnvelope, encodeEnvelope, LineEnding, TextEnvelope;
 
 enum FileOperation : ubyte { open, probe, save }
 struct FileTicket { ulong value; }
@@ -18,7 +18,7 @@ class FileResult
     ulong document;
     string path;
     Text revision;
-    DocumentBytes decoded;
+    TextEnvelope decoded;
     string bytes;
     SaveReceipt receipt;
     string error;
@@ -147,7 +147,7 @@ class DocumentIo
             {
                 const read = readRegularBytes(job.path);
                 if (read.hasError) { job.error = read.error; return; }
-                const decoded = decodeDocument(read.value);
+                const decoded = decodeEnvelope(read.value);
                 if (decoded.hasError) { job.error = decoded.error; return; }
                 job.decoded = decoded.value;
                 job.bytes = read.value;
@@ -158,7 +158,7 @@ class DocumentIo
                 auto bytes = new char[job.revision.length];
                 job.revision.copyTo(0, bytes.length, bytes);
                 const content = (() @trusted => cast(string) bytes)();
-                job.bytes = encodeDocument(DocumentBytes(content, job.bom));
+                job.bytes = encodeEnvelope(TextEnvelope(content, job.bom));
                 const saved = saveAtomic(job.path, job.bytes, job.authorization);
                 if (saved.hasError) { job.error = saved.error; return; }
                 job.receipt = saved.value;
@@ -218,7 +218,7 @@ class DocumentIo
         (() @trusted => Thread.yield())();
     }
     assert(opened.length == 1 && !opened[0].error.length && opened[0].decoded.bom);
-    assert(opened[0].decoded.predominant == "\r\n" && opened[0].revision == revision);
+    assert(opened[0].decoded.predominant == LineEnding.crlf && opened[0].revision == revision);
     assert(io.probe(path, revision, true, 42, "different baseline", true).hasValue);
     const(FileResult)[] inspected;
     const probeUntil = MonoTime.currTime + 3.seconds;

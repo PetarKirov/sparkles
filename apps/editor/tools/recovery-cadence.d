@@ -8,7 +8,7 @@
     dependency "sparkles:ui" path="../../.."
     dependency "sparkles:text-buffer" path="../../.."
     dflags "-preview=in" "-preview=dip1000" "-I$PACKAGE_DIR/../src"
-    dflags "-i=editor_document" "-i=document_text" "-i=document_files"
+    dflags "-i=editor_document" "-i=document_files"
     dflags "-i=session_record" "-i=session_archive" "-i=session_directory"
     dflags "-i=session_snapshot" "-i=session_checkpoint" "-i=session_discovery" "-i=session_runtime"
     buildType "checked" {

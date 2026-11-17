@@ -496,3 +496,16 @@ unittest
     assert(text.positionOfPoint(LinePoint(0, 3)).status == ConversionStatus.outOfRange);
     assert(text.lineEnd(0) == 1);
 }
+
+/// `Text` is a line-indexed text for `enterEnding`: a new line follows its
+/// own line's LF or CRLF, then the document's predominant ending.
+@("Text.enterEnding.mixedEndings")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.base.text.envelope : enterEnding, LineEnding;
+    const content = Text("first\r\nsecond\nlast");
+    assert(enterEnding(content, 3, LineEnding.lf) == LineEnding.crlf);
+    assert(enterEnding(content, 9, LineEnding.crlf) == LineEnding.lf);
+    assert(enterEnding(content, content.length, LineEnding.crlf) == LineEnding.crlf);
+    assert(enterEnding(Text.init, 0, LineEnding.lf) == LineEnding.lf);
+}

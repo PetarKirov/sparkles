@@ -4,6 +4,7 @@ module session_snapshot;
 import editor_document : Document;
 import session_record : SessionRecord, SessionSelection, SessionSettings, SessionSpan, SessionTab;
 import sparkles.text_buffer.text : Text;
+import sparkles.base.text.envelope : lineEndingText;
 import sparkles.ui.editor.selection : EditRange;
 import sparkles.ui.editor.state : ReadOnlySpan;
 
@@ -24,7 +25,7 @@ private final class CapturedTab
         name = source.name;
         path = source.path;
         language = source.language;
-        predominant = source.predominant;
+        predominant = lineEndingText(source.predominant);
         durabilityWarning = source.durabilityWarning;
         bom = source.bom;
         firstLine = source.firstLine;
@@ -37,7 +38,7 @@ private final class CapturedTab
 
     bool matches(Document source) const @safe pure nothrow @nogc
         => id == source.id && name == source.name && path == source.path
-            && language == source.language && predominant == source.predominant
+            && language == source.language && predominant == lineEndingText(source.predominant)
             && durabilityWarning == source.durabilityWarning && bom == source.bom
             && firstLine == source.firstLine && content == source.field.state.text
             && saved == source.saved && primary == source.field.state.selection.primaryIndex

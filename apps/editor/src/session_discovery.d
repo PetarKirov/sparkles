@@ -8,7 +8,7 @@ import std.algorithm.sorting : sort;
 import std.file : dirEntries, SpanMode;
 import std.path : baseName;
 import editor_document : Document;
-import document_text : DocumentBytes, encodeDocument;
+import sparkles.base.text.envelope : encodeEnvelope, lineEndingOf, LineEnding, TextEnvelope;
 import sparkles.text_buffer.text : Text;
 import sparkles.ui.editor.selection : EditRange, SelectionSet;
 import sparkles.ui.editor.state : ReadOnlySpan;
@@ -35,9 +35,9 @@ final class RecoveryOffer
             tab.path = stored.path;
             if (stored.savedContent != stored.content) tab.saved = Text(stored.savedContent);
             tab.bom = stored.bom;
-            tab.predominant = stored.predominant;
+            tab.predominant = lineEndingOf(stored.predominant);
             if (stored.path.length)
-                tab.savedBytes = encodeDocument(DocumentBytes(stored.savedContent, stored.bom, stored.predominant));
+                tab.savedBytes = encodeEnvelope(TextEnvelope(stored.savedContent, stored.bom, lineEndingOf(stored.predominant)));
             tab.language = stored.language;
             const lines = tab.field.state.text.lineCount;
             tab.firstLine = stored.firstLine >= lines ? lines - 1 : cast(size_t) stored.firstLine;
@@ -137,7 +137,7 @@ private string markerPath(string directory, ulong generation) @safe pure nothrow
     auto offer = catalog.offers[0];
     auto tab = offer.document(0);
     assert(tab.field.text == "edited\r\nsecond\r\nthird" && tab.dirty);
-    assert(tab.savedBytes == "\xEF\xBB\xBFdisk" && tab.bom && tab.predominant == "\r\n");
+    assert(tab.savedBytes == "\xEF\xBB\xBFdisk" && tab.bom && tab.predominant == LineEnding.crlf);
     assert(tab.firstLine == 2 && !tab.followCaret && tab.language == "d");
     const range = tab.field.state.selection.primary;
     assert(range.anchor == 1 && range.head == 3 && range.affinity == Affinity.after && range.goal == 9);

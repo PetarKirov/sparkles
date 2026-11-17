@@ -52,7 +52,7 @@ import sparkles.syntax.theme : ResolvedTheme, resolveSyntaxTheme = resolveTheme;
 import sparkles.ui.editor.state : ReadOnlySpan;
 import commands : Command, CommandBinding, CommandContext, CommandId, commandBindings, commandCatalog;
 import examples : Example, exampleText;
-import document_text : decodeDocument, enterEnding;
+import sparkles.base.text.envelope : decodeEnvelope, enterEnding, lineEndingText;
 public import editor_document : Document;
 import sparkles.syntax.ts.registry : canonicalLanguageOfPath, GrammarRegistry;
 import sparkles.ui.editor.state : EditorState;
@@ -1734,7 +1734,7 @@ struct EditorApp
     /// Admit bytes before replacing any active state; unsupported UTF-8 leaves every tab intact.
     bool openBytes(string name, string bytes) @safe
     {
-        const decoded = decodeDocument(bytes);
+        const decoded = decodeEnvelope(bytes);
         if (decoded.hasError) { status = decoded.error; return false; }
         ensureInitialized();
         const id = nextId++;
@@ -2006,7 +2006,7 @@ struct EditorApp
                 {
                     const predominant = document.predominant;
                     document.field.newlineEach((in Text current, size_t position)
-                        => enterEnding(current, position, predominant), now);
+                        => lineEndingText(enterEnding(current, position, predominant)), now);
                 }
                 else document.field.run(commandOf(cast(EditorAction) id.argument), now);
             }
