@@ -180,28 +180,40 @@ Gate:
 - An edit to one `sparkles:base` module recompiles only the variants whose
   manifests contain it.
 
-Progress: local execution without the store. `build_graph/execute.d` makes an
-action graph concrete for a run directory and runs it on the task-DAG
-executor: compiles, archives and links with BGA4's complete environment
-and their tools by absolute path, the root mapped to `.` (BGA5), and the
-test-root module generated in process. `plan-graph --run=versions` builds
-and tests `sparkles:versions` in 16 actions; two runs in different
-directories produce byte-identical objects, archives and test binary, none
-naming the worktree or the run directory. Typed generators (BGG1–BGG3,
-BGG6): `dmd`'s `config.d` is built as `dmd:config` and run with its output
-as `$OUT` (D60), so `plan-graph --run=build-primitives` builds its 44
-actions, `dmd:lexer` included, and runs its tests from the repository root
-(BGX1). The shader compiler is built from its own request and run in its
-direct invocation (shader build SHP11), with the fork naming its `spirv-opt`;
-`--run=ui-app` builds and tests through it. A dependency library's compile
-writes its archive itself (`-lib`), one member per module as dub's does, so a
-source library folded into a library and its dependent links once. The
-store (§6, `build_graph/store.d`) holds published results beneath the user's cache:
-a compile is keyed by its declared key and the manifest the fork's dependency
-output gives it, any other action by its declared key, each consumed output
-by its digest, so a second `plan-graph --run=versions` against one store
-executes no compile and no link. Next: eviction and digest records, miss
-explanations, inspection, and the gate's oracles.
+Progress, by the gate's items:
+
+- **Execution:** `build_graph/execute.d` runs an action graph on the task-DAG
+  executor with BGA4's complete environment (`TMPDIR` the action's own),
+  its tools by absolute path, the root mapped to `.` (BGA5) and the
+  compiler's own tree to `/ldc` (BGA11). A library's LDC compile writes its
+  archive (`-lib`), byte-identical across run directories. Tests run in the
+  root with the runner's arguments and never call dub (BGX1, oracle 11
+  step 1).
+- **Generators:** `dmd`'s `config.d` (D60) and the shader compiler (shader
+  build SHP11) are typed generators built by the graph; the shader compiler
+  is keyed on its import roots (BGG5).
+- **The store** (`build_graph/store.d`): declared keys with consumed outputs by
+  digest, manifests from the fork's dependency output (BGK2, `7bee3fbdeb`),
+  conservative keys without it and for ImportC compiles (BGK6), library
+  search keys (BGK9), reads outside the declared roots failing (BGK8), a
+  digest cache (BGK5), publication by rename with leases and adoption of a
+  winner (BGS2–BGS4), eviction with digest records (BGS5), verification,
+  removal and inspection through `plan-graph --cache-op` (BGS6, BGS7), miss
+  explanations (BGS8) and the determinism check (BGS9). The toolchain
+  identity is the tools' store-path closure (BGT1, BGT2).
+- **Registry sources without Nix** (BGR4): `plan-graph --fetch-sources`
+  builds and tests from a fetched tree equal to Nix's.
+- **Isolation (D39):** builds confined by Landlock and a network namespace
+  at no measurable cost; the whole test selection's list is still to run.
+- **Gate checks so far:** a second run in another worktree compiles nothing;
+  an edit to one `sparkles:base` module recompiles exactly the compiles whose
+  manifests list it; oracle 3 passes for `build-primitives` and `ui-app`
+  (`--trace-compiles`); two concurrent producers of one graph both succeed,
+  the loser adopting the winner's entries (oracle 7 step 1, one file system).
+
+Next: a consumer served from a digest record alone, `ci cache`, `pkg-config`'s
+absent candidates, and the remaining oracles over the whole test selection
+(2, 4, 5, 7, 9, 10, 16–19, 21).
 
 ## E4: The Nix backend
 
@@ -233,5 +245,5 @@ Gate:
 | E1a       | superseded  |
 | E1        | done        |
 | E2        | done        |
-| E3        | not started |
+| E3        | in progress |
 | E4        | not started |
