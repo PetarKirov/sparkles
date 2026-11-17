@@ -126,7 +126,7 @@ int main(string[] args)
         const runDir = into.length ? absolutePath(into[0]["--into=".length .. $])
             : cache.length ? buildPath(cache, "runs", text(Clock.currTime.toUnixTime, "-", thisProcessID))
             : buildPath(root, "build", "graph-run");
-        return runPackage(root, runOnly[0]["--run=".length .. $], runDir, cache);
+        return runPackage(root, runOnly[0]["--run=".length .. $], runDir, cache, args.canFind("--check-determinism"));
     }
 
     auto first = planRepository(root);
@@ -1195,7 +1195,7 @@ actions into `into` on the task-DAG executor: compiles, archives and the
 link with the fixed environment, then the test. Prints each task's lines
 and its outcome; the exit status is the run's.
 */
-int runPackage(string root, string only, string into, string cache)
+int runPackage(string root, string only, string into, string cache, bool checkDeterminism = false)
 {
     import std.file : mkdirRecurse;
     import std.parallelism : totalCPUs;
@@ -1252,7 +1252,7 @@ int runPackage(string root, string only, string into, string cache)
     foreach (name, value; environment.toAA)
         declared ~= EnvEntry(name, name == "PATH" ? trap ~ ":" ~ value : value);
     declared.sort!((a, b) => a.name < b.name);
-    const layout = RunLayout(root, into, cache, toolchain.identity);
+    const layout = RunLayout(root, into, cache, toolchain.identity, checkDeterminism);
     auto nodes = executionNodes(p.graph, layout, declared);
     auto w = stdout.lockingTextWriter;
     import sparkles.build_graph.execute : RunStats;
