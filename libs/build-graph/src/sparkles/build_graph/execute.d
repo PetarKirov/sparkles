@@ -26,8 +26,7 @@ executor admits an action, its declared key is computed (BGK1), each
 published result is looked up, through a compile's manifests (BGK3). A hit
 leaves the action's output directory a link to the result and runs nothing; a
 successful miss is published, a compile with the manifest the fork's
-dependency output gives (BGK2). Tests and the shader compiler are not
-reused. Without a cache, every run builds what it plans.
+dependency output gives (BGK2). Tests are not reused. Without a cache, every run builds what it plans.
 */
 module sparkles.build_graph.execute;
 
@@ -692,14 +691,10 @@ struct ActionDriver
         return outcome;
     }
 
-    // Whether `a`'s result may be reused: a test's never is (BGX2, E3), nor
-    // the shader compiler's, whose manifest the graph does not read yet
-    // (BGG5).
+    // Whether `a`'s result may be reused: a test's never is (BGX2, E3).
     private static bool reusable(ref const Action a) @safe pure nothrow
     {
         if (a.kind == ActionKind.test)
-            return false;
-        if (a.id.text.startsWith("generate:shader-compile:"))
             return false;
         if (a.kind == ActionKind.compile)
             return a.action.match!((ref const ProcessAction p) => p.argv.canFind!(x => x.startsWith("--makedeps-digests=")),
@@ -760,6 +755,11 @@ struct ActionDriver
                 if (a.kind == ActionKind.compile)
                     foreach (dir; cRoots(p.argv))
                         s ~= "c-root " ~ dir ~ " " ~ treeDigest(dir) ~ "\n";
+                // BGG5: the shader compiler resolves imports and reports no
+                // manifest, so it keys on every file beneath its device
+                // configuration's import roots (BGK6).
+                foreach (dir; shaderRoots(p.argv))
+                    s ~= "shader-root " ~ dir ~ " " ~ treeDigest(dir) ~ "\n";
                 const env = a.kind == ActionKind.generate && p.envDelta.length ? p.envDelta : buildEnvironment();
                 foreach (e; env)
                     s ~= "env " ~ e.name ~ "=" ~ e.value ~ "\n";
@@ -826,6 +826,48 @@ struct ActionDriver
             if (!path.startsWith("/nix/store/") && present(path))
                 return ["manifest", path ~ " appeared"];
         return ["manifest", "no manifest matches"];
+    }
+
+    // The worktree import roots of the device configuration a shader
+    // compiler's `--described=$IN(<id>)/device.json` names, from the
+    // description its producer writes.
+    private string[] shaderRoots(const string[] argv)
+    {
+        import std.json : JSONException, JSONType, parseJSON;
+
+        string[] dirs;
+        foreach (arg; argv)
+        {
+            enum prefix = "--described=$IN(";
+            if (!arg.startsWith(prefix))
+                continue;
+            size_t close = prefix.length;
+            while (close < arg.length && arg[close] != ')')
+                ++close;
+            auto producer = arg[prefix.length .. close] in planned;
+            if (producer is null)
+                continue;
+            string described;
+            (**producer).action.match!(
+                (ref const InProcessAction i) { if (i.arguments.length == 2) described = i.arguments[1]; },
+                (ref const _) {});
+            try
+            {
+                foreach (t; parseJSON(described)["targets"].array)
+                    foreach (p; t["buildSettings"]["importPaths"].array)
+                        if (p.type == JSONType.string && p.str.startsWith("$ROOT/"))
+                        {
+                            auto d = p.str["$ROOT/".length .. $];
+                            while (d.length && d[$ - 1] == '/')
+                                d = d[0 .. $ - 1];
+                            if (!dirs.canFind(d))
+                                dirs ~= d;
+                        }
+            }
+            catch (JSONException)
+                continue;
+        }
+        return dirs;
     }
 
     // The worktree directories a compile's C preprocessor searches: each C
