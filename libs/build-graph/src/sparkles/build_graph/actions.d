@@ -40,6 +40,7 @@ linker's thread counts set from them.
 */
 module sparkles.build_graph.actions;
 
+import core.time : Duration, minutes;
 import std.algorithm.searching : canFind, endsWith, startsWith;
 import std.array : array, join;
 import std.conv : text;
@@ -144,6 +145,11 @@ struct Tools
     /// Prefix maps for the toolchain's own paths, `<path>=<fixed>` (BGA11), so
     /// no output names the store path of druntime's or Phobos' sources.
     string[] prefixMaps;
+    /// How long an action may run before it is killed, failing as timed out
+    /// and unpublished (BGA9, BGA12): `testLimit` for a test, `actionLimit`
+    /// for every other process. `Duration.zero` sets none.
+    Duration testLimit = 20.minutes;
+    Duration actionLimit = 30.minutes; /// ditto
 }
 
 /**
@@ -206,6 +212,13 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
         if (a.id.text in made)
             return a.id;
         made[a.id.text] = true;
+        // BGA12: every process the graph runs ends by its limit.
+        a.action.match!(
+            (ref ProcessAction p) {
+                if (p.timeout == Duration.zero)
+                    p.timeout = a.kind == ActionKind.test ? tools.testLimit : tools.actionLimit;
+            },
+            (ref other) {});
         g.actions ~= a;
         return a.id;
     }
@@ -787,7 +800,8 @@ version (unittest)
     }
 
     // The same packages, each request a sub-package and a build type.
-    private ActionGraph graphWith(const string[2][] requests, const CoverageAttempt[] attempts = null) @safe
+    private ActionGraph graphWith(const string[2][] requests, const CoverageAttempt[] attempts = null,
+        const Tools tools = Tools.init) @safe
     {
         auto tree = memoryTree([
             "/r/dub.sdl": "name \"r\"\nsubPackage \"t1\"\nsubPackage \"t2\"\nsubPackage \"mid\"\nsubPackage \"leaf\"\n",
@@ -813,7 +827,7 @@ version (unittest)
         }
         const plan = planVariants(rs, PlanOptions(ToolchainIdentity("ldc", "toolchain-1")), tree);
         assert(plan.hasValue);
-        auto g = planActions(plan.value, rs, "/r", Tools.init, attempts);
+        auto g = planActions(plan.value, rs, "/r", tools, attempts);
         assert(g.hasValue, g.hasError ? g.error.message : null);
         return g.value;
     }
@@ -1016,6 +1030,33 @@ version (unittest)
     assert(cargv.canFind("-J=$IN(" ~ gen.id.text ~ ")"), text(cargv));
     assert(g.value.edges.canFind!(e => e.prerequisite == gen.id && e.dependent == compile.id));
     assert(g.value.actions.count!(a => a.kind == ActionKind.generate && a.id.text.startsWith("generate:r.tool")) == 1);
+}
+
+@("build_graph.actions.planActions.timeLimits")
+@safe unittest
+{
+    static Duration limitOf(ref const Action a) => a.action.match!(
+        (ref const ProcessAction p) => p.timeout, (_) => Duration.zero);
+
+    // BGA12: a test ends by its limit, every other process by the backstop.
+    const g = graphOf(":t1");
+    size_t processes;
+    foreach (ref a; g.actions)
+        if (a.action.match!((ref const ProcessAction _) => true, (_) => false))
+        {
+            ++processes;
+            assert(limitOf(a) == (a.kind == ActionKind.test ? 20.minutes : 30.minutes), a.id.text);
+        }
+    assert(processes);
+
+    // Zero sets none; the limits are the caller's.
+    const none = graphWith([[":t1", "unittest"]], null,
+        Tools(testLimit: Duration.zero, actionLimit: 5.minutes));
+    foreach (ref a; none.actions)
+        if (a.kind == ActionKind.test)
+            assert(limitOf(a) == Duration.zero);
+        else if (a.kind == ActionKind.compile)
+            assert(limitOf(a) == 5.minutes);
 }
 
 /// BGX1: a test takes what the runner's compile-time modes need as
