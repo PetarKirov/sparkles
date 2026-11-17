@@ -19,8 +19,15 @@ reads each tested source's module name and writes dub's test-root module.
 Each action's standard output and error are kept in its directory's
 `output.log`, with its exit status in its task record (BGA7).
 
-There is no store yet (§6): every run builds what it plans, and a run
-directory is the run's alone.
+With a cache directory ($(LREF RunLayout.cache)), the driver uses the store
+(§6, $(REF Store, sparkles,build_primitives,plan,store)) beneath it: when the
+executor admits an action, its declared key is computed (BGK1), each
+`$IN(<id>)` standing for the digest of that producer's outputs, and a
+published result is looked up, through a compile's manifests (BGK3). A hit
+leaves the action's output directory a link to the result and runs nothing; a
+successful miss is published, a compile with the manifest the fork's
+dependency output gives (BGK2). Tests and the shader compiler are not
+reused. Without a cache, every run builds what it plans.
 */
 module sparkles.build_graph.execute;
 
@@ -39,6 +46,10 @@ struct RunLayout
 {
     string root;         /// the worktree, absolute
     string runDirectory; /// absolute: `out/` and `measure/` per action
+    /// The cache directory holding the store's `build/` beside `runs/`,
+    /// absolute; `runDirectory` must lie beneath it. Empty runs without a
+    /// store (§6).
+    string cache;
 
     /// The output directory of action `id`: its `$OUT`.
     string outOf(TaskId id) const @safe pure nothrow => runDirectory ~ "/out/" ~ idPath(id);
@@ -272,6 +283,135 @@ import sparkles.build_primitives.task.executor : RunResult, TaskContext;
 import sparkles.build_primitives.task.model : TaskOutcome;
 import sparkles.build_primitives.task.process : ProcessDriver, ProcessDriverOptions;
 import sparkles.event_horizon.sched : Sched;
+import sparkles.build_graph.store : Manifest, ManifestEntry, OutputRecord, ResultRecord, Store,
+    cacheDirTag, declaredKeyOf, formatVersion, hexOf, layoutVersion, parseHex, readAll, readBytes, resultKey,
+    statPath;
+
+/// What a run did with each kind of action: reused it from the store, or
+/// executed it.
+struct RunStats
+{
+    size_t[string] reused;   /// by kind
+    size_t[string] executed; /// by kind
+
+    void count(string kind, bool hit) @safe pure nothrow
+    {
+        auto into = hit ? &reused : &executed;
+        if (auto n = kind in *into)
+            ++*n;
+        else
+            (*into)[kind] = 1;
+    }
+
+    /// `compile 3 executed, 12 reused; link …`, by kind in order.
+    string summary() const @safe
+    {
+        import std.algorithm.sorting : sort;
+
+        bool[string] kinds;
+        foreach (k, _; reused)
+            kinds[k] = true;
+        foreach (k, _; executed)
+            kinds[k] = true;
+        string s;
+        foreach (k; kinds.keys.sort)
+            s ~= (s.length ? "; " : "") ~ k ~ " " ~ text(executed.get(k, 0)) ~ " executed, "
+                ~ text(reused.get(k, 0)) ~ " reused";
+        return s;
+    }
+}
+
+// This process's lease name: its id and start time, so a reused id names
+// another holder (BGS4).
+private string leaseHolder() @safe
+{
+    import core.sys.posix.unistd : getpid;
+    import std.datetime.systime : Clock;
+
+    return text((() @trusted => getpid())(), "-", Clock.currStdTime);
+}
+
+private string parentOf(string path) @safe pure nothrow @nogc
+{
+    size_t slash = path.length;
+    while (slash > 0 && path[slash - 1] != '/')
+        --slash;
+    return slash > 1 ? path[0 .. slash - 1] : "/";
+}
+
+private string baseNameOf(string path) @safe pure nothrow @nogc
+{
+    size_t slash = path.length;
+    while (slash > 0 && path[slash - 1] != '/')
+        --slash;
+    return path[slash .. $];
+}
+
+/**
+The prerequisites of the make rules in `text`, as `-makedeps` writes them:
+after each target's `:`, separated by whitespace and escaped line breaks,
+with spaces and `#` escaped by a backslash and `$` doubled.
+*/
+string[] makeRulePrerequisites(scope const(char)[] text) @safe pure
+{
+    string[] result;
+    string current;
+    bool inRule;
+    void flush()
+    {
+        if (current.length)
+            result ~= current;
+        current = null;
+    }
+    for (size_t i = 0; i < text.length; ++i)
+    {
+        const c = text[i];
+        const next = i + 1 < text.length ? text[i + 1] : '\0';
+        if (!inRule)
+        {
+            if (c == '\\' && next != '\0')
+                ++i;
+            else if (c == ':' && (next == ' ' || next == '\n' || next == '\0' || next == '\\'))
+                inRule = true;
+            continue;
+        }
+        if (c == '\\' && (next == ' ' || next == '#'))
+        {
+            current ~= next;
+            ++i;
+        }
+        else if (c == '\\' && (next == '\n' || next == '\r'))
+        {
+            flush();
+            ++i;
+        }
+        else if (c == '$' && next == '$')
+        {
+            current ~= '$';
+            ++i;
+        }
+        else if (c == '\n')
+        {
+            flush();
+            inRule = false;
+        }
+        else if (c == ' ' || c == '\t' || c == '\r')
+            flush();
+        else
+            current ~= c;
+    }
+    flush();
+    return result;
+}
+
+/// `-makedeps` rules read back, escapes undone.
+@("build_graph.execute.makeRulePrerequisites")
+@safe pure unittest
+{
+    assert(makeRulePrerequisites("x.o: \\\n  a/m.d \\\n  b/with\\ space.d \\\n  c/$$d.d\n")
+        == ["a/m.d", "b/with space.d", "c/$d.d"]);
+    assert(makeRulePrerequisites("x.o:\n") is null);
+}
 
 /**
 The action driver of a local run: makes each action's output and
@@ -291,16 +431,29 @@ struct ActionDriver
     private RunLayout layout;
     private ProcessDriver* process;
     private BlockingVfs* vfs;
+    private Dir!(BlockingVfs, Rights.all) cacheRoot; // with a store: holds `build/` and the run
     private Dir!(BlockingVfs, Rights.all) run_;
     private Dir!(BlockingVfs, Rights.readOnly) worktree;
+    private Dir!(BlockingVfs, Rights.readOnly) system; // absolute paths a manifest names
+    private Store!(Dir!(BlockingVfs, Rights.all)) store;
+    private bool stored;
+    private const(Action)*[string] planned;
+    private string[string] outputsDigestOf; // by task id: what a consumer's key holds (BGK1)
+    private ubyte[32][string] digests;      // file digests read this run, by manifest path
     private string failure;
 
+    /// What the run did, by action kind: reused from the store, or executed.
+    RunStats stats;
+
     /**
-    A driver for `nodes` in `layout`. The run directory and the worktree
-    are the two roots it opens (BGF2): the run directory with every right,
-    as the store will be, and the worktree read-only.
+    A driver for `nodes` in `layout`, which `g` planned. Without a cache the
+    run directory and the worktree are the two roots it opens (BGF2): the
+    run directory with every right and the worktree read-only. With one, the
+    cache directory, which holds the store and the run directory, takes the
+    run directory's place, so a publication renames within one root (BGS2),
+    and the manifests' absolute paths are read through a read-only root.
     */
-    this(RunLayout layout, const TaskNode[] nodes) @safe
+    this(RunLayout layout, const TaskNode[] nodes, const(ActionGraph)* g = null) @safe
     {
         import core.lifetime : move;
         import sparkles.base.vfs.handles : ambientAuthority, openRoot;
@@ -308,11 +461,47 @@ struct ActionDriver
 
         this.layout = layout;
         vfs = new BlockingVfs;
-        auto made = openRoot!(Rights.all)(vfs, layout.runDirectory, ambientAuthority());
-        if (made.hasError)
-            failure = "cannot open the run directory " ~ layout.runDirectory;
+        if (g !is null)
+            foreach (ref a; g.actions)
+                planned[a.id.text] = &a;
+        if (layout.cache.length && layout.runDirectory.startsWith(layout.cache ~ "/"))
+        {
+            // A run reads its producers' outputs through the links into the
+            // store that publication leaves, all beneath the cache.
+            auto top = openRoot!(Rights.all)(vfs, layout.cache, ambientAuthority(),
+                ResolvePolicy(SymlinkPolicy.beneath, DotDotPolicy.reject));
+            if (top.hasError)
+                failure = "cannot open the cache directory " ~ layout.cache;
+            else
+            {
+                cacheRoot = move(top.value);
+                auto made = cacheRoot.walkAll(layout.runDirectory[layout.cache.length + 1 .. $]);
+                auto build = cacheRoot.walkAll("build");
+                auto runs = cacheRoot.walk("runs");
+                if (!runs.hasError)
+                    cast(void) runs.value.writeFileAtomic("CACHEDIR.TAG", cacheDirTag);
+                if (made.hasError || build.hasError)
+                    failure = "cannot open the run directory " ~ layout.runDirectory;
+                else
+                {
+                    run_ = move(made.value);
+                    stored = (() @trusted => Store!(Dir!(BlockingVfs, Rights.all)).open(build.value,
+                        leaseHolder(), store))();
+                }
+            }
+            auto root = openRoot!(Rights.readOnly)(vfs, "/", ambientAuthority(),
+                ResolvePolicy(SymlinkPolicy.beneath, DotDotPolicy.reject, crossMounts: true));
+            if (!root.hasError)
+                system = move(root.value);
+        }
         else
-            run_ = move(made.value);
+        {
+            auto made = openRoot!(Rights.all)(vfs, layout.runDirectory, ambientAuthority());
+            if (made.hasError)
+                failure = "cannot open the run directory " ~ layout.runDirectory;
+            else
+                run_ = move(made.value);
+        }
         auto tree = openRoot!(Rights.readOnly)(vfs, layout.root, ambientAuthority(),
             ResolvePolicy(SymlinkPolicy.beneath, DotDotPolicy.reject, crossMounts: true));
         if (tree.hasError)
@@ -329,14 +518,378 @@ struct ActionDriver
     /// The process driver, whose records hold each process's end and status.
     ref ProcessDriver processes() return @safe pure nothrow @nogc => *process;
 
-    /// Runs `ctx`'s action (the executor's entry point).
+    /// Whether results are looked up and published (§6).
+    bool hasStore() const @safe pure nothrow @nogc => stored;
+
+    /// Ends the leases the run holds (BGS4).
+    void finish()
+    {
+        if (stored)
+            store.releaseLeases();
+    }
+
+    /**
+    Runs `ctx`'s action (the executor's entry point). With a store, a
+    keyed action is looked up first, when the executor admits it (BGS4): a
+    hit links its output directory to the published result and runs
+    nothing; a miss runs, and a success is published.
+    */
     TaskOutcome run(ref TaskContext!Sched ctx)
     {
-        import sparkles.build_primitives.task.model : FailureReason, Failed;
+        import sparkles.build_primitives.task.model : FailureReason, Failed, OutputStream, Succeeded;
 
-        if (failure.length || !makeDirectories(ctx.node.id))
+        if (failure.length)
             return TaskOutcome(Failed(FailureReason.contract));
-        return process.run(ctx);
+        const id = ctx.node.id;
+        auto a = id.text in planned;
+        const kind = a !is null ? text((*a).kind) : "action";
+        string declared;
+        if (stored && a !is null && reusable(**a))
+        {
+            string preimage;
+            if (declaredPreimage(**a, preimage))
+                declared = declaredKeyOf(preimage);
+        }
+        if (declared.length)
+            if (auto hit = lookup(**a, declared))
+                if (adopt(id, *hit))
+                {
+                    stats.count(kind, true);
+                    return TaskOutcome(Succeeded());
+                }
+        if (!makeDirectories(id))
+            return TaskOutcome(Failed(FailureReason.contract));
+        auto outcome = process.run(ctx);
+        stats.count(kind, false);
+        const succeeded = outcome.match!((ref Succeeded _) => true, (ref _) => false);
+        if (!succeeded || !stored)
+            return outcome;
+
+        ResultRecord record;
+        record.task = id.text;
+        record.declaredKey = declared;
+        record.outputs = outputsOf(id);
+        outputsDigestOf[id.text] = record.outputsDigest;
+        if (!declared.length)
+            return outcome;
+        Manifest manifest;
+        const hasManifest = (*a).kind == ActionKind.compile;
+        if (hasManifest)
+        {
+            string why;
+            if (!readManifest(id, manifest, why))
+            {
+                ctx.output(OutputStream.stderr, "not published: " ~ why);
+                return outcome;
+            }
+            record.resultKey = resultKey(declared, manifest);
+        }
+        else
+            record.resultKey = declared;
+        const name = layout.outOf(id);
+        auto parent = run_.walk(relativeToRun(parentOf(name)));
+        if (parent.hasError)
+            return outcome;
+        const published = store.publish(parent.value, baseNameOf(name), record, linkTo(name));
+        if (store.note.length)
+            ctx.output(OutputStream.stderr, store.note);
+        if (published !is null)
+        {
+            if (hasManifest)
+                store.useManifest(declared, manifest);
+            outputsDigestOf[id.text] = published.outputsDigest;
+        }
+        return outcome;
+    }
+
+    // Whether `a`'s result may be reused: a test's never is (BGX2, E3), nor
+    // the shader compiler's, whose manifest the graph does not read yet
+    // (BGG5).
+    private static bool reusable(ref const Action a) @safe pure nothrow
+    {
+        if (a.kind == ActionKind.test)
+            return false;
+        if (a.id.text.startsWith("generate:shader-compile:"))
+            return false;
+        if (a.kind == ActionKind.compile)
+            return a.action.match!((ref const ProcessAction p) => p.argv.canFind!(x => x.startsWith("--makedeps-digests=")),
+                (ref const _) => false);
+        return true;
+    }
+
+    /*
+    BGK1: the declared key's preimage, one component per line: the format
+    version, the kind, the argument vector with each `$IN(<id>)` naming the
+    digest of that producer's outputs, the declared environment, the working
+    directory, and the content digests of the worktree files the arguments
+    name. False when a producer's outputs are unknown.
+    */
+    private bool declaredPreimage(ref const Action a, out string preimage)
+    {
+        string s = "format " ~ formatVersion.text ~ "\nkind " ~ text(a.kind) ~ "\n";
+        bool known = true;
+        string normalized(string arg)
+        {
+            string result;
+            size_t i;
+            while (i < arg.length)
+            {
+                if (arg[i .. $].startsWith("$IN("))
+                {
+                    size_t close = i + 4;
+                    while (close < arg.length && arg[close] != ')')
+                        ++close;
+                    if (auto d = arg[i + 4 .. close] in outputsDigestOf)
+                        result ~= "$IN(" ~ *d ~ ")";
+                    else
+                        known = false;
+                    i = close + 1;
+                }
+                else
+                    result ~= arg[i++];
+            }
+            return result;
+        }
+        void input(string path)
+        {
+            ubyte[32] d;
+            if (digestOf(path, d))
+                s ~= "input " ~ hexOf(d) ~ " " ~ path ~ "\n";
+        }
+        a.action.match!(
+            (ref const ProcessAction p) {
+                foreach (arg; p.argv)
+                {
+                    s ~= "arg " ~ normalized(arg) ~ "\n";
+                    if (arg.length && arg[0] != '-' && arg[0] != '$' && arg[0] != '/' && arg.canFind('/'))
+                        input(arg);
+                }
+                const env = a.kind == ActionKind.generate && p.envDelta.length ? p.envDelta : buildEnvironment();
+                foreach (e; env)
+                    s ~= "env " ~ e.name ~ "=" ~ e.value ~ "\n";
+                s ~= "cwd " ~ p.cwd ~ "\n";
+            },
+            (ref const InProcessAction i) {
+                s ~= "handler " ~ i.handler ~ "\n";
+                foreach (arg; i.arguments)
+                    s ~= "arg " ~ normalized(arg) ~ "\n";
+                // The test-root module reads the tested sources it names.
+                if (i.handler == "generate:test-root-module" && i.arguments.length > 2)
+                {
+                    const dir = i.arguments[0];
+                    size_t at = 2;
+                    while (at < i.arguments.length && i.arguments[at] != "--")
+                        ++at;
+                    foreach (source; i.arguments[at + 1 .. $])
+                        input(dir.length && dir != "." ? dir ~ "/" ~ source : source);
+                }
+            },
+            (ref const InertAction _) {});
+        preimage = s;
+        return known;
+    }
+
+    // The result `a`'s declared key leads to, if the store holds one: for a
+    // compile, through the most recently used manifest whose files hold the
+    // digests it records and whose absent candidates are still absent (BGK3).
+    private const(ResultRecord)* lookup(ref const Action a, string declared)
+    {
+        if (a.kind != ActionKind.compile)
+            return store.find(declared);
+        foreach (ref m; store.manifests(declared))
+            if (holds(m))
+                if (auto r = store.find(resultKey(declared, m)))
+                {
+                    store.useManifest(declared, m);
+                    return r;
+                }
+        return null;
+    }
+
+    private bool holds(const ref Manifest m)
+    {
+        foreach (ref f; m.files)
+        {
+            if (f.path.startsWith("/nix/store/"))
+                continue; // a store path's content is its name's
+            ubyte[32] d;
+            if (!digestOf(f.path, d) || d != f.digest)
+                return false;
+        }
+        foreach (path; m.absent)
+            if (!path.startsWith("/nix/store/") && present(path))
+                return false;
+        return true;
+    }
+
+    // Links `id`'s output directory to a published result and takes its
+    // outputs' digest for the consumers' keys.
+    private bool adopt(TaskId id, const ref ResultRecord r)
+    {
+        const name = layout.outOf(id);
+        auto parent = run_.walkAll(relativeToRun(parentOf(name)));
+        if (parent.hasError || run_.walkAll(relativeToRun(layout.measureOf(id))).hasError)
+            return false;
+        if (parent.value.symlinkAt(baseNameOf(name), linkTo(name).replace("{}", r.resultKey)).hasError)
+            return false;
+        outputsDigestOf[id.text] = r.outputsDigest;
+        return true;
+    }
+
+    // The regular files beneath `id`'s output directory, its `output.log`
+    // aside, sorted by path.
+    private OutputRecord[] outputsOf(TaskId id)
+    {
+        import std.algorithm.sorting : sort;
+        import sparkles.base.hash.blake3 : blake3;
+        import sparkles.base.vfs.types : EntryKind;
+
+        OutputRecord[] records;
+        void walk(D)(ref D dir, string prefix)
+        {
+            auto listing = dir.list();
+            if (listing.hasError)
+                return;
+            string[] files, dirs;
+            while (true)
+            {
+                auto more = listing.value.next();
+                if (more.hasError || !more.value)
+                    break;
+                const e = listing.value.front;
+                const n = e.name.idup;
+                auto st = dir.statAt(n);
+                if (st.hasError)
+                    continue;
+                if (st.value.kind == EntryKind.directory)
+                    dirs ~= n;
+                else if (st.value.kind == EntryKind.regular)
+                {
+                    const path = prefix ~ n;
+                    if (path == "output.log")
+                        continue;
+                    ubyte[] bytes;
+                    if (readBytes(dir, n, bytes))
+                        records ~= OutputRecord(path, bytes.length, st.value.executable, blake3(bytes));
+                }
+            }
+            foreach (d; dirs)
+            {
+                auto sub = dir.walk(d);
+                if (!sub.hasError)
+                    walk(sub.value, prefix ~ d ~ "/");
+            }
+        }
+        auto out_ = run_.walk(relativeToRun(layout.outOf(id)));
+        if (!out_.hasError)
+            walk(out_.value, "");
+        return records.sort!((x, y) => x.path < y.path).release;
+    }
+
+    /*
+    BGK2: a compile's manifest from the fork's dependency output, in its
+    measurement directory: each file it read with the digest of what it
+    read, and each absent candidate. A path in the run directory is named
+    from it (`$RUN/…`), so the manifest is the same in every run. BGK7: a
+    worktree file whose bytes now differ from what the compiler read
+    conflicts, and the result is not published.
+    */
+    private bool readManifest(TaskId id, out Manifest m, out string why)
+    {
+        const measure = relativeToRun(layout.measureOf(id));
+        string digestsText, absentText;
+        if (!readAll(run_, measure ~ "/digests", digestsText) || !readAll(run_, measure ~ "/absent", absentText))
+        {
+            why = "the compiler wrote no dependency digests";
+            return false;
+        }
+        import std.string : lineSplitter;
+
+        foreach (line; digestsText.lineSplitter)
+        {
+            ManifestEntry e;
+            if (line.length < 67 || !parseHex(line[0 .. 64], e.digest))
+                continue;
+            e.path = named(line[66 .. $].idup);
+            if (!e.path.startsWith("/nix/store/"))
+            {
+                ubyte[32] now;
+                if (!digestOf(e.path, now, fresh: true) || now != e.digest)
+                {
+                    why = "unstable input: " ~ e.path ~ " changed while the compiler ran";
+                    return false;
+                }
+            }
+            m.files ~= e;
+        }
+        foreach (path; makeRulePrerequisites(absentText))
+            m.absent ~= named(path);
+        return true;
+    }
+
+    // A compiler's path as a manifest names it: one in the run directory
+    // from `$RUN/`, any other as given.
+    private string named(string path) const @safe pure
+    {
+        if (path.startsWith(layout.runDirectory ~ "/"))
+            return "$RUN/" ~ path[layout.runDirectory.length + 1 .. $];
+        return path;
+    }
+
+    // The digest of the file a manifest path names, read once per run
+    // unless `fresh`.
+    private bool digestOf(string path, out ubyte[32] digest, bool fresh = false)
+    {
+        import sparkles.base.hash.blake3 : blake3;
+
+        if (!fresh)
+            if (auto d = path in digests)
+            {
+                digest = *d;
+                return true;
+            }
+        ubyte[] bytes;
+        bool read;
+        if (path.startsWith("$RUN/"))
+            // Through the cache's root: a producer's link climbs above the run.
+            read = readBytes(cacheRoot, inCache(path[5 .. $]), bytes);
+        else if (path.startsWith("/"))
+            read = readBytes(system, path[1 .. $], bytes);
+        else
+            read = readBytes(worktree, path, bytes);
+        if (!read)
+            return false;
+        digest = blake3(bytes);
+        digests[path] = digest;
+        return true;
+    }
+
+    // Whether a manifest path names an entry that exists.
+    private bool present(string path)
+    {
+        if (path.startsWith("$RUN/"))
+            return !statPath(cacheRoot, inCache(path[5 .. $])).hasError;
+        if (path.startsWith("/"))
+            return !statPath(system, path[1 .. $]).hasError;
+        return !statPath(worktree, path).hasError;
+    }
+
+    // A path relative to the run directory, as the cache's root names it.
+    private string inCache(string path) const @safe pure
+        => layout.runDirectory[layout.cache.length + 1 .. $] ~ "/" ~ path;
+
+    private string relativeToRun(string path) const @safe pure
+        => path.length > layout.runDirectory.length ? path[layout.runDirectory.length + 1 .. $] : "";
+
+    // The relative link from the directory holding `name` to a result's
+    // `out/`, `{}` standing for its key.
+    private string linkTo(string name) const @safe pure
+    {
+        string up;
+        foreach (c; parentOf(name)[layout.cache.length + 1 .. $])
+            if (c == '/')
+                up ~= "../";
+        return up ~ "../build/v" ~ layoutVersion.text ~ "/results/{}/out";
     }
 
     // The action's `out` and `measure` directories, beneath the run's root.
@@ -494,7 +1047,7 @@ of their own, reporting each task's lines to `writer` through the plain
 reporter, at most `capacity` weight at a time.
 */
 RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout, ref W writer,
-    uint capacity)
+    uint capacity, RunStats* stats = null)
 {
     import sparkles.build_primitives.task.executor : ExecutorOptions, runGraph;
     import sparkles.build_primitives.task.graph : TaskGraphBuilder;
@@ -518,7 +1071,7 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
     Sched s;
     if (Sched.create(s, SchedOptions(stackSize: 256 * 1024), LoopConfig()).hasError)
         return RunResult(exitCode: 2);
-    auto driver = new ActionDriver(layout, nodes); // the generator's handler holds its address
+    auto driver = new ActionDriver(layout, nodes, &g); // the generators' handlers hold its address
     if (driver.error.length)
         return RunResult(exitCode: 2);
     driver.processes.register("generate:test-root-module",
@@ -535,9 +1088,12 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
         cast(void) withScope!((ref sc) {
             sc.spawn(() { consumeEvents(s, *sink, reporter); });
             result = runGraph(s, clock, graph, *driver, *sink, ExecutorOptions(capacity: capacity));
+            driver.finish();
             sink.close();
         })(s);
     });
+    if (stats !is null)
+        *stats = driver.stats;
     if (ran.hasError)
         return RunResult(exitCode: 2);
     return result;

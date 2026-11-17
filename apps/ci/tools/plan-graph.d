@@ -48,9 +48,12 @@ $(LIST
         recorded or refused (oracle 24 steps 1–4).
 )
 
-`--run=<package> [--into=<dir>]` is E3's local execution by hand: it plans that
-package's test root and runs its actions on the task-DAG executor, with the
-toolchain from `PATH` named by absolute path (`build_graph/execute.d`).
+`--run=<package> [--into=<dir>] [--cache=<dir> | --no-store]` is E3's local
+execution by hand: it plans that package's test root and runs its actions on
+the task-DAG executor, with the toolchain from `PATH` named by absolute path
+(`build_graph/execute.d`), reusing and publishing results in the store beneath the
+cache directory (`$XDG_CACHE_HOME/sparkles` by default, §6), and prints what
+it executed and what it reused.
 
 Needs the dev shell's `SPARKLES_DUB_SOURCES` for the registry packages, and
 `strace` (the dev shell's, on Linux) for the trace steps. `--trace-target=F`
@@ -100,9 +103,21 @@ int main(string[] args)
     const runOnly = args.filter!(a => a.startsWith("--run=")).array;
     if (runOnly.length)
     {
+        // The store lives in the user's cache (BGS1) unless `--cache` names
+        // another, and `--no-store` runs without one; a run directory lies
+        // beneath it unless `--into` names one elsewhere.
         const into = args.filter!(a => a.startsWith("--into=")).array;
-        return runPackage(root, runOnly[0]["--run=".length .. $],
-            into.length ? absolutePath(into[0]["--into=".length .. $]) : buildPath(root, "build", "graph-run"));
+        const cacheArg = args.filter!(a => a.startsWith("--cache=")).array;
+        const xdg = environment.get("XDG_CACHE_HOME", buildPath(environment.get("HOME", "/"), ".cache"));
+        const cache = args.canFind("--no-store") ? null
+            : cacheArg.length ? absolutePath(cacheArg[0]["--cache=".length .. $]) : buildPath(xdg, "sparkles");
+        import std.datetime.systime : Clock;
+        import std.process : thisProcessID;
+
+        const runDir = into.length ? absolutePath(into[0]["--into=".length .. $])
+            : cache.length ? buildPath(cache, "runs", text(Clock.currTime.toUnixTime, "-", thisProcessID))
+            : buildPath(root, "build", "graph-run");
+        return runPackage(root, runOnly[0]["--run=".length .. $], runDir, cache);
     }
 
     auto first = planRepository(root);
@@ -1170,7 +1185,7 @@ actions into `into` on the task-DAG executor: compiles, archives and the
 link with the fixed environment, then the test. Prints each task's lines
 and its outcome; the exit status is the run's.
 */
-int runPackage(string root, string only, string into)
+int runPackage(string root, string only, string into, string cache)
 {
     import std.file : mkdirRecurse;
     import std.parallelism : totalCPUs;
@@ -1182,6 +1197,14 @@ int runPackage(string root, string only, string into)
         fail: onPath("false"), deviceCompiler: onPath("ldc2-vulkan"));
     foreach (name; ["spirv-val", "spirv-opt", "spirv-dis", "spirv-as", "spirv-cross", "glslangValidator"])
         tools.shaderTools ~= [name, onPath(name)];
+    // The fork's dependency output, which a compile's manifest comes from.
+    if (tools.compiler !is null)
+    {
+        import std.process : execute;
+
+        const help = execute([tools.compiler, "--help-hidden"]);
+        tools.dependencyOutput = help.output.canFind("makedeps-digests");
+    }
     if (tools.compiler is null || tools.archiver is null || tools.cc is null || tools.linker is null)
     {
         stderr.writeln("plan-graph: ldc2, ar, cc and ld.lld must be on PATH");
@@ -1205,10 +1228,15 @@ int runPackage(string root, string only, string into)
     foreach (name, value; environment.toAA)
         declared ~= EnvEntry(name, value);
     declared.sort!((a, b) => a.name < b.name);
-    const layout = RunLayout(root, into);
+    const layout = RunLayout(root, into, cache);
     auto nodes = executionNodes(p.graph, layout, declared);
     auto w = stdout.lockingTextWriter;
-    const r = runActions(nodes, p.graph, layout, w, cast(uint) totalCPUs);
+    import sparkles.build_graph.execute : RunStats;
+
+    RunStats stats;
+    const r = runActions(nodes, p.graph, layout, w, cast(uint) totalCPUs, &stats);
     writeln(p.graph.actions.length, " actions; exit ", r.exitCode);
+    if (cache.length)
+        writeln("store ", cache, ": ", stats.summary);
     return r.exitCode;
 }

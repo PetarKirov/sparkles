@@ -134,6 +134,10 @@ struct Tools
     /// and GLSL tools it runs, by name and absolute path (BGG3).
     string deviceCompiler;
     string[2][] shaderTools; /// ditto
+    /// Whether the compiler writes the LDC fork's dependency output: the
+    /// files it read with their digests and the absent candidates (BGK2),
+    /// which a compile's manifest comes from.
+    bool dependencyOutput;
 }
 
 /**
@@ -590,6 +594,10 @@ string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId
         argv ~= ["-lib", "-oq", "-od=$MEASURE/objects", "-cleanup-obj", "-of=$OUT/" ~ archiveName(v)];
     else
         argv ~= ["-c"] ~ (ldc ? ["-singleobj"] : null) ~ ["-of=$OUT/" ~ objectName(v)];
+    // BGK2: the manifest, beside the action's measurements.
+    if (ldc && tools.dependencyOutput)
+        argv ~= ["--makedeps=$MEASURE/deps", "--makedeps-absent=$MEASURE/absent",
+            "--makedeps-digests=$MEASURE/digests"];
     // BGA5: the root maps to `.` in what the outputs record.
     if (ldc)
         argv ~= "--ffile-prefix-map=$ROOT=.";

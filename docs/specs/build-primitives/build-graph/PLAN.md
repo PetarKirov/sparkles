@@ -195,7 +195,13 @@ actions, `dmd:lexer` included, and runs its tests from the repository root
 direct invocation (shader build SHP11), with the fork naming its `spirv-opt`;
 `--run=ui-app` builds and tests through it. A dependency library's compile
 writes its archive itself (`-lib`), one member per module as dub's does, so a
-source library folded into a library and its dependent links once.
+source library folded into a library and its dependent links once. The
+store (§6, `build_graph/store.d`) holds published results beneath the user's cache:
+a compile is keyed by its declared key and the manifest the fork's dependency
+output gives it, any other action by its declared key, each consumed output
+by its digest, so a second `plan-graph --run=versions` against one store
+executes no compile and no link. Next: eviction and digest records, miss
+explanations, inspection, and the gate's oracles.
 
 ## E4: The Nix backend
 
