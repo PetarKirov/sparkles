@@ -655,7 +655,9 @@ struct ActionDriver
         if (!declared.length)
             return outcome;
         Manifest manifest;
-        const hasManifest = (*a).kind == ActionKind.compile;
+        const hasManifest = withManifest(**a);
+        if ((*a).kind == ActionKind.compile && !hasManifest)
+            ctx.output(OutputStream.stderr, "conservatively keyed: no dependency output (BGK6)");
         if (hasManifest)
         {
             string why;
@@ -696,11 +698,16 @@ struct ActionDriver
     {
         if (a.kind == ActionKind.test)
             return false;
-        if (a.kind == ActionKind.compile)
-            return a.action.match!((ref const ProcessAction p) => p.argv.canFind!(x => x.startsWith("--makedeps-digests=")),
-                (ref const _) => false);
         return true;
     }
+
+    // Whether `a` is a compile with the fork's dependency output, keyed by
+    // its manifest (BGK2, BGK3); any other compile is keyed conservatively
+    // (BGK6).
+    private static bool withManifest(ref const Action a) @safe pure nothrow
+        => a.kind == ActionKind.compile && a.action.match!(
+            (ref const ProcessAction p) => p.argv.canFind!(x => x.startsWith("--makedeps-digests=")),
+            (ref const _) => false);
 
     /*
     BGK1: the declared key's preimage, one component per line: the format
@@ -755,6 +762,14 @@ struct ActionDriver
                 if (a.kind == ActionKind.compile)
                     foreach (dir; cRoots(p.argv))
                         s ~= "c-root " ~ dir ~ " " ~ treeDigest(dir) ~ "\n";
+                // BGK6: a compile without dependency output keys on every file
+                // beneath every worktree root it searches.
+                if (a.kind == ActionKind.compile && !withManifest(a))
+                    foreach (arg; p.argv)
+                        foreach (prefix; ["-I=", "-J="])
+                            if (arg.startsWith(prefix) && !arg[prefix.length .. $].startsWith("/")
+                                    && !arg[prefix.length .. $].startsWith("$"))
+                                s ~= "root " ~ arg[prefix.length .. $] ~ " " ~ treeDigest(arg[prefix.length .. $]) ~ "\n";
                 // BGG5: the shader compiler resolves imports and reports no
                 // manifest, so it keys on every file beneath its device
                 // configuration's import roots (BGK6).
@@ -804,7 +819,7 @@ struct ActionDriver
             const differing = preimageDifferences(older, preimage);
             return differing.length ? "differs in " ~ differing : "the same preimage, published under another key";
         }
-        if (a.kind != ActionKind.compile)
+        if (!withManifest(a))
             return ["declared", declaredMiss()];
         const list = store.manifests(declared);
         if (!list.length)
@@ -945,7 +960,7 @@ struct ActionDriver
     // digests it records and whose absent candidates are still absent (BGK3).
     private const(ResultRecord)* lookup(ref const Action a, string declared)
     {
-        if (a.kind != ActionKind.compile)
+        if (!withManifest(a))
             return store.find(declared);
         foreach (ref m; store.manifests(declared))
             if (holds(m))
