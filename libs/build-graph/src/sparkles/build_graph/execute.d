@@ -55,6 +55,10 @@ struct RunLayout
     /// bypassed, publishing nothing; its outputs are compared with the
     /// result its key leads to, and a result that differs is removed.
     bool check;
+    /// BGS8's `explain`: every keyed action is looked up as a run would look
+    /// it up, and nothing executes or publishes. A hit is adopted, so its
+    /// consumers' keys follow; a miss is classified and stops its consumers.
+    bool explain;
 
     /// The output directory of action `id`: its `$OUT`.
     string outOf(TaskId id) const @safe pure nothrow => runDirectory ~ "/out/" ~ idPath(id);
@@ -326,6 +330,9 @@ struct RunStats
     size_t[string] misses;   /// by class (BGS8): `declared`, `manifest`, `evicted`
 
     string[] futureTimes; /// files whose modification time is later than the clock (BGK5)
+    /// With `RunLayout.explain`: what each action reached would do, in the
+    /// order reached, as `<task>: <what>` (BGS8).
+    string[] explained;
 
     void future(string path) @safe pure nothrow
     {
@@ -656,6 +663,8 @@ struct ActionDriver
         if (stored && a !is null && reusable(**a))
             if (declaredPreimage(**a, preimage))
                 declared = declaredKeyOf(preimage);
+        if (layout.explain)
+            return explainOnly(ctx.node.id, a is null ? null : *a, declared, preimage);
         const(ResultRecord)* checked;
         if (declared.length && layout.check)
             checked = lookup(**a, declared);
@@ -773,6 +782,49 @@ struct ActionDriver
         if (!publishRun(id, **a, declared, preimage, record, (string m) => ctx.output(OutputStream.stderr, m)))
             return TaskOutcome(Failed(FailureReason.contract));
         return outcome;
+    }
+
+    /*
+    BGS8's `explain` for the action `a` (`task`): what a run would do with
+    it, recorded in `stats.explained`, with nothing executed or published. A
+    hit is adopted and a digest record serves its consumers, so the keys of
+    the actions after them follow; a miss is classified as a run classifies
+    it and fails the action, so its consumers are not reached. A test runs on
+    every request (BGX2), and so does an action without a key.
+    */
+    private TaskOutcome explainOnly(TaskId task, const(Action)* a, string declared, string preimage)
+    {
+        import sparkles.build_primitives.task.model : FailureReason, Failed, Succeeded;
+
+        const id = task.text;
+        void say(string what) { stats.explained ~= id ~ ": " ~ what; }
+        if (a !is null && (*a).kind == ActionKind.test)
+        {
+            say("runs on every request: a test's result is never reused (BGX2)");
+            return TaskOutcome(Succeeded());
+        }
+        if (a is null || !declared.length)
+        {
+            say(stored ? "has no key, so it would run" : "would run: the run has no store");
+            return TaskOutcome(Failed(FailureReason.contract));
+        }
+        if (auto hit = lookup(*a, declared))
+            if (adopt(task, *hit))
+            {
+                say(text("hit: result ", hit.resultKey, hit.status ? text(", a failure with status ", hit.status,
+                    ", replayed") : ""));
+                return TaskOutcome(Succeeded());
+            }
+        if (auto r = recordedResult(*a, declared))
+        {
+            recorded[id] = Recorded(declared, preimage);
+            outputsDigestOf[id] = r.outputsDigest;
+            say("served from its digest record (BGS5)");
+            return TaskOutcome(Succeeded());
+        }
+        const miss = explainMiss(*a, declared, preimage);
+        say("miss (" ~ miss[0] ~ "): " ~ miss[1]);
+        return TaskOutcome(Failed(FailureReason.contract));
     }
 
     /*

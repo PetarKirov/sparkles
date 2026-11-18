@@ -36,7 +36,7 @@ import sparkles.build_primitives.resolve.libraries : PkgConfigDriver, RecordingP
 import sparkles.build_primitives.resolve.platform : BuildPlatform;
 import sparkles.build_primitives.resolve.registry : nixRegistrySources, readDubLocks;
 import sparkles.build_primitives.resolve.tree : ResolveTree, memoryTree, rootedTree, systemTree;
-import sparkles.build_primitives.task.action : InProcessAction, InertAction, ProcessAction;
+import sparkles.build_primitives.task.action : EnvEntry, InProcessAction, InertAction, ProcessAction;
 import sparkles.build_primitives.workspace.discovery : ReadKind, ReadSet, readWorkspaceAt;
 import sparkles.build_primitives.workspace.package_graph : RecipeRole, buildPackageGraph;
 import sparkles.unittest_layout.lint : checkLayout;
@@ -526,33 +526,14 @@ int runPackage(string root, string only, string into, string cache, bool checkDe
     import std.parallelism : totalCPUs;
     import std.stdio : stdout;
     import sparkles.build_graph.execute : RunLayout, executionNodes, runActions;
-    import sparkles.build_primitives.task.action : EnvEntry;
 
-    auto tools = Tools(compiler: onPath("ldc2"), archiver: onPath("ar"), cc: onPath("cc"), linker: onPath("ld.lld"),
-        fail: onPath("false"), deviceCompiler: onPath("ldc2-vulkan"));
-    foreach (name; ["spirv-val", "spirv-opt", "spirv-dis", "spirv-as", "spirv-cross", "glslangValidator"])
-        tools.shaderTools ~= [name, onPath(name)];
-    // The fork's dependency output, which a compile's manifest comes from.
-    if (tools.compiler !is null)
+    Tools tools;
+    Toolchain toolchain;
+    if (const why = pathTools(tools, toolchain))
     {
-        import std.process : execute;
-
-        const help = execute([tools.compiler, "--help-hidden"]);
-        tools.dependencyOutput = help.output.canFind("makedeps-digests") && !noDependencyOutput;
-    }
-    if (tools.compiler is null || tools.archiver is null || tools.cc is null || tools.linker is null)
-    {
-        stderr.writeln("plan-graph: ldc2, ar, cc and ld.lld must be on PATH");
+        stderr.writeln("plan-graph: ", why);
         return 2;
     }
-    // §8: the identity every key covers, the configuration passed, the
-    // compiler's own tree remapped (BGA11).
-    const toolchain = toolchainOf(tools);
-    tools.config = toolchain.config;
-    if (testTimeout != Duration.max)
-        tools.testLimit = testTimeout;
-    if (toolchain.root.length)
-        tools.prefixMaps = [toolchain.root ~ "=/ldc"];
     auto p = planRepository(root, false, only, tools, toolchain.identity);
     if (p.error.length)
     {
@@ -628,16 +609,10 @@ int runPackage(string root, string only, string into, string cache, bool checkDe
     // declared whole (BGX1): the driver's own.
     // Oracle 11 step 1 (BGX1): a `dub` first on their `PATH` that records
     // each call and fails, so a test that runs dub is seen.
-    import std.file : exists, readText, setAttributes, write;
+    import std.file : exists, readText;
 
     const trap = buildPath(into, "dub-trap");
-    mkdirRecurse(trap);
-    write(buildPath(trap, "dub"), "#!/bin/sh\necho \"$@\" >> '" ~ buildPath(trap, "calls") ~ "'\nexit 1\n");
-    setAttributes(buildPath(trap, "dub"), octal!755);
-    EnvEntry[] declared;
-    foreach (name, value; environment.toAA)
-        declared ~= EnvEntry(name, name == "PATH" ? trap ~ ":" ~ value : value);
-    declared.sort!((a, b) => a.name < b.name);
+    const declared = declaredEnvironment(trap);
     const layout = RunLayout(root, into, cache, toolchain.identity, checkDeterminism);
     auto nodes = executionNodes(p.graph, layout, declared);
     auto w = stdout.lockingTextWriter;
@@ -921,4 +896,152 @@ string[] manifestCompleteness(const ActionGraph g, string root, string runDirect
         }
     }
     return failures;
+}
+
+/**
+The tools a run names, each found on `PATH` by absolute path, and their
+identity (§8): the compiler's configuration passed explicitly, its own tree
+remapped to `/ldc` (BGA11), the fork's dependency output used when the
+compiler has it. Returns null, or why the tools cannot be named.
+*/
+string pathTools(out Tools tools, out Toolchain toolchain)
+{
+    import std.process : execute;
+
+    tools = Tools(compiler: onPath("ldc2"), archiver: onPath("ar"), cc: onPath("cc"), linker: onPath("ld.lld"),
+        fail: onPath("false"), deviceCompiler: onPath("ldc2-vulkan"));
+    foreach (name; ["spirv-val", "spirv-opt", "spirv-dis", "spirv-as", "spirv-cross", "glslangValidator"])
+        tools.shaderTools ~= [name, onPath(name)];
+    if (tools.compiler is null || tools.archiver is null || tools.cc is null || tools.linker is null)
+        return "ldc2, ar, cc and ld.lld must be on PATH";
+    // The fork's dependency output, which a compile's manifest comes from.
+    const help = execute([tools.compiler, "--help-hidden"]);
+    tools.dependencyOutput = help.output.canFind("makedeps-digests") && !noDependencyOutput;
+    toolchain = toolchainOf(tools);
+    tools.config = toolchain.config;
+    if (testTimeout != Duration.max)
+        tools.testLimit = testTimeout;
+    if (toolchain.root.length)
+        tools.prefixMaps = [toolchain.root ~ "=/ldc"];
+    return null;
+}
+
+/**
+The environment a run declares to its generators and tests (BGX1): the
+driver's own, with a `dub` first on `PATH` that records each call beside
+itself, in `trap`, and fails, so an action that runs dub is seen.
+*/
+EnvEntry[] declaredEnvironment(string trap)
+{
+    import std.file : mkdirRecurse, setAttributes, write;
+
+    mkdirRecurse(trap);
+    write(buildPath(trap, "dub"), "#!/bin/sh\necho \"$@\" >> '" ~ buildPath(trap, "calls") ~ "'\nexit 1\n");
+    setAttributes(buildPath(trap, "dub"), octal!755);
+    EnvEntry[] declared;
+    foreach (name, value; environment.toAA)
+        declared ~= EnvEntry(name, name == "PATH" ? trap ~ ":" ~ value : value);
+    declared.sort!((a, b) => a.name < b.name);
+    return declared;
+}
+
+/**
+`ci cache store explain <task>` (BGS8): plans the repository's test
+selection with the tools a run would name, and looks `task` up, with each
+action it needs, as a run beneath `cache` would, executing nothing and
+publishing nothing. `task` is an id, or a prefix only one id has.
+
+Writes to `writer` what each action reached would do, in the order reached
+(a hit, a digest record serving it, a miss and its class with what
+differs), then the task's own line: its verdict, or, when a prerequisite
+misses, that it is not reached and why. Returns 0, or 2 when the task is
+unknown or ambiguous, or the repository cannot be planned.
+*/
+int explainTask(W)(string root, string cache, string task, ref W writer)
+{
+    import std.datetime.systime : Clock;
+    import std.file : exists, mkdirRecurse, rmdirRecurse;
+    import std.parallelism : totalCPUs;
+    import std.process : thisProcessID;
+    import sparkles.build_graph.execute : RunLayout, RunStats, executionNodes, runActions;
+
+    void say(string line) { writer.put(line); writer.put("\n"); }
+
+    Tools tools;
+    Toolchain toolchain;
+    if (const why = pathTools(tools, toolchain))
+    {
+        say("explain: " ~ why);
+        return 2;
+    }
+    auto p = planRepository(root, false, null, tools, toolchain.identity);
+    if (p.error.length)
+    {
+        say("explain: " ~ p.error);
+        return 2;
+    }
+    string[] matches;
+    foreach (ref a; p.graph.actions)
+        if (a.id.text == task)
+        {
+            matches = [a.id.text];
+            break;
+        }
+        else if (a.id.text.startsWith(task))
+            matches ~= a.id.text;
+    if (matches.length != 1)
+    {
+        say(matches.length ? text("explain: ", matches.length, " tasks start with ", task, ": ",
+            matches[0 .. matches.length < 5 ? $ : 5].join(", "), matches.length > 5 ? ", …" : "")
+            : "explain: no task " ~ task);
+        return 2;
+    }
+    const target = matches[0];
+
+    // The task and every action it needs, through any edge.
+    bool[string] needed = [target: true];
+    for (bool grew = true; grew;)
+    {
+        grew = false;
+        foreach (ref e; p.graph.edges)
+            if (e.dependent.text in needed && e.prerequisite.text !in needed)
+            {
+                needed[e.prerequisite.text] = true;
+                grew = true;
+            }
+    }
+    ActionGraph sub;
+    sub.actions = p.graph.actions.filter!(a => (a.id.text in needed) !is null).array;
+    sub.edges = p.graph.edges.filter!(e => (e.prerequisite.text in needed) !is null
+        && (e.dependent.text in needed) !is null).array;
+
+    const runDir = buildPath(cache, "runs", text("explain-", Clock.currTime.toUnixTime, "-", thisProcessID));
+    mkdirRecurse(runDir);
+    scope (exit)
+        if (exists(runDir))
+            rmdirRecurse(runDir);
+    auto layout = RunLayout(root, runDir, cache, toolchain.identity);
+    layout.explain = true;
+    auto nodes = executionNodes(sub, layout, declaredEnvironment(buildPath(runDir, "dub-trap")));
+    static struct Discard
+    {
+        void put(T)(T) {}
+    }
+    Discard quiet;
+    RunStats stats;
+    cast(void) runActions(nodes, sub, layout, quiet, cast(uint) totalCPUs, &stats);
+
+    string verdict;
+    string[] misses;
+    foreach (line; stats.explained)
+    {
+        say(line);
+        if (line.startsWith(target ~ ": "))
+            verdict = line;
+        else if (line.canFind(": miss (") || line.canFind(": has no key") || line.canFind(": would run"))
+            misses ~= line;
+    }
+    say(verdict.length ? "explain " ~ verdict : text("explain ", target, ": not reached: ",
+        misses.length ? misses.join("; ") : "a prerequisite did not complete"));
+    return 0;
 }

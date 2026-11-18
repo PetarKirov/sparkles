@@ -796,14 +796,20 @@ struct CacheCommand
         shortDescription: "Inspect or repair the build graph's store (build graph BGS7)",
         description: "Runs one operation on the store beneath $XDG_CACHE_HOME/sparkles: size, list, "
         ~ "gc, verify, evict (to the default bound, or evict=<bytes>), or remove-key=, remove-task=, "
-        ~ "remove-package= or remove-toolchain= a value. Exits 1 when verification finds a corrupt "
-        ~ "result or a lease holds a removal back, and 2 for an unknown operation.",
+        ~ "remove-package= or remove-toolchain= a value. `explain <task>` plans the repository's test "
+        ~ "selection and prints, executing nothing, whether the task and each action it needs would "
+        ~ "hit, and why each miss would miss. Exits 1 when verification finds a corrupt result or a "
+        ~ "lease holds a removal back, and 2 for an unknown operation or task.",
     ))
     struct Store
     {
         @(Argument("operation", description: "The operation: size, list, gc, verify, evict[=<bytes>], "
             ~ "or remove-key=, remove-task=, remove-package= or remove-toolchain=<value>."))
         string operation;
+
+        @(Argument("task", optional: true, description: "With explain: the task, by id or by a prefix "
+            ~ "only one id has."))
+        string task;
 
         RunExpected!void run()
         {
@@ -815,6 +821,17 @@ struct CacheCommand
             const home = environment.get("HOME", "/");
             const xdg = environment.get("XDG_CACHE_HOME", buildPath(home, ".cache"));
             auto writer = stdout.lockingTextWriter;
+            if (operation == "explain")
+            {
+                import graph_driver : explainTask;
+
+                if (!task.length)
+                    return failRun("ci cache store explain needs a task", 2);
+                const status = explainTask(detectRepoRoot(), buildPath(xdg, "sparkles"), task, writer);
+                return status == 0 ? ranOk() : failRun("ci cache store explain " ~ task ~ " failed", status);
+            }
+            if (task.length)
+                return failRun("ci cache store " ~ operation ~ " takes no task", 2);
             const status = storeOperation(buildPath(xdg, "sparkles"), operation, writer);
             return status == 0 ? ranOk() : failRun("ci cache store " ~ operation ~ " failed", status);
         }
