@@ -54,7 +54,16 @@ private Built built()
     static Built build()
     {
         import std.file : mkdirRecurse;
+        import std.process : environment;
         import std.stdio : File;
+
+        // The build graph builds both and names them (build-graph D61); a
+        // test binary never runs dub there (BGX1), and nothing relinks them
+        // while the tests run.
+        const givenRunner = environment.get("SPARKLES_SCENARIO_RUNNER");
+        const givenFixture = environment.get("SPARKLES_SCENARIO_FIXTURE");
+        if (givenRunner.length && givenFixture.length)
+            return Built(runner: givenRunner, fixture: givenFixture);
 
         here.buildPath("build").mkdirRecurse;
         auto lock = File(here.buildPath("build", ".scenarios.lock"), "w");

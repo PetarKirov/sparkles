@@ -122,7 +122,7 @@ TaskNode[] executionNodes(ref const ActionGraph g, const RunLayout layout, const
                 // A typed generator states its environment over a build's (§7).
                 q.envDelta = build ? plannedEnvironment(null, layout, id)
                     : a.kind == ActionKind.generate && p.envDelta.length ? plannedEnvironment(p.envDelta, layout, id)
-                    : declared.dup;
+                    : declaredWith(declared, p.envDelta, layout, id);
                 q.completeEnvironment = true;
                 q.stdin = p.stdin;
                 q.timeout = p.timeout;
@@ -150,6 +150,20 @@ private EnvEntry[] plannedEnvironment(const EnvEntry[] planned, const RunLayout 
         if (!planned.canFind!(p => p.name == e.name))
             env ~= EnvEntry(e.name, expand(e.value, layout, self));
     foreach (e; planned)
+        env ~= EnvEntry(e.name, expand(e.value, layout, self));
+    return env;
+}
+
+// `declared`, a test's environment (BGX1), with the entries its action adds:
+// the programs it runs (D61), their placeholders replaced.
+private EnvEntry[] declaredWith(const EnvEntry[] declared, const EnvEntry[] added, const RunLayout layout,
+    TaskId self) @safe
+{
+    EnvEntry[] env;
+    foreach (e; declared)
+        if (!added.canFind!(x => x.name == e.name))
+            env ~= e;
+    foreach (e; added)
         env ~= EnvEntry(e.name, expand(e.value, layout, self));
     return env;
 }
@@ -1007,6 +1021,10 @@ struct ActionDriver
                 const env = a.kind == ActionKind.generate && p.envDelta.length ? p.envDelta : buildEnvironment();
                 foreach (e; env)
                     s ~= "env " ~ e.name ~ "=" ~ e.value ~ "\n";
+                // D61: a test names the programs it runs by their outputs digests.
+                if (a.kind == ActionKind.test)
+                    foreach (e; p.envDelta)
+                        s ~= "env " ~ e.name ~ "=" ~ normalized(e.value) ~ "\n";
                 s ~= "cwd " ~ p.cwd ~ "\n";
             },
             (ref const InProcessAction i) {
