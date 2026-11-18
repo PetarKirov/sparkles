@@ -44,6 +44,8 @@ import sparkles.build_graph.actions : ActionKind, Tools;
 import sparkles.build_primitives.task.action : ProcessAction;
 
 
+import sparkles.build_primitives.dub_manifest : DubManifest, DubPlatformValues;
+
 import graph_driver;
 
 /// The worktree the oracles run in, absolute.
@@ -99,6 +101,7 @@ struct Oracle
 immutable Oracle[] oracles = [
     Oracle("5", &oracle5),
     Oracle("8", &oracle8),
+    Oracle("9", &oracle9),
     Oracle("10", &oracle10),
     Oracle("11", &oracle11),
     Oracle("13", &oracle13),
@@ -187,18 +190,13 @@ names other packages (`zz-oracle-b`) it depends on in both, and
 `cImportPaths` its C include roots and `versions` its version identifiers. Written from the `dub.sdl` schema
 (SDE9), as no recipe here is written as text.
 */
-string recipeOf(string name, string[] dependencies = null, string[] cImportPaths = null, string[] versions = null)
+string recipeOf(string name, string[] dependencies = null, string[] cImportPaths = null, string[] versions = null,
+    void delegate(ref DubManifest) tweak = null)
 {
-    import sparkles.build_primitives.dub_manifest : DubConfiguration, DubDependency, DubManifest,
-        DubPlatformValues;
+    import sparkles.build_primitives.dub_manifest : DubConfiguration, DubDependency;
     import sparkles.wired.sdl : toSDL;
 
-    static DubPlatformValues values(string[] v...)
-    {
-        DubPlatformValues p;
-        p.values = v.dup;
-        return p;
-    }
+    alias values = platformValues;
     static DubDependency dependency(string package_)
     {
         DubDependency d;
@@ -227,9 +225,19 @@ string recipeOf(string name, string[] dependencies = null, string[] cImportPaths
         unittests.dependencies ~= dependency(d);
     }
     m.configurations = [library, unittests];
+    if (tweak !is null)
+        tweak(m);
     const sdl = toSDL(m);
     assert(sdl.hasValue, sdl.error.toString);
     return sdl.value[].idup;
+}
+
+/// A list-valued setting of the schema: `values`, on every platform.
+DubPlatformValues platformValues(string[] v...)
+{
+    DubPlatformValues p;
+    p.values = v.dup;
+    return p;
 }
 
 /// The root recipe `text` with the fixture `name` among its sub-packages,
@@ -1665,4 +1673,360 @@ Verdict[] oracle5()
         vs ~= Verdict("step 6", why, "no output, test binary included, names the toolchain's druntime or Phobos sources");
     }
     return vs;
+}
+
+// === Oracle 9: key sensitivity ===
+
+/// The tasks whose declared key differs between `before` and `after`.
+string[] changedKeys(const string[string] before, const string[string] after)
+{
+    string[] tasks;
+    foreach (task, key; after)
+        if (auto was = task in before)
+            if (*was != key)
+                tasks ~= task;
+    return tasks.sort.release;
+}
+
+/// An executable shell script at `path`: `body` after its shebang.
+void script(string path, string body)
+{
+    import std.file : setAttributes;
+
+    mkdirRecurse(dirName(path));
+    write(path, "#!" ~ sh() ~ "\n" ~ body ~ "\n");
+    setAttributes(path, octal!755);
+}
+
+/// An empty static library at `path`, made by the archiver on `PATH`.
+void emptyArchive(string path)
+{
+    import std.process : execute;
+
+    mkdirRecurse(dirName(path));
+    const r = execute([tool("ar"), "rcs", path]);
+    assert(r.status == 0, r.output);
+}
+
+/// Sets environment variables for the scope's length.
+struct Environment
+{
+    private string[string] before;
+    private bool[string] unset;
+
+    @disable this(this);
+
+    static Environment set(string[string] values)
+    {
+        Environment e;
+        foreach (name, value; values)
+        {
+            if (auto v = std.process.environment.get(name))
+                e.before[name] = v;
+            else
+                e.unset[name] = true;
+            std.process.environment[name] = value;
+        }
+        return e;
+    }
+
+    ~this()
+    {
+        foreach (name, value; before)
+            std.process.environment[name] = value;
+        foreach (name, _; unset)
+            std.process.environment.remove(name);
+    }
+}
+
+Verdict[] oracle9()
+{
+    import sparkles.build_graph.actions : Action, DeclaredOutput;
+    import sparkles.build_graph.store : manifestExtraction;
+    import sparkles.build_primitives.task.action : EnvEntry, TaskAction;
+    import sparkles.build_primitives.task.model : taskId;
+
+    Verdict[] vs;
+    const dirA = buildPath(scratch, "o9-lib-a"), dirB = buildPath(scratch, "o9-lib-b");
+    mkdirRecurse(dirA);
+    emptyArchive(buildPath(dirB, "libzzo9.a"));
+    emptyArchive(buildPath(dirB, "libzzo9p.a"));
+    enum libModule = "module sparkles.zz_o9l.lib;\n\n// The library the test links.\nint twice(int x) { return 2 * x; }\n";
+    auto lib = Fixture.add("o9l", [
+        "dub.sdl": recipeOf("o9l"),
+        "src/sparkles/zz_o9l/lib.d": libModule,
+    ]);
+    auto app = Fixture.add("o9t", [
+        "dub.sdl": recipeOf("o9t", ["zz-oracle-o9l"], null, null, (ref DubManifest m) {
+            m.lflags = [platformValues("-L" ~ dirA, "-L" ~ dirB)];
+            m.libs = [platformValues("zzo9")];
+        }),
+        "src/sparkles/zz_o9t/t.d": "module sparkles.zz_o9t.t;\n\nimport sparkles.zz_o9l.lib;\n\npragma(lib, \"zzo9p\");\n\n"
+            ~ "unittest\n{\n    assert(twice(2) == 4);\n}\n",
+    ]);
+    const cache = freshCache("o9");
+    auto base = run(app.name, cache);
+    if (base.exitCode != 0)
+        return [Verdict("setup", "the fixture did not build:" ~ tailOf(base.log))];
+    const libCompile = taskOf(base, lib.task("compile"));
+    const appCompile = taskOf(base, app.task("compile"));
+    const link = taskOf(base, app.task("link"));
+    const keyed = base.stats.declaredKeys.keys.sort.release;
+
+    // The components of the declared key: each changes the keys it affects.
+    {
+        RunOptions o;
+        o.adjustPlan = (ref Planned p) {
+            wrapActions(p, libCompile, (string[] argv) => argv ~ "-d-version=ZzOracle9");
+        };
+        const changed = changedKeys(base.stats.declaredKeys, run(app.name, cache, o).stats.declaredKeys);
+        vs ~= Verdict("an argument", changed != [libCompile] ? text("changed ", changed, ", not the one compile") : null,
+            "one more argument to the library's compile changed its key alone");
+    }
+    {
+        enum generator = "generate:oracle-9:environment:ldc:0";
+        RunOptions with_(string value)
+        {
+            RunOptions o;
+            o.adjustPlan = (ref Planned p) {
+                p.graph.actions ~= Action(ActionKind.generate, taskId("generate", "oracle-9", "environment", "ldc", "0").value,
+                    0, TaskAction(ProcessAction(argv: [tool("true")], envDelta: [EnvEntry("PATH", ""), EnvEntry("ZZ", value)])),
+                    [DeclaredOutput(".", true)], 1);
+            };
+            return o;
+        }
+        const one = run(app.name, cache, with_("1")).stats.declaredKeys;
+        const two = run(app.name, cache, with_("2")).stats.declaredKeys;
+        const changed = changedKeys(one, two);
+        vs ~= Verdict("an environment entry", changed != [generator] ? text("changed ", changed) : null,
+            "another value of an action's declared environment entry changed that action's key alone");
+    }
+    // A toolchain component: every build action reads the toolchain.
+    foreach (component; ["compiler", "C driver", "linker"])
+    {
+        RunOptions o;
+        o.adjustTools = (ref Tools t) {
+            string* which = component == "compiler" ? &t.compiler : component == "C driver" ? &t.cc : &t.linker;
+            const wrapper = buildPath(scratch, "o9-wrapped-" ~ component.replace(" ", "-"));
+            script(wrapper, "exec " ~ *which ~ " \"$@\"");
+            *which = wrapper;
+        };
+        const changed = changedKeys(base.stats.declaredKeys, run(app.name, cache, o).stats.declaredKeys);
+        vs ~= Verdict("another " ~ component, changed != keyed ? text("changed ", changed.length, " of ", keyed.length, " keys") : null,
+            text("another ", component, " changed every one of the ", keyed.length, " keys"));
+    }
+    {
+        // The test runner's core keys only a test, and no test is keyed (BGX2).
+        const copy = buildPath(scratch, "o9-runner");
+        script(copy, "exec " ~ std.process.environment.get("SPARKLES_TEST_RUNNER", "false") ~ " \"$@\"");
+        auto env = Environment.set(["SPARKLES_TEST_RUNNER": copy]);
+        const changed = changedKeys(base.stats.declaredKeys, run(app.name, cache).stats.declaredKeys);
+        vs ~= Verdict("another runner core", changed.length ? text("a build action's key changed: ", changed) : null,
+            "another test runner changed no build action's key");
+    }
+
+    // Search inputs (BGK9).
+    foreach (lib_; [["libzzo9.a", "a `-l` library"], ["libzzo9p.a", "a `pragma(lib)` library"]])
+    {
+        const earlier = buildPath(dirA, lib_[0]);
+        emptyArchive(earlier);
+        scope (exit)
+        {
+            import std.file : remove;
+
+            remove(earlier);
+        }
+        const changed = changedKeys(base.stats.declaredKeys, run(app.name, cache).stats.declaredKeys);
+        vs ~= Verdict(lib_[1] ~ " earlier on -L", changed != [link] ? text("changed ", changed, ", not the link alone") : null,
+            lib_[1] ~ " created earlier on the -L order changed the link's key alone");
+    }
+    {
+        const p1 = buildPath(scratch, "o9-pc-1"), p2 = buildPath(scratch, "o9-pc-2");
+        mkdirRecurse(p1);
+        mkdirRecurse(p2);
+        enum pc = "Name: zzoracle9pc\nDescription: oracle 9\nVersion: 1\nLibs:\nCflags:\n";
+        write(buildPath(p2, "zzoracle9pc.pc"), pc);
+        const path = p1 ~ ":" ~ p2 ~ ":" ~ std.process.environment.get("PKG_CONFIG_PATH", "");
+        auto env = Environment.set(["PKG_CONFIG_PATH": path, "PKG_CONFIG_PATH_x86_64_unknown_linux_gnu": path]);
+        forgetPkgConfigAnswers();
+        scope (exit)
+            forgetPkgConfigAnswers();
+        auto pcPkg = Fixture.add("o9p", [
+            "dub.sdl": recipeOf("o9p", null, null, null, (ref DubManifest m) {
+                m.libs = [platformValues("zzoracle9pc")];
+            }),
+            "src/sparkles/zz_o9p/p.d": "module sparkles.zz_o9p.p;\n\nunittest {}\n",
+        ]);
+        const pcCache = freshCache("o9");
+        auto before = run(pcPkg.name, pcCache);
+        write(buildPath(p1, "zzoracle9pc.pc"), pc);
+        auto after = run(pcPkg.name, pcCache);
+        const pcLink = taskOf(before, pcPkg.task("link"));
+        const changed = changedKeys(before.stats.declaredKeys, after.stats.declaredKeys);
+        vs ~= Verdict("a .pc file earlier on pkg-config's path", !changed.canFind(pcLink)
+            ? text("the link using the query kept its key; changed ", changed) : null,
+            text("a .pc file created earlier on the search path changed the keys of ", changed.length,
+                " actions using the query"));
+    }
+
+    // The manifest extraction's version alone changes every compile's result key.
+    {
+        manifestExtraction = 2;
+        auto other = run(app.name, freshCache("o9"));
+        manifestExtraction = 1;
+        auto same = run(app.name, freshCache("o9"));
+        string[] kept;
+        foreach (task, key; same.stats.resultKeys)
+            if (task.startsWith("compile:") && other.stats.resultKeys.get(task, null) == key)
+                kept ~= task;
+        vs ~= Verdict("the manifest extraction's version", kept.length ? text("kept their result keys: ", kept) : null,
+            "another manifest extraction version changed every compile's result key");
+    }
+
+    // Early cutoff: a comment edited in place reruns its compile alone; the
+    // archives' headers carry no time, owner or group, and none is thin.
+    {
+        lib.put("src/sparkles/zz_o9l/lib.d", libModule.replace("// The library the test links.",
+            "// The library a test links."));
+        auto cut = run(app.name, cache);
+        lib.put("src/sparkles/zz_o9l/lib.d", libModule);
+        string[] downstream;
+        foreach (t; cut.stats.executedTasks)
+            if (!t.startsWith("compile:") && !t.startsWith("test:"))
+                downstream ~= t;
+        string archives;
+        foreach (task, key; cut.stats.resultKeys)
+            foreach (name, bytes; outputsOf(cache, key))
+                if (name.endsWith(".a"))
+                    archives ~= archiveHeaderFault(name, bytes);
+        vs ~= Verdict("early cutoff", !executed(cut, libCompile) ? "the edited module's compile did not rerun"
+            : downstream.length ? text("ran downstream of a comment edit: ", downstream)
+            : cut.stats.declaredKeys.get(link, null) != base.stats.declaredKeys.get(link, null) ? "the link's key changed"
+            : archives.length ? archives : null,
+            "a comment edited in place reran the compiles that read it, and no archive, link or test key downstream changed; every archive has zero times, owners and groups");
+    }
+
+    // Environment probes (BGA4).
+    {
+        Tools found;
+        Toolchain identity;
+        cast(void) pathTools(found, identity);
+        const bin = buildPath(scratch, "o9-recording");
+        const calls = buildPath(bin, "calls");
+        // They record only once the plan is about to run: the driver's own probe
+        // of the toolchain, before it, is not an action.
+        const armed = buildPath(bin, "armed");
+        script(buildPath(bin, "cc"), "[ -e " ~ armed ~ " ] && echo cc \"$@\" >> " ~ calls ~ "\nexit 1");
+        script(buildPath(bin, "ld"), "[ -e " ~ armed ~ " ] && echo ld \"$@\" >> " ~ calls ~ "\nexit 1");
+        auto env = Environment.set(["PATH": bin ~ ":" ~ std.process.environment.get("PATH", "")]);
+        RunOptions o;
+        o.adjustTools = (ref Tools t) { t = found; };
+        o.adjustPlan = (ref Planned) { write(armed, ""); };
+        auto g = run(app.name, freshCache("o9"), o);
+        bool absolute = true;
+        // A compile names the C driver; a link the driver and the linker's
+        // directory, which fixes the linker the driver runs.
+        foreach (ref a; g.plan.graph.actions)
+        {
+            const argv = argvOf(g, a.id.text);
+            if (a.kind == ActionKind.compile)
+                absolute &= argv.canFind("-gcc=" ~ found.cc);
+            else if (a.kind == ActionKind.link)
+                absolute &= argv.canFind("-gcc=" ~ found.cc) && argv.canFind("-Xcc=-B" ~ dirName(found.linker));
+        }
+        vs ~= Verdict("a recording cc and ld on PATH", exists(calls) ? "an action called them: " ~ readText(calls)
+            : !absolute ? "a compile or link does not name its toolchain's driver and linker by absolute path"
+            : g.exitCode != 0 ? "the run failed:" ~ tailOf(g.log) : null,
+            "no action called them; every compile and link names the toolchain's driver and linker");
+    }
+    {
+        auto env = Environment.set(["DFLAGS": "-d-version=ZzOracle9Env", "CC": "/nonexistent/cc",
+            "NIX_CFLAGS_COMPILE": "-DZZ_ORACLE_9"]);
+        const probed = freshCache("o9");
+        auto g = run(app.name, probed);
+        string differs;
+        if (changedKeys(base.stats.declaredKeys, g.stats.declaredKeys).length)
+            differs = "a key changed";
+        foreach (task, key; g.stats.resultKeys)
+            if (outputsOf(probed, key) != outputsOf(cache, base.stats.resultKeys.get(task, key)))
+                differs ~= " " ~ task ~ "'s outputs differ;";
+        vs ~= Verdict("DFLAGS, CC and NIX_CFLAGS_COMPILE set", differs,
+            "no key and no output changed with them in the driver's environment");
+    }
+    {
+        // libfaketime hangs LDC, so the clock moves by waiting: the outputs
+        // must not follow it (SOURCE_DATE_EPOCH pins all three), and without
+        // SOURCE_DATE_EPOCH they must, which shows the check can see it.
+        string datedLog;
+        auto dated = Fixture.add("o9d", [
+            "dub.sdl": recipeOf("o9d"),
+            "src/sparkles/zz_o9d/d.d": "module sparkles.zz_o9d.d;\n\nimport sparkles.zz_o9d.c_dated;\n\n"
+                ~ "string when() => __DATE__ ~ __TIME__ ~ __TIMESTAMP__;\n",
+            "src/sparkles/zz_o9d/c_dated.c": "const char *zz_when = __DATE__ __TIME__ __TIMESTAMP__;\n",
+        ]);
+        string[string] objects(bool pinned)
+        {
+            import core.thread : Thread;
+            import std.datetime.systime : Clock;
+            import std.file : setTimes;
+
+            Thread.sleep(2.seconds);
+            foreach (src; ["src/sparkles/zz_o9d/d.d", "src/sparkles/zz_o9d/c_dated.c"])
+                setTimes(buildPath(dated.dir, src), Clock.currTime, Clock.currTime);
+            RunOptions o;
+            if (!pinned)
+                o.adjustExecution = (string task, ref ProcessAction pa) {
+                    import sparkles.build_primitives.task.action : EnvEntry;
+
+                    if (task.startsWith("compile:"))
+                        pa.envDelta = pa.envDelta.filter!(e => e.name != "SOURCE_DATE_EPOCH").array;
+                };
+            const cache = freshCache("o9");
+            auto g = run(dated.name, cache, o);
+            datedLog = tailOf(g.log);
+            string[string] all;
+            foreach (task, key; g.stats.resultKeys)
+                if (task.startsWith(dated.task("compile")))
+                    foreach (name, bytes; outputsOf(cache, key))
+                        all[name] = bytes;
+            return all;
+        }
+        const first = objects(true), second = objects(true);
+        const unpinnedA = objects(false), unpinnedB = objects(false);
+        vs ~= Verdict("__DATE__, __TIME__ and __TIMESTAMP__", !first.length ? "the dated fixture built nothing:" ~ datedLog
+            : first != second ? "the outputs followed the clock"
+            : unpinnedA == unpinnedB ? "without SOURCE_DATE_EPOCH the outputs did not follow the clock either: the check sees nothing"
+            : null,
+            "a D module and an ImportC source that embed the date and time compile to the same bytes two seconds and "
+            ~ "new modification times apart (libfaketime hangs LDC, so no day passes); without SOURCE_DATE_EPOCH they differ");
+    }
+    return vs;
+}
+
+/// What is wrong with the `ar` archive `bytes` (`name`): a thin archive, or a
+/// member header with a time, owner or group. Empty when nothing is.
+string archiveHeaderFault(string name, string bytes)
+{
+    import std.string : strip;
+
+    if (bytes.startsWith("!<thin>\n"))
+        return name ~ " is thin; ";
+    if (!bytes.startsWith("!<arch>\n"))
+        return null;
+    size_t at = 8;
+    while (at + 60 <= bytes.length)
+    {
+        const h = bytes[at .. at + 60];
+        // The symbol table (`/`) and the long-name table (`//`) carry no
+        // time or owner: their fields may be blank.
+        const special = h[0] == '/' && (h[1] == ' ' || h[1] == '/');
+        if (!special && (h[16 .. 28].strip != "0" || h[28 .. 34].strip != "0" || h[34 .. 40].strip != "0"))
+            return text(name, ": member `", h[0 .. 16].strip, "` has time ", h[16 .. 28].strip, ", owner ",
+                h[28 .. 34].strip, " and group ", h[34 .. 40].strip, "; ");
+        size_t size;
+        foreach (c; h[48 .. 58].strip)
+            size = size * 10 + (c - '0');
+        at += 60 + size + (size & 1);
+    }
+    return null;
 }
