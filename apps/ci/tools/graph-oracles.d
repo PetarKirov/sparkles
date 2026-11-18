@@ -30,20 +30,21 @@ that is interrupted can leave a fixture behind; the next run removes it.
 module graph_oracles;
 
 import core.time : msecs, seconds;
-import std.algorithm : all, canFind, filter, map, sort, startsWith;
+import std.algorithm : all, any, canFind, count, filter, map, sort, startsWith;
 import std.array : array, join, replace, split;
-import std.conv : text;
+import std.conv : text, to;
 import std.file : exists, mkdirRecurse, readText, rmdirRecurse, tempDir, write;
 import std.path : absolutePath, buildNormalizedPath, buildPath, dirName;
 import std.process : thisProcessID;
 static import std.process;
 import std.stdio : stderr, writeln;
+import std.string : lineSplitter;
+static import core.time;
+static import std.stdio;
 import std.sumtype : match;
 
 import sparkles.build_graph.actions : ActionKind, Tools;
 import sparkles.build_primitives.task.action : ProcessAction;
-
-
 import sparkles.build_primitives.dub_manifest : DubManifest, DubPlatformValues;
 
 import graph_driver;
@@ -55,6 +56,9 @@ __gshared string scratch;
 
 int main(string[] args)
 {
+    // Oracle 7's builders: copies of this program sharing one store.
+    if (args.canFind!(a => a.startsWith("--child=")))
+        return childBuild(args);
     const only = args.filter!(a => a.startsWith("--only=")).map!(a => a["--only=".length .. $]).array;
     const positional = args[1 .. $].filter!(a => !a.startsWith("--")).array;
     root = buildNormalizedPath(absolutePath(positional.length ? positional[0] : "."));
@@ -100,6 +104,7 @@ struct Oracle
 
 immutable Oracle[] oracles = [
     Oracle("5", &oracle5),
+    Oracle("7", &oracle7),
     Oracle("8", &oracle8),
     Oracle("9", &oracle9),
     Oracle("10", &oracle10),
@@ -2029,4 +2034,429 @@ string archiveHeaderFault(string name, string bytes)
         at += 60 + size + (size & 1);
     }
     return null;
+}
+
+// === Oracle 7: concurrency ===
+
+/// The value of the option `--<name>=` in `args`, or null.
+string option(string[] args, string name)
+{
+    foreach (a; args)
+        if (a.startsWith("--" ~ name ~ "="))
+            return a["--".length + name.length + 1 .. $];
+    return null;
+}
+
+__gshared string pauseFile;    // a child pauses at its first publication, naming its key here
+__gshared string barrierDir;   // a child waits at its first publication for `barrierCount` others
+__gshared size_t barrierCount;
+__gshared bool randomDelay;    // a child sleeps up to 200 ms before each publication
+__gshared bool firstPassed;
+
+void beforeEachPublication(string key) @trusted
+{
+    import core.thread : Thread;
+    import std.file : dirEntries, SpanMode;
+    import std.random : uniform;
+
+    if (randomDelay)
+        Thread.sleep(uniform(0, 200).msecs);
+    if (firstPassed)
+        return;
+    firstPassed = true;
+    if (barrierDir.length)
+    {
+        try
+        {
+            write(buildPath(barrierDir, text(thisProcessID)), key);
+            while (dirEntries(barrierDir, SpanMode.shallow).array.length < barrierCount)
+                Thread.sleep(20.msecs);
+        }
+        catch (Exception) {}
+    }
+    if (pauseFile.length)
+    {
+        try
+            write(pauseFile, key);
+        catch (Exception) {}
+        while (true)
+            Thread.sleep(1.seconds);
+    }
+}
+
+/**
+A builder of oracle 7: plans `--child=<package>`'s test root in `--at=` (the
+worktree; `root` otherwise) and runs it against the store beneath `--cache=`,
+in a run directory of its own. `--delay` sleeps before each publication,
+`--pause=<file>` stops at the first, `--barrier=<dir>:<n>` holds the first
+until `n` builders reach theirs, `--counter=<task prefix>` appends this
+process's id to that compile's objects, so builders' outputs differ, and
+`--task=` runs one task. Prints `exit`, `result`, `executed` and `log` lines.
+*/
+int childBuild(string[] args)
+{
+    import std.algorithm : countUntil;
+    import sparkles.build_graph.store : beforePublication;
+
+    const at = option(args, "at");
+    root = buildNormalizedPath(absolutePath(at.length ? at : "."));
+    const cache = option(args, "cache");
+    randomDelay = args.canFind("--delay");
+    pauseFile = option(args, "pause");
+    if (const b = option(args, "barrier"))
+    {
+        barrierDir = b[0 .. b.countUntil(':')];
+        barrierCount = b[b.countUntil(':') + 1 .. $].to!size_t;
+    }
+    beforePublication = &beforeEachPublication;
+    RunOptions o;
+    o.cache = cache;
+    o.into = buildPath(cache, "runs", text("child-", thisProcessID));
+    o.jobs = 2;
+    if (const t = option(args, "task"))
+        o.tasks = [t];
+    if (const prefix = option(args, "counter"))
+        o.adjustExecution = (string task, ref ProcessAction pa) {
+            if (!task.startsWith(prefix))
+                return;
+            string objects;
+            foreach (arg; pa.argv)
+                if (arg.startsWith("-of="))
+                    objects ~= " \"" ~ arg[4 .. $] ~ "\"";
+            pa.argv = [sh(), "-c", "\"$0\" \"$@\" && for o in" ~ objects ~ "; do echo " ~ text(thisProcessID)
+                ~ " >> \"$o\"; done"] ~ pa.argv;
+        };
+    auto g = runGraph(root, option(args, "child"), o);
+    writeln("exit ", g.error.length ? -1 : g.exitCode);
+    if (g.error.length)
+        writeln("error ", g.error);
+    foreach (task, key; g.stats.resultKeys)
+        writeln("result ", task, " ", key);
+    foreach (task; g.stats.executedTasks)
+        writeln("executed ", task);
+    foreach (line; g.log.lineSplitter)
+        writeln("log ", line);
+    return 0;
+}
+
+/// A builder's report, parsed.
+struct ChildReport
+{
+    int exitCode = -2;
+    string[string] resultKeys;
+    string[] executed;
+    string log;
+    string raw;
+}
+
+ChildReport parseChild(string output)
+{
+    import std.algorithm : countUntil;
+    ChildReport r;
+    r.raw = output;
+    foreach (line; output.lineSplitter)
+    {
+        if (line.startsWith("exit "))
+            r.exitCode = line[5 .. $].to!int;
+        else if (line.startsWith("result "))
+        {
+            const rest = line[7 .. $];
+            const sp = rest.countUntil(' ');
+            r.resultKeys[rest[0 .. sp]] = rest[sp + 1 .. $];
+        }
+        else if (line.startsWith("executed "))
+            r.executed ~= line[9 .. $].idup;
+        else if (line.startsWith("log "))
+            r.log ~= line[4 .. $] ~ "\n";
+    }
+    return r;
+}
+
+/// A builder started: its process and the file its report goes to.
+struct Child
+{
+    std.process.Pid pid;
+    string output;
+
+    ChildReport wait()
+    {
+        cast(void) std.process.wait(pid);
+        return parseChild(exists(output) ? readText(output) : "");
+    }
+}
+
+Child startChild(string pkg, string cache, string[] extra = null)
+{
+    import std.file : thisExePath;
+    import std.stdio : File;
+
+    static size_t n;
+    const output = buildPath(scratch, text("child-", ++n, ".out"));
+    auto f = File(output, "w");
+    auto pid = std.process.spawnProcess([thisExePath, "--child=" ~ pkg, "--cache=" ~ cache] ~ extra,
+        std.stdio.stdin, f, f, null, std.process.Config.none, root);
+    return Child(pid, output);
+}
+
+/// The names in the store's `sub` directory beneath `cache`.
+string[] storeDir(string cache, string sub)
+{
+    import std.file : dirEntries, SpanMode;
+    import std.path : baseName;
+
+    const dir = buildPath(cache, "build", "v1", sub);
+    return exists(dir) ? dirEntries(dir, SpanMode.shallow).map!(e => baseName(e.name)).array.sort.release : null;
+}
+
+/// `ci cache store <op>` against the store beneath `cache`: its exit status and lines.
+int storeOp(string cache, string op, out string lines)
+{
+    import std.array : appender;
+    import sparkles.build_graph.execute : storeOperation;
+
+    auto w = appender!string;
+    const status = storeOperation(cache, op, w);
+    lines = w[];
+    return status;
+}
+
+/// Waits up to `limit` for `path` to exist.
+bool awaitFile(string path, core.time.Duration limit = 600.seconds)
+{
+    import core.thread : Thread;
+    import std.datetime.stopwatch : StopWatch, AutoStart;
+
+    auto sw = StopWatch(AutoStart.yes);
+    while (!exists(path) || readText(path).length == 0)
+    {
+        if (sw.peek > limit)
+            return false;
+        Thread.sleep(50.msecs);
+    }
+    return true;
+}
+
+/// The device of the file system `path` is on.
+ulong deviceOf(string path)
+{
+    import core.sys.posix.sys.stat : stat, stat_t;
+    import std.string : toStringz;
+
+    stat_t s;
+    return (() @trusted => stat(path.toStringz, &s))() == 0 ? s.st_dev : 0;
+}
+
+Verdict[] oracle7()
+{
+    import core.sys.posix.signal : SIGKILL;
+
+    Verdict[] vs;
+
+    // Step 1: N builders of one package, at random delays before each
+    // publication, from two worktrees on different file systems, while a
+    // reader verifies the store over and over.
+    {
+        const other = secondWorktree();
+        scope (exit)
+            removeWorktree(other);
+        const cache = freshCache("o7");
+        Child[] children;
+        foreach (i; 0 .. 4)
+            children ~= startChild("versions", cache, ["--delay"] ~ (i % 2 ? ["--at=" ~ other] : null));
+        string corrupt;
+        size_t reads;
+        bool running = true;
+        while (running)
+        {
+            string lines;
+            if (storeOp(cache, "verify", lines) != 0)
+                corrupt ~= lines;
+            ++reads;
+            running = children.any!(c => !std.process.tryWait(c.pid).terminated);
+        }
+        ChildReport[] reports = children.map!(c => c.wait()).array;
+        string why;
+        foreach (i, ref r; reports)
+            if (r.exitCode != 0)
+                why ~= text(" builder ", i, " failed:", tailOf(r.log ~ r.raw));
+            else if (r.resultKeys != reports[0].resultKeys)
+                why ~= text(" builder ", i, "'s result keys differ from builder 0's;");
+            else if (r.log.canFind("cannot publish"))
+                why ~= text(" builder ", i, " could not publish:", tailOf(r.log));
+        if (deviceOf(other) == deviceOf(root))
+            why ~= " the two worktrees are on one file system;";
+        if (deviceOf(buildPath(cache, "runs")) != deviceOf(buildPath(cache, "build")))
+            why ~= " the run directories and the store are on different file systems;";
+        vs ~= Verdict("step 1", corrupt.length ? "a reader saw a partial entry: " ~ corrupt : why,
+            text("4 builders from two worktrees on different file systems agreed on ", reports[0].resultKeys.length,
+                " result keys; ", reads, " verifications while they ran found no partial entry, and every "
+                ~ "publication was a rename within the store's file system"));
+    }
+
+    // The fixture every later step builds, with its dependencies published
+    // once beforehand, so a builder's first publication is its compile.
+    auto lib = Fixture.add("o7l", [
+        "dub.sdl": recipeOf("o7l"),
+        "src/sparkles/zz_o7l/d.d": "module sparkles.zz_o7l.d;\n\nint dep() { return 7; }\n",
+    ]);
+    auto app = Fixture.add("o7t", [
+        "dub.sdl": recipeOf("o7t", ["zz-oracle-o7l"]),
+        "src/sparkles/zz_o7t/t.d": "module sparkles.zz_o7t.t;\n\nimport sparkles.zz_o7l.d;\n\n"
+            ~ "unittest\n{\n    assert(dep() == 7);\n}\n",
+    ]);
+    // A store holding everything but `app`'s own compile and link.
+    string seeded(out GraphRun g)
+    {
+        const cache = freshCache("o7");
+        g = run(app.name, cache);
+        string lines;
+        foreach (kind; ["compile", "link"])
+            cast(void) storeOp(cache, "remove-task=" ~ taskOf(g, app.task(kind)), lines);
+        return cache;
+    }
+
+    // Step 2: a producer killed between its write and its rename.
+    {
+        GraphRun g;
+        const cache = seeded(g);
+        const pause = buildPath(scratch, "o7-pause");
+        auto c = startChild(app.name, cache, ["--pause=" ~ pause]);
+        const reached = awaitFile(pause);
+        std.process.kill(c.pid, SIGKILL);
+        cast(void) c.wait();
+        const key = reached ? readText(pause) : null;
+        const staged = storeDir(cache, "staging");
+        string lines;
+        cast(void) storeOp(cache, "gc", lines);
+        vs ~= Verdict("step 2", !reached ? "the producer never reached a publication"
+            : storeDir(cache, "results").canFind(key) ? "the killed producer's result was published"
+            : !staged.length ? "the killed producer left no staging entry"
+            : storeDir(cache, "staging").length ? "garbage collection left the staging entry"
+            : null,
+            "the producer killed before its rename left only a staging entry, and garbage collection removed it");
+    }
+
+    // Step 3: eviction beside a live lease holder, then a killed one; and
+    // garbage collection and eviction over and over while builders run.
+    {
+        GraphRun g;
+        const cache = seeded(g);
+        const pause = buildPath(scratch, "o7-hold");
+        auto c = startChild(app.name, cache, ["--pause=" ~ pause]);
+        const childId = text(c.pid.processID, "-");
+        const reached = awaitFile(pause);
+        // The results the paused builder leases: its holder name starts with its id.
+        const held = storeDir(cache, "leases").filter!(k => storeDir(cache, "leases/" ~ k)
+            .any!(h => h.startsWith(childId))).array;
+        // A lookup leases a key before it reads the record, so a missed key is
+        // leased too: only the published ones can be evicted.
+        const resultsBefore = storeDir(cache, "results");
+        const leasedResults = held.filter!(k => resultsBefore.canFind(k)).array;
+        string first, second;
+        cast(void) storeOp(cache, "evict=0", first);
+        const keptWhileAlive = leasedResults.all!(k => storeDir(cache, "results").canFind(k));
+        std.process.kill(c.pid, SIGKILL);
+        cast(void) c.wait();
+        cast(void) storeOp(cache, "gc", second);
+        const leasesAfter = held.filter!(k => storeDir(cache, "leases/" ~ k)
+            .any!(h => h.startsWith(childId))).array;
+        cast(void) storeOp(cache, "evict=0", second);
+        const leftAfter = leasedResults.filter!(k => storeDir(cache, "results").canFind(k)).array;
+        vs ~= Verdict("step 3, a lease holder", !reached ? "the holder never reached a publication"
+            : !leasedResults.length ? "the paused builder leased no published result"
+            : !keptWhileAlive ? "eviction removed a result a live holder leased: " ~ first
+            : leasesAfter.length ? text("garbage collection left the dead holder's leases: ", leasesAfter)
+            : leftAfter.length ? text("eviction after the holder died kept ", leftAfter) : null,
+            text("eviction kept the ", leasedResults.length, " results a live holder leased; once it was killed, garbage "
+                ~ "collection reclaimed its leases and eviction removed them"));
+
+        const busy = freshCache("o7");
+        Child[] children;
+        foreach (i; 0 .. 3)
+            children ~= startChild("versions", busy, ["--delay"]);
+        size_t sweeps;
+        while (children.any!(ch => !std.process.tryWait(ch.pid).terminated))
+        {
+            string lines;
+            cast(void) storeOp(busy, "gc", lines);
+            cast(void) storeOp(busy, "evict=0", lines);
+            ++sweeps;
+        }
+        string why;
+        foreach (i, ch; children)
+        {
+            const r = ch.wait();
+            if (r.exitCode != 0)
+                why ~= text(" builder ", i, " failed:", tailOf(r.log ~ r.raw));
+        }
+        vs ~= Verdict("step 3, collection while building", why,
+            text("3 builders succeeded while ", sweeps, " rounds of garbage collection and eviction to nothing ran"));
+    }
+
+    // Step 4: the losing producer (BGS3).
+    {
+        GraphRun g;
+        const cache = seeded(g);
+        const compile = taskOf(g, app.task("compile")), link = taskOf(g, app.task("link"));
+        const barrier = buildPath(scratch, "o7-barrier");
+        mkdirRecurse(barrier);
+        Child[] children;
+        foreach (i; 0 .. 2)
+            children ~= startChild(app.name, cache, ["--barrier=" ~ barrier ~ ":2", "--counter=" ~ app.task("compile")]);
+        auto reports = children.map!(c => c.wait()).array;
+        const key = reports[0].resultKeys.get(compile, null);
+        const losers = reports.count!(r => r.log.canFind("nondeterministic: result " ~ key) && r.log.canFind(".o"));
+        const linkKey = reports[0].resultKeys.get(link, null);
+        vs ~= Verdict("step 4", reports.any!(r => r.exitCode != 0) ? "a builder failed:" ~ tailOf(reports[0].log ~ reports[1].log)
+            : !key.length || reports[1].resultKeys.get(compile, null) != key ? "the builders' compile keys differ"
+            : losers != 1 ? text(losers, " builders reported the compile nondeterministic, not one:", tailOf(reports[0].log ~ reports[1].log, 30))
+            : !linkKey.length || reports[1].resultKeys.get(link, null) != linkKey ? "the two links' keys differ"
+            : !storeDir(cache, "results").canFind(linkKey) ? "the store does not hold the link's result" : null,
+            "of two builders publishing one compile key with different objects, the loser reported it nondeterministic, "
+            ~ "naming the key and the object, and both links consumed the winner's: one link key, which the store holds");
+    }
+
+    // Step 5: lookup at admission (BGS4).
+    {
+        GraphRun g;
+        const cache = seeded(g);
+        const compile = taskOf(g, app.task("compile"));
+        RunOptions o;
+        string other;
+        o.adjustPlan = (ref Planned) {
+            other = startChild(app.name, cache, ["--task=" ~ compile]).wait().raw;
+        };
+        auto admitted = run(app.name, cache, o);
+        vs ~= Verdict("step 5", !other.canFind("executed " ~ compile) ? "the other process did not compile:" ~ tailOf(other)
+            : executed(admitted, compile) ? "the compile another process published after planning was executed again"
+            : admitted.exitCode != 0 ? "the run failed:" ~ tailOf(admitted.log) : null,
+            "a compile another process published after planning hit at admission");
+    }
+
+    // Two worktrees alternating between two manifests of one declared key.
+    {
+        const other = secondWorktree();
+        scope (exit)
+            removeWorktree(other);
+        copyFixture(lib, other);
+        copyFixture(app, other);
+        write(buildPath(other, "libs", lib.name, "src/sparkles/zz_o7l/d.d"),
+            "module sparkles.zz_o7l.d;\n\nint dep() { return 7; } // the other worktree's\n");
+        const cache = freshCache("o7");
+        auto a1 = run(app.name, cache), b1 = run(app.name, cache, RunOptions.init, other);
+        auto a2 = run(app.name, cache), b2 = run(app.name, cache, RunOptions.init, other);
+        const compile = taskOf(a1, app.task("compile"));
+        string[] rebuilt;
+        foreach (r; [a2, b2])
+            foreach (t; r.stats.executedTasks)
+                if (!t.startsWith("test:"))
+                    rebuilt ~= t;
+        vs ~= Verdict("alternating manifests", a1.exitCode || b1.exitCode || a2.exitCode || b2.exitCode
+            ? "a run failed:" ~ tailOf(a1.log ~ b1.log ~ a2.log ~ b2.log)
+            : a1.stats.declaredKeys.get(compile, "a") != b1.stats.declaredKeys.get(compile, "b") ? "the two worktrees' compiles have different declared keys"
+            : a1.stats.resultKeys.get(compile, "a") == b1.stats.resultKeys.get(compile, "a") ? "the two worktrees' compiles share a manifest"
+            : rebuilt.length ? text("the second round rebuilt ", rebuilt) : null,
+            "two worktrees whose compile has one declared key and two manifests both kept hitting, alternating");
+    }
+    return vs;
 }
