@@ -30,6 +30,7 @@ import sparkles.ui.components.editor : EditorViewOptions, editorLineSpans;
 import sparkles.ui.editor.field : EditorField, FieldClipboard, serveClipboard, useClipboard;
 import sparkles.ui.editor.keys : windowTarget;
 import sparkles.ui.geometry : Rect;
+import sparkles.ui.hit_ids : HitRegistry;
 import sparkles.ui.style : ColorScheme, schemeForBackground, Slot, Visual;
 import sparkles.ui.theme : Theme;
 import sparkles.ui.themes : builtinDark, builtinLight;
@@ -165,6 +166,10 @@ struct DocViewPane
         private ImageTexture image;
     // An image file on a pixel canvas: decoded once, in the pane's registry.
     private PaneImage picture;
+    // The document's hit ids (`INP27`). The pane hit-tests only its own
+    // targets — the embedder hands it keys and the wheel, never a press into
+    // the document — so the pane's paint is the frame of this id space.
+    private HitRegistry hits;
 
     @disable this(this);
 
@@ -241,6 +246,7 @@ struct DocViewPane
             return false;
         }
         error = null;
+        claimHits();
         vm.setDocument(doc.title, doc.dsvNote, doc.source, doc.events,
             doc.preview, doc.twoslash, doc.lang, doc.diffDoc, doc.diffSides,
             doc.diffSession, doc.diffEmphasis, doc.coverage, doc.hasCoverage);
@@ -705,6 +711,13 @@ struct DocViewPane
             vm.relayout(laidCols);
     }
 
+    // A frame of the pane's ids: the model asks for its blocks again.
+    private void claimHits() @system
+    {
+        hits.beginFrame();
+        cast(void) vm.claimHits(hits);
+    }
+
     // ── painting ────────────────────────────────────────────────────────
 
     /**
@@ -847,6 +860,7 @@ struct DocViewPane
         cellH_ = ch;
         barBand_ = overlay ? Rect(barBand.x, docY, barBand.width, docRows * ch) : Rect.init;
         vm.viewRows = docRows;
+        claimHits();
         if (width != laidCols || vm.widthCols != width)
         {
             const keep = vm.captureAnchor();

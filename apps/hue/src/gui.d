@@ -80,7 +80,7 @@ import format_preview : formatPreviewActive, formatPreviewChip,
 
 // The explorer pane (XPL2): the same tree model the TUI workspace uses.
 import explorer : ExplorerTui, explorerGlyphs;
-import sparkles.ui.hit_ids : HitBlock;
+import sparkles.ui.hit_ids : HitBlock, HitRegistry;
 import sparkles.ui.components.tree_view : viewSlice;
 
 // 2D table grid selection (TBL): pure region/serialize logic over grid hits.
@@ -307,6 +307,9 @@ struct GuiArgs
 /// this is only their aggregation.
 struct GuiRunState
 {
+    /// The window's hit ids (`INP27`): every hit-testable control of a frame
+    /// asks it for its block, the frame having begun it once.
+    HitRegistry hitRegistry;
     ViewerModel vm;
     /// The document wheel's scroller for the current gesture (`SCV12`).
     ScrollLatch docLatch;
@@ -2437,6 +2440,8 @@ int runGui(GuiArgs guiArgs) @system
             const hole = pickerPreviewRect(pkTree, pkFrames);
             if (filePickerDoc !is null && hole.width > 0 && hole.height > 0)
             {
+                // The preview is a second document pane: its own instance.
+                filePickerDoc.pane.claimHits(hitRegistry, instance: 1);
                 auto paneGrid = &filePickerDoc.paint(hole.width, hole.height);
                 emitPaneGrid(ui, *paneGrid, pkOriginX + hole.x,
                     pickerOriginRow + hole.y);
@@ -2623,6 +2628,12 @@ int runGui(GuiArgs guiArgs) @system
         // later. Nothing to finish before the first frame.
         if (painted && !frameTail())
             return false;
+
+        // The frame's hit ids: a block not asked for since the last frame
+        // began is freed, and the document asks for its blocks first — its
+        // tree is retained, so it re-asks every frame it is shown.
+        hitRegistry.beginFrame();
+        cast(void) vm.claimHits(hitRegistry, instance: 0);
 
         // Fold. `inp.fin` carries the button LEVEL across frames, which an
         // event stream reports only as transitions; `handle` filled `evBuf`
@@ -4185,43 +4196,47 @@ int runGui(GuiArgs guiArgs) @system
                 cast(int)(vm.top + cast(long)((mpf.y - docY0) / cellH)));
 
             // The bar this frame concerns: the grabbed owner's, else the
-            // one under the pointer. Fence and table bars live in disjoint
-            // id ranges, one axis per range.
+            // one under the pointer. Fence and table bars are blocks of
+            // their own, one per axis (`ViewerHits`).
             const(HoverTarget)* hTgt, vTgt;
             const grabbedSv = vm.activeBar();
             const hDragging = grabbedSv !is null && grabbedSv.h.dragging;
             const vDragging = grabbedSv !is null && grabbedSv.v.dragging;
-            const grabbedH = vm.activeFenceOwner != size_t.max
-                ? vm.fenceHBarHitBase + vm.activeFenceOwner
-                : vm.tableHBarHitBase + vm.activeTableOwner;
-            const grabbedV = vm.activeFenceOwner != size_t.max
-                ? vm.fenceVBarHitBase + vm.activeFenceOwner
-                : vm.tableVBarHitBase + vm.activeTableOwner;
+            const fenceGrab = vm.activeFenceOwner, tableGrab = vm.activeTableOwner;
+            const grabbedH = fenceGrab != size_t.max
+                ? vm.hits.fenceHBar[fenceGrab] : vm.hits.tableHBar[tableGrab];
+            const grabbedV = fenceGrab != size_t.max
+                ? vm.hits.fenceVBar[fenceGrab] : vm.hits.tableVBar[tableGrab];
             foreach (ref const t; vm.targets)
             {
-                const isHBar = (t.hitId >= vm.fenceHBarHitBase
-                        && t.hitId < vm.tableCopyHitBase)
-                    || (t.hitId >= vm.tableHBarHitBase
-                        && t.hitId < vm.fenceVBarHitBase);
-                const isVBar = (t.hitId >= vm.fenceVBarHitBase
-                        && t.hitId < vm.fenceHBarHitBase)
-                    || (t.hitId >= vm.tableVBarHitBase
-                        && t.hitId < vm.tableHBarHitBase);
-                if (isHBar && (hDragging ? t.hitId == grabbedH
+                size_t barOwner;
+                bool horizontal, onFence;
+                if (!vm.hits.barOf(t.hitId, barOwner, horizontal, onFence))
+                    continue;
+                if (horizontal && (hDragging ? t.hitId == grabbedH
                         : t.rect.contains(dpf)))
                     hTgt = &t;
-                if (isVBar && (vDragging ? t.hitId == grabbedV
+                if (!horizontal && (vDragging ? t.hitId == grabbedV
                         : t.rect.contains(dpf)))
                     vTgt = &t;
+            }
+            // The owner and kind of a bar target the scan above found.
+            size_t barOwnerOf(in HoverTarget* t, out bool onFence)
+            {
+                size_t barOwner;
+                bool horizontal;
+                cast(void) vm.hits.barOf(t.hitId, barOwner, horizontal, onFence);
+                return barOwner;
             }
 
             // (Hover-while-foreign-owned is gated inside the machine now —
             // STM11 covers hover as well as the press, for every bar.)
             if (hTgt !is null && !vDragging)
             {
-                if (hTgt.hitId < vm.fenceVBarHitBase)
+                bool onFence;
+                const owner = barOwnerOf(hTgt, onFence);
+                if (!onFence)
                 {
-                    const owner = hTgt.hitId - vm.tableHBarHitBase;
                     auto sv = &vm.activateBar(ViewerModel.tableBarKey(owner));
                     const e = vm.tableExtent(owner);
                     const cur = vm.tableScrollAt.get(owner,
@@ -4241,7 +4256,6 @@ int runGui(GuiArgs guiArgs) @system
                 }
                 else
                 {
-                    const owner = hTgt.hitId - vm.fenceHBarHitBase;
                     auto sv = &vm.activateBar(ViewerModel.fenceBarKey(owner));
                     const e = vm.fenceExtent(owner);
                     const cur = vm.fenceScrollAt.get(owner,
@@ -4263,9 +4277,10 @@ int runGui(GuiArgs guiArgs) @system
             }
             else if (vTgt !is null)
             {
-                if (vTgt.hitId < vm.fenceVBarHitBase)
+                bool onFence;
+                const owner = barOwnerOf(vTgt, onFence);
+                if (!onFence)
                 {
-                    const owner = vTgt.hitId - vm.tableVBarHitBase;
                     auto sv = &vm.activateBar(ViewerModel.tableBarKey(owner));
                     const e = vm.tableExtent(owner);
                     const cur = vm.tableScrollAt.get(owner,
@@ -4285,7 +4300,6 @@ int runGui(GuiArgs guiArgs) @system
                 }
                 else
                 {
-                    const owner = vTgt.hitId - vm.fenceVBarHitBase;
                     auto sv = &vm.activateBar(ViewerModel.fenceBarKey(owner));
                     const e = vm.fenceExtent(owner);
                     const cur = vm.fenceScrollAt.get(owner,
@@ -4331,31 +4345,29 @@ int runGui(GuiArgs guiArgs) @system
             if (mp.x >= gutterPx && clickPressed())
                 foreach_reverse (ref const tgt; vm.targets)
                 {
+                    if (!tgt.rect.contains(dp))
+                        continue;
                     // Both fold affordances, one path: the gutter's icon cell
                     // and the folded placeholder's inline marker carry the same
-                    // `foldHitBase + key` id, so the column needs no hit test of
+                    // `hits.fold[key]` id, so the column needs no hit test of
                     // its own (it used to have one, keyed on pixels).
-                    if (tgt.hitId >= vm.foldHitBase && tgt.rect.contains(dp))
+                    size_t at;
+                    if (vm.hits.fold.indexOf(tgt.hitId, at))
                     {
-                        vm.folds = vm.folds.toggled(tgt.hitId - vm.foldHitBase);
+                        vm.folds = vm.folds.toggled(at);
                         vm.rebuild();
                         copyClicked = true; // not a selection either
                         break;
                     }
-                    // Ordered by range, highest base first: a code-group
-                    // tab's ids sit BELOW the fence ids, so this test must
-                    // follow them or it would swallow every fence hit.
-                    if (tgt.hitId >= vm.codeTabHitBase
-                        && tgt.hitId < vm.fenceHitBase
-                        && tgt.rect.contains(dp))
+                    if (vm.hits.codeTab.indexOf(tgt.hitId, at))
                     {
-                        vm.activateCodeTab(tgt.hitId - vm.codeTabHitBase);
+                        vm.activateCodeTab(at);
                         copyClicked = true; // not a selection either
                         break;
                     }
-                    if (tgt.hitId >= vm.fenceHitBase && tgt.rect.contains(dp))
+                    if (vm.hits.fence.indexOf(tgt.hitId, at))
                     {
-                        const bodyStart = tgt.hitId - vm.fenceHitBase;
+                        const bodyStart = at;
                         foreach (ref const f; vm.fences)
                             if (f.body.start == bodyStart)
                             {
@@ -4377,11 +4389,9 @@ int runGui(GuiArgs guiArgs) @system
                     }
                     // The whole-table copy button in the top-border cutout
                     // (TBL6): serialize the full grid per `--table-copy`.
-                    if (tgt.hitId >= vm.tableCopyHitBase
-                        && tgt.hitId < vm.codeTabHitBase
-                        && tgt.rect.contains(dp))
+                    if (vm.hits.tableCopy.indexOf(tgt.hitId, at))
                     {
-                        const spanStart = tgt.hitId - vm.tableCopyHitBase;
+                        const spanStart = at;
                         const ti = vm.tableIndexOfSpan(spanStart);
                         if (ti >= 0)
                         {

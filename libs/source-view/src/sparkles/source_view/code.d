@@ -18,6 +18,7 @@ import sparkles.syntax.event : byStyledLine, HighlightEvent;
 import sparkles.syntax.md.model : Span;
 import sparkles.syntax.theme : ResolvedTheme, StyleSpec;
 import sparkles.ui.geometry : SizeSpec;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.style : Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
@@ -45,7 +46,7 @@ struct CodeViewOptions
 {
     TextWrap wrap = TextWrap.greedy;
     const(Span)[] foldedRegions;  /// collapsed regions (`FLD`)
-    size_t foldHitBase;           /// unfold hit-id base (0 = not clickable)
+    HitBlock foldHits;            /// unfold hit ids by source offset (empty = not clickable)
     /// Tab stops: a tab advances to the next multiple of this many columns.
     int tabWidth = 4;
     /// The fold placeholder's leading `▸ ` marker. A host with a gutter
@@ -107,7 +108,7 @@ Pass `TextWrap.none` for a non-reflowing view.
 `foldedRegions` (source byte spans, `FSR4`) collapse line-wise to one
 placeholder row each — `▸ first-line ⋯ N lines` — carrying the whole
 region's identity (selection-copy over a fold yields the folded source) and,
-with a non-zero `foldHitBase`, the unfold hit id `foldHitBase + span.start`
+with an issued `foldHits` block, the unfold hit id `foldHits[span.start]`
 (the same contract as the markdown view's placeholders).
 */
 /**
@@ -207,7 +208,7 @@ uint viewCodeDocumentInto(ref Builder b, const(char)[] source,
     RgbColor pageFg, CodeViewOptions opt = CodeViewOptions())
 {
     const foldedRegions = opt.foldedRegions;
-    const foldHitBase = opt.foldHitBase;
+    const foldHits = opt.foldHits;
     const wrap = opt.wrap;
 
     // Tab expansion + the vim `list` glyphs: rewrite a line's spans so a
@@ -441,7 +442,7 @@ uint viewCodeDocumentInto(ref Builder b, const(char)[] source,
                 noBreak: true);
             rows ~= b.add(Widget(kind: WidgetKind.rich, spans: ph,
                 slot: Slot.code,
-                hitId: foldHitBase != 0 ? foldHitBase + fr.start : 0));
+                hitId: foldHits[fr.start]));
             continue;
         }
         const blank = !byLine[li].length;
@@ -643,10 +644,14 @@ uint viewCodeDocumentInto(ref Builder b, const(char)[] source,
     const ev = [HighlightEvent.sourceSpan(0, src.length)];
 
     // Fold the whole function (bytes 0..34 — through the closing brace).
-    enum hitBase = size_t.max / 4 * 3 + 1;
+    import sparkles.ui.hit_ids : HitKey, HitRegistry;
+
+    HitRegistry hits;
+    hits.beginFrame();
+    const foldHits = hits.block(HitKey("code.fold"), src.length + 1);
     auto tree = viewCodeDocument(src, ev, (() @trusted => &rt)(),
         RgbColor(0xcc, 0xcc, 0xcc), CodeViewOptions(
-            foldedRegions: [Span(0, 34)], foldHitBase: hitBase));
+            foldedRegions: [Span(0, 34)], foldHits: foldHits));
     auto frames = layout(tree);
     auto rows = documentRows(tree, frames);
 
@@ -661,7 +666,7 @@ uint viewCodeDocumentInto(ref Builder b, const(char)[] source,
     // The placeholder is an unfold click target keyed by the span start.
     bool sawHit;
     foreach (ref const t; hoverTargets(tree, frames))
-        if (t.hitId == hitBase + 0)
+        if (t.hitId == foldHits[0])
             sawHit = true;
     assert(sawHit, "unfold hit id");
 }

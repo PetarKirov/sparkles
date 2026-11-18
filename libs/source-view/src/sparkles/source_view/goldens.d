@@ -38,6 +38,7 @@ import sparkles.syntax.ts.registry : GrammarRegistry;
 import sparkles.test_runner.skip : skipTest;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.interp.cells : CellGrid;
 import sparkles.ui.interp.immediate : paint;
 import sparkles.ui.layout : layout;
@@ -81,14 +82,17 @@ private string renderGridText(ref GrammarRegistry registry,
     const pageBg = toRgb(theme.defaults.bg, RgbColor(0x1e, 0x1e, 0x1e));
 
     auto doc = extractMarkdown(registry, source);
+    HitRegistry hits;
+    hits.beginFrame();
+    HitBlock armed(string tag) => interactive ? hits.block(HitKey(tag), source.length + 1) : HitBlock.init;
     MdViewOptions opt = {
         theme: MdViewTheme.derive(theme, pageFg, pageBg),
         codeLineNumbers: true,
         maxWidth: goldenWidth, // arms the per-fence overflow scrollbar
         codeMaxLines: 8, // low enough for code-tall.md to grow its v track
         tableMaxLines: 12, // low enough for tables-tall.md to grow its v track
-        fenceHitBase: interactive ? size_t.max / 2 + 1 : 0,
-        tableCopyHitBase: interactive ? size_t.max / 8 + 1 : 0,
+        fenceHits: armed("golden.fence"),
+        tableCopyHits: armed("golden.tableCopy"),
     };
     auto tree = viewMarkdown(doc, fixtureOverrides(name, opt));
     auto frames = layout(tree, Constraints(maxW: goldenWidth));

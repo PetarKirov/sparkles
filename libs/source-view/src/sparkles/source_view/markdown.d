@@ -32,6 +32,7 @@ import sparkles.base.text.writers : formatted;
 import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs,
     ScrollbarSpec;
 import sparkles.ui.geometry : Insets, Point, SizeSpec;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.state : ScrollAxis;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
@@ -76,22 +77,25 @@ struct MdViewOptions
     /// The decoration charset (Nerd-glyph defaults; the theme glyph channel).
     MdViewGlyphs glyphs;
 
-    /// Non-zero makes fence header bands copy targets: a fence's header gets
-    /// `hitId = fenceHitBase + codeBody.start` and shows the copy glyph, so an
-    /// interactive backend maps a click back to the fence's source span with
-    /// no per-fence counter — identity is source-anchored, like fold keys.
-    size_t fenceHitBase = 0;
+    /// An issued block makes fence header bands copy targets: a fence's
+    /// header gets `hitId = fenceHits[codeBody.start]` and shows the copy
+    /// glyph, so an interactive backend maps a click back to the fence's
+    /// source span with no per-fence counter — identity is source-anchored,
+    /// like fold keys. Every `…Hits` block is the host's, asked of its
+    /// `HitRegistry` (`INP27`) at least as long as the source it indexes;
+    /// the empty block (the default) leaves the control inert.
+    HitBlock fenceHits;
 
     /**
     The runners a host offers for try blocks (fileset explorer `FXT2`): the
     input fence of a `::: try <runner>` block whose runner is listed gets a
-    ▶ cutout beside its copy cutout, with `hitId = tryHitBase +
-    codeBody.start`. A runner the host does not offer shows no ▶: the block
+    ▶ cutout beside its copy cutout, with `hitId = tryHits[codeBody.start]`.
+    A runner the host does not offer shows no ▶: the block
     reads as its fences.
     */
     const(char[])[] tryRunners;
     /// ditto
-    size_t tryHitBase = 0;
+    HitBlock tryHits;
     /**
     What the host shows under a try block whose input fence starts at the
     given offset: a node it adds to `b`, or `uint.max` for nothing. The
@@ -113,9 +117,9 @@ struct MdViewOptions
     /// fold still yields the folded source (`FLD` under `D1`: a fold is a
     /// subtree swapped for a placeholder, so it nests correctly).
     size_t[] foldedSpans;
-    /// Non-zero makes fold placeholders click targets:
-    /// `hitId = foldHitBase + span.start` (unfold on click).
-    size_t foldHitBase = 0;
+    /// An issued block makes fold placeholders click targets:
+    /// `hitId = foldHits[span.start]` (unfold on click).
+    HitBlock foldHits;
 
     /// The placeholder's leading `▸ ` marker. A host with a gutter fold
     /// column (the GUI) disables it — the column carries the affordance,
@@ -130,11 +134,11 @@ struct MdViewOptions
     /// Whether a fence's header repeats its `[label]`. A code group's tab
     /// carries it instead, so the group's active fence clears this.
     bool fenceLabelInHeader = true;
-    /// Non-zero makes a group's tabs click targets:
-    /// `hitId = codeTabHitBase + fence.codeBody.start`, so an activation
+    /// An issued block makes a group's tabs click targets:
+    /// `hitId = codeTabHits[fence.codeBody.start]`, so an activation
     /// names the fence itself rather than an index into a list that a
     /// re-parse may have renumbered.
-    size_t codeTabHitBase = 0;
+    HitBlock codeTabHits;
 
     /// In-panel fence line numbers (`COD`): each code-fence body line gets
     /// a muted 1-based number gutter inside the panel.
@@ -159,11 +163,11 @@ struct MdViewOptions
     /// (`--code-max-lines`; 0 = never).
     int codeMaxLines = 100;
 
-    /// Non-zero makes the bottom-border scrollbar a drag target:
-    /// `hitId = fenceHBarHitBase + codeBody.start`.
-    size_t fenceHBarHitBase = 0;
+    /// An issued block makes the bottom-border scrollbar a drag target:
+    /// `hitId = fenceHBarHits[codeBody.start]`.
+    HitBlock fenceHBarHits;
     /// ditto, for the vertical track.
-    size_t fenceVBarHitBase = 0;
+    HitBlock fenceVBarHits;
 
     /// `codeBody.start` of the fence whose horizontal bar is hovered or
     /// grabbed (`size_t.max` = none): its thumb brightens to the accent —
@@ -231,11 +235,11 @@ struct MdViewOptions
     /// caller owns the table and passes its `uris` to the renderer.
     MdLinkTable* linkTable;
 
-    /// Non-zero punches the whole-table copy button into a cutout of the
-    /// table's top border, just before the corner (`╭──   ╮` — `TBL6`):
-    /// `hitId = tableCopyHitBase + table.span.start`, source-anchored like
+    /// An issued block punches the whole-table copy button into a cutout of
+    /// the table's top border, just before the corner (`╭──   ╮` — `TBL6`):
+    /// `hitId = tableCopyHits[table.span.start]`, source-anchored like
     /// the fence copy targets.
-    size_t tableCopyHitBase = 0;
+    HitBlock tableCopyHits;
 
     /// The `span.start` of the table just copied (`size_t.max` = none): its
     /// cutout shows the copied glyph — feedback state lives in the app, like
@@ -260,11 +264,11 @@ struct MdViewOptions
     /// source-anchored like `fenceScrolls`.
     const(TableScroll)[] tableScrolls;
 
-    /// Non-zero makes the table's bottom-border scrollbar a drag target:
-    /// `hitId = tableHBarHitBase + table.span.start`.
-    size_t tableHBarHitBase = 0;
+    /// An issued block makes the table's bottom-border scrollbar a drag
+    /// target: `hitId = tableHBarHits[table.span.start]`.
+    HitBlock tableHBarHits;
     /// ditto, for the vertical track.
-    size_t tableVBarHitBase = 0;
+    HitBlock tableVBarHits;
 
     /// `span.start` of the table whose horizontal bar is hovered or grabbed
     /// (`size_t.max` = none) — the fence bars' hover feedback, for tables.
@@ -723,8 +727,7 @@ private uint viewCodeGroup(ref Builder b, ref const MdBlock blk,
             if (a == f.codeBody.start)
                 active = i;
         titles ~= tabTitle(f);
-        ids ~= opt.codeTabHitBase != 0
-            ? opt.codeTabHitBase + f.codeBody.start : 0;
+        ids ~= opt.codeTabHits[f.codeBody.start];
     }
 
     MdViewOptions inner = opt;
@@ -762,7 +765,7 @@ private uint viewTryBlock(ref Builder b, ref const MdBlock blk, const(char)[] sr
     import std.algorithm.searching : canFind;
 
     MdViewOptions input = opt;
-    input.tryInput = opt.tryHitBase != 0 && opt.tryRunners.canFind(blk.infoLang);
+    input.tryInput = opt.tryHits && opt.tryRunners.canFind(blk.infoLang);
     uint[] rows = [viewBlock(b, blk.children[0], src, input)];
     if (blk.children.length > 1)
     {
@@ -881,7 +884,7 @@ private uint foldPlaceholder(ref Builder b, size_t start, size_t end,
         opt.baseStyle, noBreak: true);
     Widget w = Widget(kind: WidgetKind.rich, spans: spans,
         slot: opt.proseSlot, textStyle: opt.baseStyle,
-        hitId: opt.foldHitBase != 0 ? opt.foldHitBase + start : opt.hitId);
+        hitId: opt.foldHits ? opt.foldHits[start] : opt.hitId);
     return b.add(w);
 }
 
@@ -945,7 +948,7 @@ private uint collapsedFace(ref Builder b, ref const MdBlock blk,
     int listDepth, int quoteDepth)
 {
     const clampedEnd = end > src.length ? src.length : end;
-    const foldHit = opt.foldHitBase != 0 ? opt.foldHitBase + start : opt.hitId;
+    const foldHit = opt.foldHits ? opt.foldHits[start] : opt.hitId;
 
     uint styledFace(Widget w)
     {
@@ -1044,8 +1047,7 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
     import sparkles.base.text.grapheme : visibleWidth;
     import sparkles.ui.state : PressState;
 
-    const hit = opt.fenceHitBase != 0
-        ? opt.fenceHitBase + blk.codeBody.start : opt.hitId;
+    const hit = opt.fenceHits ? opt.fenceHits[blk.codeBody.start] : opt.hitId;
 
     // Every box-drawing cell of the header — grouped or not — sits on the
     // code panel's band; in a grouped header only the tab CAPTIONS keep
@@ -1095,7 +1097,7 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
         used = 2 + cast(int) opt.groupTabs.titles.length - 1; // walls
         foreach (t; opt.groupTabs.titles)
             used += cast(int) visibleWidth(t) + 2;
-        const hasCopy0 = opt.fenceHitBase != 0;
+        const hasCopy0 = cast(bool) opt.fenceHits;
         const tailW0 = hasCopy0 ? 5 : 1;
         int fill0 = boxW - used - tailW0;
         if (fill0 < 0)
@@ -1193,11 +1195,11 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
         codeBold.bold = true;
         TextSpan words = TextSpan(run, Slot.success, codeBold, noBreak: true,
             fg: opt.theme.accentGreen, hasFg: opt.theme.present);
-        tail ~= onRing([pad("  "), words, pad("  ")], opt.tryHitBase + blk.codeBody.start, true,
+        tail ~= onRing([pad("  "), words, pad("  ")], opt.tryHits[blk.codeBody.start], true,
             opt.theme.accentGreen, opt.theme.present, Slot.success);
         tailW += 4 + cast(int) visibleWidth(run);
     }
-    const hasCopy = opt.fenceHitBase != 0;
+    const hasCopy = cast(bool) opt.fenceHits;
     if (hasCopy)
     {
         if (tail.length)
@@ -1281,8 +1283,8 @@ private uint fenceBottomBorder(ref Builder b, MdViewOptions opt,
             glyphs: ScrollbarGlyphs('━', '─'),
             edge: RuleEdge.centerY,
             hasEdge: true,
-            hitId: opt.fenceHBarHitBase != 0
-                ? opt.fenceHBarHitBase + blk.codeBody.start : opt.hitId,
+            hitId: opt.fenceHBarHits
+                ? opt.fenceHBarHits[blk.codeBody.start] : opt.hitId,
             trackFg: opt.theme.ruleFg,
             hasTrackFg: opt.theme.present,
             thumbFg: hot ? opt.theme.accentBlue : opt.theme.codeFg,
@@ -1324,8 +1326,8 @@ private uint fenceVTrack(ref Builder b, MdViewOptions opt,
         glyphs: ScrollbarGlyphs('┃', '│'),
         edge: RuleEdge.centerX,
         hasEdge: true,
-        hitId: opt.fenceVBarHitBase != 0
-            ? opt.fenceVBarHitBase + blk.codeBody.start : opt.hitId,
+        hitId: opt.fenceVBarHits
+            ? opt.fenceVBarHits[blk.codeBody.start] : opt.hitId,
         trackFg: opt.theme.ruleFg,
         hasTrackFg: opt.theme.present,
         thumbFg: hot ? opt.theme.accentBlue : opt.theme.codeFg,
@@ -1870,10 +1872,8 @@ private uint viewTable(ref Builder b, ref const MdBlock blk,
             y: opt.tableExtras.virtualRows > 0 ? 0 : ts.y,
             virtualLines: opt.tableExtras.virtualRows,
             virtualOffset: opt.tableExtras.virtualRowOffset,
-            hBarHitId: opt.tableHBarHitBase != 0
-                ? opt.tableHBarHitBase + blk.span.start : 0,
-            vBarHitId: opt.tableVBarHitBase != 0
-                ? opt.tableVBarHitBase + blk.span.start : 0,
+            hBarHitId: opt.tableHBarHits[blk.span.start],
+            vBarHitId: opt.tableVBarHits[blk.span.start],
             hThumbFg: opt.hotTableHBar == blk.span.start
                 ? opt.theme.accentBlue : opt.theme.codeFg,
             hasHThumbFg: opt.theme.present,
@@ -1893,8 +1893,8 @@ private uint viewTable(ref Builder b, ref const MdBlock blk,
         ruleFg: opt.theme.ruleFg,
         hasRuleFg: opt.theme.present,
         cutout: TableCutout(
-            present: opt.tableCopyHitBase != 0,
-            hitId: opt.tableCopyHitBase + blk.span.start,
+            present: cast(bool) opt.tableCopyHits,
+            hitId: opt.tableCopyHits[blk.span.start],
             icon: TextSpan(" " ~ (copied ? opt.glyphs.copiedIcon
                 : opt.glyphs.copyIcon) ~ " ", Slot.gutter,
                 opt.baseStyle, noBreak: true),
@@ -2796,6 +2796,7 @@ version (unittest)
     import sparkles.ui.canvas : OpKind, RecordingCanvas;
     import sparkles.ui.display_list : buildDisplayList;
     import sparkles.ui.interp.immediate : paint;
+    import sparkles.ui.hit_ids : HitKey, HitRegistry;
     import sparkles.ui.layout : layout;
     import sparkles.ui.style : defaultTwoslashPalette;
 
@@ -2900,12 +2901,14 @@ version (unittest)
         foreach (ref n; tree.nodes)
             foreach (ref s; n.spans)
                 if (s.text.canFind("▶"))
-                    return n.hitId == opt.tryHitBase + 11;
+                    return n.hitId == opt.tryHits[11];
         return false;
     }
 
+    HitRegistry hits;
+    hits.beginFrame();
     MdViewOptions opt;
-    opt.tryHitBase = 5000;
+    opt.tryHits = hits.block(HitKey("md.try"), src.length + 1);
     assert(!showsTry(opt), "no runner offered: no ▶");
     opt.tryRunners = ["fileset"];
     assert(showsTry(opt));
@@ -3028,7 +3031,10 @@ version (unittest)
             span: Span(0, src.length), codeBody: Span(0, src.length)),
     ]), src);
 
-    MdViewOptions opt = {maxWidth: 40, fenceHBarHitBase: 77,
+    HitRegistry hits;
+    hits.beginFrame();
+    const bars = hits.block(HitKey("md.fenceHBar"), src.length + 1);
+    MdViewOptions opt = {maxWidth: 40, fenceHBarHits: bars,
         codeOverflow: OverflowPolicy(WrapAtOverflow(20))};
     auto tree = viewMarkdown(doc, opt);
     auto frames = layout(tree, Constraints(maxW: 40));
@@ -3046,13 +3052,13 @@ version (unittest)
 
     // The same wrap-at:20 in a 16-cell pane: the box clamps to the pane and
     // the 20-wide wrapped body scrolls behind the bottom-border bar.
-    MdViewOptions narrow = {maxWidth: 16, fenceHBarHitBase: 77,
+    MdViewOptions narrow = {maxWidth: 16, fenceHBarHits: bars,
         codeOverflow: OverflowPolicy(WrapAtOverflow(20))};
     auto nt = viewMarkdown(doc, narrow);
     bool sawNarrowBar, sawViewport;
     foreach (ref const n; nt.nodes)
     {
-        if (n.kind == WidgetKind.scrollbar && n.hitId == 77)
+        if (n.kind == WidgetKind.scrollbar && n.hitId == bars[0])
             sawNarrowBar = true;
         if (n.clipX)
             sawViewport = true;
@@ -3136,7 +3142,6 @@ version (unittest)
     import sparkles.ui.geometry : Constraints;
     import sparkles.ui.state : hoverTargets;
 
-    enum size_t hBase = 30_000, vBase = 40_000;
     const src = "a wide wide wide wide header b c d e f g h i j";
     static MdBlock cell(size_t a, size_t b2)
         => MdBlock(kind: MdBlockKind.tableCell, span: Span(a, b2),
@@ -3152,11 +3157,16 @@ version (unittest)
             children: rows_),
     ]), src);
 
+    HitRegistry hits;
+    hits.beginFrame();
+    const hBars = hits.block(HitKey("md.tableHBar"), src.length + 1);
+    const vBars = hits.block(HitKey("md.tableVBar"), src.length + 1);
+    const hBase = hBars[0], vBase = vBars[0];
     MdViewOptions opt = {
         maxWidth: 24,
         tableMaxLines: 5,
-        tableHBarHitBase: hBase,
-        tableVBarHitBase: vBase,
+        tableHBarHits: hBars,
+        tableVBarHits: vBars,
     };
     auto tree = viewMarkdown(doc, opt);
     auto frames = layout(tree, Constraints(maxW: 24));
@@ -3190,7 +3200,6 @@ version (unittest)
     import sparkles.ui.geometry : Constraints, Rect;
     import sparkles.ui.state : hoverTargets;
 
-    enum size_t hBase = 10_000, vBase = 20_000;
     const src = "012345678901234567890123456789\n"
         ~ "one\n"
         ~ "two\n"
@@ -3199,11 +3208,16 @@ version (unittest)
         MdBlock(kind: MdBlockKind.codeFence,
             span: Span(0, src.length), codeBody: Span(0, src.length)),
     ]), src);
+    HitRegistry hits;
+    hits.beginFrame();
+    const hBars = hits.block(HitKey("md.fenceHBar"), src.length + 1);
+    const vBars = hits.block(HitKey("md.fenceVBar"), src.length + 1);
+    const hBase = hBars[0], vBase = vBars[0];
     MdViewOptions opt = {
         maxWidth: 20,
         codeMaxLines: 2,
-        fenceHBarHitBase: hBase,
-        fenceVBarHitBase: vBase,
+        fenceHBarHits: hBars,
+        fenceVBarHits: vBars,
     };
     auto tree = viewMarkdown(doc, opt);
     auto frames = layout(tree, Constraints(maxW: 20));
@@ -3464,7 +3478,7 @@ version (unittest)
     import sparkles.ui.widget : WidgetKind;
 
     // The identity channel: prose spans carry their source byte offsets, a
-    // plain fence line carries body-exact offsets, and with a fenceHitBase
+    // plain fence line carries body-exact offsets, and with fence hits
     // the (themed) header band's hit id is anchored at the body's source
     // position. Un-themed fences have no header band and so no copy target.
     const src = "hello world x = 1\ny = 2";
@@ -3478,7 +3492,10 @@ version (unittest)
     const labels = LabelSet.standard();
     const vt = MdViewTheme.derive(resolveTheme(builtinDark, labels),
         RgbColor(0xcc, 0xcc, 0xcc), RgbColor(0x1e, 0x1e, 0x1e));
-    MdViewOptions opt = {fenceHitBase: 1 << 20, theme: vt};
+    HitRegistry hits;
+    hits.beginFrame();
+    const fenceHits = hits.block(HitKey("md.fence"), src.length + 1);
+    MdViewOptions opt = {fenceHits: fenceHits, theme: vt};
     auto tree = viewMarkdown(doc, opt);
 
     bool sawProse, sawFenceLine2, sawHit;
@@ -3494,7 +3511,7 @@ version (unittest)
                     && s.srcEnd == src.length)
                     sawFenceLine2 = true;
             }
-        if (n.hitId == (1 << 20) + 12)
+        if (n.hitId == fenceHits[12])
             sawHit = true;
     }
     assert(sawProse && sawFenceLine2 && sawHit);
@@ -3890,12 +3907,15 @@ came to emit no hyperlinks at all while every unit test passed.
 
     // Folding the fence: its panel is gone; a placeholder row carries the
     // whole region's identity and the unfold hit id.
-    MdViewOptions opt = {foldedSpans: [15UL], foldHitBase: 1 << 20};
+    HitRegistry hits;
+    hits.beginFrame();
+    const foldHits = hits.block(HitKey("md.fold"), src.length + 1);
+    MdViewOptions opt = {foldedSpans: [15UL], foldHits: foldHits};
     auto tree = viewMarkdown(doc, opt);
     bool sawPlaceholder, sawPanel;
     foreach (ref const n; tree.nodes)
     {
-        if (n.kind == WidgetKind.rich && n.hitId == (1 << 20) + 15)
+        if (n.kind == WidgetKind.rich && n.hitId == foldHits[15])
             foreach (ref const s; n.spans)
                 if (s.srcStart == 15 && s.srcEnd == src.length
                     && s.text == "```d")
@@ -3944,8 +3964,10 @@ came to emit no hyperlinks at all while every unit test passed.
             inlines: [MdInline(kind: MdInlineKind.text, span: Span(35, 41))]),
     ]), src);
 
-    enum hitBase = 1UL << 40;
-    MdViewOptions opt = {foldedSpans: [0UL], foldHitBase: hitBase};
+    HitRegistry hits;
+    hits.beginFrame();
+    const foldHits = hits.block(HitKey("md.fold"), src.length + 1);
+    MdViewOptions opt = {foldedSpans: [0UL], foldHits: foldHits};
     auto tree = viewMarkdown(doc, opt);
     auto frames = layout(tree);
     auto rows = documentRows(tree, frames);
@@ -3970,7 +3992,7 @@ came to emit no hyperlinks at all while every unit test passed.
     // The unfold key is the FOLDED heading's start.
     bool sawKey;
     foreach (ref const t; hoverTargets(tree, frames))
-        if (t.hitId == hitBase + 0)
+        if (t.hitId == foldHits[0])
             sawKey = true;
     assert(sawKey, "the placeholder unfolds the folded section");
 }
@@ -4059,7 +4081,10 @@ came to emit no hyperlinks at all while every unit test passed.
 
     // No selection: the first fence shows. Titles are the label with its
     // brackets peeled, falling back to the language for the unlabelled one.
-    MdViewOptions opt = {codeTabHitBase: 1 << 21};
+    HitRegistry hits;
+    hits.beginFrame();
+    const tabHits = hits.block(HitKey("md.codeTab"), src.length + 1);
+    MdViewOptions opt = {codeTabHits: tabHits};
     auto tree = viewMarkdown(doc, opt);
     const(char)[][] titles;
     size_t[] ids;
@@ -4068,7 +4093,7 @@ came to emit no hyperlinks at all while every unit test passed.
     {
         if (n.kind == WidgetKind.text && n.hitId == 0 && n.text.length)
             titles ~= n.text;
-        if (n.hitId >= (1 << 21))
+        if (tabHits.contains(n.hitId))
             ids ~= n.hitId;
         foreach (ref const s; n.spans)
         {
@@ -4086,11 +4111,11 @@ came to emit no hyperlinks at all while every unit test passed.
 
     // Tab ids are source-anchored to each fence's body, so two groups on a
     // page cannot mint the same id.
-    assert(ids.canFind((1 << 21) + 34) && ids.canFind((1 << 21) + 49));
+    assert(ids.canFind(tabHits[34]) && ids.canFind(tabHits[49]));
 
     // Selecting the second fence by ITS source offset swaps the body and
     // nothing else — the selection is not an index a re-parse can shift.
-    MdViewOptions sel = {codeTabHitBase: 1 << 21, activeCodeTabs: [49UL]};
+    MdViewOptions sel = {codeTabHits: tabHits, activeCodeTabs: [49UL]};
     auto t2 = viewMarkdown(doc, sel);
     bool sawA2, sawB2;
     foreach (ref const n; t2.nodes)

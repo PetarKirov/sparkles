@@ -44,6 +44,7 @@ import sparkles.ui.canvas : DrawOp, OpKind, PushShift, Scrollbar;
 import sparkles.ui.cmd_buffer : GcCmdBuffer;
 import sparkles.ui.display_list : buildDisplayList, buildDisplayListInto;
 import sparkles.ui.geometry : Constraints, Point, Rect;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.layout : CellMeasure, DelegateMeasure, Frame, layout, LayoutStore;
 import sparkles.ui.components.scroll_view : ScrollView;
 import sparkles.ui.state : ScrollAxis, ScrollbarState, DisclosureState, DocRow, DocRowStore, documentRows, ElementStore,
@@ -189,6 +190,43 @@ TextStyle attrsToTextStyle(ubyte attrs) pure nothrow @nogc @safe
 // Where a model builds its display list before copying it out: one buffer per
 // thread, kept across builds, since a build finishes before the next starts.
 private GcCmdBuffer displayScratch;
+
+/**
+The hit blocks a viewer stamps on its controls (`INP27`), one per kind, each
+indexed by the source offset its control is anchored at: a fold by its
+region's start, a fence's copy band, tab and bars by its `codeBody.start`, a
+table's copy cutout and bars by its `span.start`.
+
+$(LREF ViewerModel.claimHits) asks the host's registry for them under
+`HitKey("doc-view.<member>", instance)`; each block is its key's whole slot,
+so any offset of a document the slot can number is a valid index whatever
+document the frame ends up showing. `ViewerHits.init` — a viewer nobody
+claimed for — stamps no ids at all.
+*/
+struct ViewerHits
+{
+    HitBlock fold;          /// fold placeholders and gutter arrows
+    HitBlock fence;         /// fence header (copy) bands
+    HitBlock codeTab;       /// code-group tabs
+    HitBlock tableCopy;     /// tables' copy cutouts
+    HitBlock fenceHBar;     /// fences' horizontal bars
+    HitBlock fenceVBar;     /// fences' vertical bars
+    HitBlock tableHBar;     /// tables' horizontal bars
+    HitBlock tableVBar;     /// tables' vertical bars
+
+    /// Which bar `hit` is: its owner's source offset and axis.
+    bool barOf(size_t hit, out size_t owner, out bool horizontal, out bool isFence) const @safe pure nothrow @nogc
+    {
+        if (fenceHBar.indexOf(hit, owner)) { horizontal = isFence = true; return true; }
+        if (fenceVBar.indexOf(hit, owner)) { isFence = true; return true; }
+        if (tableHBar.indexOf(hit, owner)) { horizontal = true; return true; }
+        return tableVBar.indexOf(hit, owner);
+    }
+}
+
+/// The ids each of a viewer's blocks spans: the whole slot, so a block covers
+/// every source offset the registry can number.
+enum size_t viewerHitSpan = HitRegistry.stride - 1;
 
 /**
 The shared document-pipeline Whole. The host configures the theme
@@ -435,7 +473,7 @@ struct ViewerModel
         bool plainSyntax;
         bool defaultOpen;
         const(size_t)[] foldExceptions;
-        size_t foldHitBase;
+        HitBlock foldHits;
         int tabWidth;
         bool listWhitespace, inlineFoldMarker;
         size_t themeIdx;
@@ -449,7 +487,7 @@ struct ViewerModel
             if (!(source is o.source && events is o.events && lang == o.lang
                 && parse is o.parse && plainSyntax == o.plainSyntax
                 && defaultOpen == o.defaultOpen && foldExceptions == o.foldExceptions
-                && foldHitBase == o.foldHitBase && tabWidth == o.tabWidth
+                && foldHits == o.foldHits && tabWidth == o.tabWidth
                 && listWhitespace == o.listWhitespace
                 && inlineFoldMarker == o.inlineFoldMarker && themeIdx == o.themeIdx
                 && pageFg == o.pageFg && gutterFg == o.gutterFg
@@ -522,16 +560,36 @@ struct ViewerModel
     private bool built;
     private ScrollAnchor held;
 
-    // Source-anchored identity bases (disjoint id spaces — see the md view).
-    enum size_t tableVBarHitBase = size_t.max / 128 + 1;
-    enum size_t tableHBarHitBase = size_t.max / 64 + 1;
-    enum size_t fenceVBarHitBase = size_t.max / 32 + 1;
-    enum size_t fenceHBarHitBase = size_t.max / 16 + 1;
-    enum size_t tableCopyHitBase = size_t.max / 8 + 1;
-    enum size_t codeTabHitBase = size_t.max / 4 + 1;
-    enum size_t fenceHitBase = size_t.max / 2 + 1;
-    enum size_t foldHitBase = size_t.max / 4 * 3 + 1;
+    /// The hit blocks the tree was built with — the host's, through
+    /// `claimHits`; empty (nothing hit-testable) until it claims.
+    ViewerHits hits;
     enum size_t tableKeyBase = 1;
+
+    /**
+    Asks `registry` for the viewer's hit blocks (`INP27`), under
+    `HitKey("doc-view.<kind>", instance)` — `instance` tells this viewer from
+    the application's others (a pane id). Call it on every frame the viewer is
+    shown, after the registry's `beginFrame` and before the frame builds or
+    hit-tests the document: the retained tree carries these blocks' ids, and a
+    block not asked for is freed when the next frame begins.
+
+    The blocks are the same frame after frame, so asking costs a lookup. When
+    they are not — the viewer was hidden for a frame and its slots went back
+    to the registry — the tree is rebuilt with the new ones; true then.
+    */
+    bool claimHits(ref HitRegistry registry, size_t instance = 0) @system
+    {
+        ViewerHits next;
+        static foreach (name; __traits(allMembers, ViewerHits))
+            static if (is(typeof(__traits(getMember, next, name)) == HitBlock))
+                __traits(getMember, next, name) = registry.block(
+                    HitKey("doc-view." ~ name, instance), viewerHitSpan);
+        if (next == hits)
+            return false;
+        hits = next;
+        rebuild();
+        return true;
+    }
 
     // ── scroll + search ─────────────────────────────────────────────────────
     long top;                       /// first visible visual row
@@ -714,7 +772,7 @@ struct ViewerModel
                 // list from the final tree for the host's other readers.
                 foldMarkers = foldMarkersOf(rows, foldable, folds);
                 ch.cells = iconCells(foldMarkers, rows.length, ch.width,
-                    foldHitBase);
+                    hits.fold);
             }
         }
     }
@@ -1007,7 +1065,7 @@ struct ViewerModel
             plainSyntax: plainSyntax,
             defaultOpen: folds.defaultOpen,
             foldExceptions: folds.exceptions,
-            foldHitBase: foldHitBase,
+            foldHits: hits.fold,
             tabWidth: tabWidth,
             listWhitespace: listWhitespace,
             inlineFoldMarker: inlineFoldMarker,
@@ -1476,7 +1534,7 @@ struct ViewerModel
             const docRoot = viewCodeDocumentInto(b, source, evs,
                 thisCurrent(), pageFg,
                 CodeViewOptions(wrap: TextWrap.none, foldedRegions: closed,
-                    foldHitBase: foldHitBase, tabWidth: tabWidth,
+                    foldHits: hits.fold, tabWidth: tabWidth,
                     listWhitespace: listWhitespace,
                     whitespaceFg: gutterFg, hasWhitespaceFg: true,
                     inlineFoldMarker: inlineFoldMarker,
@@ -1504,24 +1562,24 @@ struct ViewerModel
             // The width bound sizes the per-fence scrollbar's track/thumb
             // (the layout constraint below is the same number).
             maxWidth: widthCols > 0 ? widthCols : 0,
-            fenceHitBase: fenceHitBase,
-            codeTabHitBase: codeTabHitBase,
+            fenceHits: hits.fence,
+            codeTabHits: hits.codeTab,
             activeCodeTabs: activeCodeTabs,
             tableKeyBase: tableKeyBase,
-            tableCopyHitBase: tableCopyHitBase,
+            tableCopyHits: hits.tableCopy,
             copiedFence: copiedFenceSrc,
             copiedTable: copiedTableSrc,
             fenceRenderer: fenceRenderer(),
             foldedSpans: folds.exceptions,
-            foldHitBase: foldHitBase,
+            foldHits: hits.fold,
             inlineFoldMarker: inlineFoldMarker,
             codeLineNumbers: codeLineNumbers,
             proseRole: proseRole,
             codeOverflow: codeOverflow,
             codeMaxLines: resolvedCodeMaxLines(),
             fenceScrolls: snapshotBuilt(),
-            fenceHBarHitBase: fenceHBarHitBase,
-            fenceVBarHitBase: fenceVBarHitBase,
+            fenceHBarHits: hits.fenceHBar,
+            fenceVBarHits: hits.fenceVBar,
             hotFenceHBar: fenceHotGlyphs && activeBarH()
                 ? activeFenceOwner : size_t.max,
             hotFenceVBar: fenceHotGlyphs && activeBarV()
@@ -1530,8 +1588,8 @@ struct ViewerModel
             tableMaxLines: resolvedTableMaxLines(),
             tableExtras: preview.tableExtras,
             tableScrolls: tableScrollList(),
-            tableHBarHitBase: tableHBarHitBase,
-            tableVBarHitBase: tableVBarHitBase,
+            tableHBarHits: hits.tableHBar,
+            tableVBarHits: hits.tableVBar,
             hotTableHBar: fenceHotGlyphs && activeBarH()
                 ? activeTableOwner : size_t.max,
             hotTableVBar: fenceHotGlyphs && activeBarV()
@@ -2421,8 +2479,10 @@ struct ViewerModel
     bool fenceHotGlyphs = true;
 
     /// A fence's canonical bar key: both axes of one fence share one machine.
+    /// A key of the machine store, not a hit id: fences take the odd keys,
+    /// tables the even ones.
     static size_t fenceBarKey(size_t bodyStart) @safe pure nothrow @nogc
-        => fenceHBarHitBase + bodyStart;
+        => bodyStart * 2 + 1;
 
     /// Point the interaction at `key`'s bar machine (per-element state,
     /// created on first sight) and return it for stepping.
@@ -2439,18 +2499,18 @@ struct ViewerModel
     /// The active machine's fence owner (`codeBody.start`), or `size_t.max`
     /// when the active bar is not a fence's.
     size_t activeFenceOwner() const @safe pure nothrow @nogc
-        => barSvActive >= fenceHBarHitBase
-            ? barSvActive - fenceHBarHitBase : size_t.max;
+        => barSvActive != size_t.max && (barSvActive & 1)
+            ? barSvActive / 2 : size_t.max;
 
     /// A table's canonical bar key (both axes share the one machine).
     static size_t tableBarKey(size_t spanStart) @safe pure nothrow @nogc
-        => tableHBarHitBase + spanStart;
+        => spanStart * 2;
 
     /// The active machine's table owner (`span.start`), or `size_t.max`
     /// when the active bar is not a table's.
     size_t activeTableOwner() const @safe pure nothrow @nogc
-        => barSvActive >= tableHBarHitBase && barSvActive < fenceVBarHitBase
-            ? barSvActive - tableHBarHitBase : size_t.max;
+        => barSvActive != size_t.max && !(barSvActive & 1)
+            ? barSvActive / 2 : size_t.max;
 
     /// Whether the active bar engages its horizontal / vertical axis.
     private bool activeBarH() const @safe pure nothrow @nogc
@@ -2650,8 +2710,9 @@ struct ViewerModel
             // exists exactly when the fence h-overflows — the only case the
             // x clamp matters.
             int boxW;
+            const barId = hits.fenceHBar[bodyStart];
             foreach (ref const t; targets)
-                if (t.hitId == fenceHBarHitBase + bodyStart
+                if (barId != 0 && t.hitId == barId
                     && t.rect.width > boxW)
                     boxW = t.rect.width + 2;
             e.innerW = (boxW ? boxW : widthCols) - 4
@@ -2709,18 +2770,12 @@ struct ViewerModel
 
         foreach (ref const t; targets)
         {
-            if (t.rect != bar.rect || t.hitId < tableVBarHitBase)
+            size_t owner;
+            bool horizontal, isFence;
+            if (t.rect != bar.rect || !hits.barOf(t.hitId, owner, horizontal, isFence))
                 continue;
-            const id = t.hitId;
-            double pos = 0;
-            if (id >= fenceHBarHitBase)
-                pos = fenceScrollPos(id - fenceHBarHitBase, true);
-            else if (id >= fenceVBarHitBase)
-                pos = fenceScrollPos(id - fenceVBarHitBase, false);
-            else if (id >= tableHBarHitBase)
-                pos = tableScrollPos(id - tableHBarHitBase, true);
-            else
-                pos = tableScrollPos(id - tableVBarHitBase, false);
+            const pos = isFence ? fenceScrollPos(owner, horizontal)
+                : tableScrollPos(owner, horizontal);
             // Where the block is now, not where it was built: the thumb
             // follows a block scrolled without a rebuild.
             bar.offset = cast(int) pos;
@@ -2882,16 +2937,17 @@ struct ViewerModel
     TableExtent tableExtent(size_t spanStart) const @safe pure nothrow @nogc
     {
         TableExtent e;
+        const hId = hits.tableHBar[spanStart], vId = hits.tableVBar[spanStart];
         foreach (ref const n; tree.nodes)
         {
-            if (n.kind != WidgetKind.scrollbar)
+            if (n.kind != WidgetKind.scrollbar || n.hitId == 0)
                 continue;
-            if (n.hitId == tableHBarHitBase + spanStart)
+            if (n.hitId == hId)
             {
                 e.content = cast(int) n.barContent;
                 e.viewport = cast(int) n.barViewport;
             }
-            else if (n.hitId == tableVBarHitBase + spanStart)
+            else if (n.hitId == vId)
             {
                 e.lines = cast(int) n.barContent;
                 e.shownLines = cast(int) n.barViewport;
@@ -4268,6 +4324,9 @@ terminal gets the destinations it needs to make the text clickable.
     vm.cache = &cache;
     vm.widthCols = 60;
     vm.applyTheme(0);
+    HitRegistry registry;
+    registry.beginFrame();
+    vm.claimHits(registry);
 
     const src = "void f()\n{\n    int a;\n    int b;\n}\nint tail;\n";
     vm.setDocument("f.d", "", src,
@@ -4292,12 +4351,12 @@ terminal gets the destinations it needs to make the text clickable.
     assert(sawPlaceholder, "fold placeholder rendered");
 
     // The ▸ is the icon channel's cell, so it is a one-cell hit target of its
-    // own carrying `foldHitBase + key`. That target is what replaced the host's
+    // own carrying `hits.fold[key]`. That target is what replaced the host's
     // pixel-column fold hit test: the gutter arrow and the placeholder's own
     // inline marker now resolve through one path instead of two.
     bool sawGutterArrow;
     foreach (ref const t; vm.targets)
-        if (t.hitId >= ViewerModel.foldHitBase && t.rect.width == 1)
+        if (vm.hits.fold.contains(t.hitId) && t.rect.width == 1)
             sawGutterArrow = true;
     assert(sawGutterArrow, "the gutter arrow is clickable");
 
@@ -4523,6 +4582,9 @@ terminal gets the destinations it needs to make the text clickable.
     vm.names = ["dark"];
     vm.widthCols = 30;
     vm.applyTheme(0);
+    HitRegistry registry;
+    registry.beginFrame();
+    vm.claimHits(registry);
 
     // A two-column table ~55 cells wide in a 30-cell pane: the default
     // scroll mode frames it, so its retained h bar carries the extents.
@@ -4570,6 +4632,119 @@ terminal gets the destinations it needs to make the text clickable.
     assert(!vm.setTableScroll(0, 5, 0));
 }
 
+version (unittest)
+{
+    // A code block wider than its 30-cell pane: a copy band and a sideways
+    // bar, both anchored at the fence body's start.
+    private void wideFence(ref ViewerModel vm, out size_t bodyStart) @system
+    {
+        string src = "```\n";
+        bodyStart = src.length;
+        foreach (_; 0 .. 80)
+            src ~= "x";
+        src ~= "\n```\n";
+        vm.themes = [builtinDark];
+        vm.names = ["dark"];
+        vm.widthCols = 30;
+        vm.applyTheme(0);
+        vm.setDocument("code.md", "", src, null, PreviewModel(present: true,
+            doc: MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+                MdBlock(kind: MdBlockKind.codeFence, span: Span(0, src.length),
+                    codeBody: Span(bodyStart, src.length - 4))]), src)),
+            TwoslashReturn.init, "markdown");
+    }
+
+    // The ids of the targets `block` holds, with the offset each decodes to.
+    private size_t[2][] targetsIn(in ViewerModel vm, in HitBlock block) @safe
+    {
+        size_t[2][] found;
+        size_t at;
+        foreach (ref const t; vm.targets)
+            if (block.indexOf(t.hitId, at))
+                found ~= [t.hitId, at];
+        return found;
+    }
+}
+
+/// `INP27`: the viewer's blocks come from the host's registry, never overlap,
+/// and a target's id decodes back to the source offset it was stamped with.
+@("viewer_model.claimHits.blocksAreDisjointAndDecode")
+@system unittest
+{
+    HitRegistry registry;
+    registry.beginFrame();
+    registry.block(HitKey("toolbar"), 4);      // the host's own controls
+    ViewerModel vm;
+    assert(!vm.hits.fence && !vm.hits.fold, "nothing is issued before a claim");
+    size_t bodyStart;
+    wideFence(vm, bodyStart);
+    assert(vm.claimHits(registry, instance: 3), "the first claim rebuilds the tree");
+
+    // All eight blocks are issued, pairwise disjoint, and none meets the
+    // host's toolbar.
+    const HitBlock[8] all = [vm.hits.fold, vm.hits.fence, vm.hits.codeTab,
+        vm.hits.tableCopy, vm.hits.fenceHBar, vm.hits.fenceVBar,
+        vm.hits.tableHBar, vm.hits.tableVBar];
+    const toolbar = registry.find(HitKey("toolbar"));
+    foreach (i, a; all)
+    {
+        assert(a && !a.contains(toolbar[0]) && !toolbar.contains(a[0]));
+        foreach (j, b; all)
+            if (i != j)
+                assert(!b.contains(a[0]) && !b.contains(a[bodyStart]) && !a.contains(b[0]));
+    }
+
+    // The fence's copy band and its bar: two blocks, one offset.
+    const copy = targetsIn(vm, vm.hits.fence);
+    const bars = targetsIn(vm, vm.hits.fenceHBar);
+    assert(copy.length && bars.length, "the band and the bar are hit targets");
+    assert(copy[0][1] == bodyStart && bars[0][1] == bodyStart);
+    assert(copy[0][0] != bars[0][0]);
+
+    // The registry names the owner of each, under the viewer's instance.
+    HitKey owner;
+    size_t index;
+    assert(registry.ownerOf(copy[0][0], owner, index));
+    assert(owner == HitKey("doc-view.fence", 3) && index == bodyStart);
+    assert(registry.ownerOf(bars[0][0], owner, index));
+    assert(owner == HitKey("doc-view.fenceHBar", 3) && index == bodyStart);
+    size_t barOwner;
+    bool horizontal, isFence;
+    assert(vm.hits.barOf(bars[0][0], barOwner, horizontal, isFence));
+    assert(barOwner == bodyStart && horizontal && isFence);
+}
+
+/// `INP28`: a press armed on one frame names the same fence on the release
+/// frame, though a control the host shows conditionally was asked for first.
+@("viewer_model.claimHits.pressSurvivesAConditionalControl")
+@system unittest
+{
+    HitRegistry registry;
+    ViewerModel vm;
+    size_t bodyStart;
+    wideFence(vm, bodyStart);
+    registry.beginFrame();
+    vm.claimHits(registry);
+    const armed = targetsIn(vm, vm.hits.fence)[0][0];   // the press
+
+    registry.beginFrame();                              // the release frame
+    registry.block(HitKey("restore-banner"));           // appears first
+    const builds = vm.treeBuilds;
+    assert(!vm.claimHits(registry), "the same blocks: nothing rebuilds");
+    assert(vm.treeBuilds == builds);
+    size_t at;
+    assert(registry.find(HitKey("doc-view.fence")).indexOf(armed, at) && at == bodyStart,
+        "the release decodes the armed id to the same fence");
+
+    // Hidden for a frame, the viewer's slots go back to the registry; shown
+    // again, it rebuilds with its new blocks, so no stale id survives.
+    registry.beginFrame();
+    registry.beginFrame();
+    assert(vm.claimHits(registry), "new blocks rebuild the tree");
+    assert(!vm.hits.fence.contains(armed));
+    assert(targetsIn(vm, vm.hits.fence)[0][1] == bodyStart);
+}
+
 @("viewer_model.remateralizeWindow.keepsTheDragThatAskedForIt")
 @system unittest
 {
@@ -4584,6 +4759,9 @@ terminal gets the destinations it needs to make the text clickable.
     vm.names = ["dark"];
     vm.widthCols = 30;
     vm.applyTheme(0);
+    HitRegistry registry;
+    registry.beginFrame();
+    vm.claimHits(registry);
 
     string src;
     foreach (_; 0 .. 25)
@@ -5301,14 +5479,14 @@ diagnostic provider lands it claims the same rows at a higher rank and takes the
 cell, including the click, with no change here.
 */
 GutterCell[] iconCells(in FoldMarker[] markers, size_t rowCount, int width,
-    size_t hitBase) @safe
+    in HitBlock foldHits) @safe
 {
     import sparkles.ui.components.gutter : foldPriority, IconClaim, mergedCells;
 
     IconClaim[] claims;
     foreach (ref const fm; markers)
         claims ~= IconClaim(row: fm.row, priority: foldPriority,
-            glyph: fm.open ? "\u25be" : "\u25b8", hitId: hitBase + fm.key);
+            glyph: fm.open ? "\u25be" : "\u25b8", hitId: foldHits[fm.key]);
     return mergedCells(claims, rowCount, width);
 }
 
@@ -5316,17 +5494,19 @@ GutterCell[] iconCells(in FoldMarker[] markers, size_t rowCount, int width,
 @safe unittest
 {
     // `FLD5` as a channel: the arrow shows the region's state, and its hit id
-    // is the fold key offset by the base — which is what lets the ONE
-    // `foldHitBase` path in the host serve both the gutter arrow and the
+    // is the fold block's id at the fold key — which is what lets the ONE
+    // fold-block path in the host serve both the gutter arrow and the
     // inline placeholder, instead of a second column-shaped hit test.
-    enum base = 1000;
+    HitRegistry registry;
+    registry.beginFrame();
+    const folds = registry.block(HitKey("folds"), 64);
     const markers = [FoldMarker(row: 0, key: 7, open: true),
         FoldMarker(row: 3, key: 42, open: false)];
-    const cells = iconCells(markers, 5, 1, base);
+    const cells = iconCells(markers, 5, 1, folds);
 
     assert(cells.length == 5);
-    assert(cells[0].text[] == "\u25be" && cells[0].hitId == base + 7);
-    assert(cells[3].text[] == "\u25b8" && cells[3].hitId == base + 42);
+    assert(cells[0].text[] == "\u25be" && cells[0].hitId == folds[7]);
+    assert(cells[3].text[] == "\u25b8" && cells[3].hitId == folds[42]);
     assert(cells[1].text[] == " " && cells[1].hitId == 0, "inert between them");
 }
 

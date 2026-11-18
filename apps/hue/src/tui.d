@@ -62,6 +62,7 @@ import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.components.chrome : headerBar;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Point, Rect, SizeSpec;
+import sparkles.ui.hit_ids : HitRegistry;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.state : DisclosureState, DocRow, HoverTarget,
     ScrollbarState, scrollbarThumb, Selection, selectionRects, sourceOffsetAt,
@@ -356,14 +357,16 @@ struct PreviewTui
     private const(DocRow)[] mdRows() const @safe pure nothrow @nogc => vm.rows;
     private const(HoverTarget)[] mdTargets() const @safe pure nothrow @nogc => vm.targets;
     private alias FoldOp = ViewerModel.FoldOp;
-    private enum size_t fenceHitBase = ViewerModel.fenceHitBase;
-    private enum size_t codeTabHitBase = ViewerModel.codeTabHitBase;
-    private enum size_t foldHitBase = ViewerModel.foldHitBase;
-    private enum size_t tableCopyHitBase = ViewerModel.tableCopyHitBase;
-    private enum size_t fenceHBarHitBase = ViewerModel.fenceHBarHitBase;
-    private enum size_t fenceVBarHitBase = ViewerModel.fenceVBarHitBase;
-    private enum size_t tableHBarHitBase = ViewerModel.tableHBarHitBase;
-    private enum size_t tableVBarHitBase = ViewerModel.tableVBarHitBase;
+
+    /**
+    Asks `registry` for the document's hit blocks (`INP27`): call it on every
+    frame the pane is shown, `instance` telling this pane from the
+    application's other document panes.
+    */
+    void claimHits(ref HitRegistry registry, size_t instance = 0) @system
+    {
+        cast(void) vm.claimHits(registry, instance);
+    }
 
     private const(char)[] query() const return @safe pure nothrow @nogc => inp.query;
 
@@ -1185,11 +1188,12 @@ struct PreviewTui
     // (`SCV5`). The semantic h-bar target is already the corner-free track.
     private void barPress(in HoverTarget t, Point p) @system
     {
-        if (t.hitId < fenceVBarHitBase)
+        size_t owner;
+        bool isH, isFence;
+        if (!vm.hits.barOf(t.hitId, owner, isH, isFence))
+            return;
+        if (!isFence)
         {
-            const isH = t.hitId >= tableHBarHitBase;
-            const owner = t.hitId
-                - (isH ? tableHBarHitBase : tableVBarHitBase);
             auto sv = &vm.activateBar(ViewerModel.tableBarKey(owner));
             const ex = vm.tableExtent(owner);
             const cur = vm.tableScrollAt.get(owner, TableScroll(owner, 0, 0));
@@ -1208,9 +1212,6 @@ struct PreviewTui
         }
         else
         {
-            const isH = t.hitId >= fenceHBarHitBase;
-            const owner = t.hitId
-                - (isH ? fenceHBarHitBase : fenceVBarHitBase);
             auto sv = &vm.activateBar(ViewerModel.fenceBarKey(owner));
             const ex = vm.fenceExtent(owner);
             const cur = vm.fenceScrollAt.get(owner, FenceScroll(owner, 0, 0));
@@ -1241,11 +1242,10 @@ struct PreviewTui
         const tOwner = vm.activeTableOwner;
         if (tOwner != size_t.max)
         {
-            const wantId = (isH ? tableHBarHitBase : tableVBarHitBase)
-                + tOwner;
+            const wantId = (isH ? vm.hits.tableHBar : vm.hits.tableVBar)[tOwner];
             foreach (ref const t; mdTargets)
             {
-                if (t.hitId != wantId)
+                if (wantId == 0 || t.hitId != wantId)
                     continue;
                 const ex = vm.tableExtent(tOwner);
                 const cur = vm.tableScrollAt.get(tOwner,
@@ -1269,10 +1269,10 @@ struct PreviewTui
         const owner = vm.activeFenceOwner;
         if (owner == size_t.max)
             return;
-        const wantId = (isH ? fenceHBarHitBase : fenceVBarHitBase) + owner;
+        const wantId = (isH ? vm.hits.fenceHBar : vm.hits.fenceVBar)[owner];
         foreach (ref const t; mdTargets)
         {
-            if (t.hitId != wantId)
+            if (wantId == 0 || t.hitId != wantId)
                 continue;
             const ex = vm.fenceExtent(owner);
             const cur = vm.fenceScrollAt.get(owner, FenceScroll(owner, 0, 0));
@@ -2120,44 +2120,39 @@ struct PreviewTui
             if (e.action == PointerAction.press)
             {
                 const p = Point(e.pos.x + hx, cast(int) line);
+                // Each kind of control is its own block of the registry's,
+                // so a target's id decodes to one kind and one source offset.
                 foreach_reverse (ref const t; mdTargets)
                 {
-                    if (t.hitId >= foldHitBase && t.rect.contains(p))
+                    if (!t.rect.contains(p))
+                        continue;
+                    size_t at;
+                    if (vm.hits.fold.indexOf(t.hitId, at))
                     {
-                        vm.folds = vm.folds.toggled(t.hitId - foldHitBase);
+                        vm.folds = vm.folds.toggled(at);
                         vm.rebuild();
                         return true;
                     }
-                    if (t.hitId >= fenceHitBase && t.rect.contains(p))
+                    if (vm.hits.fence.indexOf(t.hitId, at))
                     {
-                        copyFenceAt(t.hitId - fenceHitBase);
+                        copyFenceAt(at);
                         return true;
                     }
-                    // Below the fence range — see the GUI's note on order.
-                    if (t.hitId >= codeTabHitBase && t.hitId < fenceHitBase
-                        && t.rect.contains(p))
+                    if (vm.hits.codeTab.indexOf(t.hitId, at))
                     {
-                        vm.activateCodeTab(t.hitId - codeTabHitBase);
+                        vm.activateCodeTab(at);
                         return true;
                     }
-                    if (t.hitId >= tableCopyHitBase
-                        && t.hitId < codeTabHitBase && t.rect.contains(p))
+                    if (vm.hits.tableCopy.indexOf(t.hitId, at))
                     {
-                        copyTableAt(t.hitId - tableCopyHitBase);
+                        copyTableAt(at);
                         return true;
                     }
-                    // The fence scrollbars (COD6): press grabs, the border
-                    // line is the track (track-click jumps included).
-                    if (t.hitId >= fenceVBarHitBase
-                        && t.hitId < tableCopyHitBase && t.rect.contains(p))
-                    {
-                        barPress(t, p);
-                        return true;
-                    }
-                    // The table scrollbars (TBL7/TBL8): the same grab
-                    // machine, one id space below the fences'.
-                    if (t.hitId >= tableVBarHitBase
-                        && t.hitId < fenceVBarHitBase && t.rect.contains(p))
+                    // The fence and table scrollbars (COD6/TBL7/TBL8): press
+                    // grabs, the border line is the track (track-click jumps
+                    // included).
+                    bool horizontal, isFence;
+                    if (vm.hits.barOf(t.hitId, at, horizontal, isFence))
                     {
                         barPress(t, p);
                         return true;
@@ -2519,6 +2514,9 @@ unittest
     static immutable(Theme)[1] themes = [builtinDark];
     static immutable string[1] names = ["dark"];
     PreviewTui t;
+    HitRegistry hits; // the frame's ids: the copy band and bars carry them
+    hits.beginFrame();
+    t.claimHits(hits);
     t.labels = LabelSet.standard();
     t.names = names[];
     t.themes = themes[];
@@ -2534,7 +2532,7 @@ unittest
     Rect bar;
     bool found;
     foreach (ref const tgt; t.vm.targets)
-        if (tgt.hitId == ViewerModel.tableHBarHitBase + 0)
+        if (tgt.hitId == t.vm.hits.tableHBar[0])
         {
             bar = tgt.rect;
             found = true;
@@ -2583,6 +2581,9 @@ unittest
     static immutable(Theme)[1] themes = [builtinDark];
     static immutable string[1] names = ["dark"];
     PreviewTui t;
+    HitRegistry hits; // the frame's ids: the copy band and bars carry them
+    hits.beginFrame();
+    t.claimHits(hits);
     t.labels = LabelSet.standard();
     t.names = names[];
     t.themes = themes[];
@@ -2629,6 +2630,9 @@ unittest
     static immutable(Theme)[1] themes = [builtinDark];
     static immutable string[1] names = ["dark"];
     PreviewTui t;
+    HitRegistry hits; // the frame's ids: the copy band and bars carry them
+    hits.beginFrame();
+    t.claimHits(hits);
     t.title = "t.md";
     t.source = src;
     t.model = PreviewModel(present: true, doc: doc);
@@ -2685,7 +2689,7 @@ unittest
     // rect — the affordance is the cutout, not the whole border row.
     int ix = -1, iy = -1;
     foreach (ref const tg; t.vm.targets)
-        if (tg.hitId == ViewerModel.fenceHitBase + 12)
+        if (tg.hitId == t.vm.hits.fence[12])
         {
             ix = tg.rect.x + 1;           // the icon cell inside the cutout
             iy = cast(int) tg.rect.y + 1; // content starts on pane row 1
