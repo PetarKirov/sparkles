@@ -82,3 +82,37 @@ unittest
     assert(fileIcon("flake.nix").fg == RgbColor(0x7e, 0xba, 0xe4));
     assert(folderGlyph(true) != folderGlyph(false));
 }
+
+/// GLY1: every icon this table hands out steps down a ladder of its own, so a
+/// target without Nerd Font icons draws its kind's shape (`▸`, `▾`, `▫`, `◇`,
+/// …) and an ASCII-only one a letter, never the replacement glyph.
+@("ui.file_icons.everyIconHasALadder")
+@safe pure
+unittest
+{
+    import std.utf : decodeFront;
+    import sparkles.ui.glyphs : projectGlyph, replacementGlyph;
+    import sparkles.ui.tokens : TargetCapabilities;
+
+    TargetCapabilities unicode, ascii;
+    unicode.unicode = true;
+    static immutable string[] names = ["a.d", "a.md", "a.json", "a.js", "a.ts", "a.sh", "a.nix", "a.py",
+        "a.rs", "a.c", "a.cpp", "a.go", "a.html", "a.css", "a.glsl", "a.spvasm", "a.toml", "a.lock", "a.png",
+        "a.pdf", "a.zip", "a.txt", "LICENSE"];
+    foreach (name; names)
+    {
+        auto glyph = fileIcon(name).glyph;
+        const g = decodeFront(glyph);
+        assert(projectGlyph(g, unicode) != replacementGlyph, name);
+        assert(projectGlyph(g, ascii) < 0x80 && projectGlyph(g, ascii) != replacementGlyph, name);
+    }
+    foreach (open; [false, true])
+    {
+        auto glyph = folderGlyph(open);
+        const g = decodeFront(glyph);
+        assert(projectGlyph(g, unicode) == (open ? '▾' : '▸'));
+    }
+    auto md = fileIcon("x.md").glyph, d = fileIcon("x.d").glyph;
+    assert(projectGlyph(decodeFront(md), unicode) != projectGlyph(decodeFront(d), unicode),
+        "a document and code fold apart");
+}
