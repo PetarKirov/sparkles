@@ -55,6 +55,9 @@ struct RunLayout
     /// bypassed, publishing nothing; its outputs are compared with the
     /// result its key leads to, and a result that differs is removed.
     bool check;
+    /// With `check`, the tasks it checks (CIC13's sample); empty checks every
+    /// keyed action, and the rest are looked up as in a run.
+    string[] checkTasks;
     /// BGS8's `explain`: every keyed action is looked up as a run would look
     /// it up, and nothing executes or publishes. A hit is adopted, so its
     /// consumers' keys follow; a miss is classified and stops its consumers.
@@ -675,7 +678,9 @@ struct ActionDriver
         if (layout.explain)
             return explainOnly(ctx.node.id, a is null ? null : *a, declared, preimage);
         const(ResultRecord)* checked;
-        if (declared.length && layout.check)
+        // BGS9: checked actions run with their own lookup bypassed.
+        const checking = layout.check && (layout.checkTasks.length == 0 || layout.checkTasks.canFind(id.text));
+        if (declared.length && checking)
             checked = lookup(**a, declared);
         else if (declared.length)
         {
@@ -767,7 +772,7 @@ struct ActionDriver
         record.status = status;
         record.outputs = outputsOf(id);
         outputsDigestOf[id.text] = record.outputsDigest;
-        if (layout.check)
+        if (checking)
         {
             // Cold and unshared: compared, never published (BGS9).
             if (checked !is null)
@@ -1809,10 +1814,11 @@ struct ActionDriver
 /**
 Runs `nodes` (from $(LREF executionNodes)) with their edges on a scheduler
 of their own, reporting each task's lines to `writer` through the plain
-reporter, at most `capacity` weight at a time.
+reporter, at most `capacity` weight at a time, cancelling the rest at
+the first failure with `failFast`.
 */
 RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout, ref W writer,
-    uint capacity, RunStats* stats = null)
+    uint capacity, RunStats* stats = null, bool failFast = false)
 {
     import sparkles.build_primitives.task.executor : ExecutorOptions, runGraph;
     import sparkles.build_primitives.task.graph : TaskGraphBuilder;
@@ -1852,7 +1858,7 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
     auto ran = s.run(() {
         cast(void) withScope!((ref sc) {
             sc.spawn(() { consumeEvents(s, *sink, reporter); });
-            result = runGraph(s, clock, graph, *driver, *sink, ExecutorOptions(capacity: capacity));
+            result = runGraph(s, clock, graph, *driver, *sink, ExecutorOptions(capacity: capacity, failFast: failFast));
             driver.finish();
             sink.close();
         })(s);
@@ -2226,4 +2232,54 @@ int storeOperation(W)(string cache, string op, ref W writer)
             line("unknown cache operation " ~ op);
             return 2;
     }
+}
+
+/**
+CIC13's sample of a run's cacheable actions for the determinism check
+(BGS9): their tasks ordered by the SHA-256 of `commit` followed by each one's
+result key (from `resultKeys`, by task), then the first `n` compiles and the
+first `n` actions of the other kinds (`archive`, `link`, `generate`)
+together, in that order. The order changes with every commit, so successive
+runs check different actions, while a rerun of one commit checks the same.
+*/
+string[] determinismSample(const string[string] resultKeys, string commit, size_t n) @safe
+{
+    import std.algorithm.sorting : sort;
+    import std.digest.sha : sha256Of;
+
+    static immutable cacheable = ["compile:", "archive:", "link:", "generate:"];
+    string[2][] ordered;
+    foreach (task, key; resultKeys)
+        foreach (prefix; cacheable)
+            if (task.startsWith(prefix))
+                ordered ~= [hexOf(sha256Of(commit ~ key)), task];
+    ordered.sort!((a, b) => a[0] < b[0] || (a[0] == b[0] && a[1] < b[1]));
+    string[] compiles, others;
+    foreach (o; ordered)
+        if (o[1].startsWith("compile:"))
+        {
+            if (compiles.length < n)
+                compiles ~= o[1];
+        }
+        else if (others.length < n)
+            others ~= o[1];
+    return compiles ~ others;
+}
+
+///
+@("build_graph.execute.determinismSample")
+@safe unittest
+{
+    import std.algorithm.searching : all;
+
+    string[string] keys;
+    foreach (i; 0 .. 10)
+        keys[text("compile:c", i)] = text("ck", i);
+    foreach (i; 0 .. 3)
+        keys[text("link:l", i)] = text("lk", i);
+    keys["test:t"] = "tk"; // a test is never sampled
+    const a = determinismSample(keys, "aaaa", 4);
+    assert(a.length == 7 && a[0 .. 4].all!(t => t.startsWith("compile:")) && a[4 .. $].all!(t => t.startsWith("link:")));
+    assert(determinismSample(keys, "aaaa", 4) == a);
+    assert(determinismSample(keys, "bbbb", 4) != a);
 }
