@@ -109,7 +109,7 @@ void marker(string name) @trusted
 }
 
 Planned planRepository(string root, bool markers = false, string only = null, Tools tools = Tools.init,
-    string toolchain = "dev-shell")
+    string toolchain = "dev-shell", bool lint = true)
 {
     const d = driverEnvironment();
     if (d.sources is null)
@@ -223,7 +223,10 @@ Planned planRepository(string root, bool markers = false, string only = null, To
             }
         return planErr!Resolution(PlanError("a generator names a directory that holds no package", directory));
     }
-    auto options = PlanOptions(ToolchainIdentity("ldc", toolchain), layoutLint(), registry.value.keys, pkgConfig);
+    // `lint` false only for oracle 8's revert check: without it a test can
+    // misread a dependency's aggregate.
+    auto options = PlanOptions(ToolchainIdentity("ldc", toolchain), lint ? layoutLint() : null, registry.value.keys,
+        pkgConfig);
     options.host = platform;
     options.resolveTool = &resolveTool;
     options.root = root;
@@ -558,6 +561,7 @@ struct RunOptions
     uint jobs;              /// the weight admitted at once; 0 for one per processor
     bool echo;              /// the reporter's lines also go to standard output
     bool failFast;          /// cancel the rest at the first failure
+    bool noLayoutLint;      /// plan without BGV4's lint (oracle 8's revert check)
     /// Changes the tools found on `PATH` before the toolchain is identified
     /// (oracle 9's substitutions).
     void delegate(ref Tools) adjustTools;
@@ -606,7 +610,7 @@ GraphRun runGraph(string root, string only, RunOptions o)
         tools.config = g.toolchain.config;
         tools.prefixMaps = g.toolchain.root.length ? [g.toolchain.root ~ "=/ldc"] : null;
     }
-    g.plan = planRepository(root, false, only, tools, g.toolchain.identity);
+    g.plan = planRepository(root, false, only, tools, g.toolchain.identity, !o.noLayoutLint);
     if (g.plan.error.length)
         return GraphRun(g.plan.error);
     if (g.plan.requests == 0)
