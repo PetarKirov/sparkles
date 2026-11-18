@@ -14,7 +14,7 @@ import sparkles.ui.components.command_palette : PaletteHit, paletteHitAt, Palett
 import sparkles.ui_app.pointer_cells : pointerCells;
 import sparkles.ui.components.editor : DragSelection, drawIndentGuides, editorLineSpans, editorView, EditorViewOptions, markSpans, PaintedRow, PaintedRows, TextMark, visualRows;
 import sparkles.ui.components.history_view : HistoryViewOptions, travelHistory = travelTo, viewHistory;
-import sparkles.ui.hit_ids : HitBlock;
+import sparkles.ui.hit_ids : HitKey, HitRegistry;
 import sparkles.ui.components.gutter : blankCell, GutterCell, GutterChannel, lineNumberCell, lineNumberWidth, withGutterCells;
 import sparkles.ui.editor.presentation : bracketMarks, CaretPosition, matchMarks, trailingWhitespaceMarks;
 import std.array : Appender, appender;
@@ -305,7 +305,7 @@ private struct ClipboardHooks
         presentApp(*app, host, AppTheme(defaultTwoslashPalette()), frame);
         app.paint(host, frame.tree, frame.frames);
         foreach (target; app.hits)
-            if (target.hitId == EditorApp.paletteRowHits[0])
+            if (target.hitId == app.hitIds.find(EditorApp.paletteRowsKey)[0])
                 return Point(target.rect.x + 1, target.rect.y);
         assert(false, "the palette draws its row");
     }
@@ -1105,21 +1105,44 @@ struct EditorApp
     private size_t paletteLastSelection = size_t.max, paletteLastRowCount = size_t.max;
     private PaletteTouch paletteTouch;
     private TouchPan editorTouch;
-    private enum size_t tabHitBase = 0x7400_0000;
-    private enum size_t dialogConfirmHit = 0x7500_0000, dialogCancelHit = 0x7500_0001;
-    private enum size_t dialogDiscardHit = 0x7600_0000;
-    private enum size_t restoreHit = 0x7800_0000;
-    private enum size_t paletteHit = 0x7900_0000;
-    private enum size_t newTabHit = 0x7900_0001;
-    private enum size_t saveHit = 0x7900_0002;
-    private enum size_t inspectorHit = 0x7900_0003;
-    private enum size_t paletteCloseHit = 0x7900_0004;
-    private enum paletteRowHits = HitBlock(0x7300_0000, 0xffff);
-    private enum size_t paletteQueryHit = 0x7300_ffff;
-    // One hit per undo revision the inspector lists, by creation index (EAP6).
-    private enum size_t undoHitBase = 0x7A00_0000, undoHitLimit = 0x7B00_0000;
-    // The find bar's controls: a command per hit, `findHitBase + Command`.
-    private enum size_t findHitBase = 0x7C00_0000, findOptionHitBase = 0x7C01_0000, findFieldHit = 0x7C02_0000;
+    /**
+    The editor's hit ids (`INP27`): `view` begins a frame and every control
+    asks for its key's block; a press decodes against the block the painted
+    frame asked for. A key a frame no longer draws — a closed dialog, a
+    hidden palette — is freed, so a late press on it names nothing.
+    */
+    private HitRegistry hitIds;
+    /// The header's controls, one block: `headerHit(HeaderControl.save)`.
+    private enum HeaderControl : size_t { palette, newTab, save, inspector }
+    /// A dialog's buttons; the key's instance is `dialogEpoch`, so each dialog has its own block.
+    private enum DialogControl : size_t { confirm, cancel, discard }
+    /// The palette's own controls beside its rows.
+    private enum PaletteControl : size_t { query, close }
+    private enum HitKey headerKey = HitKey("editor.header"), tabsKey = HitKey("editor.tabs"),
+        restoreKey = HitKey("editor.restore"), paletteRowsKey = HitKey("editor.palette.rows"),
+        paletteKey = HitKey("editor.palette"),
+        // One hit per undo revision the inspector lists, by creation index (EAP6).
+        undoKey = HitKey("editor.undo"),
+        // The find bar's controls: a command per hit (`Command` indexes the block), its
+        // switches by `FindOption`, and its two fields.
+        findCommandsKey = HitKey("editor.find.commands"), findOptionsKey = HitKey("editor.find.options"),
+        findFieldsKey = HitKey("editor.find.fields");
+
+    private size_t headerHit(HeaderControl control) @safe pure nothrow @nogc
+        => hitIds.block(headerKey, HeaderControl.max + 1)[control];
+    private HitKey dialogKey() const @safe pure nothrow @nogc => HitKey("editor.dialog", dialogEpoch);
+    private size_t dialogHit(DialogControl control) @safe pure nothrow @nogc
+        => hitIds.block(dialogKey, DialogControl.max + 1)[control];
+    private size_t paletteHit(PaletteControl control) @safe pure nothrow @nogc
+        => hitIds.block(paletteKey, PaletteControl.max + 1)[control];
+    /// The `T` member whose id in `key`'s block is `hit`.
+    private bool decode(T)(HitKey key, size_t hit, out T control) const
+    {
+        size_t index;
+        if (!hitIds.find(key).indexOf(hit, index) || index > T.max) return false;
+        control = cast(T) index;
+        return true;
+    }
 
     /// Retain the committed frame for event routing; no second layout/hit model.
     void paint(H)(ref H host, const WidgetTree tree, const Frame[] frames)
@@ -1143,15 +1166,19 @@ struct EditorApp
     The find bar (`EAP5`, `EAP7`): the query with its switches, its match
     summary and Previous/Next/Close, and, when replacing, the replacement
     with Replace and All (`viewFindBar`). Each control's hit is a command,
-    `findHitBase + Command`; the focused field shows the host's cursor.
+    indexing the find-commands block by `Command`; the focused field shows
+    the host's cursor.
     */
     private uint findBar(ref Builder b) @safe
     {
         const primary = document.field.state.selection.primary;
-        const hits = FindBarHits(previous: findHitBase + Command.findPrevious, next: findHitBase + Command.findNext,
-            close: findHitBase + Command.closeFind, replaceOne: findHitBase + Command.replaceOne,
-            replaceAll: findHitBase + Command.replaceAll, optionBase: findOptionHitBase,
-            queryField: findFieldHit, replacementField: findFieldHit + 1);
+        const commandHits = hitIds.block(findCommandsKey, Command.max + 1);
+        const fieldHits = hitIds.block(findFieldsKey, 2);
+        const hits = FindBarHits(previous: commandHits[Command.findPrevious], next: commandHits[Command.findNext],
+            close: commandHits[Command.closeFind], replaceOne: commandHits[Command.replaceOne],
+            replaceAll: commandHits[Command.replaceAll],
+            options: hitIds.block(findOptionsKey, FindOption.max + 1),
+            queryField: fieldHits[0], replacementField: fieldHits[1]);
         return viewFindBar(b, finder, primary.start, primary.end, FindBarViewOptions(hits: hits));
     }
 
@@ -1228,10 +1255,11 @@ struct EditorApp
     /**
     The inspector's undo tree (`EAP6`, `viewHistory`): up to `limit`
     revisions in creation order around the current one; revision `i`'s row
-    is hit `undoHitBase + i`, and a press travels there.
+    is the undo block's `i`-th id, and a press travels there.
     */
     private uint[] undoRows(ref Builder b, size_t limit) @safe
-        => viewHistory(b, document.field.state.history, HistoryViewOptions(limit: limit, hits: HitBlock(undoHitBase, undoHitLimit - undoHitBase),
+        => viewHistory(b, document.field.state.history, HistoryViewOptions(limit: limit,
+            hits: hitIds.block(undoKey, document.field.state.history.length),
             hint: "Alt+U earlier, Alt+Shift+U later; select one to travel"));
 
     /**
@@ -1318,9 +1346,10 @@ struct EditorApp
         {
             if (pointer.action == PointerAction.press)
             {
-                if (hit == dialogConfirmHit + 2 * dialogEpoch) execute(CommandId(Command.confirm));
-                else if (hit == dialogCancelHit + 2 * dialogEpoch) execute(CommandId(Command.cancel));
-                else if (hit == dialogDiscardHit + dialogEpoch) execute(CommandId(Command.discard));
+                DialogControl button;
+                if (decode(dialogKey, hit, button))
+                    execute(CommandId(button == DialogControl.confirm ? Command.confirm
+                        : button == DialogControl.cancel ? Command.cancel : Command.discard));
                 else if (pathDialog && displayed.pathSource == pathInput.state.text)
                 {
                     const offset = sourceOffsetAt(displayed.tree, displayed.frames, point);
@@ -1338,61 +1367,49 @@ struct EditorApp
                 choosePalette(paletteTarget(hit));
             return;
         }
-        if (hit == paletteHit)
+        const press = pointer.action == PointerAction.press;
+        HeaderControl control;
+        if (decode(headerKey, hit, control))
         {
-            if (pointer.action == PointerAction.press) execute(CommandId(Command.palette));
+            static immutable Command[HeaderControl.max + 1] commandOf =
+                [Command.palette, Command.newTab, Command.save, Command.inspector];
+            if (press) execute(CommandId(commandOf[control]));
             return;
         }
-        if (hit == newTabHit)
+        Command findCommand;
+        if (decode(findCommandsKey, hit, findCommand))
         {
-            if (pointer.action == PointerAction.press) execute(CommandId(Command.newTab));
+            if (press && finder.open) execute(CommandId(findCommand));
             return;
         }
-        if (hit == saveHit)
+        FindOption option;
+        if (decode(findOptionsKey, hit, option))
         {
-            if (pointer.action == PointerAction.press) execute(CommandId(Command.save));
+            if (press && finder.open) execute(CommandId(Command.findOption, cast(ubyte) option));
             return;
         }
-        if (hit == inspectorHit)
+        size_t index;
+        if (hitIds.find(findFieldsKey).indexOf(hit, index))
         {
-            if (pointer.action == PointerAction.press) execute(CommandId(Command.inspector));
+            if (press && finder.open) finder.onReplacement = index == 1 && finder.replacing;
             return;
         }
-        if (hit >= findHitBase && hit < findHitBase + 0x1_0000 && hit - findHitBase <= Command.max)
-        {
-            if (pointer.action == PointerAction.press && finder.open)
-                execute(CommandId(cast(Command)(hit - findHitBase)));
-            return;
-        }
-        if (hit >= findOptionHitBase && hit <= findOptionHitBase + FindOption.max)
-        {
-            if (pointer.action == PointerAction.press && finder.open)
-                execute(CommandId(Command.findOption, cast(ubyte)(hit - findOptionHitBase)));
-            return;
-        }
-        if (hit == findFieldHit || hit == findFieldHit + 1)
-        {
-            if (pointer.action == PointerAction.press && finder.open)
-                finder.onReplacement = hit == findFieldHit + 1 && finder.replacing;
-            return;
-        }
-        if (hit >= undoHitBase && hit < undoHitLimit)
+        if (hitIds.find(undoKey).indexOf(hit, index))
         {
             // The listed revisions belong to the document they were drawn for.
-            if (pointer.action == PointerAction.press && displayed !is null && displayed.document == document.id)
-                travelTo(hit - undoHitBase);
+            if (press && displayed !is null && displayed.document == document.id) travelTo(index);
             return;
         }
-        if (hit == restoreHit)
+        if (hitIds.find(restoreKey).contains(hit))
         {
-            if (pointer.action == PointerAction.press) execute(CommandId(Command.restoreSession));
+            if (press) execute(CommandId(Command.restoreSession));
             return;
         }
-        if (displayed !is null && hit >= tabHitBase && hit - tabHitBase < displayed.tabs.length)
+        if (displayed !is null && hitIds.find(tabsKey).indexOf(hit, index) && index < displayed.tabs.length)
         {
-            if (pointer.action == PointerAction.press)
-                foreach (index, tab; tabs)
-                    if (tab.id == displayed.tabs[hit - tabHitBase]) { activeTab = index; break; }
+            if (press)
+                foreach (i, tab; tabs)
+                    if (tab.id == displayed.tabs[index]) { activeTab = i; break; }
             return;
         }
         if (displayed is null) return;
@@ -1413,8 +1430,8 @@ struct EditorApp
 
     /// `hit` on the open palette; the header's Commands chip dismisses it too.
     private PaletteHit paletteTarget(size_t hit) const @safe
-        => paletteHitAt(hit, paletteChoices.length, PaletteViewOptions(rowHits: paletteRowHits, closeHit: paletteCloseHit),
-            paletteHit);
+        => paletteHitAt(hit, paletteChoices.length, PaletteViewOptions(rowHits: hitIds.find(paletteRowsKey),
+            closeHit: hitIds.find(paletteKey)[PaletteControl.close]), hitIds.find(headerKey)[HeaderControl.palette]);
 
     private void choosePalette(in PaletteHit target) @safe
     {
@@ -1942,6 +1959,9 @@ struct EditorApp
     /// One tree renders the tab strip, active field, command frontends and inspector.
     WidgetTree view(H)(ref H host)
     {
+        // Every id this frame draws is asked for below; what it no longer
+        // draws is freed (INP27).
+        hitIds.beginFrame();
         if (!recoveryExit) ensureInitialized();
         pollDocuments();
         if (languageCatalog !is null)
@@ -1973,15 +1993,19 @@ struct EditorApp
             uint[] actions;
             if (recovery.error.length)
             {
-                actions ~= chip(closing, "Retry", dialogConfirmHit + 2 * dialogEpoch, false, ControlSize(rows: 3));
-                actions ~= chip(closing, "Exit without recovery", dialogDiscardHit + dialogEpoch, false, ControlSize(rows: 3));
+                actions ~= chip(closing, "Retry", dialogHit(DialogControl.confirm), false, ControlSize(rows: 3));
+                actions ~= chip(closing, "Exit without recovery", dialogHit(DialogControl.discard), false, ControlSize(rows: 3));
             }
-            actions ~= chip(closing, "Esc: cancel exit", dialogCancelHit + 2 * dialogEpoch, false, ControlSize(rows: 3));
+            actions ~= chip(closing, "Esc: cancel exit", dialogHit(DialogControl.cancel), false, ControlSize(rows: 3));
             rows ~= closing.add(Widget(kind: WidgetKind.row, children: actions));
             return closing.finish(closing.add(Widget(kind: WidgetKind.column, children: rows)));
         }
         lastSize = [host.size.width, host.size.height];
-        if (settingsOpen()) return (() @trusted => settingsPane.buildView(settingsGeometry()))();
+        if (settingsOpen())
+        {
+            settingsPane.claimHits(hitIds);
+            return (() @trusted => settingsPane.buildView(settingsGeometry()))();
+        }
         if (filesBusy) host.wakeIn(8.msecs);
         if (!filesBusy && startupCommand != Command.none)
         {
@@ -2070,32 +2094,33 @@ struct EditorApp
             text: "Sparkles Editor", slot: Slot.docs, width: SizeSpec.grow()));
         if (mobileUi)
         {
-            headerItems ~= chip(b, "Commands", paletteHit, commands.palette.active, ControlSize(rows: 3));
-            headerItems ~= chip(b, "+ Tab", newTabHit, false, ControlSize(rows: 3));
-            headerItems ~= chip(b, "Save", saveHit, false, ControlSize(rows: 3));
-            headerItems ~= chip(b, "Inspect", inspectorHit, inspector, ControlSize(rows: 3));
+            headerItems ~= chip(b, "Commands", headerHit(HeaderControl.palette), commands.palette.active, ControlSize(rows: 3));
+            headerItems ~= chip(b, "+ Tab", headerHit(HeaderControl.newTab), false, ControlSize(rows: 3));
+            headerItems ~= chip(b, "Save", headerHit(HeaderControl.save), false, ControlSize(rows: 3));
+            headerItems ~= chip(b, "Inspect", headerHit(HeaderControl.inspector), inspector, ControlSize(rows: 3));
         }
         else
         {
             headerItems ~= b.add(Widget(kind: WidgetKind.text, text: "Commands (Ctrl+Shift+P)",
-                hitId: paletteHit, slot: commands.palette.active ? Slot.selection : Slot.docs,
+                hitId: headerHit(HeaderControl.palette), slot: commands.palette.active ? Slot.selection : Slot.docs,
                 padding: Insets(0, 1, 0, 1)));
             headerItems ~= b.add(Widget(kind: WidgetKind.text, text: "+ Tab",
-                hitId: newTabHit, slot: Slot.docs, padding: Insets(0, 1, 0, 1)));
+                hitId: headerHit(HeaderControl.newTab), slot: Slot.docs, padding: Insets(0, 1, 0, 1)));
             headerItems ~= b.add(Widget(kind: WidgetKind.text, text: "Save",
-                hitId: saveHit, slot: Slot.docs, padding: Insets(0, 1, 0, 1)));
+                hitId: headerHit(HeaderControl.save), slot: Slot.docs, padding: Insets(0, 1, 0, 1)));
             headerItems ~= b.add(Widget(kind: WidgetKind.text, text: "Inspect (F12)",
-                hitId: inspectorHit, slot: inspector ? Slot.selection : Slot.docs,
+                hitId: headerHit(HeaderControl.inspector), slot: inspector ? Slot.selection : Slot.docs,
                 padding: Insets(0, 1, 0, 1)));
         }
         children ~= b.add(Widget(kind: WidgetKind.row, children: headerItems, gap: 1,
             alignY: Alignment.center, height: SizeSpec.fixed(headerRows),
             padding: Insets(0, 1, 0, 1)));
         uint[] tabNodes;
+        const tabHits = hitIds.block(tabsKey, tabs.length ? tabs.length : 1);
         foreach (i, tab; tabs)
             tabNodes ~= b.add(Widget(kind: WidgetKind.text,
                 text: tab.name ~ (tab.dirty ? " •" : ""),
-                hitId: tabHitBase + i,
+                hitId: tabHits[i],
                 slot: i == activeTab ? Slot.selection : Slot.muted,
                 height: SizeSpec.fixed(tabRows),
                 padding: Insets(0, 1, 0, 1), paintBackground: true));
@@ -2119,11 +2144,11 @@ struct EditorApp
             uint[] actions;
             actions ~= chip(b, replacement !is null ? "Replace this time"
                 : dialog == Dialog.restoreOffer ? "Restore tabs"
-                : dialog == Dialog.dirtyClose ? "Save" : "Enter: confirm", dialogConfirmHit + 2 * dialogEpoch,
+                : dialog == Dialog.dirtyClose ? "Save" : "Enter: confirm", dialogHit(DialogControl.confirm),
                 false, ControlSize(rows: 3));
             if (dialog == Dialog.dirtyClose)
-                actions ~= chip(b, "Discard", dialogDiscardHit + dialogEpoch, false, ControlSize(rows: 3));
-            actions ~= chip(b, "Esc: cancel", dialogCancelHit + 2 * dialogEpoch, false, ControlSize(rows: 3));
+                actions ~= chip(b, "Discard", dialogHit(DialogControl.discard), false, ControlSize(rows: 3));
+            actions ~= chip(b, "Esc: cancel", dialogHit(DialogControl.cancel), false, ControlSize(rows: 3));
             children ~= b.add(Widget(kind: WidgetKind.row, children: actions, height: SizeSpec.fixed(3)));
             children ~= b.add(Widget(kind: WidgetKind.text, height: SizeSpec.grow()));
         }
@@ -2138,6 +2163,8 @@ struct EditorApp
                 const availRows = host.size.height > chromeReserved + paletteRowHeight
                     ? cast(size_t)(host.size.height - chromeReserved) / paletteRowHeight : 1;
                 const rows = availRows < maxPaletteRows ? availRows : maxPaletteRows;
+                // Smooth scrolling lists every row, so the block covers them all.
+                const paletteRowCount = commands.palette.snapshot.rowCount ? commands.palette.snapshot.rowCount : 1;
                 const int availWidth = host.size.width > 4 ? host.size.width - 2 : host.size.width;
                 const int paletteWidth = availWidth > 68 ? 68 : availWidth;
                 paletteScroll.content = cast(long) commands.palette.rowCount * paletteRowHeight;
@@ -2160,8 +2187,8 @@ struct EditorApp
                 }
                 const paletteView = viewCommandPalette(b, commands.palette, commands.query.state, context,
                     PaletteViewOptions(visibleRows: rows, rowHeight: paletteRowHeight,
-                        rowHits: paletteRowHits, queryHit: paletteQueryHit,
-                        closeHit: paletteCloseHit, compact: true, maxWidth: paletteWidth,
+                        rowHits: hitIds.block(paletteRowsKey, paletteRowCount), queryHit: paletteHit(PaletteControl.query),
+                        closeHit: paletteHit(PaletteControl.close), compact: true, maxWidth: paletteWidth,
                         smoothScroll: true, hostCursor: true,
                         scrollWhole: paletteScroll.motion.whole,
                         scrollFrac: paletteScroll.motion.frac,
@@ -2341,7 +2368,7 @@ struct EditorApp
                 children ~= b.add(Widget(kind: WidgetKind.text, slot: Slot.warn, text: "Recovery notice: " ~ recovery.notice));
             if (recovery.offerCount && !modal)
                 children ~= chip(b, text("Previous session available (", recovery.offerCount,
-                    ") • F4 R: restore"), restoreHit, false, ControlSize(rows: 3));
+                    ") • F4 R: restore"), hitIds.block(restoreKey).id, false, ControlSize(rows: 3));
         }
         children ~= b.add(Widget(kind: WidgetKind.text, text: statusPosition() ~ "  •  UTF-8  •  "
             ~ (document.dirty ? "Modified" : document.durabilityWarning.length ? "Written" : "Saved")
@@ -2697,6 +2724,41 @@ struct EditorApp
     assert(frame.frames[app.displayed.rows[0].node].rect.origin.x == x - 2, "the gutter's two cells are gone");
 }
 
+/// Every id a frame draws is issued by the registry, and a control keeps its
+/// id across a frame that adds others (INP27, INP28; editor M-a).
+@("editor.app.hitIdsComeFromTheRegistry")
+@safe unittest
+{
+    import sparkles.ui.hit_ids : HitKey;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : FrameSnapshot, presentApp;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    EditorApp app;
+    app.document.field.insert("abc", false, MonoTime.currTime);
+    RecordingHost host;
+    FrameSnapshot frame;
+    presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
+    const save = app.hitIds.find(EditorApp.headerKey)[EditorApp.HeaderControl.save];
+    assert(save != 0);
+
+    // A frame that adds the inspector and the replace bar keeps the header's ids.
+    app.execute(CommandId(Command.inspector));
+    app.execute(CommandId(Command.replace));
+    presentApp(app, host, AppTheme(defaultTwoslashPalette()), frame);
+    assert(app.hitIds.find(EditorApp.headerKey)[EditorApp.HeaderControl.save] == save);
+
+    size_t drawn;
+    foreach (node; frame.tree.nodes)
+    {
+        if (node.hitId == 0) continue;
+        HitKey owner;
+        size_t index;
+        assert(app.hitIds.ownerOf(node.hitId, owner, index), "a drawn id no key was issued");
+        ++drawn;
+    }
+    assert(drawn > 8, "the header, tabs, find bar and undo rows are all hit-testable");
+}
+
 /// The inspector lists the undo tree, a branch point included, and a press on
 /// an abandoned revision brings its text back (EAP6).
 @("editor.app.undoInspector")
@@ -2721,11 +2783,12 @@ struct EditorApp
     app.paint(host, frame.tree, frame.frames);
     string[] listed;
     size_t abandoned = size_t.max;
+    const undo = app.hitIds.find(EditorApp.undoKey);
     foreach (i, node; frame.tree.nodes)
-        if (node.hitId >= EditorApp.undoHitBase && node.hitId < EditorApp.undoHitLimit)
+        if (undo.contains(node.hitId))
         {
             listed ~= node.text.idup;
-            if (node.hitId == EditorApp.undoHitBase + 1) abandoned = i;
+            if (node.hitId == undo[1]) abandoned = i;
         }
     assert(listed == ["○ root  0 B  ⑂ 2 branches", "○ #1 from root  3 B", "● #2 from root  2 B"], listed[0]);
     const origin = frame.frames[abandoned].rect.origin;

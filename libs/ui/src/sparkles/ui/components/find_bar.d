@@ -13,6 +13,7 @@ import sparkles.ui.components.editor : editorView, EditorViewOptions;
 import sparkles.ui.editor.search : FindBar, FindOption;
 import sparkles.ui.editor.state : EditorState;
 import sparkles.ui.geometry : Insets, SizeSpec;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 
@@ -23,8 +24,9 @@ struct FindBarHits
     size_t previous, next, close;
     /// Replace the current match, and every match.
     size_t replaceOne, replaceAll;
-    /// The first switch's identity: switch `o` is `optionBase + o` (`FindOption`).
-    size_t optionBase;
+    /// The switches' identities: switch `o` is `options[o]` (`FindOption`), from the
+    /// host's registry (`INP27`).
+    HitBlock options;
     /// The query and replacement fields.
     size_t queryField, replacementField;
 }
@@ -59,7 +61,7 @@ uint viewFindBar(ref Builder b, ref const FindBar bar, size_t selectionStart, si
         => b.add(Widget(kind: WidgetKind.text, text: label, hitId: hit,
             slot: on ? Slot.selection : Slot.docs, paintBackground: on, padding: Insets(0, 1, 0, 1)));
     uint option(string label, FindOption which, bool on)
-        => b.add(Widget(kind: WidgetKind.text, text: label, hitId: options.hits.optionBase + which,
+        => b.add(Widget(kind: WidgetKind.text, text: label, hitId: options.hits.options[which],
             slot: on ? Slot.selection : Slot.muted, paintBackground: on, padding: Insets(0, 1, 0, 1)));
     uint field(in EditorState state, bool focused, string placeholder, size_t hit)
     {
@@ -108,7 +110,7 @@ int findBarRows(in FindBar bar) @safe pure nothrow @nogc => bar.replacing ? 2 : 
     bar.refresh(Text("ab xx ab"), 1);
     Builder b;
     const hits = FindBarHits(previous: 10, next: 11, close: 12, replaceOne: 13, replaceAll: 14,
-        optionBase: 20, queryField: 30, replacementField: 31);
+        options: HitBlock(20, 3), queryField: 30, replacementField: 31);
     const tree = b.finish(viewFindBar(b, bar, 6, 8, FindBarViewOptions(hits: hits)));
     size_t[string] hitOf;
     bool[string] onOf;
