@@ -22,7 +22,9 @@ built without `-preview=in` and would mangle them apart.
 */
 module sparkles.build_primitives.dub_recipe;
 
-import sparkles.build_primitives.dub_manifest : DubManifest, valuesOf;
+import std.experimental.allocator.mallocator : Mallocator;
+
+import sparkles.build_primitives.dub_manifest : decodeDubManifestLenient, valuesOf;
 import sparkles.wired.sdl : SdlDocument;
 
 /// A configuration a recipe declares.
@@ -191,12 +193,14 @@ DubRecipe parseSdlRecipe(const(char)[] text) @safe pure
     return parsed.hasValue ? recipeOf(parsed.document) : DubRecipe.init;
 }
 
-private DubRecipe recipeOf(Allocator)(ref const SdlDocument!Allocator document)
+// Decoded through `dub-manifest`, which compiles the schema: instantiating
+// `fromSDL!DubManifest` here would compile it again (some 1,700 functions).
+private DubRecipe recipeOf(ref const SdlDocument!Mallocator document) @safe pure
 {
-    import sparkles.wired.sdl : fromSDL, SdlQualifiedName;
+    import sparkles.wired.sdl : SdlQualifiedName;
 
     auto root = document.root;
-    const decoded = fromSDL!DubManifest(root);
+    const decoded = decodeDubManifestLenient(document);
     if (decoded.hasError)
         return DubRecipe.init;
     const manifest = decoded.value;

@@ -26,13 +26,14 @@ is `sparkles.build_primitives.resolve`'s to compute.
 module sparkles.build_primitives.dub_manifest;
 
 import std.conv : text;
+import std.experimental.allocator.mallocator : Mallocator;
 
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.wired : WireName, WireOptional, WireSkip;
-import sparkles.wired.sdl : OwnedSdlExtras, Sdl, SdlAttribute, SdlError, SdlErrorCode,
-    SdlErrorStage, SdlExpected, SdlExtra, SdlExtraChannel, SdlPosition, SdlSpan, SdlTagValue,
-    fromSDL, locateEmbeddedRecipe, parseEmbeddedSdlDocument, parseSdlDocument, readSDLFile,
-    sdlDubRecipe, sdlErr, sdlOk, writeEmbeddedRendering;
+import sparkles.wired.sdl : OwnedSdlExtras, Sdl, SdlAttribute, SdlDocument, SdlError,
+    SdlErrorCode, SdlErrorStage, SdlExpected, SdlExtra, SdlExtraChannel, SdlPosition, SdlSpan,
+    SdlTagValue, fromSDL, locateEmbeddedRecipe, parseEmbeddedSdlDocument, parseSdlDocument,
+    readSDLFile, sdlDubRecipe, sdlErr, sdlOk, writeEmbeddedRendering;
 
 /// One occurrence of a list-valued setting: its values and, when the
 /// occurrence is platform-qualified, the platform (`platform="linux-ldc"`).
@@ -390,6 +391,30 @@ SdlExpected!DubManifest parseEmbeddedDubManifest(scope const(char)[] host,
     if (embedded.parsed.hasError)
         return sdlErr!DubManifest(embedded.parsed.error);
     return decodeRecipe(embedded.parsed.document, sourceName);
+}
+
+/**
+Decodes the recipe a parsed `dub.sdl` document holds, as `fromSDL!DubManifest`
+does: leniently, skipping what the schema does not name, which
+$(LREF parseDubManifest) rejects. Not a template, so the schema's decoder,
+over a thousand functions, is compiled once, in this package, rather than
+again in each package that reads recipes.
+*/
+SdlExpected!DubManifest decodeDubManifestLenient(ref const SdlDocument!Mallocator document) @safe pure
+    => fromSDL!DubManifest(document.root);
+
+///
+@("build_primitives.dub_manifest.decodeDubManifestLenient.skipsUnknownTags")
+@safe pure unittest
+{
+    auto parsed = parseSdlDocument!sdlDubRecipe("name \"x\"\nunheardOf \"y\"\nconfiguration \"c\" {\n}\n");
+    assert(parsed.hasValue);
+    const decoded = decodeDubManifestLenient(parsed.document);
+    assert(decoded.hasValue);
+    assert(decoded.value.name == "x");
+    assert(decoded.value.configurations.length == 1 && decoded.value.configurations[0].name == "c");
+    // The strict reader rejects the tag the lenient one skipped.
+    assert(parseDubManifest("name \"x\"\nunheardOf \"y\"\n").hasError);
 }
 
 // Decodes a parsed recipe document, rejecting what the schema does not name.
