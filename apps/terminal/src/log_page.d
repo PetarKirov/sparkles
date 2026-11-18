@@ -30,13 +30,14 @@ import sparkles.fuzzy.match : MatcherWorkspace;
 import sparkles.input.events : Key, KeyEvent, WheelEvent;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.ui.geometry : Insets, Point, Rect, SizeSpec;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.style : Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 
 import chrome : button, column, label, row, uiLabel;
 import settings : ButtonLabels;
-import page_kit : bodyRowsFor, chip, finishPage, firstOwnHit, header, Page, PageServices,
+import page_kit : bodyRowsFor, chip, finishPage, header, Page, PageServices,
     ScrollBody, scrollSeconds,
     fitCells, searchRow;
 import surfaces : SurfaceContext;
@@ -336,15 +337,18 @@ private bool containsFolded(scope const(char)[] hay, scope const(char)[] needle)
     assert(hits.length && hits[0] == 4);
 }
 
-/// Hit ids.
-private enum Hit : size_t
+/// The page's controls, by their index in its `"terminal.logs"` hit block:
+/// the four level chips (`LevelChip`'s order), then the rest.
+private enum LogControl : ubyte
 {
-    level = firstOwnHit, // + LevelChip
-    source = firstOwnHit + 8,
+    levelDebug,
+    levelInfo,
+    levelWarn,
+    levelError,
+    source,
     previous,
     copy,
     share,
-    follow,
 }
 
 /// The log page.
@@ -352,6 +356,7 @@ final class LogPage : Page
 {
     private RingCoreLogger ring;
     private string previousPath;
+    private HitBlock controls; // its controls, as the last build numbered them
 
     private LogLine[] current; // copied from the ring
     private ulong nextSeq;     // the ring's next entry to copy
@@ -548,10 +553,12 @@ final class LogPage : Page
 
     private float frac = 0; // of the first entry, scrolled past
 
-    override WidgetTree buildPage(in SurfaceContext ctx, int cols, int rows) @safe
+    override WidgetTree buildPage(in SurfaceContext ctx, int cols, int rows,
+        ref HitRegistry hits) @safe
     {
         import std.conv : text;
 
+        controls = hits.block(HitKey("terminal.logs"), LogControl.max + 1);
         if (!showingPrevious)
             pull();
         refilter();
@@ -563,20 +570,23 @@ final class LogPage : Page
         Builder b;
         uint[] actions;
         if (services.share !is null)
-            actions ~= button(b, iconText(ActionIcon.share), "Share", labels, Hit.share, minRows: ctx.targetRows);
-        const head = header(b, showingPrevious ? "Logs · previous run" : "Logs", ctx, actions);
+            actions ~= button(b, iconText(ActionIcon.share), "Share", labels,
+                controls[LogControl.share], minRows: ctx.targetRows);
+        const head = header(b, showingPrevious ? "Logs · previous run" : "Logs", ctx, backHit,
+            actions);
 
         const search = searchRow(b, query, searching, "Search · text, source:am, /regex/",
-            ctx.targetRows);
+            searchHit, ctx.targetRows);
 
         static immutable string[4] names = ["debug", "info", "warn", "error"];
         static immutable string[4] letters = ["D", "I", "W", "E"];
         uint[] chips;
         foreach (i, name; names)
-            chips ~= chip(b, narrow ? letters[i] : name, levels[i], Hit.level + i, ctx.targetRows);
+            chips ~= chip(b, narrow ? letters[i] : name, levels[i], controls[LogControl.levelDebug + i],
+                ctx.targetRows);
         chips ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
         chips ~= chip(b, (narrow ? "" : "source: ") ~ (source.length ? source : "all") ~ " ▾", source.length > 0,
-            Hit.source, ctx.targetRows);
+            controls[LogControl.source], ctx.targetRows);
         const filters = b.add(Widget(kind: WidgetKind.row, children: chips, gap: 1,
             width: SizeSpec.grow(), padding: Insets(0, 1, 0, 1)));
 
@@ -617,9 +627,10 @@ final class LogPage : Page
             b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()))];
         if (previousPath.length)
             foot ~= button(b, "⟲", showingPrevious ? "This run" : "Previous run", ctx.labels,
-                Hit.previous, minRows: ctx.targetRows);
+                controls[LogControl.previous], minRows: ctx.targetRows);
         if (services.copy !is null)
-            foot ~= button(b, iconText(ActionIcon.copy), "Copy", ctx.labels, Hit.copy, minRows: ctx.targetRows);
+            foot ~= button(b, iconText(ActionIcon.copy), "Copy", ctx.labels, controls[LogControl.copy],
+                minRows: ctx.targetRows);
         const footer = b.add(Widget(kind: WidgetKind.row, children: foot, gap: 1,
             alignY: Alignment.center, width: SizeSpec.grow(), padding: Insets(0, 1, 0, 1),
             slot: Slot.surfaceSunken, paintBackground: true));
@@ -685,22 +696,32 @@ final class LogPage : Page
 
     override bool onHit(size_t id) @system
     {
-        if (id >= Hit.level && id < Hit.level + 4)
+        size_t i;
+        if (controls.indexOf(id, i))
+            press(cast(LogControl) i);
+        return false;
+    }
+
+    private void press(LogControl c) @system
+    {
+        final switch (c)
         {
-            levels[id - Hit.level] = !levels[id - Hit.level];
-            stale = true;
-            following = true;
-            return false;
-        }
-        switch (id)
-        {
-            case Hit.source:
+            case LogControl.levelDebug:
+            case LogControl.levelInfo:
+            case LogControl.levelWarn:
+            case LogControl.levelError:
+                const level = c - LogControl.levelDebug;
+                levels[level] = !levels[level];
+                stale = true;
+                following = true;
+                break;
+            case LogControl.source:
                 stepSource();
                 break;
-            case Hit.previous:
+            case LogControl.previous:
                 togglePrevious();
                 break;
-            case Hit.copy:
+            case LogControl.copy:
                 if (services.copy !is null)
                 {
                     services.copy(visibleText());
@@ -708,31 +729,31 @@ final class LogPage : Page
                         services.toast("Copied the log");
                 }
                 break;
-            case Hit.share:
+            case LogControl.share:
                 if (services.share !is null)
                     services.share(visibleText());
                 break;
-            default:
-                break;
         }
-        return false;
     }
 
     override bool onKey(in KeyEvent k) @system
     {
         if (k.key != Key.char_)
             return false;
+        LogControl c;
         switch (k.ch)
         {
-            case 'd': return onHit(Hit.level + LevelChip.debug_) || true;
-            case 'i': return onHit(Hit.level + LevelChip.info) || true;
-            case 'w': return onHit(Hit.level + LevelChip.warn) || true;
-            case 'e': return onHit(Hit.level + LevelChip.error) || true;
-            case 's': return onHit(Hit.source) || true;
-            case 'p': return onHit(Hit.previous) || true;
-            case 'c': return onHit(Hit.copy) || true;
+            case 'd': c = LogControl.levelDebug; break;
+            case 'i': c = LogControl.levelInfo; break;
+            case 'w': c = LogControl.levelWarn; break;
+            case 'e': c = LogControl.levelError; break;
+            case 's': c = LogControl.source; break;
+            case 'p': c = LogControl.previous; break;
+            case 'c': c = LogControl.copy; break;
             default: return false;
         }
+        press(c);
+        return true;
     }
 
     /// The source chip's next choice: all, then each source seen, in order.
@@ -833,6 +854,7 @@ version (unittest)
     SurfaceContext ctx;
     ctx.cellW = ctx.cellH = 1;
     ctx.area = Rect(0, 0, 80, 20);
+    HitRegistry hits;
     auto ring = new RingCoreLogger(LogLevel.all);
     foreach (i; 0 .. 40)
     {
@@ -841,25 +863,25 @@ version (unittest)
         ringWrite(ring, LogLevel.info, text("entry ", i));
     }
     auto p = new LogPage(ring, null, PageServices.init);
-    auto rows = rowTexts(p.build(ctx, 80));
+    auto rows = rowTexts(p.build(ctx, 80, hits));
     assert(rows.length == p.bodyRows && rows[$ - 1] == "entry 39", "following: the tail");
 
     // A new entry while following: it shows.
     ringWrite(ring, LogLevel.info, "entry 40");
-    rows = rowTexts(p.build(ctx, 80));
+    rows = rowTexts(p.build(ctx, 80, hits));
     assert(rows[$ - 1] == "entry 40");
 
     // Scrolled up, a new entry never moves the reader (`TPG8`).
     p.scrolled(-5);
-    const before = rowTexts(p.build(ctx, 80));
+    const before = rowTexts(p.build(ctx, 80, hits));
     ringWrite(ring, LogLevel.info, "entry 41");
-    assert(rowTexts(p.build(ctx, 80)) == before);
+    assert(rowTexts(p.build(ctx, 80, hits)) == before);
     assert(!p.following);
 
     // Back to the bottom: following again, the new entry shows.
     p.scrolled(1000);
     assert(p.following);
-    assert(rowTexts(p.build(ctx, 80))[$ - 1] == "entry 41");
+    assert(rowTexts(p.build(ctx, 80, hits))[$ - 1] == "entry 41");
 }
 
 @("log_page.LogPage.chipsSearchAndCopy")
@@ -873,20 +895,21 @@ version (unittest)
     SurfaceContext ctx;
     ctx.cellW = ctx.cellH = 1;
     ctx.area = Rect(0, 0, 80, 30);
+    HitRegistry hits;
     auto ring = new RingCoreLogger(LogLevel.all);
     ringWrite(ring, LogLevel.info, "server on am.sock");
     ringWrite(ring, LogLevel.trace, "accepted a connection");
     ringWrite(ring, LogLevel.warning, "request refused");
     auto p = new LogPage(ring, null, s);
-    assert(rowTexts(p.build(ctx, 80)) == ["server on am.sock", "request refused"]);
+    assert(rowTexts(p.build(ctx, 80, hits)) == ["server on am.sock", "request refused"]);
 
     // `d` turns debug on; `w` turns warnings off.
     assert(p.key(KeyEvent(Key.char_, 'd')) && p.key(KeyEvent(Key.char_, 'w')));
-    assert(rowTexts(p.build(ctx, 80)) == ["server on am.sock", "accepted a connection"]);
+    assert(rowTexts(p.build(ctx, 80, hits)) == ["server on am.sock", "accepted a connection"]);
 
     // Searching ranks by sparkles:fuzzy.
     p.setQuery("conection");
-    assert(rowTexts(p.build(ctx, 80)) == ["accepted a connection"]);
+    assert(rowTexts(p.build(ctx, 80, hits)) == ["accepted a connection"]);
 
     // Copy takes what the filters keep.
     assert(p.key(KeyEvent(Key.char_, 'c')));
@@ -906,10 +929,11 @@ version (unittest)
     SurfaceContext ctx;
     ctx.cellW = ctx.cellH = 1;
     ctx.area = Rect(0, 0, 80, 20);
+    HitRegistry hits;
     auto p = new LogPage(testRing(3), path, PageServices.init);
-    assert(rowTexts(p.build(ctx, 80)).length == 3);
+    assert(rowTexts(p.build(ctx, 80, hits)).length == 3);
     assert(p.key(KeyEvent(Key.char_, 'p')));
-    assert(rowTexts(p.build(ctx, 80)) == ["started", "crashed ⏎   at here"]);
+    assert(rowTexts(p.build(ctx, 80, hits)) == ["started", "crashed ⏎   at here"]);
     assert(p.key(KeyEvent(Key.char_, 'p')));
-    assert(rowTexts(p.build(ctx, 80)).length == 3);
+    assert(rowTexts(p.build(ctx, 80, hits)).length == 3);
 }

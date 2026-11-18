@@ -31,6 +31,7 @@ import sparkles.terminal_view.component : TerminalView;
 import sparkles.terminal_view.selection : Granularity, SelectionBounds, SelectionEnd;
 import sparkles.ui.components.dock : PaneId;
 import sparkles.ui.geometry : Insets, Point, Rect, SizeSpec;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.style : Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
@@ -446,11 +447,8 @@ struct SelectionGeometry
     int lift;
 }
 
-private enum size_t hitBase = 0x5E10;
-private enum size_t hitFirst = hitBase + 0x100; // a swiped row's first item
-
-private MenuAction actionOf(size_t id) @safe pure nothrow @nogc
-    => cast(MenuAction)(id - hitBase);
+/// The menu's hit key (`INP27`): one block, an id per `MenuAction`.
+private enum HitKey menuKey = HitKey("terminal.selection-menu");
 
 /// The selection menu, in any presentation (`TSE5`, `TSE7`).
 final class ActionMenu : Surface, SelfPlaced
@@ -478,6 +476,7 @@ final class ActionMenu : Surface, SelfPlaced
     private Presentation shown;
     private bool fellBack;
     private int liftShown;
+    private HitBlock hits_; // the actions' ids, as the last build numbered them
     /// The layer as last placed (the controller's swipe needs the row).
     Layer layer;
 
@@ -519,17 +518,26 @@ final class ActionMenu : Surface, SelfPlaced
 
     // ── Surface ─────────────────────────────────────────────────────────
 
-    WidgetTree build(in SurfaceContext ctx, int cols) @safe
-        => buildAs(shown, ctx, cols);
+    WidgetTree build(in SurfaceContext ctx, int cols, ref HitRegistry hits) @safe
+    {
+        hits_ = hits.block(menuKey, MenuAction.max + 1);
+        return buildAs(shown, ctx, cols);
+    }
 
     Placement placement() const @safe
         => shown == Presentation.sheet ? Placement.sheet : Placement.anchored;
 
+    /// The id the last build gave action `a`.
+    size_t hitOf(MenuAction a) const @safe pure nothrow @nogc => hits_[a];
+
     bool activate(size_t id) @system
     {
-        if (id < hitBase || id > hitBase + MenuAction.max)
-            return false;
-        const a = actionOf(id);
+        size_t i;
+        return hits_.indexOf(id, i) && run(cast(MenuAction) i);
+    }
+
+    private bool run(MenuAction a) @system
+    {
         if (a == MenuAction.more)
         {
             showingMore = true;
@@ -544,7 +552,7 @@ final class ActionMenu : Surface, SelfPlaced
     bool confirm() @system
     {
         const list = current;
-        return list.length ? activate(hitBase + list[focus < list.length ? focus : 0]) : false;
+        return list.length ? run(list[focus < list.length ? focus : 0]) : false;
     }
 
     void cancel() @system
@@ -575,8 +583,9 @@ final class ActionMenu : Surface, SelfPlaced
 
     // ── placement ───────────────────────────────────────────────────────
 
-    Layer placeIn(in SurfaceContext ctx) @safe
+    Layer placeIn(in SurfaceContext ctx, ref HitRegistry hits) @safe
     {
+        hits_ = hits.block(menuKey, MenuAction.max + 1);
         const cols = ctx.area.width / ctx.cellW, rows = ctx.area.height / ctx.cellH;
         Layer l;
         if (asked == Presentation.card || asked == Presentation.compact
@@ -688,7 +697,7 @@ final class ActionMenu : Surface, SelfPlaced
             padding: Insets(0, 1, 0, 1),
             alignX: Alignment.center,
             alignY: Alignment.center,
-            hitId: cut ? 0 : hitBase + a,
+            hitId: cut ? 0 : hits_[a],
         ));
     }
 
@@ -756,7 +765,7 @@ final class ActionMenu : Surface, SelfPlaced
         import chrome : button;
 
         const look = looks[a];
-        const btn = button(b, look.icon, look.label, ctx.labels, hitBase + a,
+        const btn = button(b, look.icon, look.label, ctx.labels, hits_[a],
             minRows: ctx.targetRows);
         b.nodes[btn].width = SizeSpec.grow();
         return btn;
@@ -851,7 +860,7 @@ final class ActionMenu : Surface, SelfPlaced
                     ]))],
                     width: SizeSpec.fixed(menuW),
                     padding: Insets(0, 1, 0, 1),
-                    hitId: hitBase + a,
+                    hitId: hits_[a],
                     slot: focused ? Slot.chromeFocused : Slot.surfaceRaised,
                     paintBackground: focused,
                     // A rule between X1's groups.
@@ -1693,31 +1702,32 @@ version (unittest)
     SurfaceContext ctx = {area: Rect(0, 0, 400, 600), cellW: 10, cellH: 20, targetRows: 2,
         labels: ButtonLabels.iconText};
     auto r = new Recorder;
+    HitRegistry hits;
     auto m = new ActionMenu(r, MenuFacts(chars: 23, canPaste: true, canShare: true,
         canAutofill: true), Presentation.sheet);
-    const l = m.placeIn(ctx);
+    const l = m.placeIn(ctx, hits);
     assert(l.y + l.bounds.height * 20 == 600, "along the bottom");
     assert(shows(l, "23 characters selected"));
     // 38 columns of row: four whole items and a cut one, which hits nothing.
     const ids = hitIds(l);
-    assert(ids[0 .. 4] == [hitBase + MenuAction.copy, hitBase + MenuAction.paste,
-        hitBase + MenuAction.selectAll, hitBase + MenuAction.share]);
+    assert(ids[0 .. 4] == [m.hitOf(MenuAction.copy), m.hitOf(MenuAction.paste),
+        m.hitOf(MenuAction.selectAll), m.hitOf(MenuAction.share)]);
     assert(shows(l, "Find"), "the fifth item shows, cut off");
     // Autofill is a row of its own.
-    assert(ids[$ - 1] == hitBase + MenuAction.autofill);
+    assert(ids[$ - 1] == m.hitOf(MenuAction.autofill));
 
     // Swiped to the end: the row ends in More, which lists what is hidden.
     m.swipe(10);
-    const end = m.placeIn(ctx);
-    assert(hitIds(end)[0 .. 4] == [hitBase + MenuAction.share, hitBase + MenuAction.find,
-        hitBase + MenuAction.run, hitBase + MenuAction.more]);
-    assert(!m.activate(hitBase + MenuAction.more) && m.listing, "More opens its list");
-    const more = m.placeIn(ctx);
+    const end = m.placeIn(ctx, hits);
+    assert(hitIds(end)[0 .. 4] == [m.hitOf(MenuAction.share), m.hitOf(MenuAction.find),
+        m.hitOf(MenuAction.run), m.hitOf(MenuAction.more)]);
+    assert(!m.activate(m.hitOf(MenuAction.more)) && m.listing, "More opens its list");
+    const more = m.placeIn(ctx, hits);
     assert(shows(more, "Copy") && shows(more, "Select all") && !shows(more, "Share"),
         "the items swiped out of view");
 
     // An action runs and closes the menu.
-    assert(m.activate(hitBase + MenuAction.copy));
+    assert(m.activate(m.hitOf(MenuAction.copy)));
     assert(r.done == [MenuAction.copy] && r.closed);
 }
 
@@ -1726,18 +1736,19 @@ version (unittest)
 {
     SurfaceContext ctx = {area: Rect(0, 0, 400, 600), cellW: 10, cellH: 20, targetRows: 2};
     auto r = new Recorder;
+    HitRegistry hits;
     auto m = new ActionMenu(r, MenuFacts(chars: 4, canPaste: true, canShare: true),
         Presentation.card);
     m.geo.box = Rect(60, 400, 40, 20);
     m.geo.handles = [Rect(40, 420, 20, 20), Rect(100, 420, 20, 20)];
     m.geo.bottom = 440;
     m.geo.cellH = 20;
-    const card = m.placeIn(ctx);
+    const card = m.placeIn(ctx, hits);
     assert(m.presentation == Presentation.card);
     assert(card.y + card.bounds.height * 20 <= 400, "above the selection, not over it");
     // B1: Copy, Paste, All, Find, then More holding Share and Run.
-    assert(hitIds(card) == [hitBase + MenuAction.copy, hitBase + MenuAction.paste,
-        hitBase + MenuAction.selectAll, hitBase + MenuAction.find, hitBase + MenuAction.more]);
+    assert(hitIds(card) == [m.hitOf(MenuAction.copy), m.hitOf(MenuAction.paste),
+        m.hitOf(MenuAction.selectAll), m.hitOf(MenuAction.find), m.hitOf(MenuAction.more)]);
 
     // A selection filling the pane: no room for a card — a sheet (B3), and
     // the content rises so the selection's end stays above it (B2).
@@ -1746,7 +1757,7 @@ version (unittest)
     m.geo.box = Rect(0, 40, 400, 520);
     m.geo.handles = [Rect.init, Rect(380, 560, 20, 20)];
     m.geo.bottom = 580;
-    const sheet = m.placeIn(ctx);
+    const sheet = m.placeIn(ctx, hits);
     assert(m.presentation == Presentation.sheet);
     assert(shows(sheet, "4 characters selected · no room for a card, shown as a sheet"));
     assert(lifted > 0 && 580 - lifted * 20 <= sheet.y, "the end handle above the sheet");
@@ -1755,14 +1766,14 @@ version (unittest)
     const first = lifted;
     m.geo.lift = lifted;
     m.geo.bottom = 580 - lifted * 20;
-    cast(void) m.placeIn(ctx);
+    cast(void) m.placeIn(ctx, hits);
     assert(lifted == first && r.notes.length == 1);
 
     // Compact: icon-only.
     auto c = new ActionMenu(r, MenuFacts(chars: 4), Presentation.compact);
     c.geo.box = Rect(60, 400, 40, 20);
     c.geo.cellH = 20;
-    const pill = c.placeIn(ctx);
+    const pill = c.placeIn(ctx, hits);
     assert(shows(pill, iconText(ActionIcon.copy)) && !shows(pill, "Copy"));
 }
 
@@ -1771,17 +1782,18 @@ version (unittest)
 {
     SurfaceContext ctx = {area: Rect(0, 0, 960, 560), cellW: 10, cellH: 20};
     auto r = new Recorder;
+    HitRegistry hits;
     auto m = new ActionMenu(r, MenuFacts(chars: 8, canPaste: true, link: "https://ex.org"),
         Presentation.context);
     m.shortcuts[MenuAction.copy] = "Ctrl+Shift+C";
     m.pointer = Point(240, 170);
     m.geo.box = Rect(100, 160, 230, 20);
-    const l = m.placeIn(ctx);
+    const l = m.placeIn(ctx, hits);
     assert(l.y >= 180, "below the selection's row");
     assert(shows(l, iconText(ActionIcon.copy) ~ " Copy") && shows(l, "Ctrl+Shift+C"));
-    assert(hitIds(l) == [hitBase + MenuAction.copy, hitBase + MenuAction.paste,
-        hitBase + MenuAction.selectAll, hitBase + MenuAction.find, hitBase + MenuAction.run,
-        hitBase + MenuAction.more]);
+    assert(hitIds(l) == [m.hitOf(MenuAction.copy), m.hitOf(MenuAction.paste),
+        m.hitOf(MenuAction.selectAll), m.hitOf(MenuAction.find), m.hitOf(MenuAction.run),
+        m.hitOf(MenuAction.more)]);
     // Arrow keys move the highlight; Enter runs it.
     KeyEvent down;
     down.key = Key.down;

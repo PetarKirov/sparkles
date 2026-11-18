@@ -28,16 +28,22 @@ import sparkles.ui.style : FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
+
 import chrome : band, button, label, row, uiLabel;
 import surfaces : Placement, Surface, SurfaceContext;
 
-/// Hit ids.
-private enum Hit : size_t
+/// The paste guard's buttons, by their index in its hit block.
+private enum PasteButton : ubyte
 {
-    none,
-    cancel = 0xC0F1,
+    cancel,
     oneLine,
     paste,
+}
+
+/// The clipboard read's buttons, by their index in its hit block.
+private enum ReadButton : ubyte
+{
     allowOnce,
     allowAlways,
     deny,
@@ -54,6 +60,7 @@ final class PasteConfirm : Surface
     private TerminalView* pane;
     private size_t lines;
     private string text;
+    private HitBlock hits_; // its buttons, as the last build numbered them
 
     /// `text` is the paste already stripped of controls (`TPR18`); `lines` its
     /// line count.
@@ -64,8 +71,9 @@ final class PasteConfirm : Surface
         this.text = text;
     }
 
-    WidgetTree build(in SurfaceContext ctx, int cols) @safe
+    WidgetTree build(in SurfaceContext ctx, int cols, ref HitRegistry hits) @safe
     {
+        hits_ = hits.block(HitKey("terminal.paste-confirm"), PasteButton.max + 1);
         import std.algorithm.iteration : splitter;
         import std.conv : to;
 
@@ -85,9 +93,10 @@ final class PasteConfirm : Surface
             body_ ~= label(b, line.length ? line : " ", Slot.code);
         }
         body_ ~= row(b, [
-            button(b, "×", "Cancel", ctx.labels, Hit.cancel, minRows: ctx.targetRows),
-            button(b, "⏎", "As one line", ctx.labels, Hit.oneLine, minRows: ctx.targetRows),
-            button(b, iconText(ActionIcon.paste), "Paste", ctx.labels, Hit.paste, primary: true, minRows: ctx.targetRows),
+            button(b, "×", "Cancel", ctx.labels, hits_[PasteButton.cancel], minRows: ctx.targetRows),
+            button(b, "⏎", "As one line", ctx.labels, hits_[PasteButton.oneLine], minRows: ctx.targetRows),
+            button(b, iconText(ActionIcon.paste), "Paste", ctx.labels, hits_[PasteButton.paste],
+                primary: true, minRows: ctx.targetRows),
         ]);
         return b.finish(band(b, body_, fullWidth: false));
     }
@@ -96,26 +105,30 @@ final class PasteConfirm : Surface
 
     bool activate(size_t id) @system
     {
-        switch (id)
+        size_t i;
+        return hits_.indexOf(id, i) && press(cast(PasteButton) i);
+    }
+
+    private bool press(PasteButton which) @system
+    {
+        final switch (which)
         {
-            case Hit.cancel:
+            case PasteButton.cancel:
                 pane.confirmPaste(false);
                 return true;
-            case Hit.oneLine:
+            case PasteButton.oneLine:
                 // The held paste is dropped and its lines go as one: no line
                 // break left, so nothing runs until the user presses Enter.
                 pane.confirmPaste(false);
                 pane.sendPaste(oneLine(text));
                 return true;
-            case Hit.paste:
+            case PasteButton.paste:
                 pane.confirmPaste(true);
                 return true;
-            default:
-                return false;
         }
     }
 
-    bool confirm() @system => activate(Hit.paste);
+    bool confirm() @system => press(PasteButton.paste);
     void cancel() @system => pane.confirmPaste(false);
     bool key(in KeyEvent k) @system => false;
 }
@@ -135,6 +148,7 @@ final class ClipboardRead : Surface
 {
     private TerminalView* pane;
     private string program, where;
+    private HitBlock hits_; // its buttons, as the last build numbered them
 
     /// `program` names who asked; `where` the tab and pane ("tab "nvim", pane 1").
     this(TerminalView* pane, string program, string where) @safe pure nothrow
@@ -144,19 +158,21 @@ final class ClipboardRead : Surface
         this.where = where;
     }
 
-    WidgetTree build(in SurfaceContext ctx, int cols) @safe
+    WidgetTree build(in SurfaceContext ctx, int cols, ref HitRegistry hits) @safe
     {
+        hits_ = hits.block(HitKey("terminal.clipboard-read"), ReadButton.max + 1);
         Builder b;
         uint[] body_;
         body_ ~= uiLabel(b, (program.length ? program : "A program") ~ " wants to read your clipboard",
             Slot.textPrimary, bold: true);
         body_ ~= prose(b, where ~ " asked through OSC 52. It could be a remote host over ssh.");
         body_ ~= row(b, [
-            button(b, iconText(ActionIcon.allowOnce), "Allow once", ctx.labels, Hit.allowOnce, primary: true,
+            button(b, iconText(ActionIcon.allowOnce), "Allow once", ctx.labels,
+                hits_[ReadButton.allowOnce], primary: true, minRows: ctx.targetRows),
+            button(b, iconText(ActionIcon.alwaysAllow), "Always for this pane", ctx.labels,
+                hits_[ReadButton.allowAlways], minRows: ctx.targetRows),
+            button(b, iconText(ActionIcon.deny), "Deny", ctx.labels, hits_[ReadButton.deny],
                 minRows: ctx.targetRows),
-            button(b, iconText(ActionIcon.alwaysAllow), "Always for this pane", ctx.labels, Hit.allowAlways,
-                minRows: ctx.targetRows),
-            button(b, iconText(ActionIcon.deny), "Deny", ctx.labels, Hit.deny, minRows: ctx.targetRows),
         ]);
         return b.finish(band(b, body_));
     }
@@ -165,23 +181,27 @@ final class ClipboardRead : Surface
 
     bool activate(size_t id) @system
     {
-        switch (id)
+        size_t i;
+        return hits_.indexOf(id, i) && press(cast(ReadButton) i);
+    }
+
+    private bool press(ReadButton which) @system
+    {
+        final switch (which)
         {
-            case Hit.allowOnce:
+            case ReadButton.allowOnce:
                 pane.answerClipboardRead(ClipboardReadAnswer.allowOnce);
                 return true;
-            case Hit.allowAlways:
+            case ReadButton.allowAlways:
                 pane.answerClipboardRead(ClipboardReadAnswer.allowAlways);
                 return true;
-            case Hit.deny:
+            case ReadButton.deny:
                 pane.answerClipboardRead(ClipboardReadAnswer.deny);
                 return true;
-            default:
-                return false;
         }
     }
 
-    bool confirm() @system => activate(Hit.allowOnce);
+    bool confirm() @system => press(ReadButton.allowOnce);
     void cancel() @system => pane.answerClipboardRead(ClipboardReadAnswer.deny);
     bool key(in KeyEvent k) @system => false;
 }
@@ -205,7 +225,8 @@ final class ClipboardRead : Surface
     import chrome : place, Place;
 
     auto s = new PasteConfirm(null, 3, "cd /tmp\nrm -rf build\nnix build .#terminal-apk");
-    const l = place(s.build(SurfaceContext.init, 60), 60, 20, 0, 0, 1, 1, Place.top);
+    HitRegistry hits;
+    const l = place(s.build(SurfaceContext.init, 60, hits), 60, 20, 0, 0, 1, 1, Place.top);
     bool title, preview;
     foreach (ref n; l.tree.nodes)
     {
@@ -215,8 +236,9 @@ final class ClipboardRead : Surface
     assert(title && preview);
     size_t buttons;
     foreach (ref t; l.hits)
-        buttons += t.hitId == Hit.cancel || t.hitId == Hit.oneLine || t.hitId == Hit.paste;
+        buttons += hits.find(HitKey("terminal.paste-confirm")).contains(t.hitId);
     assert(buttons == 3);
+    assert(!s.activate(0), "an id outside its block is not its");
 }
 
 @("confirmations.ClipboardRead.namesWhoAsked")
@@ -227,7 +249,8 @@ final class ClipboardRead : Surface
     import chrome : place, Place;
 
     auto s = new ClipboardRead(null, "nvim", `Tab "nvim", pane 1`);
-    const l = place(s.build(SurfaceContext.init, 60), 60, 20, 0, 0, 1, 1, Place.top);
+    HitRegistry hits;
+    const l = place(s.build(SurfaceContext.init, 60, hits), 60, 20, 0, 0, 1, 1, Place.top);
     bool named;
     foreach (ref n; l.tree.nodes)
         named |= n.text.canFind("nvim wants to read your clipboard");

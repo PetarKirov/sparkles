@@ -28,7 +28,7 @@ module tab_tree;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.input.events : Key, KeyAction, KeyEvent, WheelEvent;
 import sparkles.ui.components.dock : PaneId;
-import sparkles.ui.hit_ids : HitBlock;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.components.tree_view : collapseOrUp, TreeViewState;
 import sparkles.ui.components.tree_widget : flatten, TreeData, TreeGlyphs, treeView;
 import sparkles.ui.style : FontRole, Slot, TextStyle, TypeStep;
@@ -36,7 +36,7 @@ import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import chrome : band, uiLabel;
-import page_kit : fitCells, PageClipboard, QueryField, ScrollBody, scrollSeconds, scrollViewport, searchRow, settleViewport;
+import page_kit : fitCells, hitBlock, PageClipboard, QueryField, ScrollBody, scrollSeconds, scrollViewport, searchRow, settleViewport;
 import sparkles.ui.editor.keys : editorBinds, windowTarget;
 import surfaces : Pasteable, Placement, Scrollable, Surface, SurfaceContext;
 
@@ -79,10 +79,17 @@ private struct TabNode
     ulong key;   // the opened set's and the selection's identity
 }
 
-/// The hit id of arena node `i`.
-private enum size_t rowHit = 0x7EE0_0000;
-/// The new-tab row.
-private enum size_t newTabHit = 0x7EDF_FFFF;
+/// The tree's own controls, by their index in its `"terminal.tab-tree"` block.
+private enum TreeControl : ubyte
+{
+    newTab, /// the New tab row
+    search, /// the search field
+}
+
+/// The tree's hit keys (`INP27`): its controls, and its rows by arena node.
+private enum HitKey controlsKey = HitKey("terminal.tab-tree");
+/// ditto
+private enum HitKey rowsKey = HitKey("terminal.tab-tree.rows");
 
 // A tab's key: its first pane's, in a space of its own (a pane's key is its id).
 private ulong tabKey(in TreeTab tab, size_t index) @safe pure nothrow @nogc
@@ -107,6 +114,8 @@ final class TabTree : Surface, Scrollable, Pasteable
     private bool reveal;        // the keyboard moved: bring the selection into view
     private bool bestMatch;     // the query changed: select its first row
     private int per = 1;        // rows a row takes (a touch target is taller)
+    // The blocks the last build numbered its targets from.
+    private HitBlock controls, rowHits;
 
     /// `snapshot` lists the workspace now; `pick` selects a tab and, when
     /// non-zero, focuses a pane.
@@ -121,9 +130,11 @@ final class TabTree : Surface, Scrollable, Pasteable
         tv.height = int.max / 2;
     }
 
-    WidgetTree build(in SurfaceContext ctx, int cols) @safe
+    WidgetTree build(in SurfaceContext ctx, int cols, ref HitRegistry hits) @safe
     {
         rebuild(cols);
+        controls = hits.block(controlsKey, TreeControl.max + 1);
+        rowHits = hitBlock(hits, rowsKey, data.nodes.length);
         body.touch = ctx.touch;
         body.wide = ctx.touch && ctx.wideBars;
         per = ctx.targetRows > 1 ? ctx.targetRows : 1;
@@ -161,7 +172,7 @@ final class TabTree : Surface, Scrollable, Pasteable
             lines ~= b.add(Widget(kind: WidgetKind.row,
                 children: [uiLabel(b, "+ New tab", Slot.accentPrimary)],
                 width: SizeSpec.grow(), height: SizeSpec.fixed(per),
-                alignY: Alignment.center, hitId: newTabHit));
+                alignY: Alignment.center, hitId: controls[TreeControl.newTab]));
         }
         // Beside the rail the tree fills its panel, the touch search at the
         // panel's bottom; below the pill it floats, as tall as its rows.
@@ -189,7 +200,7 @@ final class TabTree : Surface, Scrollable, Pasteable
         TreeGlyphs glyphs;
         glyphs.leaf = "  "; // a one-pane tab's icon under a tab's
         const column = treeView(b, data, tv.rows, &isOpenNode, tv.selectedNode, glyphs,
-            hits: HitBlock(rowHit, data.nodes.length));
+            hits: rowHits);
         auto rows = b.nodes[column].children.dup; // `add` may move the nodes
         foreach (ref child; rows)
         {
@@ -308,17 +319,20 @@ final class TabTree : Surface, Scrollable, Pasteable
     /// tree stays.
     bool activate(size_t id) @system
     {
-        if (id == newTabHit && newTab !is null)
+        size_t i;
+        if (controls.indexOf(id, i))
         {
+            if (i != TreeControl.newTab || newTab is null)
+                return false;
             newTab();
             return true;
         }
-        if (id < rowHit || id - rowHit >= data.nodes.length)
+        if (!rowHits.indexOf(id, i) || i >= data.nodes.length)
             return false;
-        const node = cast(uint)(id - rowHit);
-        foreach (i, ref r; tv.rows)
+        const node = cast(uint) i;
+        foreach (row, ref r; tv.rows)
             if (r.node == node)
-                tv.sel = cast(long) i;
+                tv.sel = cast(long) row;
         keepSelection();
         const v = data.nodes[node].value;
         if (v.expandable)
@@ -478,7 +492,7 @@ final class TabTree : Surface, Scrollable, Pasteable
     // the caret shows once there is one.
     private uint searchField(ref Builder b, in SurfaceContext ctx) @safe
         => searchRow(b, query.idup, query.length > 0, "Search tabs, panes, programs, dirs",
-            ctx.targetRows, inBand: true);
+            controls[TreeControl.search], ctx.targetRows, inBand: true);
 
     private static string paneCount(size_t n) @safe
     {
@@ -550,8 +564,9 @@ version (unittest)
 {
     import std.algorithm.searching : canFind;
 
+    HitRegistry hits;
     auto t = tree();
-    const shown = texts(t.build(SurfaceContext.init, 40));
+    const shown = texts(t.build(SurfaceContext.init, 40, hits));
     assert(shown.canFind("~/sparkles") && shown.canFind("build"));
     assert(shown.canFind("zsh") && !shown.canFind("nix build .#hue-apk"),
         "only the current tab is open");
@@ -559,7 +574,7 @@ version (unittest)
     assert(shown[0] == iconText(ActionIcon.search), "the search field on top on the desktop");
 
     SurfaceContext touch = {touch: true};
-    const last = texts(t.build(touch, 40));
+    const last = texts(t.build(touch, 40, hits));
     assert(last[$ - 2] == iconText(ActionIcon.search), "at the bottom on touch");
 }
 
@@ -570,13 +585,14 @@ version (unittest)
 
     // The tab is its pane: its title once, the pane's directory beside it,
     // no "1 pane" and no pane row repeating the title.
+    HitRegistry hits;
     auto t = tree();
-    const shown = texts(t.build(SurfaceContext.init, 40));
+    const shown = texts(t.build(SurfaceContext.init, 40, hits));
     assert(shown.count("nvim spec.md") == 1 && shown.canFind("~/docs"));
     assert(!shown.canFind("nvim viewer.md") && !shown.canFind("1 pane"));
 
     // A click picks its pane.
-    t.activate(hitOf(t.build(SurfaceContext.init, 40), "nvim spec.md"));
+    t.activate(hitOf(t.build(SurfaceContext.init, 40, hits), "nvim spec.md"));
     assert(picked == [1, 4]);
 }
 
@@ -585,8 +601,9 @@ version (unittest)
 {
     import std.algorithm.searching : canFind;
 
+    HitRegistry hits;
     auto t = tree();
-    auto built = t.build(SurfaceContext.init, 40);
+    auto built = t.build(SurfaceContext.init, 40, hits);
 
     // A pane: focused, and the tree stays.
     assert(!t.activate(hitOf(built, "htop")), "a pick does not close the tree");
@@ -595,12 +612,12 @@ version (unittest)
     // A closed tab with panes: selected, and opened.
     assert(!t.activate(hitOf(built, "build")));
     assert(picked == [2, 0]);
-    built = t.build(SurfaceContext.init, 40);
+    built = t.build(SurfaceContext.init, 40, hits);
     assert(texts(built).canFind("nix build .#hue-apk"), "the click opened it");
 
     // Again: closed.
     t.activate(hitOf(built, "build"));
-    assert(!texts(t.build(SurfaceContext.init, 40)).canFind("nix build .#hue-apk"));
+    assert(!texts(t.build(SurfaceContext.init, 40, hits)).canFind("nix build .#hue-apk"));
 }
 
 @("tab_tree.key.leftClosesRightOpens")
@@ -608,13 +625,14 @@ version (unittest)
 {
     import std.algorithm.searching : canFind;
 
+    HitRegistry hits;
     auto t = tree();
-    t.build(SurfaceContext.init, 40); // the focused pane selected
+    t.build(SurfaceContext.init, 40, hits); // the focused pane selected
     assert(t.key(KeyEvent(Key.left)), "Left climbs to the tab");
     assert(t.key(KeyEvent(Key.left)), "then closes it");
-    assert(!texts(t.build(SurfaceContext.init, 40)).canFind("htop"));
+    assert(!texts(t.build(SurfaceContext.init, 40, hits)).canFind("htop"));
     assert(t.key(KeyEvent(Key.right)));
-    assert(texts(t.build(SurfaceContext.init, 40)).canFind("htop"), "Right opens it");
+    assert(texts(t.build(SurfaceContext.init, 40, hits)).canFind("htop"), "Right opens it");
 }
 
 @("tab_tree.key.searchOpensMatchingTabs")
@@ -622,10 +640,11 @@ version (unittest)
 {
     import std.algorithm.searching : canFind;
 
+    HitRegistry hits;
     auto t = tree();
     foreach (dchar c; "hue-apk")
         assert(t.key(KeyEvent(Key.char_, c)));
-    const shown = texts(t.build(SurfaceContext.init, 40));
+    const shown = texts(t.build(SurfaceContext.init, 40, hits));
     assert(shown.canFind("nix build .#hue-apk"), "the match opens its tab");
     assert(!shown.canFind("htop"), "a tab without a match is gone");
 
@@ -635,7 +654,7 @@ version (unittest)
 
     // Down to the pane, then Enter: it is focused.
     assert(t.key(KeyEvent(Key.down)));
-    t.build(SurfaceContext.init, 40);
+    t.build(SurfaceContext.init, 40, hits);
     assert(t.confirm() && picked[1] == 5);
 
     // Backspace widens again.
@@ -647,13 +666,14 @@ version (unittest)
 @("tab_tree.key.anEditedQuerySelectsTheBestMatch")
 @system unittest
 {
+    HitRegistry hits;
     auto t = tree();
-    t.build(SurfaceContext.init, 40);
+    t.build(SurfaceContext.init, 40, hits);
     // "~/sparkles" is the first row and still matches (its "nix build"
     // pane), but the tab named "build" ranks first.
     foreach (dchar c; "build")
         assert(t.key(KeyEvent(Key.char_, c)));
-    t.build(SurfaceContext.init, 40);
+    t.build(SurfaceContext.init, 40, hits);
     assert(t.confirm());
     assert(picked[0] == 2, "the best match, not the row selected before the search");
 }
@@ -667,11 +687,12 @@ version (unittest)
         TreeTab("vim", "≡", 0, false, [TreePane(2, "vim", "≡", "~/src")]),
     ];
     size_t[] chosen;
+    HitRegistry hits;
     auto t = new TabTree(() => two(), (size_t tab, PaneId p) { chosen = [tab, p]; });
-    t.build(SurfaceContext.init, 40);
+    t.build(SurfaceContext.init, 40, hits);
     foreach (dchar c; "vim")
         assert(t.key(KeyEvent(Key.char_, c)));
-    t.build(SurfaceContext.init, 40);
+    t.build(SurfaceContext.init, 40, hits);
     assert(t.confirm());
     assert(chosen[0] == 1, "the best match, not the row selected before the search");
 }
@@ -679,6 +700,7 @@ version (unittest)
 @("tab_tree.key.clusterBackspaceAndInvalidScalar")
 @system unittest
 {
+    HitRegistry hits;
     auto t = tree();
     assert(t.key(KeyEvent(Key.char_, 'a')));
     assert(t.key(KeyEvent(Key.char_, '\u0301')));
@@ -722,10 +744,11 @@ long fuzzyScore(scope const(char)[] query, scope const(char)[] text) @trusted
 
     // Mockup E: beside the rail the tree slides out at the panel's full
     // height, its touch search at the bottom; below the pill it floats.
+    HitRegistry hits;
     auto t = tree();
     SurfaceContext rail = {touch: true, cellW: 1, cellH: 1, panelArea: Rect(0, 0, 40, 30),
         panelFull: true};
-    const full = place(t.build(rail, 40), 40, 30, 0, 0, 1, 1, Place.top);
+    const full = place(t.build(rail, 40, hits), 40, 30, 0, 0, 1, 1, Place.top);
     assert(full.bounds.height == 30);
     foreach (i, ref n; full.tree.nodes)
         if (n.text == iconText(ActionIcon.search))
@@ -733,7 +756,7 @@ long fuzzyScore(scope const(char)[] query, scope const(char)[] text) @trusted
 
     SurfaceContext pill = rail;
     pill.panelFull = false;
-    assert(place(t.build(pill, 40), 40, 30, 0, 0, 1, 1, Place.top).bounds.height < 30);
+    assert(place(t.build(pill, 40, hits), 40, 30, 0, 0, 1, 1, Place.top).bounds.height < 30);
 }
 
 @("tab_tree.build.aShortPanelScrollsTheList")
@@ -746,10 +769,11 @@ long fuzzyScore(scope const(char)[] query, scope const(char)[] text) @trusted
     // The keyboard up: a panel of 12 rows for 5 rows of tabs and panes, a
     // new-tab row and the search field, each 2 rows tall. The list scrolls
     // under the overlay bar; the search field stays on the panel.
+    HitRegistry hits;
     auto t = new TabTree(() => sample(), (size_t, PaneId) {}, () {});
     SurfaceContext kb = {touch: true, cellW: 1, cellH: 1, targetRows: 2,
         panelArea: Rect(0, 0, 40, 12)};
-    const l = place(t.build(kb, 40), 40, 12, 0, 0, 1, 1, Place.top);
+    const l = place(t.build(kb, 40, hits), 40, 12, 0, 0, 1, 1, Place.top);
     assert(l.bounds.height <= 12, "the panel's height, not the list's");
     bool search;
     foreach (i, ref n; l.tree.nodes)
@@ -761,15 +785,16 @@ long fuzzyScore(scope const(char)[] query, scope const(char)[] text) @trusted
     // Moving the selection down scrolls the list to it.
     foreach (_; 0 .. 4)
         t.key(KeyEvent(Key.down));
-    t.build(kb, 40);
+    t.build(kb, 40, hits);
     assert(t.scrolling.motion.target > 0, "the view follows the selection");
 }
 
 @("tab_tree.key.aReleaseDoesNotMoveAgain")
 @system unittest
 {
+    HitRegistry hits;
     auto t = tree();
-    t.build(SurfaceContext.init, 40);
+    t.build(SurfaceContext.init, 40, hits);
     const from = t.tv.sel;
     KeyEvent up = KeyEvent(Key.down);
     up.action = KeyAction.release;
@@ -782,9 +807,10 @@ long fuzzyScore(scope const(char)[] query, scope const(char)[] text) @trusted
 {
     import std.algorithm.searching : any, endsWith, startsWith;
 
+    HitRegistry hits;
     auto t = new TabTree(() => [TreeTab("a-very-long-window-title-that-will-not-fit", "❯", 0, true,
         [TreePane(1, "zsh", "❯", "/home/someone/a/very/deep/directory")])], (size_t, PaneId) {});
-    const shown = texts(t.build(SurfaceContext.init, 24));
+    const shown = texts(t.build(SurfaceContext.init, 24, hits));
     assert(shown.any!(s => s.endsWith("…") && s.length > 3), "the title is cut with an ellipsis");
     foreach (s; shown)
         if (!s.startsWith("Search")) // the placeholder is cut where it is painted

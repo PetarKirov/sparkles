@@ -23,7 +23,7 @@ import sparkles.core_cli.build_info : BuildInfo, BuildLoad, JsonSubject,
 import sparkles.wired.json.document : JsonKind;
 import sparkles.ui.glyphs : ActionIcon, iconText;
 import sparkles.input.events : Key, KeyEvent;
-import sparkles.ui.hit_ids : HitBlock;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.components.property_view : propertyView, writePropertyText;
 import sparkles.ui.components.tree_view : TreeViewState;
 import sparkles.ui.geometry : Insets, Rect, SizeSpec;
@@ -33,7 +33,7 @@ import sparkles.ui.style : Decoration, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import chrome : button, column, label, row, uiLabel;
-import page_kit : bodyRowsFor, breakLong, codeText, finishPage, firstOwnHit, header, Page,
+import page_kit : bodyRowsFor, breakLong, codeText, finishPage, header, hitBlock, Page,
     PageServices, prose;
 import surfaces : SurfaceContext;
 
@@ -241,17 +241,21 @@ AboutFacts gatherAboutFacts(BuildInfo info) @system
     return f;
 }
 
-/// Hit id of the copy button. Link buttons are `firstOwnHit` plus the
-/// sorted-key index, and there are not 256 of them.
-private enum copyHit = firstOwnHit + 256;
-/// Component-tree rows are `componentHit` plus the node index.
-private enum componentHit = firstOwnHit + 512;
+/// The page's hit keys: the copy button, the link buttons by sorted key, and
+/// the component tree's rows by node (`INP27`).
+private enum HitKey copyKey = HitKey("terminal.about.copy");
+/// ditto
+private enum HitKey linksKey = HitKey("terminal.about.links");
+/// ditto
+private enum HitKey componentsKey = HitKey("terminal.about.components");
 
 /// The about page.
 final class AboutPage : Page
 {
     private AboutFacts facts;
     private BuildLoad* load;
+    // The blocks the last build numbered its targets from.
+    private HitBlock copyHits, linkHits, componentHits;
     private PropertyTree!JsonSubject tree;
     private TreeViewState!string componentView;
     /// Whether `tree` matches the document, the width and the disclosure
@@ -266,13 +270,16 @@ final class AboutPage : Page
         this.load = load;
     }
 
-    override WidgetTree buildPage(in SurfaceContext ctx, int cols, int rows) @safe
+    override WidgetTree buildPage(in SurfaceContext ctx, int cols, int rows,
+        ref HitRegistry hits) @safe
     {
         Builder b;
         uint[] actions;
+        copyHits = hitBlock(hits, copyKey, services.copy !is null);
         if (services.copy !is null)
-            actions ~= button(b, iconText(ActionIcon.copy), "Copy", ctx.labels, copyHit, minRows: ctx.targetRows);
-        const head = header(b, "About", ctx, actions);
+            actions ~= button(b, iconText(ActionIcon.copy), "Copy", ctx.labels, copyHits.id,
+                minRows: ctx.targetRows);
+        const head = header(b, "About", ctx, backHit, actions);
 
         uint[] items;
         // The identity: a mark, the name, the one-line summary (C1).
@@ -290,12 +297,13 @@ final class AboutPage : Page
 
         // One button per link, sorted by name (`credits`, `docs`, `source`).
         auto keys = sortedLinkKeys();
+        linkHits = hitBlock(hits, linksKey, keys.length);
         if (keys.length)
         {
             uint[] links;
             foreach (i, key; keys)
                 links ~= button(b, linkIcon(key), linkCaption(key), ctx.labels,
-                    firstOwnHit + i, minRows: ctx.targetRows);
+                    linkHits[i], minRows: ctx.targetRows);
             items ~= b.add(Widget(kind: WidgetKind.row, children: links, gap: 1));
             items ~= blank(b);
         }
@@ -305,10 +313,12 @@ final class AboutPage : Page
         items ~= blank(b);
 
         items ~= uiLabel(b, "Components", Slot.textPrimary, bold: true);
-        if (fillComponents(cols))
+        const shown = fillComponents(cols);
+        componentHits = hitBlock(hits, componentsKey, shown ? tree.data.nodes.length : 0);
+        if (shown)
         {
             PropertyEditState edits;
-            items ~= propertyView(b, tree.data, componentView, edits, hits: HitBlock(componentHit, tree.data.nodes.length));
+            items ~= propertyView(b, tree.data, componentView, edits, hits: componentHits);
         }
         items ~= blank(b);
 
@@ -424,22 +434,20 @@ final class AboutPage : Page
     }
 
     /// Buttons and tree rows act and leave the page open: only Back
-    /// (`PageHit.back`, handled by the base) is done.
+    /// (handled by the base) is done.
     override bool onHit(size_t id) @system
     {
-        if (id == copyHit)
-        {
+        size_t i;
+        if (copyHits.contains(id))
             copyFacts();
-            return false;
-        }
-        auto keys = sortedLinkKeys();
-        if (id >= firstOwnHit && id < firstOwnHit + keys.length)
+        else if (linkHits.indexOf(id, i))
         {
-            open(linkUrl(keys[id - firstOwnHit]));
-            return false;
+            auto keys = sortedLinkKeys();
+            if (i < keys.length)
+                open(linkUrl(keys[i]));
         }
-        if (id >= componentHit)
-            toggleComponent(id - componentHit);
+        else if (componentHits.indexOf(id, i))
+            toggleComponent(i);
         return false;
     }
 
@@ -590,7 +598,9 @@ private string linkCaption(string key) @safe pure nothrow
     SurfaceContext ctx;
     ctx.cellW = ctx.cellH = 1;
     ctx.area = Rect(0, 0, 80, 40);
-    const l = place(p.build(ctx, 80), 80, 40, 0, 0, 1, 1, Place.top);
+    HitRegistry registry;
+    registry.beginFrame();
+    const l = place(p.build(ctx, 80, registry), 80, 40, 0, 0, 1, 1, Place.top);
     bool sawVersion, sawSource;
     foreach (ref n; l.tree.nodes)
     {
@@ -598,10 +608,10 @@ private string linkCaption(string key) @safe pure nothrow
         sawSource |= n.text == "Source";
     }
     assert(sawVersion && sawSource);
-    size_t hits;
+    size_t links;
     foreach (ref t; l.hits)
-        hits += t.hitId == firstOwnHit || t.hitId == firstOwnHit + 1 || t.hitId == firstOwnHit + 2;
-    assert(hits == 3);
+        links += registry.find(linksKey).contains(t.hitId);
+    assert(links == 3);
     assert(p.key(KeyEvent(Key.char_, 's')) && p.key(KeyEvent(Key.char_, 'c')));
     assert(opened == [sourceUrl, creditsUrl]);
 
@@ -617,8 +627,6 @@ private string linkCaption(string key) @safe pure nothrow
 @("about_page.AboutPage.buttonsKeepThePageOpen")
 @system unittest
 {
-    import page_kit : PageHit;
-
     auto load = buildInfoFromJSON(`{
         "version": "0.1.0",
         "links": { "source": "https://example.test/source" },
@@ -632,13 +640,20 @@ private string linkCaption(string key) @safe pure nothrow
     s.openUri = (string u) { opened ~= u; };
     s.copy = (string) { ++copies; };
     auto p = new AboutPage(AboutFacts.init, &load, s);
+    SurfaceContext ctx;
+    ctx.cellW = ctx.cellH = 1;
+    ctx.area = Rect(0, 0, 80, 40);
+    HitRegistry hits;
+    hits.beginFrame();
+    cast(void) p.build(ctx, 80, hits);
 
     // `true` from `activate` closes the page: only Back may return it.
-    assert(!p.activate(copyHit));
+    assert(!p.activate(hits.find(copyKey).id));
     assert(copies == 1);
-    assert(!p.activate(firstOwnHit));
+    assert(!p.activate(hits.find(linksKey)[0]));
     assert(opened == ["https://example.test/source"]);
-    assert(p.activate(PageHit.back));
+    assert(!p.activate(hits.find(componentsKey)[0]));
+    assert(p.activate(p.backHit));
 }
 
 @("about_page.AboutPage.componentNodesCollapse")
@@ -655,8 +670,9 @@ private string linkCaption(string key) @safe pure nothrow
     SurfaceContext ctx;
     ctx.cellW = ctx.cellH = 1;
     ctx.area = Rect(0, 0, 80, 40);
+    HitRegistry hits;
 
-    p.build(ctx, 80);
+    p.build(ctx, 80, hits);
     const openRows = p.componentView.rows.length;
     size_t lib = size_t.max;
     foreach (i, ref n; p.tree.data.nodes)
@@ -668,17 +684,17 @@ private string linkCaption(string key) @safe pure nothrow
     assert(lib != size_t.max);
 
     // A press closes the node, and the next frame keeps it closed.
-    assert(!p.activate(componentHit + lib));
-    p.build(ctx, 80);
+    assert(!p.activate(hits.find(componentsKey)[lib]));
+    p.build(ctx, 80, hits);
     assert(p.componentView.rows.length < openRows);
-    p.build(ctx, 80);
+    p.build(ctx, 80, hits);
     assert(p.componentView.rows.length < openRows);
 
     // Copy still writes the whole tree.
     assert(p.copyText.canFind("kept"));
 
     // A second press opens it again.
-    assert(!p.activate(componentHit + lib));
-    p.build(ctx, 80);
+    assert(!p.activate(hits.find(componentsKey)[lib]));
+    p.build(ctx, 80, hits);
     assert(p.componentView.rows.length == openRows);
 }

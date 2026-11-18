@@ -14,6 +14,8 @@ module autofill_chip;
 import sparkles.ui.glyphs : ActionIcon, iconText;
 import sparkles.terminal_view.process_info : PtyReading;
 
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
+
 import chrome : ChromeTheme, Layer;
 import settings : ButtonLabels;
 
@@ -34,11 +36,12 @@ bool chipShown(PtyReading reading, bool keyboardShown, bool autofillAvailable)
     assert(!chipShown(PtyReading.password, true, false), "no service to ask");
 }
 
-/// The chip's hit id.
-enum size_t chipHit = 0xA1F1;
+/// The chip's hit key (`INP27`): one id, the button's.
+enum HitKey chipKey = HitKey("terminal.autofill-chip");
 
-/// The chip's tree: the button and a line saying why it is there (A1).
-auto chipTree(ButtonLabels labels, int targetRows, int cols = 80) @safe
+/// The chip's tree: the button, carrying `hit`, and a line saying why it is
+/// there (A1).
+auto chipTree(size_t hit, ButtonLabels labels, int targetRows, int cols = 80) @safe
 {
     import sparkles.ui.geometry : Insets, SizeSpec;
     import sparkles.ui.style : Slot;
@@ -47,7 +50,7 @@ auto chipTree(ButtonLabels labels, int targetRows, int cols = 80) @safe
     import chrome : button, label;
 
     Builder b;
-    const btn = button(b, iconText(ActionIcon.autofill), "Autofill password", labels, chipHit, primary: true,
+    const btn = button(b, iconText(ActionIcon.autofill), "Autofill password", labels, hit, primary: true,
         minRows: targetRows);
     // The reason, as much of it as the band has room for beside the button.
     const why = label(b, cols >= 64 ? "echo is off — a password is being read" : "echo is off",
@@ -74,12 +77,15 @@ private import sparkles.ui.style : Decoration;
 {
     import chrome : place, Place;
 
-    const l = place(chipTree(ButtonLabels.iconText, 3), 40, 3, 0, 0, 1, 1, Place.top);
+    HitRegistry hits;
+    hits.beginFrame();
+    const l = place(chipTree(hits.block(chipKey).id, ButtonLabels.iconText, 3), 40, 3, 0, 0, 1, 1,
+        Place.top);
     assert(l.bounds.height == 3, "a 48 dp band");
     bool why;
     foreach (ref n; l.tree.nodes)
         why |= n.text == "echo is off — a password is being read";
-    assert(why && l.hits.length == 1 && l.hits[0].hitId == chipHit);
+    assert(why && l.hits.length == 1 && hits.find(chipKey).contains(l.hits[0].hitId));
 }
 
 version (Android):
@@ -93,6 +99,7 @@ struct AutofillChip
     /// Whether it shows this frame.
     bool shown;
     private Layer layer;
+    private HitBlock hit; // the button's, as the last placement numbered it
 
     /**
     Probes `tv`'s pty — only while the keyboard shows — and decides whether
@@ -123,13 +130,16 @@ struct AutofillChip
     int height(int cellH, int targetRows) const @safe pure nothrow @nogc
         => shown ? cellH * (targetRows > 1 ? targetRows : 1) : 0;
 
-    /// Lays the chip out in the band at pixel `band`.
-    void place(ButtonLabels labels, int targetRows, in Rect band, int cw, int ch) @safe
+    /// Lays the chip out in the band at pixel `band`, its button numbered
+    /// from `hits` while it shows.
+    void place(ButtonLabels labels, int targetRows, in Rect band, int cw, int ch,
+        ref HitRegistry hits) @safe
     {
         import chrome : place_ = place, Place;
 
-        layer = shown ? place_(chipTree(labels, targetRows, band.width / cw), band.width / cw, band.height / ch,
-            band.x, band.y, cw, ch, Place.top) : Layer.init;
+        hit = shown ? hits.block(chipKey) : HitBlock.init;
+        layer = shown ? place_(chipTree(hit.id, labels, targetRows, band.width / cw), band.width / cw,
+            band.height / ch, band.x, band.y, cw, ch, Place.top) : Layer.init;
     }
 
     /// Paints it.
@@ -149,7 +159,7 @@ struct AutofillChip
 
         if (!shown || !layer.contains(x, y))
             return false;
-        if (layer.hitAt(x, y) == chipHit)
+        if (hit.contains(layer.hitAt(x, y)))
         {
             const ok = requestPasswordAutofill();
             info(i"terminal: autofill chip: requested $(ok)");

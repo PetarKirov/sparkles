@@ -9,6 +9,12 @@ hits and its cancel. The stack places them each frame — a card anchored at its
 subject, or a bottom sheet, as `ui.overlayStyle` says (`TCF10`) — and routes
 taps and the overlay keys to the top one.
 
+$(B Hit ids are issued, never chosen) (`INP27`): a surface asks the
+application's registry for its blocks under keys of its own each time it
+builds, keeps the blocks it was given, and decodes a hit against them. Every
+surface on the stack builds every frame, so the blocks a hit is decoded
+against are the ones the painted frame carried.
+
 $(B An anchored card never covers its subject) — the line, link or selection
 it is about — nor the keyboard or the extra keys: it goes above the subject,
 else below it, and when neither fits that occurrence is a sheet instead.
@@ -20,6 +26,7 @@ import core.time : Duration, MonoTime, seconds;
 import sparkles.input.events : KeyEvent, PointerAction, PointerEvent, Point, WheelEvent;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.geometry : Rect, Size;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.widget : WidgetTree;
 
 import chrome : ChromeTheme, Layer, paintLayer, place, Place;
@@ -73,11 +80,13 @@ enum Placement : ubyte
 /// One surface on the stack.
 interface Surface
 {
-    /// Its widget tree, at most `cols` wide.
-    WidgetTree build(in SurfaceContext ctx, int cols) @safe;
+    /// Its widget tree, at most `cols` wide, its targets numbered from the
+    /// blocks it asks `hits` for.
+    WidgetTree build(in SurfaceContext ctx, int cols, ref HitRegistry hits) @safe;
     /// Where it goes; `anchored` defers to `ui.overlayStyle`.
     Placement placement() const @safe;
-    /// A hit on `id`; true when the surface is done (and leaves the stack).
+    /// A hit on `id`, an id of a block the last build was given; true when
+    /// the surface is done (and leaves the stack).
     bool activate(size_t id) @system;
     /// The primary action (Enter); true when done.
     bool confirm() @system;
@@ -139,7 +148,7 @@ of its selection and handles (`TSE6`). An empty layer falls back to its
 interface SelfPlaced
 {
     /// Its layer for this frame.
-    Layer placeIn(in SurfaceContext ctx) @safe;
+    Layer placeIn(in SurfaceContext ctx, ref HitRegistry hits) @safe;
 }
 
 /// A surface whose content scrolls: a wheel notch, or a drag on a touch
@@ -224,7 +233,7 @@ struct Surfaces
     }
 
     /// Lays every surface out for this frame.
-    void place(in SurfaceContext ctx) @safe
+    void place(in SurfaceContext ctx, ref HitRegistry hits) @safe
     {
         layers.length = 0;
         foreach (s; stack)
@@ -232,7 +241,7 @@ struct Surfaces
             SurfaceContext own = ctx;
             if (auto a = cast(Anchored) s)
                 own.subject = a.anchor;
-            layers ~= placeOne(s, own);
+            layers ~= placeOne(s, own, hits);
         }
         toastLayer = Layer.init;
         if (toasts.length)
@@ -463,11 +472,11 @@ becomes a sheet when it fits neither side or `ui.overlayStyle` is `sheet`.
 /// The widest a page or a sheet gets, in columns (`TPG19`, D47).
 enum maxSurfaceCols = 100;
 
-Layer placeOne(Surface s, in SurfaceContext ctx) @safe
+Layer placeOne(Surface s, in SurfaceContext ctx, ref HitRegistry hits) @safe
 {
     if (auto p = cast(SelfPlaced) s)
     {
-        auto l = p.placeIn(ctx);
+        auto l = p.placeIn(ctx, hits);
         if (!l.empty)
             return l;
     }
@@ -488,7 +497,7 @@ Layer placeOne(Surface s, in SurfaceContext ctx) @safe
             // area, it left the opener's rows blank at its foot.
             SurfaceContext pctx = ctx;
             pctx.area = pa;
-            auto page = place(s.build(pctx, pcap), pcap, prows,
+            auto page = place(s.build(pctx, pcap, hits), pcap, prows,
                 pa.x + (pcols - pcap) / 2 * ctx.cellW, pa.y, ctx.cellW, ctx.cellH, Place.top);
             page.opaque = true; // the panes and the opener do not show through
             page.backdrop = pa;
@@ -496,7 +505,7 @@ Layer placeOne(Surface s, in SurfaceContext ctx) @safe
         }
         case Placement.panel:
             const pc = ctx.panelArea.width / ctx.cellW, pr = ctx.panelArea.height / ctx.cellH;
-            auto panel = place(s.build(ctx, pc), pc, pr, ctx.panelArea.x, ctx.panelArea.y,
+            auto panel = place(s.build(ctx, pc, hits), pc, pr, ctx.panelArea.x, ctx.panelArea.y,
                 ctx.cellW, ctx.cellH, Place.top);
             // Beside the rail the panel is its whole area — the pixels its
             // whole cells leave over too — with a rule against the panes.
@@ -507,26 +516,26 @@ Layer placeOne(Surface s, in SurfaceContext ctx) @safe
             }
             return panel;
         case Placement.sheet:
-            return place(s.build(ctx, capped), capped, rows, x, ctx.area.y, ctx.cellW,
+            return place(s.build(ctx, capped, hits), capped, rows, x, ctx.area.y, ctx.cellW,
                 ctx.cellH, Place.bottom);
         case Placement.anchored:
             if (ctx.style == OverlayStyle.anchored && ctx.subject.height > 0)
             {
                 Layer card;
-                if (anchor(s, ctx, card))
+                if (anchor(s, ctx, hits, card))
                     return card;
             }
-            return place(s.build(ctx, capped), capped, rows, x, ctx.area.y, ctx.cellW,
+            return place(s.build(ctx, capped, hits), capped, rows, x, ctx.area.y, ctx.cellW,
                 ctx.cellH, Place.bottom);
     }
 }
 
 /// The card above the subject, else below it; false when it fits neither.
-private bool anchor(Surface s, in SurfaceContext ctx, out Layer card) @safe
+private bool anchor(Surface s, in SurfaceContext ctx, ref HitRegistry hits, out Layer card) @safe
 {
     const cols = ctx.area.width / ctx.cellW;
     const width = cols - 2 > 20 ? (cols - 2 < 60 ? cols - 2 : 60) : cols;
-    auto l = place(s.build(ctx, width), width, ctx.area.height / ctx.cellH, 0, 0,
+    auto l = place(s.build(ctx, width, hits), width, ctx.area.height / ctx.cellH, 0, 0,
         ctx.cellW, ctx.cellH, Place.top);
     const h = l.bounds.height * ctx.cellH, w = l.bounds.width * ctx.cellW;
 
@@ -569,6 +578,7 @@ version (unittest)
         bool capturePointer, pointerCancelled;
         PointerEvent lastPointer;
         Size lastCellPixels;
+        HitBlock ok; // its button's block, as the last build was given it
 
         this(Placement where, int lines) @safe pure nothrow
         {
@@ -576,7 +586,7 @@ version (unittest)
             this.lines = lines;
         }
 
-        WidgetTree build(in SurfaceContext ctx, int cols) @safe
+        WidgetTree build(in SurfaceContext ctx, int cols, ref HitRegistry hits) @safe
         {
             import chrome : band, button, label;
             import sparkles.ui.widget : Builder;
@@ -587,7 +597,8 @@ version (unittest)
             uint[] rows;
             foreach (_; 0 .. lines - 1)
                 rows ~= label(b, "line");
-            rows ~= button(b, "✓", "OK", ctx.labels, 42);
+            ok = hits.block(HitKey("surfaces.probe"));
+            rows ~= button(b, "✓", "OK", ctx.labels, ok.id);
             return b.finish(band(b, rows, fullWidth: false));
         }
 
@@ -620,11 +631,12 @@ version (unittest)
     import sparkles.input.events : PointerButton;
 
     SurfaceContext ctx = {area: Rect(20, 40, 800, 480), cellW: 10, cellH: 20};
+    HitRegistry hits;
     Surfaces s;
     auto probe = new Probe(Placement.sheet, 2);
     probe.capturePointer = true;
     s.push(probe);
-    s.place(ctx);
+    s.place(ctx, hits);
     const layer = s.layers[$ - 1];
     assert(s.pointer(PointerEvent(action: PointerAction.press,
         button: PointerButton.left, pos: Point(layer.x + 20, layer.y + 20))));
@@ -647,27 +659,28 @@ version (unittest)
     // An 80×24 area of 10×20 cells; the subject is a line near the bottom.
     SurfaceContext ctx = {area: Rect(0, 0, 800, 480), cellW: 10, cellH: 20,
         subject: Rect(50, 400, 300, 20)};
+    HitRegistry hits;
     auto p = new Probe(Placement.anchored, 3);
 
-    const above = placeOne(p, ctx);
+    const above = placeOne(p, ctx, hits);
     assert(above.y + above.bounds.height * 20 <= 400, "above the subject");
 
     // Near the top: no room above, so below.
     ctx.subject = Rect(50, 20, 300, 20);
-    const below = placeOne(p, ctx);
+    const below = placeOne(p, ctx, hits);
     assert(below.y >= 40, "below the subject, not over it");
 
     // A subject filling the middle of a short area: neither fits — a sheet.
     ctx.area = Rect(0, 0, 800, 100);
     ctx.subject = Rect(0, 40, 800, 20);
-    const sheet = placeOne(p, ctx);
+    const sheet = placeOne(p, ctx, hits);
     assert(sheet.x == 0 && sheet.y + sheet.bounds.height * 20 == 100, "the sheet fallback");
 
     // `ui.overlayStyle = sheet` always sheets.
     ctx.area = Rect(0, 0, 800, 480);
     ctx.subject = Rect(50, 400, 300, 20);
     ctx.style = OverlayStyle.sheet;
-    const forced = placeOne(p, ctx);
+    const forced = placeOne(p, ctx, hits);
     assert(forced.y + forced.bounds.height * 20 == 480);
 }
 
@@ -675,10 +688,11 @@ version (unittest)
 @system unittest
 {
     SurfaceContext ctx = {area: Rect(0, 0, 800, 480), cellW: 10, cellH: 20};
+    HitRegistry hits;
     Surfaces s;
     auto a = new Probe(Placement.sheet, 2);
     s.push(a);
-    s.place(ctx);
+    s.place(ctx, hits);
     assert(s.modal);
 
     // A tap outside the sheet cancels it (the scrim).
@@ -687,10 +701,10 @@ version (unittest)
 
     auto b = new Probe(Placement.sheet, 2);
     s.push(b);
-    s.place(ctx);
+    s.place(ctx, hits);
     // The button is on the sheet's last row, one cell in.
     assert(s.tap(15, 470));
-    assert(b.activated == 42 && !s.modal);
+    assert(b.activated == b.ok.id && !s.modal);
 
     auto c = new Probe(Placement.sheet, 1);
     s.push(c);
@@ -705,12 +719,13 @@ version (unittest)
     // sheet stays in the panes' area (D49).
     SurfaceContext ctx = {area: Rect(0, 60, 400, 600), pageArea: Rect(0, 0, 400, 660),
         cellW: 10, cellH: 20};
+    HitRegistry hits;
     auto probe = new Probe(Placement.page, 3);
-    const page = placeOne(probe, ctx);
+    const page = placeOne(probe, ctx, hits);
     assert(page.y == 0 && page.backdrop == Rect(0, 0, 400, 660));
     // It builds for the rows it fills, not the panes' (a blank foot).
     assert(probe.builtArea == Rect(0, 0, 400, 660));
-    const sheet = placeOne(new Probe(Placement.sheet, 2), ctx);
+    const sheet = placeOne(new Probe(Placement.sheet, 2), ctx, hits);
     assert(sheet.y + sheet.bounds.height * 20 == 660 && sheet.y > 60);
 }
 
@@ -721,14 +736,15 @@ version (unittest)
     // closes: closing the menu must not close the guard.
     SurfaceContext ctx = {area: Rect(0, 0, 800, 480), cellW: 10, cellH: 20};
     Surfaces s;
+    HitRegistry hits;
     auto menu = new Probe(Placement.sheet, 2);
     auto guard = new Probe(Placement.sheet, 2);
     menu.host = &s;
     menu.next = guard;
     s.push(menu);
-    s.place(ctx);
+    s.place(ctx, hits);
     assert(s.tap(15, 470));
-    assert(menu.activated == 42);
+    assert(menu.activated == menu.ok.id);
     assert(s.stack.length == 1 && s.stack[0] is guard, "the guard is up, the menu gone");
 }
 
@@ -753,16 +769,17 @@ version (unittest)
     // centred; the page still hides the panes beside it (`TPG19`).
     SurfaceContext ctx = {area: Rect(0, 0, 3000, 480), cellW: 10, cellH: 20};
     auto page = new Probe(Placement.page, 3);
-    const p = placeOne(page, ctx);
+    HitRegistry hits;
+    const p = placeOne(page, ctx, hits);
     assert(page.builtCols == maxSurfaceCols && p.x == 1000);
     assert(p.opaque && p.backdrop == ctx.area);
 
     auto sheet = new Probe(Placement.sheet, 3);
-    const s = placeOne(sheet, ctx);
+    const s = placeOne(sheet, ctx, hits);
     assert(sheet.builtCols == maxSurfaceCols && s.x == 1000);
 
     // A phone's 50 columns are not touched.
     ctx.area = Rect(0, 0, 500, 480);
-    const narrow = placeOne(page, ctx);
+    const narrow = placeOne(page, ctx, hits);
     assert(page.builtCols == 50 && narrow.x == 0);
 }

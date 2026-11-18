@@ -14,6 +14,7 @@ module links;
 
 import sparkles.ui.glyphs : ActionIcon, iconText;
 import sparkles.ui.geometry : Rect;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.style : FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
@@ -86,11 +87,10 @@ void openUri(string uri) @system
     }
 }
 
-/// Hit ids.
-private enum Hit : size_t
+/// The confirmation's buttons, by their index in its hit block.
+private enum LinkButton : ubyte
 {
-    none,
-    open = 0x11C0,
+    open,
     copy,
     share,
     cancel,
@@ -105,6 +105,7 @@ final class LinkConfirm : Surface, Anchored
     private string from;
     private Rect where;
     private void delegate(string) @system copy;
+    private HitBlock hits_; // its buttons, as the last build numbered them
 
     /**
     `uri` is what opens; `hyperlink` says it came from OSC 8; `openable` is
@@ -126,8 +127,9 @@ final class LinkConfirm : Surface, Anchored
 
     Rect anchor() const @safe => where;
 
-    WidgetTree build(in SurfaceContext ctx, int cols) @safe
+    WidgetTree build(in SurfaceContext ctx, int cols, ref HitRegistry hits) @safe
     {
+        hits_ = hits.block(HitKey("terminal.link-confirm"), LinkButton.max + 1);
         Builder b;
         uint[] lines;
         const scheme = schemeOf(uri);
@@ -152,14 +154,16 @@ final class LinkConfirm : Surface, Anchored
             lines ~= prose(b, (from.length ? "From the terminal output of " ~ from ~ ". " : "")
                 ~ "The address shown is the one that opens.", Slot.textSecondary);
         }
-        buttons ~= button(b, iconText(ActionIcon.copy), "Copy", ctx.labels, Hit.copy, minRows: ctx.targetRows);
+        buttons ~= button(b, iconText(ActionIcon.copy), "Copy", ctx.labels, hits_[LinkButton.copy],
+            minRows: ctx.targetRows);
         if (shareable)
-            buttons ~= button(b, iconText(ActionIcon.share), "Share", ctx.labels, Hit.share, minRows: ctx.targetRows);
+            buttons ~= button(b, iconText(ActionIcon.share), "Share", ctx.labels, hits_[LinkButton.share],
+                minRows: ctx.targetRows);
         if (ctx.style != OverlayStyle.anchored)
-            buttons ~= button(b, "✕", "Cancel", ctx.labels, Hit.cancel, minRows: ctx.targetRows);
+            buttons ~= button(b, "✕", "Cancel", ctx.labels, hits_[LinkButton.cancel], minRows: ctx.targetRows);
         if (openable)
             buttons ~= button(b, iconText(ActionIcon.open), ctx.style == OverlayStyle.anchored ? "Open" : "Open in browser",
-                ctx.labels, Hit.open, primary: true, minRows: ctx.targetRows);
+                ctx.labels, hits_[LinkButton.open], primary: true, minRows: ctx.targetRows);
         else
             lines ~= label(b, "Only http, https and mailto links open (and links.schemes).",
                 Slot.muted);
@@ -171,17 +175,23 @@ final class LinkConfirm : Surface, Anchored
 
     bool activate(size_t id) @system
     {
-        switch (id)
+        size_t i;
+        return hits_.indexOf(id, i) && press(cast(LinkButton) i);
+    }
+
+    private bool press(LinkButton which) @system
+    {
+        final switch (which)
         {
-            case Hit.open:
+            case LinkButton.open:
                 if (openable)
                     openUri(uri);
                 return true;
-            case Hit.copy:
+            case LinkButton.copy:
                 if (copy !is null)
                     copy(uri);
                 return true;
-            case Hit.share:
+            case LinkButton.share:
                 version (Android)
                 {
                     import sparkles.android.intents : shareText;
@@ -189,14 +199,12 @@ final class LinkConfirm : Surface, Anchored
                     cast(void) shareText(uri);
                 }
                 return true;
-            case Hit.cancel:
+            case LinkButton.cancel:
                 return true;
-            default:
-                return false;
         }
     }
 
-    bool confirm() @system => activate(openable ? Hit.open : Hit.copy);
+    bool confirm() @system => press(openable ? LinkButton.open : LinkButton.copy);
     void cancel() @system {}
     bool key(in KeyEvent k) @system => false;
 
@@ -255,8 +263,9 @@ private string hostOf(string uri) @safe pure
     auto l = new LinkConfirm("https://sparkles.petar-kirov.dev/docs", true, true, false,
         "~/sparkles", Rect(0, 0, 10, 1), null);
     SurfaceContext card = {style: OverlayStyle.anchored};
+    HitRegistry hits;
     const(char)[][] texts;
-    foreach (ref n; place(l.build(card, 60), 60, 10, 0, 0, 1, 1, Place.top).tree.nodes)
+    foreach (ref n; place(l.build(card, 60, hits), 60, 10, 0, 0, 1, 1, Place.top).tree.nodes)
         texts ~= n.text;
     // A button's icon and caption are separate runs: the caption is in the interface face.
     assert(texts.canFind("OSC 8 link · https") && texts.canFind(iconText(ActionIcon.copy)) && texts.canFind("Copy")
@@ -264,7 +273,7 @@ private string hostOf(string uri) @safe pure
 
     SurfaceContext sheet = {style: OverlayStyle.sheet};
     texts = null;
-    foreach (ref n; place(l.build(sheet, 60), 60, 10, 0, 0, 1, 1, Place.top).tree.nodes)
+    foreach (ref n; place(l.build(sheet, 60, hits), 60, 10, 0, 0, 1, 1, Place.top).tree.nodes)
         texts ~= n.text;
     assert(texts.canFind("Open this link?") && texts.canFind("sparkles.petar-kirov.dev")
         && texts.canFind("/docs") && texts.canFind("Open in browser"));
@@ -272,7 +281,7 @@ private string hostOf(string uri) @safe pure
     // A disallowed scheme has no Open (`TPR6`).
     auto js = new LinkConfirm("javascript:alert(1)", true, false, false, null, Rect.init, null);
     texts = null;
-    foreach (ref n; place(js.build(card, 60), 60, 10, 0, 0, 1, 1, Place.top).tree.nodes)
+    foreach (ref n; place(js.build(card, 60, hits), 60, 10, 0, 0, 1, 1, Place.top).tree.nodes)
         texts ~= n.text;
     assert(!texts.canFind("↗ Open"));
 }
