@@ -2,7 +2,8 @@
 Runs a program confined, for the build graph's isolation spike (D39): its
 writes go only beneath the directories `--write` names (and to `/dev`, for
 `/dev/null`), through Landlock, and with `--no-network` it runs in a network
-namespace of its own, which holds only a loopback interface that is down.
+namespace of its own, which holds only a loopback interface, up, so a
+program reaches itself on `127.0.0.1` and nothing else.
 Reads are not restricted: manifests record them.
 
     confine [--write=<dir>]... [--no-network] -- <program> <argument>...
@@ -92,6 +93,11 @@ int main(string[] args)
         }
         catch (Exception e)
             return cannot("map the user's ids: " ~ e.msg);
+        // The namespace's loopback starts down: a test that listens on
+        // 127.0.0.1 and connects to itself would wait forever (BGA12's case).
+        // Up, it still reaches nothing outside the namespace.
+        if (!loopbackUp())
+            return cannot("bring the loopback interface up");
     }
 
     const abi = syscall(sysLandlockCreateRuleset, null, 0, landlockCreateRulesetVersion);
@@ -133,6 +139,36 @@ int main(string[] args)
     argv ~= null;
     execv(argv[0], argv.ptr);
     return cannot("execute " ~ program[0]);
+}
+
+/// Sets `lo` up in the process's network namespace (`SIOCSIFFLAGS`).
+bool loopbackUp()
+{
+    import core.sys.posix.sys.ioctl : ioctl;
+    import core.sys.posix.sys.socket : AF_INET, SOCK_DGRAM, socket;
+
+    enum siocgifflags = 0x8913, siocsifflags = 0x8914;
+    enum short iffUp = 0x1, iffRunning = 0x40;
+    // `struct ifreq`: the name, then a union whose first member here is the
+    // flags; 40 bytes on Linux.
+    static struct IfReq
+    {
+        char[16] name = 0;
+        short flags;
+        ubyte[22] rest;
+    }
+
+    const fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0)
+        return false;
+    scope (exit)
+        close(fd);
+    IfReq req;
+    req.name[0 .. 2] = "lo";
+    if (ioctl(fd, siocgifflags, &req) != 0)
+        return false;
+    req.flags |= iffUp | iffRunning;
+    return ioctl(fd, siocsifflags, &req) == 0;
 }
 
 int fail(string why)
