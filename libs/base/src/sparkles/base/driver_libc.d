@@ -783,9 +783,14 @@ unittest
     assert(readSelfExe(self));
     if (!libcDirOf(self[], dir))
         skipTest("no glibc directory on the test binary's run path or the system's");
-    char[64] name = void;
+    // In `TMPDIR`, the one place a confined test may write outside its own
+    // directories (build-graph D39).
     import core.stdc.stdio : snprintf;
-    snprintf(name.ptr, name.length, "/tmp/driver-libc-test-%d.json", getpid());
+    import core.stdc.stdlib : getenv;
+
+    const tmp = getenv("TMPDIR");
+    char[pathMax] name = void;
+    snprintf(name.ptr, name.length, "%s/driver-libc-test-%d.json", tmp && *tmp ? tmp : "/tmp", getpid());
     auto f = fopen(name.ptr, "w");
     assert(f);
     fputs(`{"ICD": {"library_path": "`, f);
