@@ -15,6 +15,10 @@
 #   CI_BRANCH              Deployment branch. Defaults to the provider's branch
 #                          variable; a PR deploys under its head branch, which
 #                          is what makes it a preview rather than production.
+#   CF_PAGES_CREATE        1: create the project first when it does not exist.
+#   CF_PAGES_COMMENT       The PR comment's marker (default: docs-preview).
+#   CF_PAGES_LABEL         The PR comment's text before the URL
+#                          (default: "📄 Docs preview deployed to:").
 #   GITHUB_TOKEN           Only needed for the PR comment.
 set -euo pipefail
 
@@ -43,6 +47,11 @@ fi
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
 
+if [ "${CF_PAGES_CREATE:-0}" = 1 ] \
+  && ! yarn exec "wrangler pages project list" 2>/dev/null | grep -qw -- "$project"; then
+  yarn exec "wrangler pages project create ${project@Q} --production-branch main"
+fi
+
 ci_group "Deploying $dist to Cloudflare Pages ($project, branch $branch)"
 # The locked devDependency, not a freshly fetched wrangler. `yarn exec`
 # takes one shell command, so the flags have to live inside that string.
@@ -63,5 +72,6 @@ printf 'Deployment URL: %s\n' "$url"
 ci_export DOCS_PREVIEW_URL "$url"
 
 if [ -n "${GITHUB_TOKEN:-}" ]; then
-  "$here/pr-comment.sh" docs-preview "📄 Docs preview deployed to: $url"
+  "$here/pr-comment.sh" "${CF_PAGES_COMMENT:-docs-preview}" \
+    "${CF_PAGES_LABEL:-📄 Docs preview deployed to:} $url"
 fi
