@@ -25,7 +25,11 @@
       ...
     }:
     let
-      inherit (config.legacyPackages.sparklesSources) libsClosure;
+      inherit (config.legacyPackages.sparklesSources) libsClosure srcClosure;
+
+      # The shader compiler and its own closure: every build that runs its
+      # pre-generate step builds the tool, to compile or to read the stamp.
+      shaderCompileDirs = srcClosure "apps/shader-compile";
 
       # Copies a generated-shaders package, with its `prebuilt` stamp, into
       # `libs/<lib>/generated/shaders/` of the source tree at `rootDir`.
@@ -55,10 +59,9 @@
           inherit pname;
           version = "0.1.0";
 
-          # The tool, and what `dub describe` reads to find the unit: the
-          # package's closure (sources and recipes) plus its device-only
-          # entry points.
-          sourceDirs = [ "apps/shader-compile/src" ] ++ extraDirs ++ libsClosure [ lib' ];
+          # The tool, and what it resolves to find the unit: the package's
+          # closure (sources and recipes) plus its device-only entry points.
+          sourceDirs = shaderCompileDirs ++ extraDirs ++ libsClosure [ lib' ];
           sourceRoot = "${finalAttrs.src.name}/apps/shader-compile";
           generatesShaders = true;
 
@@ -107,9 +110,9 @@
         needsUiShaders =
           srcDirs: builtins.elem "libs/ui-raylib/src" srcDirs || builtins.elem "libs/ui-vulkan/src" srcDirs;
         needsUiVulkanShaders = srcDirs: builtins.elem "libs/ui-vulkan/src" srcDirs;
+        inherit shaderCompileDirs;
         uiShaderDirs =
-          srcDirs:
-          lib.optional (needsUiShaders srcDirs || needsUiVulkanShaders srcDirs) "apps/shader-compile/src";
+          srcDirs: lib.optionals (needsUiShaders srcDirs || needsUiVulkanShaders srcDirs) shaderCompileDirs;
         placeUiShaders = placeShaders {
           package = config.packages.ui-shaders;
           lib' = "ui";

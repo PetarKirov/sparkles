@@ -17,6 +17,9 @@ dependency "sparkles:shaders" path="../.."
 dependency "sparkles:wired" path="../.."
 // The fixture tests rewrite a recipe through an SDL selector.
 dependency "sparkles:wired-sdl-select" path="../.."
+// The device configuration, resolved as dub would, without running dub.
+// It reaches no `sparkles:ui`.
+dependency "sparkles:build-primitives" path="../.."
 
 
 configuration "application" {

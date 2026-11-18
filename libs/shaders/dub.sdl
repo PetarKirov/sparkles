@@ -24,7 +24,7 @@ configuration "unittest" {
     dependency "sparkles:test-runner" path="../.."
 }
 // The device build: what LDC's dcompute target compiles for the GPU. Never
-// built by dub — `shader-compile` asks `dub describe` for it and compiles the
+// built by dub — `shader-compile` resolves it as dub would and compiles the
 // `@compute` modules among its sources, and `sparkles:dmd-lsp` analyzes those
 // modules under it (`TGT6`). A configuration is the device build because its
 // dflags name a dcompute target, not because of its name.

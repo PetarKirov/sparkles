@@ -28,6 +28,7 @@ import std.array : array, join;
 import std.conv : text;
 
 import sparkles.build_primitives.resolve.configure : Resolution, ResolvedTarget, VersionInheritance;
+import sparkles.build_primitives.resolve.describe : describeDevice;
 import sparkles.build_primitives.resolve.platform : BuildPlatform;
 import sparkles.build_primitives.resolve.libraries : PkgConfigDriver;
 import sparkles.build_primitives.resolve.settings : BuildSettings, TargetType, optionNames, requirementNames;
@@ -501,61 +502,6 @@ size_t addVariant(ref VariantPlan plan, Variant v) @safe
             return i;
     plan.variants ~= v;
     return plan.variants.length - 1;
-}
-
-/*
-The device configuration `r` as `dub describe` reports what the shader
-compiler reads of it: the root package, each target's directory, and each
-target's import paths, versions, dflags and source files (shader build
-SHP1). Paths beneath `root` are written `$ROOT/…`, so the description is
-the same in every worktree.
-*/
-string describeDevice(ref const Resolution r, string root) @safe
-{
-    import std.json : JSONValue;
-
-    string place(string path)
-    {
-        if (root.length && path == root)
-            return "$ROOT";
-        if (root.length && path.startsWith(root ~ "/"))
-            return "$ROOT/" ~ path[root.length + 1 .. $];
-        return path;
-    }
-    JSONValue[] places(const string[] paths)
-    {
-        JSONValue[] values;
-        foreach (p; paths)
-            values ~= JSONValue(place(p));
-        return values;
-    }
-    JSONValue[] strings(const string[] values)
-    {
-        JSONValue[] result;
-        foreach (s; values)
-            result ~= JSONValue(s);
-        return result;
-    }
-
-    JSONValue[] packages, targets;
-    foreach (ref t; r.targets)
-    {
-        packages ~= JSONValue(["name": JSONValue(t.package_), "path": JSONValue(place(t.directory))]);
-        targets ~= JSONValue([
-            "rootPackage": JSONValue(t.package_),
-            "buildSettings": JSONValue([
-                "importPaths": JSONValue(places(t.settings.importPaths)),
-                "versions": JSONValue(strings(t.settings.versions)),
-                "dflags": JSONValue(strings(t.settings.dflags)),
-                "sourceFiles": JSONValue(places(t.settings.sourceFiles)),
-            ]),
-        ]);
-    }
-    return JSONValue([
-        "rootPackage": JSONValue(r.rootPackage),
-        "packages": JSONValue(packages),
-        "targets": JSONValue(targets),
-    ]).toString;
 }
 
 string directoryOf(string path) @safe pure nothrow @nogc

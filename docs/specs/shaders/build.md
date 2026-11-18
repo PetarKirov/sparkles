@@ -30,8 +30,11 @@ once, as a [device configuration](../../glossary.md#device-configuration): a [du
 `vulkan-100`, `vulkan-110`, `vulkan-120`, `vulkan-130` and `vulkan-140`;
 `shaders` is the conventional name. The build
 step **must** use that configuration's import paths, version identifiers and
-flags as `dub describe` reports them, and **must** treat a configuration
-without the flag as a configuration error. The target names the compiler's
+flags as dub resolves them, the values `dub describe` reports, and **must**
+treat a configuration without the flag as a configuration error. It resolves
+the configuration in-process, with `sparkles:build-primitives`' resolver
+([build graph §2](../build-primitives/build-graph/SPEC.md#_2-recipe-resolution)),
+and runs no dub. The target names the compiler's
 code generator, which the OpenGL profiles use; a Vulkan profile is compiled
 for its own Vulkan version (`vulkan-110` for `vulkan1.1`), whose SPIR-V the
 code generator emits: 1.3 for Vulkan 1.1, 1.6 for Vulkan 1.3. The profiles
@@ -125,7 +128,7 @@ applies:
 
 1. the arguments are malformed: 2;
 2. with `--if-stale`, the output is fresh: 0;
-3. the device compiler, dub, or a SPIR-V or GLSL tool cannot be run: 3;
+3. the device compiler or a SPIR-V or GLSL tool cannot be run: 3;
 4. the device configuration cannot be described, describes no build target
    (it has no sources, or a target type that builds nothing), names no
    dcompute target, names anything but exactly one of the Vulkan targets of
@@ -165,8 +168,7 @@ either. Without
 invocation ([build graph BGG3](../build-primitives/build-graph/SPEC.md#_7-generators)):
 the graph resolves the configuration itself, writes the file, names every
 tool by absolute path, and leaves staleness to its cache. `SHP1`'s rules
-apply to the configuration the file describes, and `SHP10`'s third outcome
-no longer counts dub among the tools.
+apply to the configuration the file describes.
 
 _Rationale:_ a step that runs dub reads recipes the graph cannot declare as
 inputs, and one that searches `PATH` runs tools its key does not name.
@@ -190,7 +192,8 @@ taken as soon as the configuration is described, before the compiler reads
 the file, so a file edited while the step runs leaves the stamp stale.
 
 **SHB2: Freshness.** With `--if-stale`, the build step **must** exit 0
-without running dub or the device compiler when the stamp's format version is
+without resolving the configuration or running the device compiler when the
+stamp's format version is
 the current one, every recorded input exists with its recorded hash, and
 every recorded output exists, and it records at least one input and one
 output. A stamp with any other line, or a malformed one, is stale, except

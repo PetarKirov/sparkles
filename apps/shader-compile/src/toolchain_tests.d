@@ -1,7 +1,7 @@
 /**
 The build step as its users run it: the built tool, as a process, on a copy of
 `tests/fixture/` (a consumer package with a device configuration), against the
-real device compiler, dub, and the SPIR-V and GLSL tools.
+real device compiler and the SPIR-V and GLSL tools.
 
 These are the tests a fake cannot stand in for — what the compiler puts across
 the interface (`SHF1`–`SHF3`, `SHF5`–`SHF7`), and what the step does with each
@@ -35,11 +35,11 @@ import sparkles.wired.sdl : parseSdlDocument, sdlDubRecipe, SdlEditor, sdlEditor
     SdlQualifiedName, SdlScalar;
 import sparkles.wired.sdl.select : SdlSelector;
 
-import app : isFresh, parseDescribe, stampName, unitOf, withoutHostFlags;
+import app : describeConfiguration, isFresh, parseDescribe, stampName, unitOf;
 
 /// The tools the step runs, the device compiler first.
-private immutable toolchain = ["ldc2-vulkan", "dub", "spirv-val", "spirv-opt", "spirv-dis",
-    "spirv-as", "spirv-cross", "glslangValidator"];
+private immutable toolchain = ["ldc2-vulkan", "spirv-val", "spirv-opt", "spirv-dis", "spirv-as",
+    "spirv-cross", "glslangValidator"];
 
 /// Where `tool` is on `PATH`, or `null`.
 private string onPath(string tool)
@@ -245,7 +245,8 @@ dflags "-mdcompute-targets=vulkan-999"`);
         ["--config=badVersion", "not `vulkan-999`"],
         ["--config=nope", "failed in"],
         ["--config=library", "names no dcompute target"],
-        ["--config=sourceLibrary", "describes no build target"],
+        // Resolved as `dub build` would: a source library is no root.
+        ["--config=sourceLibrary", "cannot have target type sourceLibrary"],
         ["--config=twoTargets", "must name exactly one Vulkan target"],
         ["--config=hostOnly", "declares no `@fragment` or `@vertex` entry point"],
     ])
@@ -313,18 +314,18 @@ dflags "-mdcompute-targets=vulkan-999"`);
         return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
 
     // `SHP11`: given the configuration's description and every tool by path,
-    // the step runs with a `PATH` that holds nothing, so neither dub nor a tool
-    // is found by searching, and generates what a described run generates.
+    // the step runs with a `PATH` that holds nothing, so no tool is found by
+    // searching, and generates what a described run generates.
     auto described = Fixture.create("described");
     auto searched = Fixture.create("searched");
-    const description = execute(["dub", "describe", "--root=" ~ described.pkg, "--config=shaders",
-        "--compiler=ldc2-vulkan"], withoutHostFlags(environment.toAA), Config.newEnv);
-    assert(description.status == 0, description.output);
+    string error;
+    const description = describeConfiguration(described.pkg, "shaders", "ldc2-vulkan", error);
+    assert(description !is null, error);
     const file = described.root.buildPath("device.json");
-    file.write(description.output[description.output.indexOf('{') .. $]);
+    file.write(description);
 
     string[] args = ["--described=" ~ file, "--ldc=" ~ onPath("ldc2-vulkan")];
-    foreach (tool; toolchain[2 .. $])
+    foreach (tool; toolchain[1 .. $])
         args ~= "--tool=" ~ tool ~ "=" ~ onPath(tool);
     described.env = ["PATH": described.root.buildPath("empty")];
     const r = described.run(args);
@@ -704,11 +705,11 @@ exit 0
     // `SHP3`: the unit of the repository's own consumer, as the step reads
     // it — every `@compute` module among the device configuration's sources, the
     // package's and its dependencies', and no other; one of them device-only.
-    const described = execute(["dub", "describe", "--root=" ~ repoRoot.buildPath("libs", "ui"),
-        "--config=shaders", "--compiler=ldc2-vulkan"], withoutHostFlags(environment.toAA),
-        Config.newEnv);
-    assert(described.status == 0, described.output);
-    const unit = unitOf(parseDescribe(described.output));
+    string error;
+    const described = describeConfiguration(repoRoot.buildPath("libs", "ui"), "shaders", "ldc2-vulkan",
+        error);
+    assert(described !is null, error);
+    const unit = unitOf(parseDescribe(described));
     string rel(string p) => p.relativePath(repoRoot);
     assert(unit.deviceOnly.map!rel.array == ["libs/ui/shaders/effects.d"], unit.deviceOnly.to!string);
     auto sources = unit.sources.map!rel.array;

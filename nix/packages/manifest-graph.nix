@@ -305,6 +305,7 @@
         inherit sourceFor sourceForWith manifestFileset;
         inherit (config.legacyPackages.uiShaderPlacement)
           needsUiShaders
+          shaderCompileDirs
           uiShaderDirs
           needsUiVulkanShaders
           placeUiVulkanShaders
