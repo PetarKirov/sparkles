@@ -499,3 +499,23 @@ tr.slot:hover > th {
   padding-top: 3px;
   margin-top: 2px;
 }
+.picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.picker select {
+  font: inherit;
+  min-height: 34px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--spk-border-strong-fg, #c9cbd2);
+  background: var(--spk-page-bg, #ffffff);
+  color: var(--spk-page-fg, #17181c);
+}
+.choice > .panel {
+  border: 0;
+  padding: 0;
+}

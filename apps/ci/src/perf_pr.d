@@ -343,6 +343,15 @@ struct SetupTime
     long seconds;
 }
 
+/// One job's time in the final run: its latest execution's wait and wall time, in seconds.
+struct JobTime
+{
+    string name;
+    string runner;
+    long queue;
+    long wall;
+}
+
 /// The longest and shortest shard of a placement, first attempt on the final head.
 struct ShardBalance
 {
@@ -369,6 +378,7 @@ struct PrFigures
     SetupTime[] setup;
     ShardBalance[] shards;
     string[] paths;
+    JobTime[] jobTimes; /// each job of the final run, by name
 
     long seconds(Scope s) const @safe pure nothrow @nogc
     {
@@ -466,6 +476,9 @@ PrFigures figuresOf(in PrRecord r) @safe
             latestJobs ~= run.jobs[newest[k]];
     }
     f.final_ = byRunner(finalJobs);
+    foreach (ref j; latestJobs)
+        if (j.ran && !isGate(j))
+            f.jobTimes ~= JobTime(j.name, j.runner, j.queue, j.wall);
     f.latest = byRunner(latestJobs);
 
     // Time to green, and its split along the last job that ran a minute.
@@ -612,6 +625,10 @@ version (unittest)
     assert(slow.failures == 1 && slow.alone == 1 && slow.flaky == 1, "failed alone, then passed: flaky");
     assert(f.setup == [SetupTime("macos-latest", 0, 240), SetupTime("ubuntu-latest", 100, 1302)]);
     assert(f.shards == [ShardBalance("x86_64-linux-ldc2", 600, 400)]);
+    assert(f.jobTimes.map!(j => j.name).array == ["slow (x86_64-linux, ldc2, oracle.x)",
+        "test (x86_64-linux-ldc2, 1/2)", "test (x86_64-linux-ldc2, 2/2)"], "the gate and a job that never ran aside");
+    assert(f.jobTimes[0] == JobTime("slow (x86_64-linux, ldc2, oracle.x)", "macos-latest", 30, 120),
+        "the rerun, the latest execution");
 }
 
 @("perfPr.encode.roundTripAndPrivacy")
