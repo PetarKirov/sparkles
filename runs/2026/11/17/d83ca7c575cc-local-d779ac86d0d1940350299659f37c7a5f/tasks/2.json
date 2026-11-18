@@ -1,0 +1,1 @@
+{"tasks":[{"id":"pin-build:demo-x86_64-linux","series":"4ada4369bd63577935919e17e099840317873e8e03760aa7d165d5c62000146c","outcome":"failed","start":400,"end":1005692500,"metrics":{"task.wall":1005692100}}]}

@@ -1,0 +1,1 @@
+{"tasks":[{"id":"test:ci:unittest:serial","series":"db58345c4df07000df25b877493deffab006eacc9668672013176590dd132f11","outcome":"failed","start":51600,"end":34926573500,"metrics":{"task.wall":34926521900}}]}
