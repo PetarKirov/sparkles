@@ -67,6 +67,14 @@
         # changes with every commit and stays unpinned.
         test-runner = config.packages.test-runner;
       }
+      // lib.optionalAttrs (config.packages ? snix-castore) {
+        # Snix's castore CLI, the content identity's oracle in the `ci` shell
+        # (Linux). It is a test tool, not a compiler, but it is planned and
+        # built like the toolchain: nothing else builds the aarch64-linux
+        # shell, so without a pin every arm test shard compiled it, 7 of its
+        # 10 minutes of setup (run 44208696311).
+        toolchain-snix-castore = config.packages.snix-castore;
+      }
       // lib.optionalAttrs onX86Linux {
         # DMD, whose test suite runs on every build.
         toolchain-dmd = pkgs.dmd;
