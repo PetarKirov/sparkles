@@ -1025,6 +1025,10 @@ include:
 - the source closure the binary reads at run time, such as fixtures named
   through `__FILE_FULL_PATH__`;
 - the toolchain, when the test compiles;
+- the programs it runs that the graph builds, which its package declares in
+  `test-programs.json`: each is linked by its own actions, and the test
+  receives its path in the environment variable the file names
+  ([D61](./decisions.md#d61-a-test-that-runs-a-program-it-builds-gets-it-from-the-graph-accepted));
 - the flake inputs it reads.
 
 **BGX3: Result reuse.** A test action's result **must not** be reused unless one

@@ -1,0 +1,17 @@
+{
+  "programs": [
+    {
+      "buildType": "checked",
+      "configuration": "application",
+      "directory": ".",
+      "variable": "SPARKLES_SCENARIO_RUNNER"
+    },
+    {
+      "buildType": "unittest",
+      "configuration": "unittest",
+      "directory": "tests/fixture",
+      "testRoot": true,
+      "variable": "SPARKLES_SCENARIO_FIXTURE"
+    }
+  ]
+}

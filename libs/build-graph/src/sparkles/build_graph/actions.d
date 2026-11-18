@@ -172,6 +172,18 @@ struct CoverageAttempt
     size_t plain;    /// the index of the plain one
 }
 
+/**
+A program a test runs that the graph builds (BGX2, D61): request `program`'s
+binary, named to request `test`'s test action by the environment variable
+`variable`. A program's own tests do not run.
+*/
+struct TestProgram
+{
+    size_t test;     /// the index of the test's request
+    size_t program;  /// the index of the program's request
+    string variable; /// what names the program to the test
+}
+
 /// Why the graph could not be made.
 struct ActionError
 {
@@ -194,10 +206,11 @@ Params:
     root = the repository root, which in-tree paths are made relative to
     tools = the compiler and the archiver
     attempts = the coverage attempts among the requests
+    programs = the programs the requests' tests run
 */
 PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
     const Resolution[] resolutions, string root, const Tools tools = Tools.init,
-    const CoverageAttempt[] attempts = null) @safe
+    const CoverageAttempt[] attempts = null, const TestProgram[] programs = null) @safe
 {
     ActionGraph g;
     bool[string] made;
@@ -206,6 +219,8 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
     TaskId[size_t] archiveOf;
     // Each request's root compile and link.
     TaskId[size_t] rootCompileOf, linkOf;
+    // Each request's test.
+    TaskId[size_t] testOf;
 
     TaskId add(Action a)
     {
@@ -420,7 +435,7 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
         foreach (a; archiveIds)
             edge(a, linkId);
 
-        if (v.role == Role.testRoot)
+        if (v.role == Role.testRoot && !programs.canFind!(p => p.program == ri))
         {
             const testWeight = defaultWeight(ActionKind.test);
             // A coverage test writes its listings to its own directory, recording
@@ -437,8 +452,24 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
                 TaskAction(ProcessAction(argv: testArgv,
                     sandbox: SandboxPolicy.taskDirectory)),
                 coverage ? [DeclaredOutput(".", true)] : null, testWeight);
-            edge(linkId, add(t));
+            testOf[ri] = add(t);
+            edge(linkId, testOf[ri]);
         }
+    }
+
+    // D61: a test runs the programs it declares, from their links.
+    foreach (ref p; programs)
+    {
+        if (p.program !in linkOf || p.test !in testOf)
+            return planErr!ActionGraph(ActionError(text("a test program names a request with no ",
+                p.program !in linkOf ? "binary" : "test", ": ", p.variable)));
+        const binary = inputPath(linkOf[p.program], binaryName(plan.variants[plan.requests[p.program][0]]));
+        foreach (ref a; g.actions)
+            if (a.id == testOf[p.test])
+                a.action.match!(
+                    (ref ProcessAction pa) { pa.envDelta ~= EnvEntry(p.variable, binary); },
+                    (ref other) {});
+        edge(linkOf[p.program], testOf[p.test]);
     }
 
     // CIC7: the coverage build is provisional, and the plain retry waits for
@@ -812,7 +843,7 @@ version (unittest)
 
     // The same packages, each request a sub-package and a build type.
     private ActionGraph graphWith(const string[2][] requests, const CoverageAttempt[] attempts = null,
-        const Tools tools = Tools.init) @safe
+        const Tools tools = Tools.init, const TestProgram[] programs = null) @safe
     {
         auto tree = memoryTree([
             "/r/dub.sdl": "name \"r\"\nsubPackage \"t1\"\nsubPackage \"t2\"\nsubPackage \"mid\"\nsubPackage \"leaf\"\n",
@@ -838,7 +869,7 @@ version (unittest)
         }
         const plan = planVariants(rs, PlanOptions(ToolchainIdentity("ldc", "toolchain-1")), tree);
         assert(plan.hasValue);
-        auto g = planActions(plan.value, rs, "/r", tools, attempts);
+        auto g = planActions(plan.value, rs, "/r", tools, attempts, programs);
         assert(g.hasValue, g.hasError ? g.error.message : null);
         return g.value;
     }
@@ -1049,6 +1080,29 @@ version (unittest)
     assert(dargv.canFind("-J=$IN(" ~ gen.id.text ~ ")") && !dargv.canFind("-J=g/gen"), text(dargv));
     assert(g.value.edges.canFind!(e => e.prerequisite == gen.id && e.dependent == dependent.id));
     assert(g.value.actions.count!(a => a.id == gen.id) == 1);
+}
+
+/// D61: a program a test runs is linked, its own tests do not run, and the test
+/// names it by a variable whose value is the link's binary.
+@("build_graph.actions.planActions.testPrograms")
+@safe unittest
+{
+    const g = graphWith([[":t1", "unittest"], [":t2", "unittest"]], null, Tools.init,
+        [TestProgram(test: 0, program: 1, variable: "T2_BINARY")]);
+    assert(count(g, ActionKind.test) == 1);
+    const(Action)* test, link2;
+    foreach (ref a; g.actions)
+    {
+        if (a.kind == ActionKind.test)
+            test = &a;
+        if (a.kind == ActionKind.link && a.id.text.startsWith("link:r.t2:"))
+            link2 = &a;
+    }
+    assert(test !is null && test.id.text.startsWith("test:r.t1:") && link2 !is null);
+    const env = test.action.match!((ref const ProcessAction p) => p.envDelta, (_) => null);
+    assert(env.length == 1 && env[0].name == "T2_BINARY"
+        && env[0].value == "$IN(" ~ link2.id.text ~ ")/" ~ link2.outputs[0].path, text(env));
+    assert(g.edges.canFind!(e => e.prerequisite == link2.id && e.dependent == test.id));
 }
 
 @("build_graph.actions.planActions.timeLimits")

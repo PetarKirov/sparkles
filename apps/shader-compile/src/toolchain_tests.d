@@ -71,6 +71,10 @@ private string tool()
 {
     static string build()
     {
+        // The build graph builds the tool and names it (build-graph D61); a
+        // test binary never runs dub there (BGX1).
+        if (const built = environment.get("SPARKLES_SHADER_COMPILE"))
+            return built;
         // Every worker process of the test run builds it once; a lock file
         // keeps their dub builds of the same tree from racing each other. A
         // build can still relink the binary while another worker runs it

@@ -76,8 +76,8 @@ import std.stdio : stderr, writeln;
 import std.sumtype : match;
 import std.typecons : Nullable;
 
-import sparkles.build_graph.actions : ActionGraph, ActionKind, CoverageAttempt, Tools, planActions,
-    taskNodes;
+import sparkles.build_graph.actions : ActionGraph, ActionKind, CoverageAttempt, TestProgram, Tools,
+    planActions, taskNodes;
 import sparkles.build_graph.variants : LayoutCheck, PlanError, PlanOptions, Role, ToolchainIdentity,
     VariantPlan, planVariants;
 import sparkles.build_primitives.task.model : PlanExpected, planErr, planOk;
@@ -353,6 +353,48 @@ Planned planRepository(string root, bool markers = false, string only = null, To
             return Planned(fault() ? fault() : text(pkg.shortName, ": ", r.error.message));
         rs ~= r.value;
     }
+    // D61: the programs each test runs, declared beside its package's recipe,
+    // planned as requests of their own whose tests do not run.
+    TestProgram[] programs;
+    {
+        import std.json : JSONException, JSONType, parseJSON;
+
+        string[] testDirectories;
+        foreach (ref pkg; graph.value.packages)
+            if (!only.length || pkg.shortName == only)
+                testDirectories ~= pkg.path.length ? root ~ "/" ~ pkg.path : root;
+        foreach (ti, dir; testDirectories)
+        {
+            const file = dir ~ "/test-programs.json";
+            string json;
+            if (!tree.readText(file, json))
+                continue;
+            try
+            {
+                foreach (entry; parseJSON(json)["programs"].array)
+                {
+                    const at = buildNormalizedPath(dir, entry["directory"].str);
+                    string sub;
+                    foreach (ref pkg; graph.value.packages)
+                        if ((pkg.path.length ? root ~ "/" ~ pkg.path : root) == at)
+                            sub = pkg.shortName;
+                    auto request = ResolveRequest(directory: sub.length ? root : at, subPackage: sub,
+                        configuration: entry["configuration"].str, buildType: entry["buildType"].str,
+                        platform: platform,
+                        testRoot: "testRoot" in entry && entry["testRoot"].type == JSONType.true_);
+                    foreach (n, s; registry.value)
+                        request.registry[n] = s;
+                    auto r = resolve(request, tree);
+                    if (r.hasError)
+                        return Planned(fault() ? fault() : text(file, ": ", r.error.message));
+                    rs ~= r.value;
+                    programs ~= TestProgram(test: ti, program: rs.length - 1, variable: entry["variable"].str);
+                }
+            }
+            catch (JSONException e)
+                return Planned(text(file, ": ", e.msg));
+        }
+    }
     // The variables the resolved values refer to: the requests pass none.
     foreach (ref r; rs)
         foreach (name; r.environmentInputs)
@@ -393,7 +435,7 @@ Planned planRepository(string root, bool markers = false, string only = null, To
             if (!p.packageDirectories.canFind(t.directory))
                 p.packageDirectories ~= t.directory;
 
-    auto g = planActions(p.plan, rs, root, tools);
+    auto g = planActions(p.plan, rs, root, tools, null, programs);
     if (g.hasError)
         return Planned(text(g.error));
     p.graph = g.value;

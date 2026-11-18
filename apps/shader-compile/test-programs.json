@@ -1,0 +1,10 @@
+{
+  "programs": [
+    {
+      "buildType": "debug",
+      "configuration": "application",
+      "directory": ".",
+      "variable": "SPARKLES_SHADER_COMPILE"
+    }
+  ]
+}

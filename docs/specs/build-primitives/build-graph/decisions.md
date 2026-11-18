@@ -17,7 +17,8 @@ access through the capability VFS, was accepted on 2026-11-07, and D56,
 planning's source scans on DMD's lexer and parser, and D57, pruning's scan
 scope, and D58, the layout lint's gate, on 2026-11-16; and D59, what
 planning's trace holds, and D60, a single-file generator's `git`, on
-2026-11-17. Records marked **proposed** await the owner's decision.
+2026-11-17; and D61, the programs a test builds, on 2026-11-18. Records
+marked **proposed** await the owner's decision.
 
 ## D1: Own the build instead of isolating dub (accepted)
 
@@ -1738,3 +1739,40 @@ clear error.
 
 **Revisit when** a single-file generator needs a tool to succeed, or the
 upstream `config.d` stops calling `git`.
+
+## D61: A test that runs a program it builds gets it from the graph (accepted)
+
+**Question.** Two test suites build programs with dub and run them:
+`shader-compile`'s command-line tests build the tool (`--config=application`),
+and `test-runner-impl`'s scenarios build the runner executable (`checked`)
+and a fixture package's test binary (`tests/fixture`). Each writes into its
+package's `build/` directory, under a lock file there. A test binary never
+runs dub (BGX1), and a confined test writes only its own directories and
+`TMPDIR` (D39), so both fail in the graph. Skip them there, leave them
+failing, or have the graph build the programs?
+
+**Alternatives.**
+
+- **Skip them under the graph:** the smallest change, but the graph never
+  runs those tests, and nothing keys them on the programs they run.
+- **Leave them failing until E4:** records the violation and fixes nothing.
+- **The graph builds the programs:** each is a planned target like any other,
+  and the test receives its path.
+
+**Choice.** Decided by the owner on 2026-11-18 (BGX1, BGX2): the graph builds
+them. A package whose tests run programs declares them in
+`test-programs.json` beside its recipe: for each, the environment variable
+that names it to the test, and the package directory, configuration and build
+type to build it with. Planning a package's test root reads that file
+through the tree, so it joins the read set; it builds each program as an
+ordinary request whose own tests do not run, and gives the test action the
+variable set to the linked binary. The link is then one of the test's
+runtime inputs, and its outputs digest is part of the test's key. A test
+uses the variable when it is set, and builds the program with dub
+otherwise, so `dub test` is unchanged.
+
+**Trade-offs.** The file is a second place, beside the test's own code, that
+names what the test runs; a test that starts running another program and
+does not declare it still runs dub, which the dub trap reports (oracle 11).
+
+**Revisit when** dub gains a way to declare a test's build-time tools.
