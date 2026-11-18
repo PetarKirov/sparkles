@@ -31,7 +31,7 @@ module graph_oracles;
 
 import core.time : msecs, seconds;
 import std.algorithm : all, canFind, filter, map, sort, startsWith;
-import std.array : array, join, replace;
+import std.array : array, join, replace, split;
 import std.conv : text;
 import std.file : exists, mkdirRecurse, readText, rmdirRecurse, tempDir, write;
 import std.path : absolutePath, buildNormalizedPath, buildPath, dirName;
@@ -39,7 +39,7 @@ import std.process : thisProcessID;
 import std.stdio : stderr, writeln;
 import std.sumtype : match;
 
-import sparkles.build_graph.actions : ActionKind;
+import sparkles.build_graph.actions : ActionKind, Tools;
 import sparkles.build_primitives.task.action : ProcessAction;
 
 
@@ -100,7 +100,9 @@ immutable Oracle[] oracles = [
     Oracle("13", &oracle13),
     Oracle("16", &oracle16),
     Oracle("17", &oracle17),
+    Oracle("18", &oracle18),
     Oracle("19", &oracle19),
+    Oracle("24", &oracle24),
 ];
 
 // === Fixtures ===
@@ -152,7 +154,7 @@ struct Fixture
     }
 
     /// The task id prefix of the package's actions of `kind` (`compile`).
-    string task(string kind) const => kind ~ ":sparkles." ~ name;
+    string task(string kind) const => kind ~ ":sparkles." ~ name ~ ":";
 }
 
 /// Removes the fixtures an interrupted check left behind, and their lines in
@@ -178,10 +180,10 @@ void removeStaleFixtures()
 A fixture library's recipe: its `src` imported, the repository's preview
 flags, and the test runner in its `unittest` configuration. `dependencies`
 names other packages (`zz-oracle-b`) it depends on in both, and
-`cImportPaths` its C include roots. Written from the `dub.sdl` schema
+`cImportPaths` its C include roots and `versions` its version identifiers. Written from the `dub.sdl` schema
 (SDE9), as no recipe here is written as text.
 */
-string recipeOf(string name, string[] dependencies = null, string[] cImportPaths = null)
+string recipeOf(string name, string[] dependencies = null, string[] cImportPaths = null, string[] versions = null)
 {
     import sparkles.build_primitives.dub_manifest : DubConfiguration, DubDependency, DubManifest,
         DubPlatformValues;
@@ -207,6 +209,8 @@ string recipeOf(string name, string[] dependencies = null, string[] cImportPaths
     m.dflags = [values("-preview=in", "-preview=dip1000")];
     if (cImportPaths.length)
         m.cImportPaths = [values(cImportPaths)];
+    if (versions.length)
+        m.versions = [values(versions)];
     DubConfiguration library, unittests;
     library.name = "library";
     library.targetType = "library";
@@ -1135,4 +1139,265 @@ ScratchStore ScratchStoreOver(string cache)
     s.runOut = move(runOut.value);
     assert(typeof(s.store).open(s.build, "1-1", s.store));
     return s;
+}
+
+// === Oracle 18: miss explanations ===
+
+/// `ci cache store explain <task>`'s lines against the store beneath `cache`.
+string explained(string cache, string task)
+{
+    import std.array : appender;
+
+    auto w = appender!string;
+    cast(void) explainTask(root, cache, task, w);
+    return w.data;
+}
+
+/// The class and detail of `task`'s miss in `g`'s log: `declared: differs in …`.
+string missOf(ref const GraphRun g, string task)
+{
+    import std.string : indexOf, lineSplitter;
+
+    foreach (line; g.log.lineSplitter)
+        if (line.startsWith("[" ~ task ~ " stderr] miss ("))
+        {
+            const rest = line[line.indexOf("miss (") + 6 .. $];
+            const close = rest.indexOf("): ");
+            return (rest[0 .. close] ~ ": " ~ rest[close + 3 .. $]).idup;
+        }
+    return null;
+}
+
+Verdict[] oracle18()
+{
+    import std.digest.sha : sha256Of;
+    import std.file : dirEntries, read, remove, SpanMode;
+    import sparkles.build_graph.execute : storeOperation;
+    import sparkles.build_graph.store : hexOf;
+    import std.array : appender;
+
+    Verdict[] vs;
+    // The compile of `o18` reads `o18b`'s module through its import path, a
+    // file its manifest lists but its declared key does not; and it probes
+    // for a module `o18b` does not have, an absent candidate.
+    enum libModule = "module sparkles.zz_o18b.lib;\n\nint g() { return 2; }\n";
+    auto dep = Fixture.add("o18b", [
+        "dub.sdl": recipeOf("o18b"),
+        "src/sparkles/zz_o18b/lib.d": libModule,
+    ]);
+    auto fx = Fixture.add("o18", [
+        "dub.sdl": recipeOf("o18", ["zz-oracle-o18b"]),
+        "src/sparkles/zz_o18/m.d": "module sparkles.zz_o18.m;\n\nimport sparkles.zz_o18b.lib;\n\n"
+            ~ "static if (__traits(compiles, { import sparkles.zz_o18b.missing; }))\n    enum hasMissing = true;\n"
+            ~ "else\n    enum hasMissing = false;\n\nint f() { return g(); }\n",
+    ]);
+    const cache = freshCache("o18");
+    auto first = run(fx.name, cache);
+    const compile = taskOf(first, fx.task("compile"));
+    if (first.exitCode != 0)
+        return [Verdict("setup", "the fixture failed:" ~ tailOf(first.log))];
+
+    // Each miss in a run, classified and naming what changed; explain says
+    // the same and executes nothing. Afterwards the baseline is published
+    // again, so the next scenario's preimage is compared with it alone.
+    void scenario(string what, string class_, string names, void delegate() change, void delegate() undo,
+        RunOptions o = RunOptions.init)
+    {
+        change();
+        const before = storeEntries(cache);
+        const lines = explained(cache, compile);
+        const executedNothing = storeEntries(cache) == before;
+        auto g = run(fx.name, cache, o);
+        undo();
+        cast(void) run(fx.name, cache);
+        const miss = missOf(g, compile);
+        string why;
+        if (!miss.startsWith(class_ ~ ": "))
+            why = text("the run classed it `", miss, "`, not ", class_);
+        else if (!miss.canFind(names))
+            why = text("the run's explanation `", miss, "` does not name ", names);
+        else if (class_ == "declared" && miss.canFind(", "))
+            why = text("the run's explanation `", miss, "` names more than the substituted component");
+        else if (o.adjustTools is null && !lines.canFind(compile ~ ": miss (" ~ class_ ~ "): "))
+            why = text("explain did not class it ", class_, ":\n", lines);
+        else if (!executedNothing)
+            why = "explain changed the store";
+        vs ~= Verdict(what, why, text("`", miss, "`", o.adjustTools is null
+            ? ", in the run and from explain, which executed nothing" : ""));
+    }
+
+    // Declared: one more argument, and nothing else. (A recipe's version
+    // would be another variant, so another task.)
+    {
+        RunOptions o;
+        o.adjustPlan = (ref Planned p) {
+            wrapActions(p, compile, (string[] argv) => argv ~ "-d-version=ZzOracle18");
+        };
+        o.adjustTools = (ref Tools) {}; // explain plans afresh, and cannot see it
+        scenario("declared (argument)", "declared", "arg", () {}, () {}, o);
+    }
+    // Manifest: a file the manifest lists, not the declared key, edited.
+    scenario("manifest (edited)", "manifest", "libs/zz-oracle-o18b/src/sparkles/zz_o18b/lib.d changed",
+        () => dep.put("src/sparkles/zz_o18b/lib.d", libModule ~ "// edited\n"),
+        () => dep.put("src/sparkles/zz_o18b/lib.d", libModule));
+    // Manifest: a file created at an absent candidate.
+    scenario("manifest (absent candidate)", "manifest", "missing.d appeared",
+        () => dep.put("src/sparkles/zz_o18b/missing.d", "module sparkles.zz_o18b.missing;\n"),
+        () => remove(buildPath(dep.dir, "src/sparkles/zz_o18b/missing.d")));
+    // Declared: the toolchain, another compiler build in its place.
+    {
+        RunOptions o;
+        o.adjustTools = (ref Tools t) {
+            import std.file : setAttributes;
+
+            const wrapper = buildPath(scratch, "ldc2-wrapped");
+            write(wrapper, "#!" ~ sh() ~ "\nexec " ~ t.compiler ~ " \"$@\"\n");
+            setAttributes(wrapper, octal!755);
+            t.compiler = wrapper;
+        };
+        // The wrapper's path is in the compile's arguments too, so the
+        // explanation names both; nothing else may differ.
+        auto g = run(fx.name, cache, o);
+        cast(void) run(fx.name, cache);
+        const miss = missOf(g, compile);
+        const named = miss.startsWith("declared: differs in ") ? miss["declared: differs in ".length .. $] : null;
+        vs ~= Verdict("declared (compiler)", named.split(", ").sort.release != ["arg", "toolchain"]
+            ? text("another compiler build classed `", miss, "`") : null,
+            "`" ~ miss ~ "`: the toolchain, and the argument that names the compiler");
+    }
+    // Evicted: the result and its record gone, the manifest still matching.
+    {
+        auto again = run(fx.name, cache);
+        const key = again.stats.resultKeys.get(compile, null);
+        auto discard = appender!string;
+        cast(void) storeOperation(cache, "remove-key=" ~ key, discard);
+        cast(void) storeOperation(cache, "gc", discard);
+        const recorded = buildPath(cache, "build", "v1", "records", key);
+        if (exists(recorded))
+            remove(recorded);
+        const lines = explained(cache, compile);
+        auto g = run(fx.name, cache);
+        const miss = missOf(g, compile);
+        vs ~= Verdict("evicted", !miss.startsWith("evicted: ") ? text("the run classed it `", miss, "`")
+            : !lines.canFind(compile ~ ": miss (evicted): ") ? "explain did not class it evicted:\n" ~ lines : null,
+            "`" ~ miss ~ "`, in the run and from explain");
+    }
+
+    // A redacted value is in the store only as a keyed digest.
+    {
+        import sparkles.build_graph.actions : Action, DeclaredOutput;
+        import sparkles.build_primitives.task.action : EnvEntry, TaskAction;
+        import sparkles.build_primitives.task.model : taskId;
+
+        enum secret = "oracle-18-secret-hunter2";
+        RunOptions o;
+        o.adjustPlan = (ref Planned p) {
+            p.graph.actions ~= Action(ActionKind.generate, taskId("generate", "oracle-18", "secret", "ldc", "0").value,
+                0, TaskAction(ProcessAction(argv: [tool("true")],
+                    envDelta: [EnvEntry("PATH", ""), EnvEntry("ORACLE_18_TOKEN", secret, redacted: true)])),
+                [DeclaredOutput(".", true)], 1);
+        };
+        auto g = run(fx.name, cache, o);
+        const plainDigest = hexOf(sha256Of(secret));
+        string found;
+        foreach (e; dirEntries(buildPath(cache, "build"), SpanMode.depth))
+            if (e.isFile)
+            {
+                const bytes = cast(const(char)[]) read(e.name);
+                if (bytes.canFind(secret) || bytes.canFind(plainDigest))
+                    found = e.name;
+            }
+        string preimages;
+        foreach (e; dirEntries(buildPath(cache, "build", "v1", "preimages"), SpanMode.shallow))
+            preimages ~= readText(e.name);
+        vs ~= Verdict("redacted value", g.exitCode != 0 ? "the run failed:" ~ tailOf(g.log)
+            : found.length ? "the value, or its plain SHA-256, is in " ~ found
+            : !preimages.canFind("ORACLE_18_TOKEN=redacted:") ? "no preimage records the redacted entry" : null,
+            "the preimage holds the value only as a keyed digest; neither it nor its SHA-256 is in the store");
+    }
+    return vs;
+}
+
+// === Oracle 24, steps 5 and 6: the store's links, and file identity ===
+
+Verdict[] oracle24()
+{
+    import std.file : dirEntries, getTimes, remove, setTimes, SpanMode, symlink;
+    import std.process : execute;
+    import std.datetime.systime : SysTime;
+    import std.array : appender;
+
+    Verdict[] vs;
+    auto fx = Fixture.add("o24", [
+        "dub.sdl": recipeOf("o24"),
+        "src/sparkles/zz_o24/a.d": "module sparkles.zz_o24.a;\n\nint a() { return 1; }\n",
+        "src/sparkles/zz_o24/b.d": "module sparkles.zz_o24.b;\n\nint b() { return 2; }\n",
+    ]);
+
+    // Step 5: a link planted in a published result is a corrupt entry, found
+    // without touching what it points to.
+    {
+        const cache = freshCache("o24");
+        auto g = run(fx.name, cache);
+        const compile = taskOf(g, fx.task("compile"));
+        const key = g.stats.resultKeys.get(compile, null);
+        string planted;
+        const out_ = buildPath(cache, "build", "v1", "results", key, "out");
+        foreach (e; dirEntries(out_, SpanMode.shallow))
+            if (e.isFile && e.name.endsWith(".o"))
+                planted = e.name;
+        const target = buildPath(scratch, "o24-link-target.o");
+        if (planted.length)
+        {
+            import std.file : copy;
+
+            copy(planted, target);
+            remove(planted);
+            symlink(target, planted);
+        }
+        const traceFile = buildPath(scratch, "o24.trace");
+        const ci = buildPath(root, "apps", "ci", "build", "ci");
+        // explain reads the store beneath $XDG_CACHE_HOME/sparkles: point it here.
+        const xdg = buildPath(scratch, "o24-xdg");
+        mkdirRecurse(xdg);
+        if (!exists(buildPath(xdg, "sparkles")))
+            symlink(cache, buildPath(xdg, "sparkles"));
+        const r = execute(["strace", "-f", "-qq", "-e", "trace=%file", "-o", traceFile, ci, "cache", "store",
+            "explain", compile], ["XDG_CACHE_HOME": xdg]);
+        const trace = exists(traceFile) ? readText(traceFile) : "";
+        vs ~= Verdict("step 5", !planted.length ? "no object to plant a link at"
+            : !r.output.canFind("miss") ? "the lookup through a planted link did not miss:\n" ~ r.output
+            : !exists(buildPath(cache, "build", "v1", "trash")) || storeHas(cache, key) ? "the entry was not moved to trash/"
+            : trace.canFind(target) ? "the lookup touched the link's target " ~ target : null,
+            "the lookup refused the planted link, moved the entry to trash/, and never touched its target");
+    }
+
+    // Step 6: a file replaced by a hard link to another of the same size
+    // and modification time is rehashed.
+    {
+        import std.file : rename;
+        import core.sys.posix.unistd : link;
+        import std.string : toStringz;
+
+        const cache = freshCache("o24");
+        auto g = run(fx.name, cache);
+        const compile = taskOf(g, fx.task("compile"));
+        const a = buildPath(fx.dir, "src/sparkles/zz_o24/a.d");
+        const b = buildPath(fx.dir, "src/sparkles/zz_o24/b.d");
+        // b, renamed to the same size as a with other bytes, then linked in a's place.
+        fx.put("src/sparkles/zz_o24/b.d", "module sparkles.zz_o24.a;\n\nint a() { return 9; }\n");
+        SysTime atime, mtime;
+        getTimes(a, atime, mtime);
+        setTimes(b, atime, mtime);
+        remove(a);
+        const linked = link(b.toStringz, a.toStringz) == 0;
+        const lines = explained(cache, compile);
+        // The first action that reads it (the test-root module's generator,
+        // then the compile) must miss naming it.
+        vs ~= Verdict("step 6", !linked ? "cannot hard-link the fixture"
+            : !lines.canFind(": miss (") || !lines.canFind("zz_o24/a.d")
+                ? "a file of another identity, its size and time the same, was trusted:\n" ~ lines : null,
+            "the hard link, same size and time, was rehashed and missed");
+    }
+    return vs;
 }
