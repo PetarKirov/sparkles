@@ -41,8 +41,12 @@ The toolkit's views take a `HitBlock` where they once took a `hitBase`:
 `treeView` and `viewSlice` (`hits[node]`), `propertyView` and
 `inspectorView` (`hits[node]`), `viewHistory` (`HistoryViewOptions.hits`,
 `hits[revision]`) and `viewCommandPalette` (`PaletteViewOptions.rowHits`,
-the `i`-th listed row). `SettingsPane.claimHits(registry, instance)` asks
-for the pane's own rows each frame it is shown.
+the `i`-th listed row), `actionBar` and `tabStrip` (`hits[segment]`),
+`chordCaptureView` (`hits[CaptureHit]`), `viewLantern` (`hits[item]`) and
+the settings sections (`sectionHit(block, node, part)`, decoded by
+`decodeSectionHit(block, …)`, in a block of `sectionHitCount(nodes)` ids).
+`SettingsPane.claimHits(registry, instance)` asks for the pane's own rows
+each frame it is shown.
 
 ```d
 HitRegistry hits;

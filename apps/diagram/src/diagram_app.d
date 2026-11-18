@@ -342,7 +342,7 @@ struct DiagramApp
         BoxLayout box;
         const root = viewLantern(b, guideLabels, listed[],
             world.lantern.pending.length, viewport.width, box,
-            Placement.classic, LanternStyle.init, 0, world.lantern.scroll);
+            Placement.classic, LanternStyle.init, scroll: world.lantern.scroll);
         auto tree = b.finish(root);
         auto frames = layout(tree, Constraints(maxW: viewport.width));
 

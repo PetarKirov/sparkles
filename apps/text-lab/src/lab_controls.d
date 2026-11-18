@@ -13,7 +13,7 @@ import sparkles.input : Event, FocusEvent, GestureEvent, Key, KeyAction, KeyEven
 import sparkles.ui.components.controls : chip, ControlSize;
 import sparkles.ui.components.picker : PickerState;
 import sparkles.ui.components.property_sections : decodeSectionHit, SectionItem, SectionPart, sectionHit,
-    SectionsOptions;
+    sectionHitCount, SectionsOptions;
 import sparkles.ui.components.settings_pane : SettingsPane, SettingsResult;
 import sparkles.ui.components.settings_sections : SettingsSections;
 import sparkles.ui.components.scroll_body : ScrollBody;
@@ -231,15 +231,14 @@ final class LabControls
         {
             hits.block(fontChipKey);
             const nodes = pane.tree.data.nodes.length;
-            hits.block(sectionsKey, sectionHit(0, cast(uint)(nodes ? nodes : 1), 0));
+            hits.block(sectionsKey, sectionHitCount(nodes));
         }
     }
 
     /// The generated row's node and part `hit` names, when it is one.
     bool decodeSection(size_t hit, out uint node, out uint part) const @safe pure nothrow @nogc
     {
-        const block = hits.find(sectionsKey);
-        return block.contains(hit) && decodeSectionHit(block.base, hit, node, part)
+        return decodeSectionHit(hits.find(sectionsKey), hit, node, part)
             && node < pane.tree.data.nodes.length;
     }
 
@@ -856,7 +855,7 @@ final class LabControls
                 if (n.path == "font.face" || n.path == "font.path" || n.path == "font.index") continue;
                 if (n.path.length >= 5 && n.path[0 .. 5] == "axes[") displayed.label = n.label;
                 rows ~= sections.row(b, pane, displayed, i == focus,
-                    SectionsOptions(targetRows: target, width: width - 2, touch: true), sectionHits.base);
+                    SectionsOptions(targetRows: target, width: width - 2, touch: true), sectionHits);
             }
         }
         if (error.length) rows ~= b.add(Widget(kind: WidgetKind.text, text: error));
@@ -879,7 +878,7 @@ final class LabControls
             double next = scrollBody.motion.pos < scrollMax ? scrollBody.motion.pos : scrollMax;
             if (focusMoved && focus < items.length)
                 foreach (i, widget; tree.nodes)
-                    if (widget.hitId == sectionHit(hits.find(sectionsKey).base, items[focus].node,
+                    if (widget.hitId == sectionHit(hits.find(sectionsKey), items[focus].node,
                             SectionPart.row))
                     {
                         const r = frames[i].rect;
@@ -1059,7 +1058,7 @@ final class LabControls
                         }
                         if (!picker.active)
                             cast(void) sections.pointer(pane, p, tree, frames,
-                                hits.find(sectionsKey).base, result, true, Size(cw, ch));
+                                hits.find(sectionsKey), result, true, Size(cw, ch));
                         return;
                     }
                     if (!touching || p.pointerId != touchPress.pointerId) return;
@@ -1103,7 +1102,7 @@ final class LabControls
                     }
                     if (sections.drag.active || ax >= slop && ax > ay)
                         if (!picker.active && sections.pointer(pane, p, tree, frames,
-                                hits.find(sectionsKey).base, result, true, Size(cw, ch)))
+                                hits.find(sectionsKey), result, true, Size(cw, ch)))
                         {
                             scrollBody.cancelDrag();
                             if (p.action == PointerAction.release) touching = false;
@@ -1117,7 +1116,7 @@ final class LabControls
                     if (ax >= slop || ay >= slop) return;
                 }
                 if (!picker.active && sections.pointer(pane, p, tree, frames,
-                        hits.find(sectionsKey).base, result, touch, Size(cw, ch))) return;
+                        hits.find(sectionsKey), result, touch, Size(cw, ch))) return;
                 if (!touch && p.action != PointerAction.press) return;
                 const hit = hoverTargets(tree, frames).hitAt(
                     p.pos.x / cast(float) cw, p.pos.y / cast(float) ch);

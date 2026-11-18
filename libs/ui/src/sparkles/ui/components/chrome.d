@@ -17,6 +17,7 @@ import sparkles.base.term_color : RgbColor;
 import sparkles.ui.canvas : RuleEdge;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.ui.geometry : Insets, Point, SizeSpec;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.components.dock : DockDrag, dockHintRect;
 import sparkles.ui.components.scroll_view : ScrollLayout, ScrollView;
 import sparkles.ui.state : PressState, ScrollAxis, ScrollbarState, ScrollState,
@@ -383,19 +384,19 @@ $(LIST
         with `.length` and pushes it off-centre.
 )
 
-`hitBase` is the first id; segment `i` gets `hitBase + i`, so a host maps an
-activation back with `id - hitBase`. Pass the `press` state to render the
+`hits` is the host's block (`INP27`); segment `i` gets `hits[i]`, so a host maps an
+activation back with `hits.indexOf`. Pass the `press` state to render the
 armed segment pressed. A `label` that is empty renders an empty segment,
 which still takes its share of the width — a bar's segments stay aligned
 across rebuilds even when one has nothing to say.
 */
-uint actionBar(ref Builder b, scope const(string)[] labels, size_t hitBase,
+uint actionBar(ref Builder b, scope const(string)[] labels, in HitBlock hits,
     in PressState press = PressState.init)
 {
     auto segs = new uint[](labels.length);
     foreach (i, label; labels)
     {
-        const id = hitBase + i;
+        const id = hits[i];
         const caption = b.add(Widget(
             kind: WidgetKind.text,
             // `string`, not `const(char)[]`: this is built every frame by a
@@ -455,8 +456,8 @@ Consumers are deliberately unrelated: an application selecting one of several
 documents, and a markdown renderer showing one of a code group's fences. That
 is the test of whether this belongs in the toolkit at all.
 
-`hitBase` is the first id; tab `i` gets `hitBase + i`, so an activation maps
-back with `id - hitBase`. Pass `ids` instead when the caller has its own
+`hits` is the host's block (`INP27`); tab `i` gets `hits[i]`, so an activation maps
+back with `hits.indexOf`. Pass `ids` instead when the caller has its own
 identity scheme — a source-anchored one, say — and the strip uses those
 verbatim.
 */
@@ -527,7 +528,7 @@ uint tabStripTopBorder(ref Builder b, scope const(string)[] labels,
 }
 
 uint tabStrip(ref Builder b, scope const(string)[] labels, size_t active,
-    size_t hitBase, in PressState press = PressState.init,
+    in HitBlock hits, in PressState press = PressState.init,
     bool fitLabels = true, scope const(size_t)[] ids = null,
     TabCaps caps = TabCaps.init)
 {
@@ -538,11 +539,11 @@ uint tabStrip(ref Builder b, scope const(string)[] labels, size_t active,
     segs.reserve(labels.length + 1);
     foreach (i, label; labels)
     {
-        // Ids default to `hitBase + i`, but a caller with its own identity
+        // Ids default to `hits[i]`, but a caller with its own identity
         // scheme supplies them: a markdown code group anchors each tab to
         // its fence's source offset, so two groups on one page cannot mint
         // the same id and a re-parse cannot renumber them.
-        const id = i < ids.length ? ids[i] : hitBase + i;
+        const id = i < ids.length ? ids[i] : hits[i];
         const isActive = i == active;
         const armed = press.isArmed(id);
         const caption = b.add(Widget(
@@ -680,7 +681,7 @@ version (unittest)
     import sparkles.input : PointerAction, PointerEvent;
 
     // Five segments across 30 cells, ids 100..104 — hue's toolbar shape.
-    enum base = 100;
+    enum base = HitBlock(100, 5);
     auto b = Builder();
     const bar = actionBar(b, ["◀ thm", "thm ▶", "view", "tree", "ln №"], base);
     Widget colW = Widget(kind: WidgetKind.column, children: [bar],
@@ -704,7 +705,7 @@ version (unittest)
         const x = cast(int)(i * 6 + 3);
         h.update(PointerEvent(action: PointerAction.move, pos: Point(x, 0)),
             targets);
-        assert(h.hot == base + i, "segment hit mismatch");
+        assert(h.hot == base[i], "segment hit mismatch");
     }
 
     // The segments TILE the bar: each starts where the previous ended, and
@@ -755,7 +756,7 @@ version (unittest)
     // bar from layout flow, which is what a host wants for a bar that yields
     // its row rather than one that merely goes quiet.)
     auto b = Builder();
-    const bar = actionBar(b, ["a", "b"], 7);
+    const bar = actionBar(b, ["a", "b"], HitBlock(7, 2));
     b.nodes[bar].visibility = Visibility.collapsed;
     Widget colW = Widget(kind: WidgetKind.column, children: [bar],
         width: SizeSpec.fixed(10));
@@ -775,7 +776,7 @@ version (unittest)
     // host tracking which one it pressed.
     auto b = Builder();
     const press = PressState.init.pressed(21);
-    const bar = actionBar(b, ["x", "y", "z"], 20, press);
+    const bar = actionBar(b, ["x", "y", "z"], HitBlock(20, 3), press);
     auto tree = b.finish(bar);
 
     const segs = tree.nodes[bar].children;
@@ -878,7 +879,7 @@ version (unittest)
     import sparkles.input : PointerAction, PointerEvent;
 
     // Three tabs sized to their labels, the second one showing.
-    enum base = 200;
+    enum base = HitBlock(200, 3);
     auto b = Builder();
     const strip = tabStrip(b, ["config.js", "config.ts", "π.md"], 1, base);
     const col = b.add(Widget(kind: WidgetKind.column, children: [strip],
@@ -904,13 +905,13 @@ version (unittest)
     HoverState h;
     h.update(PointerEvent(action: PointerAction.move, pos: Point(5, 0)),
         targets);
-    assert(h.hot == base + 0);
+    assert(h.hot == base[0]);
     h.update(PointerEvent(action: PointerAction.move, pos: Point(15, 0)),
         targets);
-    assert(h.hot == base + 1);
+    assert(h.hot == base[1]);
     h.update(PointerEvent(action: PointerAction.move, pos: Point(24, 0)),
         targets);
-    assert(h.hot == base + 2);
+    assert(h.hot == base[2]);
     // Past the last tab is filler: hit-testable by nothing.
     h.update(PointerEvent(action: PointerAction.move, pos: Point(35, 0)),
         targets);
@@ -924,7 +925,7 @@ version (unittest)
     // a DIFFERENT one is held down, which is what a strip that conflates
     // them gets wrong mid-press.
     auto b = Builder();
-    const strip = tabStrip(b, ["one", "two"], 0, 10,
+    const strip = tabStrip(b, ["one", "two"], 0, HitBlock(10, 2),
         PressState.init.pressed(11));
     auto tree = b.finish(strip);
     const tabs = tree.nodes[strip].children;
@@ -942,7 +943,7 @@ version (unittest)
     // the SAME share of the leftover, so the strip tiles exactly (the
     // actionBar behaviour — not equal widths, which unequal labels forbid).
     auto e = Builder();
-    const seg = tabStrip(e, ["a", "bbbbb"], 0, 10, PressState.init,
+    const seg = tabStrip(e, ["a", "bbbbb"], 0, HitBlock(10, 2), PressState.init,
         fitLabels: false);
     const col = e.add(Widget(kind: WidgetKind.column, children: [seg],
         width: SizeSpec.fixed(30)));

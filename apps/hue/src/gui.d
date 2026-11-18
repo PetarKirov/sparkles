@@ -2385,8 +2385,8 @@ int runGui(GuiArgs guiArgs) @system
                 BoxLayout ltnBox;
                 const ltnRoot = viewLantern(ltnBuilder, ltnLabels, listed[],
                     pn.lantern.pending.length, screenW / cellW, ltnBox,
-                    guiLanternPlacement(), LanternStyle.init, 0,
-                    pn.lantern.scroll);
+                    guiLanternPlacement(), LanternStyle.init,
+                    scroll: pn.lantern.scroll);
                 auto ltnTree = ltnBuilder.finish(ltnRoot);
                 // Bounded to the window, so a `classic` panel actually
                 // spans it rather than shrinking to its content.
@@ -2848,7 +2848,7 @@ int runGui(GuiArgs guiArgs) @system
             auto barB = Builder();
             const barLabels = toolbarLabels();
             const toolbarHits = hitRegistry.block(toolbarHitKey, toolbarSegments);
-            const barRoot = actionBar(barB, barLabels[], toolbarHits.base,
+            const barRoot = actionBar(barB, barLabels[], toolbarHits,
                 toolbarPress);
             if (inputMode)
                 barB.nodes[barRoot].visibility = Visibility.collapsed;

@@ -747,7 +747,7 @@ private uint viewCodeGroup(ref Builder b, ref const MdBlock blk,
         inner.groupTabs = GroupTabs(titles, ids, active);
         return viewBlock(b, blk.children[active], src, inner);
     }
-    const strip = tabStrip(b, titles, active, 0, PressState.init,
+    const strip = tabStrip(b, titles, active, HitBlock.init, PressState.init,
         fitLabels: true, ids: ids);
     const body = viewBlock(b, blk.children[active], src, inner);
     return b.add(Widget(kind: WidgetKind.column, children: [strip, body],
@@ -1091,7 +1091,7 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
             caps.hasBandBg = true;
         }
         const strip = tabStrip(b, opt.groupTabs.titles, opt.groupTabs.active,
-            0, PressState.init, fitLabels: true, ids: opt.groupTabs.ids,
+            HitBlock.init, PressState.init, fitLabels: true, ids: opt.groupTabs.ids,
             caps: caps);
         kids ~= strip;
         used = 2 + cast(int) opt.groupTabs.titles.length - 1; // walls

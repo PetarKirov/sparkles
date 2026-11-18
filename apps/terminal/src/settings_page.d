@@ -37,7 +37,7 @@ import std.conv : text;
 import sparkles.input.events : Key, KeyAction, KeyEvent, PointerEvent, WheelEvent;
 import sparkles.ui.components.chord_capture : CaptureConflict, CaptureHit, CapturePhase,
     CaptureResolution, ChordCapture, chordCaptureView, pathLabel;
-import sparkles.ui.components.property_sections : choiceLabel, decodeSectionHit,
+import sparkles.ui.components.property_sections : choiceLabel, decodeSectionHit, sectionHitCount,
     sectionHeader, sectionHit, SectionItem, SectionPart, SectionsOptions, sentenceCase,
     naturalCells, unquoted;
 import sparkles.ui.components.settings_pane : SettingsResult, SettingsToast;
@@ -406,10 +406,9 @@ final class SettingsPage : Surface, PointerSurface, Scrollable
         captureHits = hits.block(captureKey, CaptureHit.max + 1);
         bindingHits = hitBlock(hits, bindingsKey, bindings.length);
         bindingEditHits = hitBlock(hits, bindingEditsKey, bindings.length);
-        // `sectionHit` numbers a node's parts from the base it is given: the
-        // block spans as many ids as it numbers for every node.
+        // The sections block numbers every part of every node.
         const nodes = pane.tree.data.nodes.length;
-        sectionHits = hitBlock(hits, sectionsKey, sectionHit(0, cast(uint) nodes, 0));
+        sectionHits = hitBlock(hits, sectionsKey, sectionHitCount(nodes));
     }
 
     bool activate(size_t id) @system
@@ -431,7 +430,7 @@ final class SettingsPage : Surface, PointerSurface, Scrollable
             return false;
         }
         uint node, part;
-        if (sectionHits.contains(id) && decodeSectionHit(sectionHits.base, id, node, part))
+        if (decodeSectionHit(sectionHits, id, node, part))
             sectionPart(node, part);
         return false;
     }
@@ -479,7 +478,7 @@ final class SettingsPage : Surface, PointerSurface, Scrollable
         scope const(Frame)[] frames, Size cellPixels = Size(1, 1)) @system
     {
         SettingsResult result;
-        const used = sections.pointer(*pane, p, tree, frames, sectionHits.base, result, touch,
+        const used = sections.pointer(*pane, p, tree, frames, sectionHits, result, touch,
             cellPixels);
         if (used)
         {
@@ -736,7 +735,7 @@ final class SettingsPage : Surface, PointerSurface, Scrollable
             case Item.Kind.section:
                 break;
         }
-        return sections.row(b, *pane, it.si, focused, opt, sectionHits.base);
+        return sections.row(b, *pane, it.si, focused, opt, sectionHits);
     }
 
     private uint bindingWidget(ref Builder b, size_t i, bool focused, in SectionsOptions opt)
@@ -773,7 +772,7 @@ final class SettingsPage : Surface, PointerSurface, Scrollable
             alignY: Alignment.center, hitId: bindingHits[i]));
         uint[] kids = [main];
         if (capture.open && captureRow == i)
-            kids ~= chordCaptureView(b, capture, leader, captureHits.base, opt.targetRows, touch);
+            kids ~= chordCaptureView(b, capture, leader, captureHits, opt.targetRows, touch);
         const capturing = capture.open && captureRow == i;
         return b.add(Widget(kind: WidgetKind.column, children: kids, gap: capturing ? 1 : 0,
             width: SizeSpec.grow(), padding: Insets(0, 1, capturing ? 1 : 0, 2),
@@ -1237,7 +1236,7 @@ version (unittest)
     {
         foreach (i, ref nd; p.pane.tree.data.nodes)
             if (nd.value.path == path)
-                return sectionHit(p.sectionHits.base, cast(uint) i, part);
+                return sectionHit(p.sectionHits, cast(uint) i, part);
         assert(false, path);
     }
 }

@@ -35,10 +35,14 @@ import sparkles.ui.components.range_slider : SliderDomain;
 import sparkles.ui.components.tree_widget : TreeData;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.ui.geometry : Insets, SizeSpec;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.property_tree : LeafKind, PropertyNode, SearchRole;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind;
 import sparkles.ui.wrap : TextWrap;
+
+// The tests' sections block: room for 4096 nodes.
+version (unittest) private enum testHits = HitBlock(1000, 64 * 4096);
 
 @safe:
 
@@ -281,18 +285,23 @@ enum SectionPart : uint
 
 private enum uint partsPerNode = 64;
 
-/// The hit id of `part` of `node`'s row.
-size_t sectionHit(size_t base, uint node, uint part) pure nothrow @nogc
-    => base + cast(size_t) node * partsPerNode + part;
+/// The ids a block needs for `nodes` rows: ask the registry for this many.
+size_t sectionHitCount(size_t nodes) pure nothrow @nogc
+    => (nodes ? nodes : 1) * partsPerNode;
 
-/// The node and part `id` names; false when it is not a row's.
-bool decodeSectionHit(size_t base, size_t id, out uint node, out uint part)
+/// The hit id of `part` of `node`'s row in `block` (`INP27`); 0 past it.
+size_t sectionHit(in HitBlock block, uint node, uint part) pure nothrow @nogc
+    => block[cast(size_t) node * partsPerNode + part];
+
+/// The node and part `id` names; false when it is not one of `block`'s.
+bool decodeSectionHit(in HitBlock block, size_t id, out uint node, out uint part)
     pure nothrow @nogc
 {
-    if (id < base)
+    size_t index;
+    if (!block.indexOf(id, index))
         return false;
-    node = cast(uint)((id - base) / partsPerNode);
-    part = cast(uint)((id - base) % partsPerNode);
+    node = cast(uint)(index / partsPerNode);
+    part = cast(uint)(index % partsPerNode);
     return true;
 }
 
@@ -300,10 +309,12 @@ bool decodeSectionHit(size_t base, size_t id, out uint node, out uint part)
 @("ui.property_sections.sectionHit.roundTrips")
 @safe pure nothrow @nogc unittest
 {
+    const block = HitBlock(1000, sectionHitCount(20));
     uint n, p;
-    assert(decodeSectionHit(1000, sectionHit(1000, 17, SectionPart.choice0 + 2), n, p));
+    assert(decodeSectionHit(block, sectionHit(block, 17, SectionPart.choice0 + 2), n, p));
     assert(n == 17 && p == SectionPart.choice0 + 2);
-    assert(!decodeSectionHit(1000, 999, n, p));
+    assert(!decodeSectionHit(block, 999, n, p));
+    assert(!decodeSectionHit(block, 1000 + sectionHitCount(20), n, p), "an id past the block is no row's");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -406,13 +417,14 @@ string sectionSummary(ref const TreeData!PropertyNode data, uint node)
 One leaf or drill-in row of `data` (`PRT37`–`PRT40`): label, changed marker
 and description on the left; the chip, the reset and the inline editor on
 the right; an open dropdown's options, the line editor and a refusal under
-it. Hit ids are $(LREF sectionHit)`(hitBase, item.node, part)`.
+it. Hit ids are $(LREF sectionHit)`(block, item.node, part)`, from the
+host's block of $(LREF sectionHitCount) ids.
 */
 uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const SectionItem item,
-    ref const RowState st, in SectionsOptions opt, size_t hitBase)
+    ref const RowState st, in SectionsOptions opt, HitBlock block)
 {
     const n = &data.nodes[item.node].value;
-    size_t hit(uint part) => sectionHit(hitBase, item.node, part);
+    size_t hit(uint part) => sectionHit(block, item.node, part);
 
     if (item.kind == SectionItem.Kind.status)
         return b.add(Widget(kind: WidgetKind.text, text: item.label, slot: Slot.muted,
@@ -887,7 +899,7 @@ version (UiPropertyFixtures)
     const item = SectionItem(SectionItem.Kind.leaf, node, "Size");
     const st = RowState(changed: true, chip: "overrides colors.properties", chipWarn: true);
     const root = sectionRow(b, f.tree.data, item, st,
-        SectionsOptions(targetRows: 3, width: 60), 1000);
+        SectionsOptions(targetRows: 3, width: 60), testHits);
     auto tree = b.finish(root);
     auto frames = layout(tree, Constraints(maxW: 60));
     // The row is a 48 dp target (three rows here); its parts are hits.
@@ -895,9 +907,9 @@ version (UiPropertyFixtures)
     size_t[] ids;
     foreach (ref t; hoverTargets(tree, frames))
         ids ~= t.hitId;
-    assert(ids.canFind(sectionHit(1000, node, SectionPart.dec))
-        && ids.canFind(sectionHit(1000, node, SectionPart.inc))
-        && ids.canFind(sectionHit(1000, node, SectionPart.reset)));
+    assert(ids.canFind(sectionHit(testHits, node, SectionPart.dec))
+        && ids.canFind(sectionHit(testHits, node, SectionPart.inc))
+        && ids.canFind(sectionHit(testHits, node, SectionPart.reset)));
 
     // The changed marker is a glyph, and the chip carries the note.
     const(char)[] all;
@@ -922,7 +934,7 @@ version (UiPropertyFixtures)
     const item = SectionItem(SectionItem.Kind.drill, node, "Colours");
     const st = RowState.init;
     const root = sectionRow(b, f.tree.data, item, st,
-        SectionsOptions(width: 60), 1);
+        SectionsOptions(width: 60), HitBlock(1, sectionHitCount(f.tree.data.nodes.length)));
     auto tree = b.finish(root);
     size_t painted;
     string count;
@@ -964,15 +976,15 @@ version (UiPropertyFixtures)
             const item = SectionItem(SectionItem.Kind.leaf, node, "Size");
             const state = RowState(changed: value != 13);
             const root = sectionRow(builder, fixture.tree.data, item, state,
-                SectionsOptions(targetRows: 3, width: width), 1000);
+                SectionsOptions(targetRows: 3, width: width), testHits);
             auto tree = builder.finish(root);
             const frames = layout(tree, Constraints(maxW: width));
             foreach (i, widget; tree.nodes)
             {
-                if (widget.hitId == sectionHit(1000, node, SectionPart.open))
+                if (widget.hitId == sectionHit(testHits, node, SectionPart.open))
                     assert(frames[i].rect.right <= frames[root].rect.right - 1,
                         "numeric chip must fit inside the row's padding");
-                if (widget.hitId == sectionHit(1000, node, SectionPart.slider))
+                if (widget.hitId == sectionHit(testHits, node, SectionPart.slider))
                 {
                     if (value == 13 && !original.width) original = frames[i].rect;
                     else assert(frames[i].rect == original, text("track moved: ", original, " -> ", frames[i].rect));
@@ -1001,7 +1013,7 @@ version (UiPropertyFixtures)
         const item = SectionItem(SectionItem.Kind.leaf, node, "Follow system");
         const st = RowState.init;
         const root = sectionRow(b, f.tree.data, item, st,
-            SectionsOptions(targetRows: 3, width: width), 1);
+            SectionsOptions(targetRows: 3, width: width), HitBlock(1, sectionHitCount(f.tree.data.nodes.length)));
         auto tree = b.finish(root);
         auto frames = layout(tree, Constraints(maxW: width));
         const bottom = frames[tree.root].rect.y + frames[tree.root].rect.height;

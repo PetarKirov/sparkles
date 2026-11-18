@@ -17,11 +17,15 @@ import sparkles.ui.components.property_view : refusalText;
 import sparkles.ui.components.range_slider : RangeSlider, SliderDomain;
 import sparkles.ui.components.settings_pane : SettingsResult;
 import sparkles.ui.geometry : Rect, Size;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.state : hoverTargets, hitAt;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.property_tree : EditValue, LeafKind, PropertyNode, readValueAt;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
+
+// The tests' sections block: room for 4096 nodes.
+version (unittest) private enum testHits = HitBlock(1000, 64 * 4096);
 
 /// State beside a settings pane, independent of placement and persistence.
 struct SettingsSections
@@ -47,7 +51,7 @@ struct SettingsSections
         SectionItem item;
         RowState state;
         SectionsOptions options;
-        size_t base;
+        HitBlock base;
         WidgetTree tree;
     }
     private CachedLeaf[] cachedLeaves;
@@ -125,7 +129,7 @@ struct SettingsSections
 
     /// Builds a section row using the same controller state on every host.
     uint row(P)(ref Builder b, ref P pane, in SectionItem item,
-        bool focused, in SectionsOptions opt, size_t base)
+        bool focused, in SectionsOptions opt, HitBlock base)
     {
         auto n = &pane.tree.data.nodes[item.node].value;
         if (item.kind == SectionItem.Kind.header)
@@ -242,7 +246,7 @@ struct SettingsSections
     /// cells (defaults to identity). Hits include fractional viewport shifts
     /// and clipping. Capture owns subsequent moves/releases outside the track.
     bool pointer(P)(ref P pane, in PointerEvent p, in WidgetTree tree,
-        scope const(Frame)[] frames, size_t base, out SettingsResult result, bool touch = false,
+        scope const(Frame)[] frames, HitBlock base, out SettingsResult result, bool touch = false,
         Size cellPixels = Size(1, 1))
     {
         result = SettingsResult.init;
@@ -353,27 +357,27 @@ struct SettingsSections
     SettingsSections sections;
     Builder b;
     const row = sections.row(b, pane, sections.items(pane)[0], false,
-        SectionsOptions(width: 40, targetRows: 3), 1000);
+        SectionsOptions(width: 40, targetRows: 3), testHits);
     const root = b.add(Widget(kind: WidgetKind.column, children: [row], clipY: true,
         height: SizeSpec.fixed(6), childOffsetFracY: 0.5));
     const tree = b.finish(root);
     const frames = layout(tree, Constraints(maxW: 40));
     Rect track;
     foreach (i, widget; tree.nodes)
-        if (widget.hitId == sectionHit(1000, 0, SectionPart.slider)) track = frames[i].rect;
+        if (widget.hitId == sectionHit(testHits, 0, SectionPart.slider)) track = frames[i].rect;
     assert(track.height == 3);
     SettingsResult result;
     const at = Point((track.x + 1) * 10, track.y * 20 - 5);
     assert(sections.pointer(pane, PointerEvent(PointerAction.press, PointerButton.left, at),
-        tree, frames, 1000, result, false, Size(10, 20)),
+        tree, frames, testHits, result, false, Size(10, 20)),
         "the top half row is painted above its integer frame");
     const first = subject.value;
     cast(void) sections.pointer(pane, PointerEvent(PointerAction.drag, PointerButton.left,
-        Point(at.x + 1, at.y)), tree, frames, 1000, result, false, Size(10, 20));
+        Point(at.x + 1, at.y)), tree, frames, testHits, result, false, Size(10, 20));
     assert(subject.value > first, "single-pixel motion changes a continuous value");
     cast(void) sections.cancel(pane);
     assert(!sections.pointer(pane, PointerEvent(PointerAction.press, PointerButton.left,
-        Point(at.x, 6 * 20)), tree, frames, 1000, result, false, Size(10, 20)),
+        Point(at.x, 6 * 20)), tree, frames, testHits, result, false, Size(10, 20)),
         "the viewport's lower edge cannot capture");
 }
 
@@ -413,8 +417,8 @@ struct SettingsSections
         b.add(Widget(kind: WidgetKind.text, text: "preceding node"));
         const item = sections.items(pane)[0];
         const state = sections.rowState(pane, "weight", focused);
-        const root = cached ? sections.row(b, pane, item, focused, options, 1000)
-            : sectionRow(b, pane.tree.data, item, state, options, 1000);
+        const root = cached ? sections.row(b, pane, item, focused, options, testHits)
+            : sectionRow(b, pane.tree.data, item, state, options, testHits);
         const tree = b.finish(root);
         auto ops = buildDisplayList(tree, layout(tree, Constraints(maxW: options.width)),
             Palette.init, RgbColor.init, RgbColor.init);
@@ -465,23 +469,23 @@ struct SettingsSections
     auto items = sections.items(pane);
     uint[] ids;
     foreach (item; items)
-        ids ~= sections.row(b, pane, item, true, SectionsOptions.init, 1000);
+        ids ~= sections.row(b, pane, item, true, SectionsOptions.init, testHits);
     auto tree = b.finish(b.container(WidgetKind.column, ids));
     auto frames = layout(tree, Constraints(maxW: 60));
     Rect track;
     foreach (i, widget; tree.nodes)
-        if (widget.hitId == sectionHit(1000, 0, SectionPart.slider))
+        if (widget.hitId == sectionHit(testHits, 0, SectionPart.slider))
             track = frames[i].rect;
     assert(track.width > 1);
     SettingsResult result;
     assert(sections.pointer(pane, PointerEvent(PointerAction.press, PointerButton.left,
-        Point(track.x, track.y)), tree, frames, 1000, result));
+        Point(track.x, track.y)), tree, frames, testHits, result));
     assert(subject.weight == 100 && pane.edits.undo.length == 0);
     assert(sections.pointer(pane, PointerEvent(PointerAction.release, PointerButton.left,
-        Point(track.x + track.width + 10, track.y)), tree, frames, 1000, result));
+        Point(track.x + track.width + 10, track.y)), tree, frames, testHits, result));
     assert(subject.weight == 700 && pane.edits.undo.length == 1);
     cast(void) sections.pointer(pane, PointerEvent(PointerAction.press, PointerButton.left,
-        Point(track.x, track.y)), tree, frames, 1000, result);
+        Point(track.x, track.y)), tree, frames, testHits, result);
     cast(void) sections.cancel(pane);
     assert(subject.weight == 700 && pane.edits.undo.length == 1);
     cast(void) sections.activate(pane, 0, SectionPart.open, SectionsOptions.init);
