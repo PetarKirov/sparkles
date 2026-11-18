@@ -447,6 +447,28 @@ environment is refused the key.
 This is configuration evidence, not a test; it is repeated whenever the
 workflows, the environment or the signers file change.
 
+### Oracle 18: pull request records and the site
+
+**Source of truth:** pull request records hand-built from saved provider API
+pages, with quantities computed by hand.
+
+**Method:**
+
+- A fixture pull request with two pushes, a rerun of one failed job and a
+  job that never started: `ci.pr.runner.wall`, `ci.pr.runner.billed`,
+  `ci.final.runner.wall`, `ci.final.latest.wall`, the time to merge, the
+  time to green and the queue figures equal the hand-computed values per
+  runner type.
+- A fixture whose API pages carry a login, a branch name, a title and a
+  runner name: none of them reaches the record, and a label outside the
+  allowlist is recorded as `<label>`.
+- `ci perf site` built twice from one tip is byte-identical, and a record
+  with a bad signature is not shown.
+- No built page names an origin other than its own: the site's files hold no
+  `http://` or `https://` URL a page loads.
+- Against a local remote, an append writes `prs/<yyyy>/<mm>/<number>/pr.json`
+  under the merge date, and a second append of it is a no-op.
+
 ## Spikes
 
 Each spike states a question and a decision criterion. Its result is recorded

@@ -72,7 +72,7 @@ for their observation obligations. The test runner's `--bench` mode, which
 measures individual test bodies with statistical repetition, is a separate
 measurement model; it shares this vocabulary, and its results do not enter run
 records. Sampling profilers, per-function hardware counters, dashboards
-outside the repository and alerting are out of scope. So is a long-term store
+other than the static site of §17, and alerting are out of scope. So is a long-term store
 other than `refs/perf/data`, for the reasons
 [decisions.md](./decisions.md#od19-history-lives-on-refs-perf-data-accepted)
 records.
@@ -82,7 +82,8 @@ metric vocabulary. Sections 4–9 define the metrics, by scope: every action,
 compiles, links and archives, tests, runs and CI jobs. Section 10 sets the
 overhead budget. Sections 11–13 define the run record, the `refs/perf/data` history
 and the privacy rules, §14 comparison and the regression gate, §15 the
-`ci perf` commands and §16 how reporters show metrics. Delivery order lives in
+`ci perf` commands, §16 how reporters show metrics and §17 the dashboard
+built from the history. Delivery order lives in
 [PLAN.md](./PLAN.md), oracles, spikes and evidence in [testing.md](./testing.md),
 and the choices behind each section in [decisions.md](./decisions.md).
 
@@ -653,6 +654,59 @@ several in sequence.
 | `ci.cache.pushed-bytes` | bytes the job pushed to the binary cache    | bytes | push output, E; absent without one | E               | none         |
 | `ci.job.critical-path`  | as OBJ3                                     | ns    | E                                  | E               | none         |
 
+**OBJ4: Pull request records.** When a landing comes from a pull request, the
+appending job (OBH4) **must** append one pull request record for it, built
+from the provider's API, never from a run's artifacts. The record holds:
+
+- the pull request's number, its creation and merge instants, and the landed
+  commit;
+- the repository-relative paths of the files it changed, which test
+  selection's view reads (OBW2);
+- every workflow run the provider associates with the pull request, on any of
+  its heads, force-pushed ones included: the run's identifier, workflow file,
+  event, head commit and creation instant;
+- for each attempt of each run, each job's name, runner type (OBJ6),
+  creation, start and completion instants and conclusion, and its steps'
+  names, start and completion instants. A job that never started has its
+  conclusion and no other instants.
+
+An attempt lists again the jobs it carried over from an earlier one, with
+that execution's instants. The record holds each execution once, under the
+attempt that ran it.
+
+It holds no login, branch name, title or runner name (OBP1, OBP3). The record
+is a file, `pr.json`, with the schema member of OBD6 and its own schema name.
+
+**OBJ5: Derived quantities.** A reader **must** derive these from a pull
+request record, and the record **must not** store them:
+
+| ID                          | Definition                                                                                                     |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `ci.pr.runner.wall`         | per runner type, the sum of job wall times (start to completion) over every attempt of every run               |
+| `ci.pr.runner.billed`       | the same, each job's wall rounded up to whole minutes                                                          |
+| `ci.final.runner.wall`      | per runner type, over every attempt of each workflow's last run on the final head                              |
+| `ci.final.latest.wall`      | per runner type, over the latest execution of each job of those runs, as the provider's `latest` view shows    |
+| `ci.pr.time-to-merge`       | the pull request's creation to its merge                                                                       |
+| `ci.pr.time-to-green`       | the earliest creation among the final head's runs to the latest completion among their jobs' latest executions |
+| `ci.pr.queue.total`, `.max` | the sum and the maximum of job queue times (creation to start) over every attempt of every run                 |
+
+The final head is the pull request's last head commit. Its earliest run
+creation stands for the last push, which the provider does not report.
+
+The split of the time to green follows the job of the final head that
+completed last among those that ran at least a minute, so an aggregating
+job that only waits for the others is not the one it follows. A flaky
+failure is a job that failed and then succeeded, in a later attempt of the
+same run. A failure no other group shared is the only failing group of an
+attempt, the workflow's aggregating job aside.
+
+**OBJ6: Runner types.** A job's runner type **must** be the normalization of
+its labels that [`ci stats`](../../ci/stats/SPEC.md#_6-2-runner-type-normalisation-pure)
+defines, recorded only when the label allowlist of OBP3 holds it, and as
+`<label>` otherwise. What a runner type costs is not a record's content: the
+rates live in `ci/runner-rates.json`, so a change of price changes no
+history.
+
 ## 10. Overhead budget
 
 **OBO1: The budget.** With every default family on, observation **must** cost,
@@ -801,6 +855,7 @@ never downloads it and no branch list shows it.
 ```text
 README.md                                      what the ref is, with the schema's link
 runs/<yyyy>/<mm>/<dd>/<commit12>-<run id>/     one run record, as OBD4
+prs/<yyyy>/<mm>/<number>/pr.json               one pull request record, as OBJ4
 rollups/<yyyy>/<mm>/<s>.json                   compacted series summaries (OBH7)
 ```
 
@@ -839,6 +894,9 @@ that establishes `main`'s checks:
   own records.
 - **Pull requests:** a pull request run **must** upload its records as
   artifacts and **must not** append them.
+- **Landed pull requests:** on either path, the appending job **must** also
+  append the pull request record of the landing (OBJ4), under the merge date.
+  A landing that no pull request names appends none.
 
 The appending job **must** live in `main-checks.yml` for both paths, after the
 mirroring step or after the rebuild it `needs`, never in `ci.yml`, which also
@@ -1081,6 +1139,8 @@ ci perf compare BASE HEAD [--gate] [--local] [--metrics LIST] [--json FILE]
 ci perf history TASK [--metric ID] [--since DATE] [--limit N] [--origin ci|local|all] [--json FILE]
 ci perf push [RUN...] [--allow-dirty]
 ci perf fetch [--since DATE]
+ci perf import-prs --repo OWNER/REPO --since DATE
+ci perf site --out DIR
 ```
 
 Every `ci perf` command also accepts `--history-remote URL` (OBH9).
@@ -1125,6 +1185,11 @@ only git and network access.
 **OBQ8: One-node graphs.** Each `ci perf` command **must** run as a one-node
 graph ([CIC2](../../ci/task-dag/SPEC.md#_1-1-canonical-commands)).
 
+**OBQ9: `import-prs`.** `ci perf import-prs` **must** write, locally, the pull
+request record of every pull request of the repository merged on or after
+`DATE`, as OBJ4 defines it, for `ci perf push` to publish (OBH6). It seeds the
+history, as the run importer does.
+
 ## 16. Reporting
 
 **OBU1: Plain summaries.** The plain reporter's final summary **must** add the
@@ -1150,6 +1215,45 @@ estimate with `≈`, a stored measurement with `*` and an absent value with
 **OBU5: Task output is untouched.** No measurement **may** appear in a task's
 replayed output block, so that a reused result replays the same lines (TRM6 of
 the test runner's process model).
+
+## 17. The dashboard
+
+**OBW1: Built from verified history.** `ci perf site --out DIR` **must** read
+`refs/perf/data` through the reader of OBH9, keep only what OBH8 verifies, and
+write a static site: its pages, scripts and styles, and JSON data files. It
+reads no other source but `ci/runner-rates.json`, so two builds from one tip
+and one rate file are byte-identical.
+
+**OBW2: Views.** The site **must** be one page per tab and one page per pull
+request, each a sidebar beside its panels, every figure on exactly one tab:
+
+| Tab            | Shows                                                                                                                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Overview       | the latest and median time to green against the 15-minute goal, runner minutes, the longest wait and flaky failures; one small chart per other tab            |
+| Time to green  | each pull request's time to green split along the job that finished last: before it existed, waiting for a runner, running, after it; green to merge          |
+| Runner load    | jobs running per runner type and jobs waiting, hour by hour; jobs waiting by hour of day                                                                      |
+| Runner minutes | minutes per pull request and runner type at each scope of OBJ5, billed minutes, the estimated charge from `ci/runner-rates.json`, rerun and cancelled minutes |
+| Jobs           | per job group: minutes, failures, failures no other group shared, flaky failures, rerun minutes; setup's share per runner type; shard balance                 |
+| Packages       | per placement and package, `task.wall` over the records: trend, median and spread                                                                             |
+| Test selection | per pull request, the packages its paths reach through `sparkles:` dependencies, the test minutes the rest cost, and the paths that reached them all          |
+| Efficiency     | parallel efficiency and per-task CPU and memory, once the history holds them                                                                                  |
+
+A pull request's page shows the panels of every tab for that pull request
+alone, and the timeline of its final run's jobs. A family that the history
+does not hold yet is not drawn, and its tab says what it waits for.
+
+**OBW3: Static.** A page **must** request nothing but the site's own files: no
+provider API, no token, no third-party script, style or font.
+
+**OBW4: Deployment.** A workflow **must** build the site and deploy it to the
+Cloudflare Pages project `sparkles-perf` after each successful append to
+`refs/perf/data`, on `.#ci-minimal`, with no signing key. A pull request that
+changes the site's code **must** deploy a preview built from the ref's current
+tip.
+
+**OBW5: Size.** Each data file **must** stay under 4 MiB uncompressed. Past
+that, a view's data **must** be aggregated by month for months older than
+the last three.
 
 ## Terminology
 
