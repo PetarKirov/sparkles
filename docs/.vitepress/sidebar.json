@@ -2250,6 +2250,10 @@
             "link": "/libs/ui/reference/editor-surface"
           },
           {
+            "text": "Hit-id registry",
+            "link": "/libs/ui/reference/hit-ids"
+          },
+          {
             "text": "Backends",
             "link": "/specs/ui/backends"
           },

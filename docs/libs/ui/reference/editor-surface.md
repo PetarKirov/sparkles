@@ -62,13 +62,12 @@ call `selectNextMatch`, `replaceCurrent`, `replaceAll` or
 `sparkles.text_buffer.history.History` (text-buffer `TXB-HIS7`) and travels
 it.
 
-| Symbol                                     | Meaning                                                                                              |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `HistoryViewOptions`                       | `limit` rows, the `hitBase` of revision 0's row (0: no hits), a `hint` appended to the header        |
-| `viewHistory(b, history, options)`         | The header and one row per listed revision: `● #4 from #3  12 B  ⑂ 2 branches`, indented by depth    |
-| `historyWindow(current, total, limit)`     | The listed revisions `[first, last]`: up to half the window past the current one, filled near an end |
-| `revisionAtHit(hit, hitBase, length, out)` | The revision whose row has hit identity `hit`                                                        |
-| `travelTo(field, index, now)`              | Move the field to revision `index` with `earlier`/`later`, one ordinary history step                 |
+| Symbol                                 | Meaning                                                                                                                                                                                                                                      |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HistoryViewOptions`                   | `limit` rows; `hits`, the block revision `i`'s row takes `hits[i]` from (empty: no hits), asked of the [hit-id registry](../../../specs/ui/input.md#hit-testing-inp10-inp27-inp28) for the history's length; a `hint` appended to the header |
+| `viewHistory(b, history, options)`     | The header and one row per listed revision: `● #4 from #3  12 B  ⑂ 2 branches`, indented by depth                                                                                                                                            |
+| `historyWindow(current, total, limit)` | The listed revisions `[first, last]`: up to half the window past the current one, filled near an end                                                                                                                                         |
+| `travelTo(field, index, now)`          | Move the field to revision `index` with `earlier`/`later`, one ordinary history step                                                                                                                                                         |
 
 A host checks that the rows it drew belong to the active document before
 it travels on a press.

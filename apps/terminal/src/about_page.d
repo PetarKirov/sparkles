@@ -23,6 +23,7 @@ import sparkles.core_cli.build_info : BuildInfo, BuildLoad, JsonSubject,
 import sparkles.wired.json.document : JsonKind;
 import sparkles.ui.glyphs : ActionIcon, iconText;
 import sparkles.input.events : Key, KeyEvent;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.components.property_view : propertyView, writePropertyText;
 import sparkles.ui.components.tree_view : TreeViewState;
 import sparkles.ui.geometry : Insets, Rect, SizeSpec;
@@ -307,7 +308,7 @@ final class AboutPage : Page
         if (fillComponents(cols))
         {
             PropertyEditState edits;
-            items ~= propertyView(b, tree.data, componentView, edits, hitBase: componentHit);
+            items ~= propertyView(b, tree.data, componentView, edits, hits: HitBlock(componentHit, tree.data.nodes.length));
         }
         items ~= blank(b);
 

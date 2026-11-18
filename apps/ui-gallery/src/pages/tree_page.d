@@ -15,6 +15,7 @@ there. No base class, no interface, no registration.
 module pages.tree_page;
 
 import sparkles.input : Key, KeyEvent;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.components.tree_view : treeActivate = activate,
     treeCollapseOrUp = collapseOrUp, TreeStep;
 import sparkles.ui.components.tree_widget : flatten, FlatTreeRow, Guide,
@@ -106,12 +107,12 @@ uint view(ref Builder b, in GalleryState s)
 
     body_ ~= section(b, "your view", [
         treeView(b, data, rows, (uint n) => s.treeDemo.open.isOpen(n), selected,
-            TreeGlyphs(guides: s.theme.glyphs.guides)),
+            TreeGlyphs(guides: s.theme.glyphs.guides), hits: HitBlock(1, data.nodes.length)),
     ]);
     body_ ~= spacer(b);
     body_ ~= section(b, "the same data, everything open", [
         treeView(b, data, allRows, (uint n) => true, uint.max,
-            TreeGlyphs(guides: s.theme.glyphs.guides)),
+            TreeGlyphs(guides: s.theme.glyphs.guides), hits: HitBlock(1, data.nodes.length)),
     ]);
     body_ ~= spacer(b);
 

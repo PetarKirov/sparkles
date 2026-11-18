@@ -2,6 +2,7 @@
 module sparkles.ui.components.command_palette;
 
 import sparkles.ui.command_palette : CommandPalette, PaletteChoice;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.editor.state : EditorState;
 import sparkles.ui.components.editor : editorView, EditorViewOptions;
 import sparkles.ui.components.scroll_body : ScrollBody, TouchPan, TouchStep;
@@ -12,12 +13,15 @@ import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind;
 import sparkles.fuzzy : TextRange;
 
 /// Viewport and hit routing are host policy; rows default to touch-sized targets.
+/// The hit ids are the host's, from its registry (`INP27`): `rowHits[i]` is the
+/// `i`-th listed row (ask for the palette's `snapshot.rowCount`, at least 1), and an
+/// id of `0` leaves a part inert.
 struct PaletteViewOptions
 {
     size_t visibleRows = 10;
     int rowHeight = 3;
-    size_t hitBase = 0x7300_0000;
-    size_t queryHit = 0x7300_ffff;
+    HitBlock rowHits;
+    size_t queryHit;
     size_t closeHit = 0;
     bool compact = false;
     int maxWidth = 0;
@@ -104,7 +108,7 @@ PaletteView!Cmd viewCommandPalette(Cmd, size_t Capacity, size_t QueryBytes, Cont
         const rowNode = b.add(Widget(kind: WidgetKind.row, children: row, gap: 1,
             padding: Insets(0, 1, 0, 1), alignY: Alignment.center,
             height: SizeSpec.fixed(rowH), width: SizeSpec.grow(),
-            hitId: options.hitBase + result.choices.length,
+            hitId: options.rowHits[result.choices.length],
             slot: index == state.selection ? Slot.selection : Slot.surface,
             paintBackground: true));
         if (options.smoothScroll) rowNodes ~= rowNode;
@@ -154,8 +158,9 @@ dismisses.
 PaletteHit paletteHitAt(size_t hit, size_t choiceCount, in PaletteViewOptions options = PaletteViewOptions.init,
     size_t dismissHit = 0) @safe pure nothrow @nogc
 {
-    if (hit >= options.hitBase && hit - options.hitBase < choiceCount)
-        return PaletteHit(PaletteHit.Kind.choose, hit - options.hitBase);
+    size_t row;
+    if (options.rowHits.indexOf(hit, row) && row < choiceCount)
+        return PaletteHit(PaletteHit.Kind.choose, row);
     if (hit == 0 || (options.closeHit && hit == options.closeHit) || (dismissHit && hit == dismissHit))
         return PaletteHit(PaletteHit.Kind.dismiss);
     return PaletteHit.init;
@@ -165,9 +170,9 @@ PaletteHit paletteHitAt(size_t hit, size_t choiceCount, in PaletteViewOptions op
 @("ui.command_palette_view.hitAt")
 @safe pure nothrow @nogc unittest
 {
-    const options = PaletteViewOptions(closeHit: 9);
-    assert(paletteHitAt(options.hitBase + 2, 3, options) == PaletteHit(PaletteHit.Kind.choose, 2));
-    assert(paletteHitAt(options.hitBase + 3, 3, options).kind == PaletteHit.Kind.none);
+    const options = PaletteViewOptions(rowHits: HitBlock(100, 10), queryHit: 200, closeHit: 9);
+    assert(paletteHitAt(options.rowHits[2], 3, options) == PaletteHit(PaletteHit.Kind.choose, 2));
+    assert(paletteHitAt(options.rowHits[3], 3, options).kind == PaletteHit.Kind.none);
     assert(paletteHitAt(9, 3, options).kind == PaletteHit.Kind.dismiss);
     assert(paletteHitAt(0, 3, options).kind == PaletteHit.Kind.dismiss);
     assert(paletteHitAt(77, 3, options, 77).kind == PaletteHit.Kind.dismiss);
@@ -217,9 +222,9 @@ struct PaletteTouch
     scroll.content = 30;
     scroll.viewport = 9;
     PaletteTouch touch;
-    const options = PaletteViewOptions.init;
+    const options = PaletteViewOptions(rowHits: HitBlock(100, 10));
     const at = (PointerAction action, int y) => PointerEvent(action, pos: Point(5, y));
-    scope row = () => paletteHitAt(options.hitBase + 1, 4, options);
+    scope row = () => paletteHitAt(options.rowHits[1], 4, options);
 
     touch.press(scroll, at(PointerAction.press, 40), 20, 0);
     assert(touch.captures(at(PointerAction.drag, 41)));
@@ -255,7 +260,8 @@ struct PaletteTouch
     assert(palette.search(opening.ticket, "sv", Context.init) == PaletteStatus.ok);
     auto query = EditorState.create("sv");
     Builder b;
-    const view = viewCommandPalette(b, palette, query, Context.init);
+    const options = PaletteViewOptions(rowHits: HitBlock(100, 10), queryHit: 200);
+    const view = viewCommandPalette(b, palette, query, Context.init, options);
     assert(view.choices.length == 1 && view.choices[0] == palette.choice(0));
     const tree = b.finish(view.root);
     string matched;
@@ -263,7 +269,7 @@ struct PaletteTouch
     foreach (node; tree.nodes)
     {
         shortcut |= node.text == "Ctrl+S";
-        queryHit |= node.hitId == PaletteViewOptions.init.queryHit;
+        queryHit |= node.hitId == options.queryHit;
         foreach (span; node.spans)
         {
             if (span.slot == Slot.matched) matched ~= span.text;

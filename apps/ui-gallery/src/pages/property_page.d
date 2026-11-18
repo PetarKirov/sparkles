@@ -36,6 +36,7 @@ module pages.property_page;
 import std.conv : text;
 
 import sparkles.input : Key, KeyEvent;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.components.property_view : matchedFieldsText,
     propertyView, PropertyViewOptions, refusalText, valueText;
 import sparkles.ui.components.tree_view : treeActivate = activate,
@@ -149,7 +150,7 @@ private void builtSections(ref Builder b, ref uint[] body_,
         valueColumn: w > 44 ? 26 : 18,
         rangeBarCells: w > 50 ? 8 : 4,
     );
-    const treeCol = propertyView(b, d.tree.data, d.tv, d.edits, opt, hitBase);
+    const treeCol = propertyView(b, d.tree.data, d.tv, d.edits, opt, HitBlock(hitBase, d.tree.data.nodes.length));
     // Wide rows clip inside the pane rather than overflowing it.
     const clipped = b.add(Widget(kind: WidgetKind.column,
         children: [treeCol], clipX: true, width: SizeSpec.grow()));

@@ -28,6 +28,7 @@ module tab_tree;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.input.events : Key, KeyAction, KeyEvent, WheelEvent;
 import sparkles.ui.components.dock : PaneId;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.components.tree_view : collapseOrUp, TreeViewState;
 import sparkles.ui.components.tree_widget : flatten, TreeData, TreeGlyphs, treeView;
 import sparkles.ui.style : FontRole, Slot, TextStyle, TypeStep;
@@ -188,7 +189,7 @@ final class TabTree : Surface, Scrollable, Pasteable
         TreeGlyphs glyphs;
         glyphs.leaf = "  "; // a one-pane tab's icon under a tab's
         const column = treeView(b, data, tv.rows, &isOpenNode, tv.selectedNode, glyphs,
-            hitBase: cast(uint) rowHit);
+            hits: HitBlock(rowHit, data.nodes.length));
         auto rows = b.nodes[column].children.dup; // `add` may move the nodes
         foreach (ref child; rows)
         {

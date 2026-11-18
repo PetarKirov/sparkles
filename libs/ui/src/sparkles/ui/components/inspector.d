@@ -37,6 +37,7 @@ module sparkles.ui.components.inspector;
 
 import std.conv : text;
 
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.components.tree_view : TreeViewState, viewSlice;
 import sparkles.ui.components.tree_widget : FlatTreeRow, flatten, Guide,
     nodeExpandable, TreeData, TreeGlyphs;
@@ -55,7 +56,7 @@ struct InspectorAction
 {
     string label;   ///
     bool active;    ///
-    uint hitId;     /// 0 = not interactive
+    size_t hitId;   /// 0 = not interactive
 }
 
 /// One row of the details pane.
@@ -88,7 +89,7 @@ enum Slot[] inspectorSlots = [Slot.gutter, Slot.code, Slot.chromeAccent, Slot.do
 uint inspectorView(Key, T)(ref Builder b, in TreeData!T data,
     in TreeViewState!Key state, scope bool delegate(uint) @safe isOpen,
     string title, in InspectorAction[] actions, in DetailRow[] details,
-    int innerWidth, TreeGlyphs glyphs = TreeGlyphs.init, uint hitBase = 1)
+    int innerWidth, TreeGlyphs glyphs = TreeGlyphs.init, HitBlock hits = HitBlock.init)
 {
     uint[] rows;
 
@@ -113,7 +114,7 @@ uint inspectorView(Key, T)(ref Builder b, in TreeData!T data,
         import sparkles.ui.components.chrome : hBar, scrollBox, vBar;
 
         rows ~= scrollBox(b,
-            viewSlice(b, data, state, isOpen, glyphs, hitBase: hitBase),
+            viewSlice(b, data, state, isOpen, glyphs, hits: hits),
             state.scrollFrame(),
             vBar(state.scroll, state.top), hBar(state.scroll, state.hsb.offset));
     }

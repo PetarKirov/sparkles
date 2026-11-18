@@ -15,6 +15,7 @@ module sparkles.ui.components.property_view;
 
 import std.conv : text;
 
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.components.tree_view : TreeViewState;
 import sparkles.ui.components.tree_widget : FlatTreeRow, Guide, nodeExpandable,
     TreeData, TreeGlyphs;
@@ -152,7 +153,7 @@ enum Slot[] propertyViewSlots = [Slot.muted, Slot.gutter, Slot.matched, Slot.err
 
 uint propertyView(ref Builder b, in TreeData!PropertyNode data,
     in TreeViewState!string s, in PropertyEditState edits,
-    PropertyViewOptions opt = PropertyViewOptions.init, uint hitBase = 1)
+    PropertyViewOptions opt = PropertyViewOptions.init, HitBlock hits = HitBlock.init)
 {
     const first = cast(size_t)(s.top < 0 ? 0 : s.top);
     const last = first + s.bodyRows > s.rows.length ? s.rows.length
@@ -249,7 +250,7 @@ uint propertyView(ref Builder b, in TreeData!PropertyNode data,
 
         const selected = row.node == s.selectedNode;
         rowIds ~= b.add(Widget(kind: WidgetKind.rich, spans: spans,
-            hitId: n.synthetic ? 0 : hitBase + row.node,
+            hitId: n.synthetic ? 0 : hits[row.node],
             paintBackground: selected, stretch: selected,
             // The selection tint is the palette's `inherit` + `selected` (D46).
             states: selected ? StateSet.of(InteractionState.selected) : StateSet.init));

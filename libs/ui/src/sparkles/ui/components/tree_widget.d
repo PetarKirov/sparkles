@@ -24,6 +24,7 @@ rails per frame.
 */
 module sparkles.ui.components.tree_widget;
 
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.state : DisclosureState;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.style : GuideGlyphs, InteractionState, Slot, StateSet, TextStyle;
@@ -216,7 +217,7 @@ uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
     scope bool delegate(uint) @safe isOpen,
     uint selected = uint.max, TreeGlyphs glyphs = TreeGlyphs.init,
     RgbColor selectionBg = RgbColor.init, bool hasSelectionBg = false,
-    uint hitBase = 1)
+    HitBlock hits = HitBlock.init)
 {
     static const(char)[] labelOf(ref const T v)
     {
@@ -316,7 +317,7 @@ uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
             }
 
         Widget w = Widget(kind: WidgetKind.rich, spans: spans,
-            hitId: hitBase + node, // hit identity (0 = none; default base 1)
+            hitId: hits[node], // the caller's block, indexed by node (empty: none)
             paintBackground: node == selected, stretch: node == selected,
             // The selection tint is the palette's `inherit` + `selected` (D46).
             states: node == selected ? StateSet.of(InteractionState.selected) : StateSet.init);
