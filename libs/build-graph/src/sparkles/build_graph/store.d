@@ -29,8 +29,10 @@ place, so the run reads the result where the store holds it. When another
 producer published the key first, the entry goes to `trash/` and the link
 names the winner's (BGS3); the outputs that differ are reported.
 
-Eviction, digest records, preimages, miss explanations, inspection and the
-determinism check (BGS5–BGS9) are not here yet.
+Eviction with digest records (BGS5), verification (BGS6), inspection and
+repair, replacement among them (BGS7), and the preimages miss explanations
+compare (BGS8) are here too; older layouts go with
+$(LREF collectOlderLayouts) (BGS10). The determinism check (BGS9) is the executor's.
 */
 module sparkles.build_graph.store;
 
@@ -283,16 +285,18 @@ struct Store(D)
 
     /**
     The store in `dir`, the store's top directory (`build`): its layout
-    directory is created with its subdirectories, and the top directory
-    holds a `CACHEDIR.TAG` (BGS7). `holder` names this process's leases.
+    directory `v<layout>` (BGS10) is created with its subdirectories, and the
+    top directory holds a `CACHEDIR.TAG` (BGS7). `holder` names this
+    process's leases. `layout` is this build's layout version unless a test
+    plays another build's.
     */
-    static bool open(ref D dir, string holder, out Store s)
+    static bool open(ref D dir, string holder, out Store s, uint layout = layoutVersion)
     {
         import core.lifetime : move;
 
         if (dir.writeFileAtomic("CACHEDIR.TAG", cacheDirTag).hasError)
             return false;
-        auto v = dir.walkAll("v" ~ layoutVersion.text);
+        auto v = dir.walkAll("v" ~ layout.text);
         if (v.hasError)
             return false;
         foreach (sub; ["results", "manifests", "leases", "staging", "trash", "preimages", "recency", "records", "digests"])
@@ -397,9 +401,14 @@ struct Store(D)
     the one a concurrent producer published first (BGS3), with `note`
     naming the outputs that differ. Null when nothing was published, with
     `note` saying why: `name` is then as it was.
+
+    With `replacing` (BGS7), a result already published under the key moves
+    to `trash/` first, unless a live process other than this one leases it,
+    which `alive` decides: then it stays, and `note` names the lease the
+    replacement waits for.
     */
     const(ResultRecord)* publish(P)(ref P parent, string name, const ref ResultRecord record,
-        string linkTarget)
+        string linkTarget, bool replacing = false, scope bool delegate(string holder) alive = null)
     {
         import std.array : replace;
 
@@ -420,6 +429,13 @@ struct Store(D)
             return failed("cannot move the outputs into staging");
 
         lease(key);
+        if (replacing && published(key))
+        {
+            if (alive !is null && leasedByOthers(key, alive))
+                note = "replacing " ~ key ~ " waits for a live lease another process holds on it";
+            else
+                cast(void) moveToTrash(key);
+        }
         auto results = v.walk("results");
         const(ResultRecord)* published = &record;
         if (results.hasError || staging.value.renameAt(stage, results.value, key).hasError)
@@ -886,6 +902,61 @@ struct Store(D)
             cast(void) results.value.renameAt(key, trash.value, text(key, "-", holder, "-", staged++));
         return null;
     }
+}
+
+/**
+BGS10: removes, from the store's top directory `top` (`build`), each layout
+directory older than `layout` (`v<N>`, N < `layout`) that no live process
+leases a result in, as `alive` decides of each lease's holder: another
+revision of the build graph may still be using it. Returns the directories
+removed.
+*/
+string[] collectOlderLayouts(D)(ref D top, scope bool delegate(string holder) alive, uint layout = layoutVersion)
+{
+    import std.conv : to;
+
+    static string[] list(E)(ref E dir)
+    {
+        string[] result;
+        auto listing = dir.list();
+        if (listing.hasError)
+            return null;
+        while (true)
+        {
+            auto more = listing.value.next();
+            if (more.hasError || !more.value)
+                break;
+            result ~= listing.value.front.name.idup;
+        }
+        return result;
+    }
+
+    string[] removed;
+    foreach (name; list(top))
+    {
+        if (name.length < 2 || name[0] != 'v' || name[1 .. $].splitter('/').array.length != 1)
+            continue;
+        uint n;
+        try
+            n = name[1 .. $].to!uint;
+        catch (Exception)
+            continue;
+        if (n >= layout)
+            continue;
+        bool live;
+        auto leases = top.walk(name ~ "/leases");
+        if (!leases.hasError)
+            foreach (key; list(leases.value))
+            {
+                auto holders = leases.value.walk(key);
+                if (!holders.hasError)
+                    foreach (h; list(holders.value))
+                        live |= alive(h);
+            }
+        if (!live && !top.removeTree(name).hasError)
+            removed ~= name;
+    }
+    return removed;
 }
 
 /// The `CACHEDIR.TAG` a store's top directory and the runs' directory hold

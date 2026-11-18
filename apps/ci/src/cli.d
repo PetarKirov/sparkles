@@ -798,7 +798,8 @@ struct CacheCommand
         ~ "gc, verify, evict (to the default bound, or evict=<bytes>), or remove-key=, remove-task=, "
         ~ "remove-package= or remove-toolchain= a value. `explain <task>` plans the repository's test "
         ~ "selection and prints, executing nothing, whether the task and each action it needs would "
-        ~ "hit, and why each miss would miss. Exits 1 when verification finds a corrupt result or a "
+        ~ "hit, and why each miss would miss; `replace <task>` executes the task with its lookup "
+        ~ "bypassed and publishes its result in the published one's place. Exits 1 when verification finds a corrupt result or a "
         ~ "lease holds a removal back, and 2 for an unknown operation or task.",
     ))
     struct Store
@@ -807,7 +808,7 @@ struct CacheCommand
             ~ "or remove-key=, remove-task=, remove-package= or remove-toolchain=<value>."))
         string operation;
 
-        @(Argument("task", optional: true, description: "With explain: the task, by id or by a prefix "
+        @(Argument("task", optional: true, description: "With explain or replace: the task, by id or by a prefix "
             ~ "only one id has."))
         string task;
 
@@ -829,6 +830,15 @@ struct CacheCommand
                     return failRun("ci cache store explain needs a task", 2);
                 const status = explainTask(detectRepoRoot(), buildPath(xdg, "sparkles"), task, writer);
                 return status == 0 ? ranOk() : failRun("ci cache store explain " ~ task ~ " failed", status);
+            }
+            if (operation == "replace")
+            {
+                import graph_driver : replaceTask;
+
+                if (!task.length)
+                    return failRun("ci cache store replace needs a task", 2);
+                const status = replaceTask(detectRepoRoot(), buildPath(xdg, "sparkles"), task, writer);
+                return status == 0 ? ranOk() : failRun("ci cache store replace " ~ task ~ " failed", status);
             }
             if (task.length)
                 return failRun("ci cache store " ~ operation ~ " takes no task", 2);

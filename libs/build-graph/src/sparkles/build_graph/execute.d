@@ -58,6 +58,9 @@ struct RunLayout
     /// With `check`, the tasks it checks (CIC13's sample); empty checks every
     /// keyed action, and the rest are looked up as in a run.
     string[] checkTasks;
+    /// BGS7: the tasks to replace. Each runs with its lookup bypassed, and its
+    /// result replaces the published one, which moves to `trash/`.
+    string[] replaceTasks;
     /// BGS8's `explain`: every keyed action is looked up as a run would look
     /// it up, and nothing executes or publishes. A hit is adopted, so its
     /// consumers' keys follow; a miss is classified and stops its consumers.
@@ -680,9 +683,10 @@ struct ActionDriver
         const(ResultRecord)* checked;
         // BGS9: checked actions run with their own lookup bypassed.
         const checking = layout.check && (layout.checkTasks.length == 0 || layout.checkTasks.canFind(id.text));
+        const replacing = layout.replaceTasks.canFind(id.text);
         if (declared.length && checking)
             checked = lookup(**a, declared);
-        else if (declared.length)
+        else if (declared.length && !replacing)
         {
             if (auto hit = lookup(**a, declared))
                 if (adopt(id, *hit))
@@ -884,7 +888,9 @@ struct ActionDriver
         auto parent = run_.walk(relativeToRun(parentOf(name)));
         if (parent.hasError)
             return true;
-        const published = store.publish(parent.value, baseNameOf(name), record, linkTo(name));
+        bool alive(string holder) => holderRuns(holder);
+        const published = store.publish(parent.value, baseNameOf(name), record, linkTo(name),
+            layout.replaceTasks.canFind(id.text), &alive);
         if (store.note.length)
             note(store.note);
         if (published !is null)
@@ -2189,8 +2195,15 @@ int storeOperation(W)(string cache, string op, ref W writer)
                 line(text(e.key, " ", e.bytes, " ", e.recency, " ", e.task));
             return 0;
         case "gc":
+        {
+            import sparkles.build_graph.store : collectOlderLayouts;
+
             line(text(store.collectGarbage(&alive), " entries collected"));
+            // BGS10: an older layout's directory, once no live lease is in it.
+            foreach (old; collectOlderLayouts(build.value, &alive))
+                line("removed the older layout " ~ old);
             return 0;
+        }
         case "verify":
             const corrupt = store.verify();
             foreach (k; corrupt)
