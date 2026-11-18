@@ -30,7 +30,7 @@ that is interrupted can leave a fixture behind; the next run removes it.
 module graph_oracles;
 
 import core.time : msecs, seconds;
-import std.algorithm : canFind, filter, map, sort, startsWith;
+import std.algorithm : all, canFind, filter, map, sort, startsWith;
 import std.array : array, join, replace;
 import std.conv : text;
 import std.file : exists, mkdirRecurse, readText, rmdirRecurse, tempDir, write;
@@ -99,6 +99,7 @@ immutable Oracle[] oracles = [
     Oracle("11", &oracle11),
     Oracle("13", &oracle13),
     Oracle("16", &oracle16),
+    Oracle("17", &oracle17),
     Oracle("19", &oracle19),
 ];
 
@@ -767,3 +768,371 @@ string plantByte(string cache, string key)
 private bool endsWith(string s, string suffix) => s.length >= suffix.length && s[$ - suffix.length .. $] == suffix;
 
 private enum octal(int n) = (n / 100) * 64 + ((n / 10) % 10) * 8 + n % 10;
+
+// === Oracle 17: the store's lifecycle ===
+
+/// A store of its own beneath `scratch`, with a run directory beside it to
+/// publish from, as the executor lays them out.
+struct ScratchStore
+{
+    import sparkles.base.vfs.handles : Dir;
+    import sparkles.base.vfs.types : Rights;
+    import sparkles.build_graph.store : ResultRecord, Store;
+    import sparkles.event_horizon.sys : BlockingVfs;
+
+    alias D = Dir!(BlockingVfs, Rights.all);
+    string dir;  /// the cache directory, absolute
+    BlockingVfs* vfs;
+    D top, build, runOut;
+    Store!D store;
+    private size_t published;
+
+    @disable this(this);
+
+    static ScratchStore make(string label, uint layout = 1)
+    {
+        import core.lifetime : move;
+        import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+        import sparkles.base.vfs.types : DotDotPolicy, ResolvePolicy, SymlinkPolicy;
+
+        ScratchStore s;
+        s.dir = freshCache(label);
+        s.vfs = new BlockingVfs;
+        auto top = openRoot!(Rights.all)(s.vfs, s.dir, ambientAuthority(),
+            ResolvePolicy(SymlinkPolicy.beneath, DotDotPolicy.reject));
+        assert(!top.hasError);
+        s.top = move(top.value);
+        auto build = s.top.walkAll("build");
+        assert(!build.hasError);
+        s.build = move(build.value);
+        auto runOut = s.top.walkAll("runs/r/out");
+        assert(!runOut.hasError);
+        s.runOut = move(runOut.value);
+        assert(Store!D.open(s.build, "1-1", s.store, layout));
+        return s;
+    }
+
+    /// Publishes `size` bytes of `fill` as the result `key` of `task`, built
+    /// with `toolchain`; returns whether it was published.
+    bool publish(string task, string key, size_t size, char fill = 'x', string toolchain = "t1")
+    {
+        import sparkles.base.hash.blake3 : blake3;
+        import sparkles.build_graph.store : OutputRecord;
+
+        const name = text("o", ++published);
+        auto out_ = runOut.walkAll(name);
+        auto bytes = new char[size];
+        bytes[] = fill;
+        if (out_.value.writeFileAtomic("f", bytes).hasError)
+            return false;
+        ResultRecord r;
+        r.task = task;
+        r.toolchain = toolchain;
+        r.declaredKey = "declared-" ~ key;
+        r.resultKey = key;
+        r.outputs = [OutputRecord("f", size, false, blake3(cast(const(ubyte)[]) bytes))];
+        return store.publish(runOut, name, r, "../../../build/v1/results/{}/out") !is null;
+    }
+
+    /// Writes a lease on `key` held by `holder`, another process.
+    void leaseAs(string key, string holder)
+    {
+        auto leases = build.walkAll("v1/leases/" ~ key);
+        assert(!leases.hasError);
+        assert(!leases.value.writeFileAtomic(holder, "").hasError);
+    }
+
+    /// The names a directory beneath the layout holds.
+    string[] names(string sub)
+    {
+        import std.file : dirEntries, SpanMode;
+
+        const at = buildPath(dir, "build", "v1", sub);
+        if (!exists(at))
+            return null;
+        string[] result;
+        foreach (e; dirEntries(at, SpanMode.shallow))
+            result ~= e.name[at.length + 1 .. $];
+        return result.sort.release;
+    }
+}
+
+Verdict[] oracle17()
+{
+    import std.file : setTimes;
+    import std.datetime.systime : SysTime;
+    import sparkles.build_graph.store : Manifest, ManifestEntry, cacheDirTag, collectOlderLayouts, resultKey;
+
+    Verdict[] vs;
+    bool none(string) => false;
+
+    // Step 1: recency is the leases' order, not the files' access times.
+    {
+        auto s = ScratchStore.make("o17");
+        s.publish("compile:p.a:x", "A", 100);
+        s.publish("compile:p.b:x", "B", 100);
+        s.store.releaseLeases();
+        s.store.lease("A");
+        s.store.releaseLeases();
+        // An access time pushed far into the past changes nothing.
+        const f = buildPath(s.dir, "build", "v1", "results", "A", "out", "f");
+        setTimes(f, SysTime(0), SysTime.fromUnixTime(2_000_000_000));
+        const report = s.store.evict(150, 1 << 20, &none);
+        vs ~= Verdict("step 1", report.evicted != ["B"] ? text("evicted ", report.evicted, ", not B")
+            : !s.store.published("A") ? "A, the more recently leased, is gone" : null,
+            "B went before A, A's access time notwithstanding");
+    }
+
+    // Step 2: publication completes past the bound; eviction stops at 90 %.
+    {
+        auto s = ScratchStore.make("o17");
+        bool all = true;
+        foreach (i; 0 .. 10)
+            all &= s.publish(text("compile:p.c", i, ":x"), text("C", i), 100);
+        s.store.releaseLeases();
+        const report = s.store.evict(500, 1 << 20, &none);
+        vs ~= Verdict("step 2", !all ? "a publication past the bound did not complete"
+            : report.resultBytes > 450 || report.resultBytes + 100 <= 450
+                ? text("eviction stopped at ", report.resultBytes, " bytes of a 500-byte bound, not just under 450") : null,
+            text("all ten published past the bound; eviction stopped at ", report.resultBytes, " bytes"));
+    }
+
+    // Step 3: leases past the bound hold their entries, report the overshoot,
+    // and eviction resumes when they end.
+    {
+        auto s = ScratchStore.make("o17");
+        foreach (i; 0 .. 5)
+            s.publish(text("compile:p.d", i, ":x"), text("D", i), 100);
+        s.store.releaseLeases();
+        foreach (i; 0 .. 5)
+            s.leaseAs(text("D", i), "99999-1");
+        bool other(string h) => h == "99999-1";
+        const held = s.store.evict(300, 1 << 20, &other);
+        const resumed = s.store.evict(300, 1 << 20, &none);
+        vs ~= Verdict("step 3", held.evicted.length ? text("a leased entry was evicted: ", held.evicted)
+            : held.leased.length != 5 ? text("the overshoot reported ", held.leased.length, " leased entries, not 5")
+            : resumed.resultBytes > 270 ? text("after the leases ended, ", resumed.resultBytes, " bytes remained") : null,
+            text("nothing leased went, the five leased were reported, and eviction resumed to ",
+                resumed.resultBytes, " bytes"));
+    }
+
+    // Step 5: the results' bound takes no record or manifest list; the
+    // records' bound takes the lists whose results are gone first.
+    {
+        auto s = ScratchStore.make("o17");
+        Manifest m1, m2;
+        m1.files = [ManifestEntry("libs/a.d")];
+        m2.files = [ManifestEntry("libs/b.d")];
+        const r1 = resultKey("declared-1", m1), r2 = resultKey("declared-2", m2);
+        s.publish("compile:p.e:1", r1, 100);
+        s.publish("compile:p.e:2", r2, 100);
+        s.store.useManifest("declared-1", m1);
+        s.store.useManifest("declared-2", m2);
+        s.store.releaseLeases();
+        const records = s.names("records");
+        const lists = s.names("manifests");
+        const results = s.store.evict(50, 1 << 20, &none);
+        // Eviction adds the evicted results' digest records (BGS5); it may
+        // remove none of what was there.
+        const kept = records.all!(r => s.names("records").canFind(r)) && s.names("manifests") == lists;
+        // r1's result comes back; r2's record goes too, so r2 is neither
+        // published nor recorded, and its list must go first.
+        s.publish("compile:p.e:1", r1, 100);
+        s.store.releaseLeases();
+        {
+            import std.file : remove;
+
+            remove(buildPath(s.dir, "build", "v1", "records", r2));
+        }
+        const bound = s.store.recordBytes - 1;
+        const dropped = s.store.evict(1 << 20, bound, &none);
+        vs ~= Verdict("step 5", results.evicted.length != 2 ? text("the results' bound evicted ", results.evicted)
+            : !kept ? "the results' bound took a record or a manifest list"
+            : !dropped.recordsDropped ? "the records' bound dropped nothing"
+            : s.store.manifests("declared-2").length ? "the list whose result is gone was kept"
+            : !s.store.manifests("declared-1").length ? "the list whose result is published went first" : null,
+            "the results' bound kept every record and list; the records' bound took the dangling list first");
+    }
+
+    // Step 6: removal by key, task, package and toolchain moves exactly the
+    // named entries to trash/.
+    {
+        import sparkles.build_graph.execute : storeOperation;
+        import std.array : appender;
+
+        string[] failures;
+        foreach (op; [["remove-key=K1", "K1"], ["remove-task=compile:sparkles.p:x", "K1"],
+            ["remove-package=sparkles:q", "K3,K4"], ["remove-toolchain=t2", "K2,K4"]])
+        {
+            auto s = ScratchStore.make("o17");
+            s.publish("compile:sparkles.p:x", "K1", 10, 'a', "t1");
+            s.publish("compile:sparkles.p:y", "K2", 10, 'b', "t2");
+            s.publish("compile:sparkles.q:x", "K3", 10, 'c', "t1");
+            s.publish("compile:sparkles.q:y", "K4", 10, 'd', "t2");
+            s.store.releaseLeases();
+            auto discard = appender!string;
+            const status = storeOperation(s.dir, op[0], discard);
+            string[] gone;
+            foreach (k; ["K1", "K2", "K3", "K4"])
+                if (!s.store.published(k))
+                    gone ~= k;
+            if (status != 0 || gone.join(",") != op[1])
+                failures ~= text(op[0], " removed ", gone, ", not ", op[1]);
+            else if (s.names("trash").length != gone.length)
+                failures ~= text(op[0], " left ", s.names("trash").length, " entries in trash/");
+        }
+        vs ~= Verdict("step 6", failures.join("; "), "each removal moved exactly the named entries to trash/");
+    }
+
+    // Step 7, the store's half: its top directory holds the tag.
+    {
+        auto s = ScratchStore.make("o17");
+        const tag = buildPath(s.dir, "build", "CACHEDIR.TAG");
+        vs ~= Verdict("step 7 (store)", !exists(tag) || readText(tag) != cacheDirTag ? "build/CACHEDIR.TAG is missing or other" : null,
+            "build/ holds CACHEDIR.TAG with its signature line");
+    }
+
+    // Step 8: format versions.
+    {
+        auto s = ScratchStore.make("o17");
+        s.publish("compile:p.f:x", "F", 10);
+        s.store.releaseLeases();
+        // Another build's layout beside this one.
+        {
+            import sparkles.build_graph.store : Store;
+
+            typeof(s.store) newer;
+            assert(typeof(s.store).open(s.build, "1-1", newer, 2));
+        }
+        const separate = exists(buildPath(s.dir, "build", "v1")) && exists(buildPath(s.dir, "build", "v2"));
+        // An entry in an unknown format: a miss, left in place.
+        const record = buildPath(s.dir, "build", "v1", "results", "F", "record");
+        write(record, readText(record).replace("format 1\n", "format 99\n"));
+        const unknown = s.store.find("F") is null && exists(buildPath(s.dir, "build", "v1", "results", "F"));
+        s.store.releaseLeases();
+        // The older layout goes only when no lease in it is live.
+        s.leaseAs("F", "99999-2");
+        bool other(string h) => h == "99999-2";
+        const whileLeased = collectOlderLayouts(s.build, &other, 2);
+        const afterwards = collectOlderLayouts(s.build, &none, 2);
+        vs ~= Verdict("step 8", !separate ? "the two layouts do not have directories of their own"
+            : !unknown ? "an entry in an unknown format was served or removed"
+            : whileLeased.length ? "the older layout went while a lease in it was live"
+            : afterwards != ["v1"] ? text("garbage collection removed ", afterwards, ", not v1") : null,
+            "v1 and v2 are separate; an unknown format is a miss left in place; v1 went once its lease ended");
+    }
+
+    vs ~= oracle17DigestRecords();
+    return vs;
+}
+
+/**
+Oracle 17 step 4, through the graph: an archive evicted while the link
+that consumed it survives is served from its digest record; a new binary
+that links it rebuilds it with the record's digests; and a rebuild that
+differs is reported nondeterministic, its record taking the new digests.
+Step 7's other half: the runs' directory holds the tag.
+*/
+Verdict[] oracle17DigestRecords()
+{
+    import sparkles.build_graph.store : cacheDirTag;
+
+    Verdict[] vs;
+    auto lib = Fixture.add("o17b", [
+        "dub.sdl": recipeOf("o17b"),
+        "src/sparkles/zz_o17b/lib.d": "module sparkles.zz_o17b.lib;\n\nint twice(int x) { return 2 * x; }\n",
+    ]);
+    auto app = Fixture.add("o17a", [
+        "dub.sdl": recipeOf("o17a", ["zz-oracle-o17b"]),
+        "src/sparkles/zz_o17a/use.d": "module sparkles.zz_o17a.use;\n\nimport sparkles.zz_o17b.lib;\n\n"
+            ~ "unittest\n{\n    assert(twice(2) == 4);\n}\n",
+    ]);
+    const cache = freshCache("o17");
+    auto first = run(app.name, cache);
+    const archive = taskOf(first, lib.task("compile"));
+    const link = taskOf(first, app.task("link"));
+    const archiveKey = first.stats.resultKeys.get(archive, null);
+    if (first.exitCode != 0 || !archiveKey.length)
+        return [Verdict("step 4", "the fixture did not build:" ~ tailOf(first.log))];
+
+    // Evict the archive alone: every other result is leased by a live process.
+    {
+        auto s = ScratchStoreOver(cache);
+        foreach (task, key; first.stats.resultKeys)
+            if (key != archiveKey)
+                s.leaseAs(key, "99999-3");
+        bool other(string h) => h == "99999-3";
+        cast(void) s.store.evict(0, 1 << 30, &other);
+    }
+    auto again = run(app.name, cache);
+    vs ~= Verdict("step 4 (link served)",
+        executed(again, archive) ? "the archive was rebuilt for a link that hits"
+        : executed(again, link) ? "the link did not hit"
+        : !again.log.canFind("served from its digest record") ? "the archive was not served from its record" : null,
+        "the link hit, and the evicted archive was served from its digest record without rebuilding");
+
+    // A new binary that links it: the archive is rebuilt, matching its record.
+    app.put("src/sparkles/zz_o17a/use.d", "module sparkles.zz_o17a.use;\n\nimport sparkles.zz_o17b.lib;\n\n"
+        ~ "unittest\n{\n    assert(twice(3) == 6);\n}\n");
+    auto rebuilt = run(app.name, cache);
+    vs ~= Verdict("step 4 (rebuilt)",
+        !executed(rebuilt, archive) ? "the new binary's link did not rebuild the archive"
+        : rebuilt.log.canFind("differs from its digest record") ? "the deterministic rebuild was reported different"
+        : rebuilt.exitCode != 0 ? "the new binary failed:" ~ tailOf(rebuilt.log) : null,
+        "the new binary's link rebuilt the evicted archive, equal to its record");
+
+    // Once more, with an archiver that makes the rebuild differ.
+    {
+        auto s = ScratchStoreOver(cache);
+        foreach (task, key; rebuilt.stats.resultKeys)
+            if (key != archiveKey)
+                s.leaseAs(key, "99999-4");
+        bool other(string h) => h == "99999-4";
+        cast(void) s.store.evict(0, 1 << 30, &other);
+    }
+    app.put("src/sparkles/zz_o17a/use.d", "module sparkles.zz_o17a.use;\n\nimport sparkles.zz_o17b.lib;\n\n"
+        ~ "unittest\n{\n    assert(twice(4) == 8);\n}\n");
+    RunOptions o;
+    o.adjustExecution = (string task, ref ProcessAction pa) {
+        if (task != archive)
+            return;
+        string objects;
+        foreach (arg; pa.argv)
+            if (arg.startsWith("-of="))
+                objects ~= " \"" ~ arg[4 .. $] ~ "\"";
+        pa.argv = [sh(), "-c", "\"$0\" \"$@\" && for o in" ~ objects ~ "; do printf x >> \"$o\"; done"] ~ pa.argv;
+    };
+    auto differing = run(app.name, cache, o);
+    vs ~= Verdict("step 4 (differs)",
+        !executed(differing, archive) ? "the archive was not rebuilt"
+        : !differing.log.canFind("differs from its digest record") ? "a rebuild unlike its record was not reported" : null,
+        "a rebuild unlike its record was reported nondeterministic");
+
+    const runsTag = buildPath(cache, "runs", "CACHEDIR.TAG");
+    vs ~= Verdict("step 7 (runs)", !exists(runsTag) || readText(runsTag) != cacheDirTag
+        ? "runs/CACHEDIR.TAG is missing or other" : null, "runs/ holds CACHEDIR.TAG with its signature line");
+    return vs;
+}
+
+/// A store a run already made, opened beside it.
+ScratchStore ScratchStoreOver(string cache)
+{
+    import core.lifetime : move;
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : DotDotPolicy, ResolvePolicy, Rights, SymlinkPolicy;
+    import sparkles.event_horizon.sys : BlockingVfs;
+
+    ScratchStore s;
+    s.dir = cache;
+    s.vfs = new BlockingVfs;
+    auto top = openRoot!(Rights.all)(s.vfs, cache, ambientAuthority(),
+        ResolvePolicy(SymlinkPolicy.beneath, DotDotPolicy.reject));
+    assert(!top.hasError);
+    s.top = move(top.value);
+    auto build = s.top.walkAll("build");
+    s.build = move(build.value);
+    auto runOut = s.top.walkAll("runs/r/out");
+    s.runOut = move(runOut.value);
+    assert(typeof(s.store).open(s.build, "1-1", s.store));
+    return s;
+}
