@@ -142,6 +142,11 @@ and needs none of the prerequisites above.
   fixes and GitHub actions their verb groups (CIC17).
 - Change every workflow, hook, script, Nix package and document that runs
   `ci` in the same change, so the repository never runs a removed flag.
+- Move each command group's implementation out of `app.d` into its
+  `commands/` module (SPEC §7), with the file selection, rendering and
+  toolchain command lines the groups share in modules of their own.
+
+Progress: the command tree landed in #743; the `commands/` split follows it.
 
 Gate:
 
