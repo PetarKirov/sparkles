@@ -598,8 +598,9 @@ Panel[] minutes(const ref SiteData d) @safe
             Cell(known ? format("%.4f", rate[0]) : "—", true, known ? "" : "muted"),
             Cell(known ? format("%.2f", rate[0] * billed.get(r, 0)) : "—", true, known ? "" : "muted")];
     }
-    t.note = "Rates are ci/runner-rates.json's, per minute; a type it leaves unset has no charge. Billed minutes "
-        ~ "round each job up to a whole minute.";
+    t.note = "Standard runners are free on a public repository. The charge is what the same minutes would "
+        ~ "cost a private one, at each label's list price per minute (ci/runner-rates.json); billed minutes round "
+        ~ "each job up to a whole minute, as the provider does.";
     Panel w = Panel(Kind.table, "Minutes no result needed");
     w.heads = ["Pull request", "Total", "Reruns", "Cancelled", "Share"];
     foreach_reverse (ref f; figs)

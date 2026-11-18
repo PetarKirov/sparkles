@@ -1,11 +1,11 @@
 {
   "perMinute": {
-    "macos-latest": null,
-    "ubuntu-24.04-arm": null,
-    "ubuntu-latest": null,
-    "windows-latest": null
+    "macos-latest": 0.062,
+    "ubuntu-24.04-arm": 0.005,
+    "ubuntu-latest": 0.006,
+    "windows-latest": 0.01
   },
   "schema": "sparkles.ci.runner-rates",
-  "source": "Per-minute list prices of the provider's hosted runners, in USD; null leaves a runner type's charge unshown (observability OBJ6, OBW2).",
+  "source": "USD per minute of each label's standard SKU in a private repository (actions_linux, actions_linux_arm, actions_windows, actions_macos), from https://docs.github.com/en/billing/reference/actions-runner-pricing as read on 2026-11-18. Standard runners are free on public repositories (https://docs.github.com/en/actions/reference/runners/github-hosted-runners), where they have 4 cores: the charge is what the same minutes would cost a private repository.",
   "version": 1
 }
