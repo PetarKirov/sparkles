@@ -333,6 +333,13 @@ struct RunStats
     /// With `RunLayout.explain`: what each action reached would do, in the
     /// order reached, as `<task>: <what>` (BGS8).
     string[] explained;
+    /// Per task: its declared key, when it has one (BGK1).
+    string[string] declaredKeys;
+    /// Per task: the result key it was served or published under (BGK2).
+    string[string] resultKeys;
+    /// The tasks that executed, in the order they finished; every other
+    /// keyed task was reused.
+    string[] executedTasks;
 
     void future(string path) @safe pure nothrow
     {
@@ -663,6 +670,8 @@ struct ActionDriver
         if (stored && a !is null && reusable(**a))
             if (declaredPreimage(**a, preimage))
                 declared = declaredKeyOf(preimage);
+        if (declared.length)
+            stats.declaredKeys[id.text] = declared;
         if (layout.explain)
             return explainOnly(ctx.node.id, a is null ? null : *a, declared, preimage);
         const(ResultRecord)* checked;
@@ -674,6 +683,7 @@ struct ActionDriver
                 if (adopt(id, *hit))
                 {
                     stats.count(kind, true);
+                    stats.resultKeys[id.text] = hit.resultKey;
                     if (hit.status == 0)
                         return TaskOutcome(Succeeded());
                     // BGA9: a deterministic failure is replayed, not recompiled.
@@ -714,6 +724,7 @@ struct ActionDriver
             return TaskOutcome(Failed(FailureReason.contract));
         auto outcome = process.run(ctx);
         stats.count(kind, false);
+        stats.executedTasks ~= id.text;
         // BGA9: what an ending publishes. A success; a compile, archive or
         // link that exited on its own with any status; never an action ended
         // by a signal, a timeout or a cancellation.
@@ -874,6 +885,7 @@ struct ActionDriver
         if (published !is null)
         {
             store.recordPreimage(id.text, preimage);
+            stats.resultKeys[id.text] = published.resultKey;
             if (hasManifest)
                 store.useManifest(declared, manifest);
             outputsDigestOf[id.text] = published.outputsDigest;
