@@ -98,6 +98,10 @@ struct Action
     /// Part of a coverage build: its failure is classified by the plain
     /// retry behind it, so it never fails the run (CIC7, TDC4).
     bool provisional;
+    /// BGK9: the `pkg-config` search behind the flags it uses, as
+    /// `pkgConfigSearch` writes it: each file used and each candidate absent
+    /// before it, which its declared key covers when the action runs.
+    string[] searchInputs;
 }
 
 /// The actions and their edges.
@@ -234,6 +238,9 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
                     p.timeout = a.kind == ActionKind.test ? tools.testLimit : tools.actionLimit;
             },
             (ref other) {});
+        // BGK9: what `pkg-config` searched for the flags a compile or link uses.
+        if ((a.kind == ActionKind.compile || a.kind == ActionKind.link) && a.variant < plan.variants.length)
+            a.searchInputs = plan.variants[a.variant].pcSearch.dup;
         g.actions ~= a;
         return a.id;
     }

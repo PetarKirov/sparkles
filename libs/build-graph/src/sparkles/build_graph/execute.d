@@ -30,7 +30,7 @@ dependency output gives (BGK2). Tests are not reused. Without a cache, every run
 */
 module sparkles.build_graph.execute;
 
-import std.algorithm.searching : canFind, startsWith;
+import std.algorithm.searching : canFind, endsWith, startsWith;
 import std.array : join, replace;
 import std.conv : text;
 import std.sumtype : match;
@@ -1055,8 +1055,26 @@ struct ActionDriver
                 // along its `-L` search order, and on the candidates absent
                 // before it, so a library created earlier on the path changes it.
                 if (a.kind == ActionKind.link)
-                    foreach (line; librarySearch(p.argv))
+                {
+                    auto concrete = a.id.text in concreteProcess;
+                    foreach (line; librarySearch(p.argv, concrete is null ? null : concrete.argv))
                         s ~= line ~ "\n";
+                }
+                // BGK9: the `pkg-config` search behind the flags it uses, so a
+                // `.pc` file edited, or created earlier on the search path,
+                // changes the key. A store path's file never changes.
+                foreach (line; a.searchInputs)
+                {
+                    if (line.startsWith("pc ") && !line[3 .. $].startsWith("/nix/store/"))
+                    {
+                        ubyte[32] d;
+                        s ~= line ~ (digestOf(line[3 .. $], d) ? " " ~ hexOf(d) : " unreadable") ~ "\n";
+                    }
+                    else if (line.startsWith("pc-absent "))
+                        s ~= line ~ (present(line["pc-absent ".length .. $]) ? " present" : " absent") ~ "\n";
+                    else
+                        s ~= line ~ "\n";
+                }
                 // BGK6: a compile without dependency output keys on every file
                 // beneath every worktree root it searches.
                 if (a.kind == ActionKind.compile && !withManifest(a))
@@ -1149,20 +1167,34 @@ struct ActionDriver
     }
 
     /*
-    BGK9: for each `-L-l<name>` a link passes, the first of `lib<name>.so`
-    and `lib<name>.a` along its `-L-L<dir>` directories, in order, as
-    `library <name> <path> after <n> absent`, or `library <name> unresolved`
-    when none holds it (the toolchain's own directories, which its identity
-    covers, then serve it).
+    BGK9: for each `-L-l<name>` a link passes, and each library its objects
+    and archives name through `pragma(lib)` (read from `concrete`, its
+    argument vector as it runs, once its inputs exist), the first of
+    `lib<name>.so` and `lib<name>.a` along its `-L-L<dir>` directories, in
+    order, as `library <name> <path> after <n> absent`, or
+    `library <name> unresolved` when none holds it (the toolchain's own
+    directories, which its identity covers, then serve it).
     */
-    private string[] librarySearch(const string[] argv)
+    private string[] librarySearch(const string[] argv, const string[] concrete = null)
     {
+        import sparkles.build_graph.deplibs : dependentLibraries;
+
         string[] dirs, names, lines;
         foreach (arg; argv)
             if (arg.startsWith("-L-L") && arg.length > 4)
                 dirs ~= arg[4 .. $];
             else if (arg.startsWith("-L-l") && arg.length > 4)
                 names ~= arg[4 .. $];
+        foreach (arg; concrete)
+            if ((arg.endsWith(".o") || arg.endsWith(".a")) && layout.cache.length
+                    && arg.startsWith(layout.cache ~ "/"))
+            {
+                string bytes;
+                if (readAll(cacheRoot, arg[layout.cache.length + 1 .. $], bytes))
+                    foreach (name; dependentLibraries(cast(const(ubyte)[]) bytes))
+                        if (!names.canFind(name))
+                            names ~= name;
+            }
         foreach (name; names)
         {
             size_t absentBefore;
