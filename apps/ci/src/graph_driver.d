@@ -28,6 +28,7 @@ import std.typecons : Nullable;
 
 import sparkles.build_graph.actions : ActionGraph, ActionKind, CoverageAttempt, TestProgram, Tools,
     planActions, taskNodes;
+import sparkles.build_graph.execute : RunStats;
 import sparkles.build_graph.variants : LayoutCheck, PlanError, PlanOptions, Role, ToolchainIdentity,
     VariantPlan, planVariants;
 import sparkles.build_primitives.task.model : PlanExpected, planErr, planOk;
@@ -540,54 +541,72 @@ enum Confinement
     tests,  /// those and the tests
 }
 
-int runPackage(string root, string only, string into, string cache, bool checkDeterminism = false,
-    Confinement confine = Confinement.none)
+/// What a run asks for, beyond its package.
+struct RunOptions
 {
-    import std.file : mkdirRecurse;
+    string into;   /// the run directory, absolute; made when missing
+    string cache;  /// the cache directory holding the store; empty runs without one
+    bool check;    /// BGS9's determinism check
+    Confinement confine;    /// D39's spike
+    bool traceCompiles;     /// oracle 3: every compile under `strace`
+    uint jobs;              /// the weight admitted at once; 0 for one per processor
+    bool echo;              /// the reporter's lines also go to standard output
+    /// Changes the tools found on `PATH` before the toolchain is identified
+    /// (oracle 9's substitutions).
+    void delegate(ref Tools) adjustTools;
+    /// Changes the plan before it runs (the oracles' wrapped actions).
+    void delegate(ref Planned) adjustPlan;
+}
+
+/// What a run of the graph did.
+struct GraphRun
+{
+    string error;        /// why it could not run; null when it ran
+    Planned plan;        ///
+    Toolchain toolchain; ///
+    int exitCode;        /// the run's
+    RunStats stats;      /// what each action did (BGS8, BGK1)
+    string log;          /// the reporter's lines
+    string dubCalls;     /// what tests passed to `dub` (BGX1); empty when none ran it
+}
+
+/**
+Plans the test root of the package `only` (every package's when null) with
+the tools on `PATH`, named by absolute path, and runs it on the task-DAG
+executor into `o.into`, against the store beneath `o.cache` when one is
+named.
+*/
+GraphRun runGraph(string root, string only, RunOptions o)
+{
+    import std.array : appender;
+    import std.file : exists, mkdirRecurse, readText;
     import std.parallelism : totalCPUs;
-    import std.stdio : stdout;
     import sparkles.build_graph.execute : RunLayout, executionNodes, runActions;
 
+    GraphRun g;
     Tools tools;
-    Toolchain toolchain;
-    if (const why = pathTools(tools, toolchain))
+    if (const why = pathTools(tools, g.toolchain))
+        return GraphRun(why);
+    if (o.adjustTools !is null)
     {
-        stderr.writeln("plan-graph: ", why);
-        return 2;
+        o.adjustTools(tools);
+        g.toolchain = toolchainOf(tools);
+        tools.config = g.toolchain.config;
+        tools.prefixMaps = g.toolchain.root.length ? [g.toolchain.root ~ "=/ldc"] : null;
     }
-    auto p = planRepository(root, false, only, tools, toolchain.identity);
-    if (p.error.length)
-    {
-        stderr.writeln("plan-graph: ", p.error);
-        return 1;
-    }
-    if (p.requests == 0)
-    {
-        stderr.writeln("plan-graph: no package ", only);
-        return 2;
-    }
-    mkdirRecurse(into);
-    // Oracle 3 over an earlier traced run's directory, running nothing.
-    if (oracle3Only)
-    {
-        size_t compiles, opened, lookups;
-        const failures = manifestCompleteness(p.graph, root, into, compiles, opened, lookups);
-        foreach (f; failures[0 .. failures.length < 40 ? $ : 40])
-            writeln("oracle 3: ", f);
-        writeln(failures.length ? "fail" : "pass", " oracle 3 (manifest completeness): ", compiles, " compiles, ",
-            opened, " files opened, ", lookups, " failed lookups under their roots; ", failures.length, " failures");
-        return failures.length ? 1 : 0;
-    }
+    g.plan = planRepository(root, false, only, tools, g.toolchain.identity);
+    if (g.plan.error.length)
+        return GraphRun(g.plan.error);
+    if (g.plan.requests == 0)
+        return GraphRun("no package " ~ only);
+    mkdirRecurse(o.into);
     // Oracle 3: every compile under `strace`, its trace beside its manifest.
-    if (traceCompiles)
+    if (o.traceCompiles)
     {
         const strace = onPath("strace");
         if (strace is null)
-        {
-            stderr.writeln("plan-graph: --trace-compiles needs strace on PATH");
-            return 2;
-        }
-        foreach (ref a; p.graph.actions)
+            return GraphRun("tracing compiles needs strace on PATH");
+        foreach (ref a; g.plan.graph.actions)
             if (a.kind == ActionKind.compile)
                 a.action.match!(
                     (ref ProcessAction pa) {
@@ -597,27 +616,24 @@ int runPackage(string root, string only, string into, string cache, bool checkDe
                     (ref _) {});
     }
     // D39's spike: every build action confined to its own directories and
-    // without a network; tests too with `--confine-tests`, which may also
+    // without a network; tests too with `Confinement.tests`, which may also
     // write their temporary directory.
-    if (confine != Confinement.none)
+    if (o.confine != Confinement.none)
     {
         import std.process : execute;
 
-        const wrapper = buildPath(into, "confine");
+        const wrapper = buildPath(o.into, "confine");
         const built = execute([tools.compiler, "-O", "-of=" ~ wrapper, buildPath(root, "apps/ci/tools/confine.d")]);
         if (built.status != 0)
+            return GraphRun("cannot build the confinement wrapper: " ~ built.output);
+        foreach (ref a; g.plan.graph.actions)
         {
-            stderr.writeln("plan-graph: cannot build the confinement wrapper: ", built.output);
-            return 2;
-        }
-        foreach (ref a; p.graph.actions)
-        {
-            if (a.kind == ActionKind.test && confine != Confinement.tests)
+            if (a.kind == ActionKind.test && o.confine != Confinement.tests)
                 continue;
-            // The dub trap below records its calls beside itself, so a
-            // confined action that runs dub is still seen (BGX1).
+            // The dub trap records its calls beside itself, so a confined
+            // action that runs dub is still seen (BGX1).
             string[] prefix = [wrapper, "--write=$OUT", "--write=$MEASURE", "--no-network",
-                "--write=" ~ buildPath(into, "dub-trap")];
+                "--write=" ~ buildPath(o.into, "dub-trap")];
             if (a.kind == ActionKind.test)
                 prefix ~= "--write=" ~ environment.get("TMPDIR", "/tmp");
             prefix ~= "--";
@@ -626,45 +642,98 @@ int runPackage(string root, string only, string into, string cache, bool checkDe
                 (ref _) {});
         }
     }
+    if (o.adjustPlan !is null)
+        o.adjustPlan(g.plan);
     // Generators and tests run with the environment they are given here,
-    // declared whole (BGX1): the driver's own.
-    // Oracle 11 step 1 (BGX1): a `dub` first on their `PATH` that records
-    // each call and fails, so a test that runs dub is seen.
-    import std.file : exists, readText;
-
-    const trap = buildPath(into, "dub-trap");
+    // declared whole (BGX1): the driver's own, with a `dub` first on `PATH`
+    // that records each call and fails (oracle 11 step 1).
+    const trap = buildPath(o.into, "dub-trap");
     const declared = declaredEnvironment(trap);
-    const layout = RunLayout(root, into, cache, toolchain.identity, checkDeterminism);
-    auto nodes = executionNodes(p.graph, layout, declared);
-    auto w = stdout.lockingTextWriter;
-    import sparkles.build_graph.execute : RunStats;
-
-    RunStats stats;
-    const r = runActions(nodes, p.graph, layout, w, runJobs ? runJobs : cast(uint) totalCPUs, &stats);
-    writeln(p.graph.actions.length, " actions; exit ", r.exitCode);
-    if (cache.length)
-        writeln("store ", cache, ": ", stats.summary);
-    // BGS5: eviction after the run, off its publish path.
-    if (cache.length)
-        cast(void) cacheOp(cache, "evict");
-    if (exists(buildPath(trap, "calls")))
+    const layout = RunLayout(root, o.into, o.cache, g.toolchain.identity, o.check);
+    auto nodes = executionNodes(g.plan.graph, layout, declared);
+    static struct Tee
     {
-        stderr.writeln("plan-graph: BGX1: a test ran dub: ", readText(buildPath(trap, "calls")));
+        typeof(appender!string())* log;
+        bool echo;
+        void put(T)(T s)
+        {
+            import std.stdio : stdout;
+
+            log.put(s);
+            if (echo)
+                stdout.write(s);
+        }
+    }
+    auto log = appender!string;
+    auto w = Tee(&log, o.echo);
+    const r = runActions(nodes, g.plan.graph, layout, w, o.jobs ? o.jobs : cast(uint) totalCPUs, &g.stats);
+    g.exitCode = r.exitCode;
+    g.log = log.data;
+    // BGS5: eviction after the run, off its publish path.
+    if (o.cache.length)
+    {
+        import sparkles.build_graph.execute : storeOperation;
+
+        auto discard = appender!string;
+        cast(void) storeOperation(o.cache, "evict", discard);
+    }
+    if (exists(buildPath(trap, "calls")))
+        g.dubCalls = readText(buildPath(trap, "calls"));
+    return g;
+}
+
+int runPackage(string root, string only, string into, string cache, bool checkDeterminism = false,
+    Confinement confine = Confinement.none)
+{
+    // Oracle 3 over an earlier traced run's directory, running nothing.
+    if (oracle3Only)
+    {
+        Tools tools;
+        Toolchain toolchain;
+        if (const why = pathTools(tools, toolchain))
+        {
+            stderr.writeln("plan-graph: ", why);
+            return 2;
+        }
+        auto p = planRepository(root, false, only, tools, toolchain.identity);
+        if (p.error.length)
+        {
+            stderr.writeln("plan-graph: ", p.error);
+            return 1;
+        }
+        return reportOracle3(p, root, into);
+    }
+    auto g = runGraph(root, only, RunOptions(into: into, cache: cache, check: checkDeterminism, confine: confine,
+        traceCompiles: traceCompiles, jobs: runJobs, echo: true));
+    if (g.error.length)
+    {
+        stderr.writeln("plan-graph: ", g.error);
+        return g.error.startsWith("no package") ? 2 : 1;
+    }
+    writeln(g.plan.graph.actions.length, " actions; exit ", g.exitCode);
+    if (cache.length)
+        writeln("store ", cache, ": ", g.stats.summary);
+    if (g.dubCalls.length)
+    {
+        stderr.writeln("plan-graph: BGX1: a test ran dub: ", g.dubCalls);
         return 1;
     }
     writeln("BGX1: no test ran dub");
-    if (traceCompiles)
-    {
-        size_t compiles, opened, lookups;
-        const failures = manifestCompleteness(p.graph, root, into, compiles, opened, lookups);
-        foreach (f; failures[0 .. failures.length < 40 ? $ : 40])
-            writeln("oracle 3: ", f);
-        writeln(failures.length ? "fail" : "pass", " oracle 3 (manifest completeness): ", compiles, " compiles, ",
-            opened, " files opened, ", lookups, " failed lookups under their roots; ", failures.length, " failures");
-        if (failures.length)
-            return 1;
-    }
-    return r.exitCode;
+    if (traceCompiles && reportOracle3(g.plan, root, into) != 0)
+        return 1;
+    return g.exitCode;
+}
+
+// Oracle 3's verdict over a traced run's directory.
+int reportOracle3(ref const Planned p, string root, string into)
+{
+    size_t compiles, opened, lookups;
+    const failures = manifestCompleteness(p.graph, root, into, compiles, opened, lookups);
+    foreach (f; failures[0 .. failures.length < 40 ? $ : 40])
+        writeln("oracle 3: ", f);
+    writeln(failures.length ? "fail" : "pass", " oracle 3 (manifest completeness): ", compiles, " compiles, ",
+        opened, " files opened, ", lookups, " failed lookups under their roots; ", failures.length, " failures");
+    return failures.length ? 1 : 0;
 }
 
 /// The toolchain as a run names it (§8).
