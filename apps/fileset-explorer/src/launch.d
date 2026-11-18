@@ -61,10 +61,23 @@ RunExpected!void launch(Root dir, string query, GuiOptions gui, bool touch = fal
     auto app = new ExplorerApp(dir, query);
     if (touch)
         app.layout = ExplorerApp.Layout.touch;
+    return asRunResult(runApp(*app, explorerRunConfig(gui, native, nerdFont)), "fileset-explorer");
+}
+
+/**
+What the explorer asks of its host. In a terminal, bare pointer motion
+(any-event tracking): a terminal declares hover only when asked for it, and
+without hover the explorer takes the touch layout (`FXU11`), whose rows are
+two cells tall, where hue's tree has rows of one.
+*/
+RunConfig explorerRunConfig(GuiOptions gui, NativeOptions native = NativeOptions.init, bool nerdFont = true)
+    @safe
+{
     RunConfig cfg = {
         title: "fileset explorer",
         gui: gui,
         native: native,
+        motion: true,
         fractionalScroll: true,
         touchGestures: TouchGestures.all,
         // Hue's file icons in a terminal too, as hue draws them (`FXU9`).
@@ -72,5 +85,5 @@ RunExpected!void launch(Root dir, string query, GuiOptions gui, bool touch = fal
     };
     cast(void) cfg.app.id.assign("dev.petar_kirov.sparkles.fileset_explorer");
     cast(void) cfg.app.name.assign("Fileset Explorer");
-    return asRunResult(runApp(*app, cfg), "fileset-explorer");
+    return cfg;
 }

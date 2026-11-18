@@ -28,6 +28,15 @@ import sparkles.fileset_tools.stats : formatStats;
     assert(bare.value.command.match!((ref View v) => v.renderPlain, (ref _) => false), "the default is view");
     // Hue's Nerd Font icons in a terminal unless told otherwise (FXU9).
     assert(bare.value.command.match!((ref View v) => v.nerdFont, (ref _) => false));
+    // FXU11: a terminal is asked for hover, so the explorer keeps its
+    // one-row desktop tree there, as hue does, rather than the touch layout.
+    {
+        import sparkles.ui_app.gui_options : GuiOptions;
+        import launch : explorerRunConfig;
+
+        const cfg = explorerRunConfig(GuiOptions.init);
+        assert(cfg.motion && cfg.mouse && cfg.nerdFont);
+    }
     auto plainIcons = parseCli!Explorer(["fileset-explorer", "view", "--no-nerd-font"]);
     assert(plainIcons, plainIcons.error.message);
     assert(plainIcons.value.command.match!((ref View v) => !v.nerdFont, (ref _) => false));
