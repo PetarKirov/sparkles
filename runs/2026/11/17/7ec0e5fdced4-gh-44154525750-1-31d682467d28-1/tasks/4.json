@@ -1,0 +1,1 @@
+{"tasks":[{"id":"test:wired-wasm:unittest:parallel","series":"95d60b7d2e796ca04502c357df1b45dbf0e09f59198742c737a19e03254298ca","outcome":"passed","start":772724022000,"end":776121333100,"metrics":{"task.wall":3397311100}}]}
