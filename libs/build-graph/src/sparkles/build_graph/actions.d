@@ -689,6 +689,9 @@ string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId
         argv ~= f;
     foreach (p; s.importPaths)
         argv ~= "-I=" ~ relative(p, root);
+    // The C preprocessor's include roots, as dub passes them (ImportC).
+    foreach (p; s.cImportPaths)
+        argv ~= (ldc ? "-P-I" : "-P=-I") ~ relative(p, root);
     foreach (p; s.stringImportPaths)
     {
         string path = relative(p, root);
@@ -771,6 +774,8 @@ string[] testRunnerArguments(ref const Variant v, string root, const Tools tools
         args ~= "--import-path=" ~ relative(p, root);
     foreach (p; s.stringImportPaths)
         args ~= "--string-import-path=" ~ relative(p, root);
+    foreach (p; s.cImportPaths)
+        args ~= "--dflag=-P-I" ~ relative(p, root);
     foreach (id; s.versions)
         args ~= "--version=" ~ id;
     foreach (f; s.dflags)
