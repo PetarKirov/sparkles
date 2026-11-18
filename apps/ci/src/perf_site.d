@@ -168,6 +168,7 @@ enum Kind
     table,
     scatter,
     empty,
+    picker, /// one of `charts`, chosen from a list
 }
 
 /// One coloured part of a bar; `hatch` draws it striped.
@@ -286,6 +287,7 @@ struct Panel
     string emptyTitle, emptyText;
     /// How the tooltip reads values: `min`, `s` (seconds, as durations) or `jobs`.
     string unit = "min";
+    Panel[] charts;   /// a picker's choices, each titled
 }
 
 /// The colours of the series: design-system tokens, each with its fallback.
@@ -703,8 +705,54 @@ Panel[] jobs(const ref SiteData d) @safe
         }
         b.cells ~= row;
     }
-    return [t, s, b];
+    return [t, jobTimes(figs), s, b];
 }
+
+/// Each job's time over the pull requests, one chart per job, picked from a list.
+private Panel jobTimes(const(PrFigures)[] figs) @safe
+{
+    import perf_pr : JobTime;
+
+    // Every job name, the ones of the latest pull request first, slowest first.
+    double[string] latest, seen;
+    foreach (ref f; figs)
+        foreach (ref j; f.jobTimes)
+            seen[j.name] = 1;
+    foreach (ref j; figs[$ - 1].jobTimes)
+        latest[j.name] = j.wall + j.queue;
+    auto names = seen.keys.sort!((a, b) => latest.get(a, -1) > latest.get(b, -1)
+        || (latest.get(a, -1) == latest.get(b, -1) && a < b)).release;
+
+    Panel p = Panel(Kind.picker, "Job time over pull requests", "the job's latest execution in each final run");
+    foreach (n; names)
+    {
+        Panel c = Panel(Kind.columns, n);
+        c.height = 170;
+        double peak = 1;
+        string color = Colors.run;
+        foreach (ref f; figs)
+        {
+            const(JobTime)[] j;
+            foreach (ref x; f.jobTimes)
+                if (x.name == n)
+                    j = [x];
+            Seg[] segs;
+            if (j.length)
+            {
+                color = colorOf(j[0].runner);
+                segs = [Seg(j[0].wall / 60.0, color, false, "running"), Seg(j[0].queue / 60.0, Colors.light, true,
+                    "waiting for a runner")];
+                peak = max(peak, (j[0].wall + j[0].queue) / 60.0);
+            }
+            c.columns ~= Column("#" ~ f.number.to!string, null, "#" ~ f.number.to!string, segs);
+        }
+        c.cap = peak * 1.05;
+        c.legend = [Key("running", color), Key("waiting for a runner", Colors.light, true)];
+        c.aside = latest.get(n, -1) >= 0 ? "latest: " ~ dur(latest[n]) : "not in the latest pull request";
+        p.charts ~= c;
+    }
+    p.note = "A pull request where the job did not run has an empty slot. Each chart is scaled to its own job.";
+    return p;}
 
 /// Packages: trend, median and spread per placement (slice 9).
 Panel[] packages(const ref SiteData d) @safe
@@ -1150,6 +1198,22 @@ void render(ref Appender!string w, in Panel p) @safe pure
             w ~= `</div><span class="xlabel">`;
             esc(w, p.xLabel);
             w ~= "</span></div></div>\n";
+            break;
+        case Kind.picker:
+            w ~= `<label class="picker">Job <select>`;
+            foreach (i, ref c; p.charts)
+            {
+                w ~= format(`<option value="%d">`, i);
+                esc(w, c.title);
+                w ~= "</option>";
+            }
+            w ~= "</select></label>\n";
+            foreach (i, ref c; p.charts)
+            {
+                w ~= format(`<div class="choice" data-choice="%d">`, i);
+                render(w, c);
+                w ~= "</div>\n";
+            }
             break;
         case Kind.empty:
             w ~= `<div class="empty"><b>`;

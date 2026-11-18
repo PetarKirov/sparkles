@@ -146,3 +146,18 @@
     if (slot) show(hot || slot);
   });
 })();
+
+// A picker shows the chart its list names, and hides the others.
+(() => {
+  'use strict';
+  const choose = select => {
+    const panel = select.closest('.panel');
+    for (const c of panel.querySelectorAll(':scope > .choice'))
+      c.hidden = c.dataset.choice !== select.value;
+  };
+  for (const select of document.querySelectorAll('.picker select'))
+    choose(select);
+  document.addEventListener('change', e => {
+    if (e.target.matches('.picker select')) choose(e.target);
+  });
+})();
