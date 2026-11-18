@@ -42,9 +42,9 @@ import sparkles.ui.components.lantern_view : BoxLayout, LabelArena, LanternStyle
     Placement, viewLantern;
 import sparkles.ui.lantern : ltnStep = step, StepKind;
 import kit;
-import pages.split_page : splitMax = maxPane, splitMin = minPane;
-import pages.terminal_page : hitPane, paneHeight, terminalOwns = ownsId;
-import registry : pages, propertyPageIndex, stepPage, terminalPageIndex;
+import pages.split_page : dividerKey, splitMax = maxPane, splitMin = minPane;
+import pages.terminal_page : paneHeight, termPaneKey, terminalOwns = ownsId;
+import registry : claimPageHits, pages, propertyPageIndex, stepPage, terminalPageIndex;
 import scrollbars;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.effect : applyThemeEffects, Builtin, EffectBinding,
@@ -297,6 +297,18 @@ struct Gallery
                     h.quit();
             }
         }
+
+        // The frame's hit ids (`INP27`): begin the registry's frame, then ask
+        // for every block this frame stamps — the shell's, the showing page's
+        // (the inspector claims its rows as it builds) — after the side
+        // effects above have settled the tabs and the page, and before any
+        // view reads a block.
+        s.hits.beginFrame();
+        s.hits.block(navKey, pages.length);
+        s.hits.block(contentBarKey);
+        if (s.inspectorVisible)
+            s.hits.block(inspectorBarKey);
+        claimPageHits(s);
 
         auto b = Builder();
 
@@ -1375,7 +1387,7 @@ struct Gallery
         // asked for reporting, so click-to-focus and hover continue below.
         if (s.page == terminalPageIndex && s.terms.any)
         {
-            const paneRect = rectOf(tree, frames, hitPane);
+            const paneRect = rectOf(tree, frames, s.hitOf(termPaneKey));
             if (paneRect.width > 0 && paneRect.contains(p.pos))
                 if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
                 {
@@ -1436,7 +1448,7 @@ struct Gallery
                 // whatever is under the pointer now — which is the whole point
                 // of `CaptureState`, and the reason a divider does not let go
                 // when you drag past the pane beside it.
-                if (s.capture.ownedBy(hitSplit))
+                if (s.capture.ownedBy(s.hitOf(dividerKey)))
                     s.split = s.split.draggedTo(p.pos.x, splitMin,
                         splitMax(s.contentWidth - 1));
                 return;
@@ -1449,9 +1461,9 @@ struct Gallery
             case PointerAction.press:
                 s.hover.update(p, targets);
                 s.press = s.press.pressed(s.hover.hot);
-                if (s.hover.hot == hitSplit)
+                if (s.hover.isHot(s.hitOf(dividerKey)))
                 {
-                    s.capture = s.capture.capturedBy(hitSplit);
+                    s.capture = s.capture.capturedBy(s.hitOf(dividerKey));
                     s.split = s.split.started(p.pos.x);
                 }
                 return;
@@ -1477,13 +1489,14 @@ struct Gallery
         // keyboard back from a focused terminal — clicking the catalog means
         // using it. Its tabs and buttons keep the capture (VSCode's shape:
         // switching tabs moves the focus, it does not drop it).
-        if (s.terms.focused && !terminalOwns(id))
+        if (s.terms.focused && !terminalOwns(s, id))
             s.terms.focused = false;
 
-        if (id >= hitNav && id < hitNav + pages.length)
+        size_t page;
+        if (s.hits.find(navKey).indexOf(id, page))
         {
             s.region = Region.nav;
-            return setPage(id - hitNav);
+            return setPage(page);
         }
 
         // The inspector panel's own rows: select, and fold a container.
@@ -1508,7 +1521,7 @@ struct Gallery
         // it tracks the mouse; otherwise it walks the scrollback — either
         // way, not the gallery's document. The GUI arm does both through
         // `wheelInPane`. The terminal arm stays on `sendWheel`, in cells.
-        if (s.page == terminalPageIndex && s.terms.any && s.hover.isHot(hitPane))
+        if (s.page == terminalPageIndex && s.terms.any && s.hover.isHot(s.hitOf(termPaneKey)))
         {
             if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
             {
@@ -1565,7 +1578,7 @@ struct Gallery
         if (ds != PointerShape.default_)
             return h.pointerShape(ds);
 
-        const overDivider = s.pointerAffordances && s.hover.isHot(hitSplit);
+        const overDivider = s.pointerAffordances && s.hover.isHot(s.hitOf(dividerKey));
         auto want = wantedPointerShape(s.split, overDivider,
             s.demoView.v, s.demoView.h);
         h.pointerShape(want);
@@ -1634,7 +1647,7 @@ struct Gallery
         auto rows = new uint[](pages.length);
         foreach (i, ref p; pages)
         {
-            const id = hitNav + i;
+            const id = s.hitOf(navKey, i);
             const selected = i == s.page;
             const hot = s.pointerAffordances && s.hover.isHot(id);
             const caption = b.add(Widget(
@@ -1706,7 +1719,7 @@ struct Gallery
             ScrollState(dock.offsetV(paneInsp)), keyInspScroll);
         const f = dock.scrollFrameOf(paneInsp);
         const bar = verticalBar(b, dock.scrollOf(paneInsp),
-            BarGeometry.ofFrame(f.vExtents), hitInspBar);
+            BarGeometry.ofFrame(f.vExtents), s.hitOf(inspectorBarKey));
         const inner = b.add(Widget(
             kind: WidgetKind.row,
             children: [view_, bar],
@@ -1738,7 +1751,7 @@ struct Gallery
         // grew past the viewport (`GalleryState.contentWidth`).
         const f = dock.scrollFrameOf(paneContent);
         const bar = verticalBar(b, dock.scrollOf(paneContent),
-            BarGeometry.ofFrame(f.vExtents), hitContentBar);
+            BarGeometry.ofFrame(f.vExtents), s.hitOf(contentBarKey));
 
         return b.add(Widget(
             kind: WidgetKind.row,
@@ -2344,7 +2357,7 @@ version (unittest)
         // Row i sits under the header band, one row per page.
         hover.update(PointerEvent(action: PointerAction.move,
             pos: Point(3, cast(int)(1 + i))), targets);
-        assert(hover.hot == hitNav + i, "nav row " ~ p.title ~ " hit mismatch");
+        assert(hover.hot == g.s.hitOf(navKey, i), "nav row " ~ p.title ~ " hit mismatch");
     }
 }
 
@@ -2406,7 +2419,7 @@ version (unittest)
     h.size = sizeOf(96, 24);
     auto tree = g.view(h);
     auto frames = layout(tree, Constraints(maxW: 96, maxH: 24));
-    const bar = rectOf(tree, frames, hitContentBar);
+    const bar = rectOf(tree, frames, g.s.hitOf(contentBarKey));
     assert(!bar.empty, "the content bar is not painted");
 
     // A press near the bottom of the track jumps the thumb there…
@@ -2434,6 +2447,7 @@ version (unittest)
 @("ui_gallery.gallery.componentsScrollbarsReachThePageThroughTheShell")
 @safe unittest
 {
+    import pages.components_page : samplesKey;
     import registry : pageIndexOf;
     import sparkles.ui.geometry : Constraints;
 
@@ -2447,7 +2461,7 @@ version (unittest)
     h.size = sizeOf(120, 70);
     auto tree = g.view(h);
     const bar = rectOf(tree,
-        layout(tree, Constraints(maxW: 120, maxH: 70)), hitChromeSamples);
+        layout(tree, Constraints(maxW: 120, maxH: 70)), g.s.hitOf(samplesKey));
     assert(!bar.empty && bar.y < 70, "the specimen is visible in the frame");
 
     drive(g, [Event(PointerEvent(action: PointerAction.press,
@@ -2479,7 +2493,7 @@ version (unittest)
     h.size = sizeOf(96, 24);
     auto tree = g.view(h);
     const bar = rectOf(tree, layout(tree, Constraints(maxW: 96, maxH: 24)),
-        hitContentBar);
+        g.s.hitOf(contentBarKey));
 
     const page = g.s.page;
     drive(g, [
@@ -2511,7 +2525,7 @@ version (unittest)
     h.size = sizeOf(96, 24);
     auto tree = g.view(h);
     const bar = rectOf(tree, layout(tree, Constraints(maxW: 96, maxH: 24)),
-        hitContentBar);
+        g.s.hitOf(contentBarKey));
     const narrow = g.dock.scrollOf(Gallery.paneContent).vAnim.percent;
 
     auto rec = drive(g, [Event(PointerEvent(action: PointerAction.move,
@@ -2714,7 +2728,7 @@ version (unittest)
     Point at;
     bool found;
     foreach (t; targets)
-        if (t.hitId == tabHit(id))
+        if (t.hitId == tabHit(g.s, id))
         {
             at = Point(t.rect.x + 1, t.rect.y);
             found = true;
@@ -2727,7 +2741,7 @@ version (unittest)
         auto t2 = b2.finish(pages[g.s.page].view(b2, g.s));
         foreach (ref n; b2.nodes)
             if (n.kind == WidgetKind.text && n.text == "✕"
-                && n.hitId == closeHit(id))
+                && n.hitId == closeHit(g.s, id))
                 return true;
         cast(void) t2;
         return false;
@@ -2736,7 +2750,7 @@ version (unittest)
     assert(!hasClose, "no pointer, no close button");
     drive(g, [Event(PointerEvent(action: PointerAction.move, pos: at))],
         100, 30);
-    assert(g.s.hover.isHot(tabHit(id)));
+    assert(g.s.hover.isHot(tabHit(g.s, id)));
     assert(hasClose, "a hovered row reveals its ✕");
 }
 
@@ -2775,7 +2789,7 @@ version (unittest)
     Point grab;
     bool found;
     foreach (t; targets)
-        if (t.hitId == hitSplit)
+        if (t.hitId && t.hitId == g.s.hitOf(dividerKey))
         {
             grab = Point(t.rect.x, t.rect.y + 1);
             found = true;
@@ -2798,13 +2812,53 @@ version (unittest)
     assert(g.s.split.size == before + 6, "the size survives the release");
 }
 
+@("ui_gallery.gallery.everyStampedIdIsIssuedByTheRegistry")
+@safe unittest
+{
+    import sparkles.ui.hit_ids : HitKey, HitRegistry;
+
+    // INP27 over real frames: on every page, with the inspector open, each id
+    // the shell, the page and the inspector stamp is one the registry issued
+    // this frame — no hand-picked constant survives — and the shell's nav rows
+    // and the inspector's rows never share an id with the page's blocks.
+    foreach (i, ref p; pages)
+    {
+        Gallery g;
+        g.s.page = i;
+        g.s.inspectorOpen = true;
+        g.s.surface = sizeOf(160, 40);
+        cast(void) g.s.terms.spawn();
+        RecordingHost h;
+        h.size = sizeOf(160, 40);
+        auto tree = g.view(h);
+        assert(g.s.inspectorVisible, "the frame shows the inspector");
+        size_t stamped;
+        foreach (ref n; tree.nodes)
+        {
+            if (!n.hitId)
+                continue;
+            HitKey key;
+            size_t index;
+            assert(g.s.hits.ownerOf(n.hitId, key, index),
+                "page " ~ p.title ~ " stamps an id no key holds");
+            ++stamped;
+        }
+        assert(stamped >= pages.length, "the nav rows at least are hit-testable");
+        const nav = g.s.hits.find(navKey);
+        assert(nav.length == pages.length);
+        foreach (ref n; tree.nodes)
+            if (n.hitId && !nav.contains(n.hitId))
+                assert(n.hitId < nav.base || n.hitId >= nav.base + HitRegistry.stride);
+    }
+}
+
 @("ui_gallery.gallery.clickingAThemeRowSelectsIt")
 @safe unittest
 {
     import registry : pageIndexOf;
     import sparkles.ui.geometry : Constraints;
 
-    // A page mints hit ids from its own base and the shell routes them back —
+    // A page claims hit ids under its own key and the shell routes them back —
     // the seam that lets a page be interactive without the shell knowing what
     // it is showing. The click point comes from the target the painter used,
     // so this cannot pass by clicking somewhere the row is not drawn.
@@ -2822,7 +2876,7 @@ version (unittest)
     Point at;
     foreach (t; targets)
     {
-        const which = themeAt(t.hitId);
+        const which = themeAt(g.s, t.hitId);
         if (which != size_t.max && which != g.s.themeIndex)
         {
             wanted = which;

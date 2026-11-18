@@ -15,7 +15,7 @@ there. No base class, no interface, no registration.
 module pages.tree_page;
 
 import sparkles.input : Key, KeyEvent;
-import sparkles.ui.hit_ids : HitBlock;
+import sparkles.ui.hit_ids : HitKey;
 import sparkles.ui.components.tree_view : treeActivate = activate,
     treeCollapseOrUp = collapseOrUp, TreeStep;
 import sparkles.ui.components.tree_widget : flatten, FlatTreeRow, Guide,
@@ -78,6 +78,19 @@ TreeData!Item sampleTree()
     return d;
 }
 
+/// The two views' rows, one id per node (`INP27`): instance 0 is the view
+/// over the live opened set, 1 the everything-open copy.
+enum HitKey treeRowsKey = HitKey("gallery.tree.rows"),
+    allOpenRowsKey = HitKey("gallery.tree.rows", 1);
+
+/// ditto — the page's `claimHits` hook.
+void claimHits(ref GalleryState s)
+{
+    const nodes = sampleTree().nodes.length;
+    s.hits.block(treeRowsKey, nodes);
+    s.hits.block(allOpenRowsKey, nodes);
+}
+
 /// ditto
 uint view(ref Builder b, in GalleryState s)
 {
@@ -107,12 +120,12 @@ uint view(ref Builder b, in GalleryState s)
 
     body_ ~= section(b, "your view", [
         treeView(b, data, rows, (uint n) => s.treeDemo.open.isOpen(n), selected,
-            TreeGlyphs(guides: s.theme.glyphs.guides), hits: HitBlock(1, data.nodes.length)),
+            TreeGlyphs(guides: s.theme.glyphs.guides), hits: s.hits.find(treeRowsKey)),
     ]);
     body_ ~= spacer(b);
     body_ ~= section(b, "the same data, everything open", [
         treeView(b, data, allRows, (uint n) => true, uint.max,
-            TreeGlyphs(guides: s.theme.glyphs.guides), hits: HitBlock(1, data.nodes.length)),
+            TreeGlyphs(guides: s.theme.glyphs.guides), hits: s.hits.find(allOpenRowsKey)),
     ]);
     body_ ~= spacer(b);
 
@@ -233,10 +246,12 @@ version (unittest)
 bool handleActivate(ref GalleryState s, size_t id)
 {
     const data = sampleTree();
-    if (id == 0 || id > data.nodes.length)
+    size_t at;
+    if (!s.hits.find(treeRowsKey).indexOf(id, at)
+        && !s.hits.find(allOpenRowsKey).indexOf(id, at))
         return false;
 
-    const node = cast(uint)(id - 1);
+    const node = cast(uint) at;
     if (data.hasChildren(node))
         s.treeDemo.open = s.treeDemo.open.toggled(node);
     auto open = s.treeDemo.open;
@@ -245,6 +260,27 @@ bool handleActivate(ref GalleryState s, size_t id)
         if (r.node == node)
             s.treeDemo.sel = cast(long) i;
     return true;
+}
+
+@("ui_gallery.pages.treeRowsDecodeThroughTheRegistry")
+@safe unittest
+{
+    // INP27: the two views over one data hold disjoint blocks (they once both
+    // started at 1), and a press on either names the same node.
+    GalleryState s;
+    s.hits.beginFrame();
+    claimHits(s);
+    const live = s.hits.find(treeRowsKey), all = s.hits.find(allOpenRowsKey);
+    assert(live && all && !all.contains(live[0]) && !live.contains(all[0]));
+
+    const data = sampleTree();
+    const leaf = cast(uint)(data.nodes.length - 1);   // `README.md`, top level
+    assert(handleActivate(s, all[leaf]));
+    assert(s.treeDemo.rows[cast(size_t) s.treeDemo.sel].node == leaf);
+    s.treeDemo.sel = 0;
+    assert(handleActivate(s, live[leaf]));
+    assert(s.treeDemo.rows[cast(size_t) s.treeDemo.sel].node == leaf);
+    assert(!handleActivate(s, 0) && !handleActivate(s, 1));
 }
 
 @("ui_gallery.pages.treeSampleProducesEveryGuideState")

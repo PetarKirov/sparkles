@@ -19,9 +19,20 @@ import sparkles.ui.themes : builtinThemes;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind;
 
 import kit;
-import state : GalleryState, hitTheme, themeNames, toastConfigFor;
+import sparkles.ui.hit_ids : HitKey;
+
+import state : GalleryState, hitOf, themeNames, toastConfigFor;
 
 @safe:
+
+/// The theme list's rows, one id per built-in by theme index (`INP27`).
+enum HitKey themeRowsKey = HitKey("gallery.themes.rows");
+
+/// ditto — the page's `claimHits` hook.
+void claimHits(ref GalleryState s) pure nothrow @nogc
+{
+    s.hits.block(themeRowsKey, themeNames.length);
+}
 
 /// ditto
 // Theme cycling is the shell's `[`/`]` rows; names are pointer targets.
@@ -84,7 +95,7 @@ private uint nameList(ref Builder b, in GalleryState s)
     {
         const at = first + i;
         const selected = at == s.themeIndex;
-        const id = hitTheme + at;
+        const id = s.hitOf(themeRowsKey, at);
         const hot = s.pointerAffordances && s.hover.isHot(id);
         const marker = label(b, selected ? "▸ " : "  ",
             selected ? Slot.chromeAccent : Slot.muted);
@@ -178,15 +189,17 @@ private uint scene(ref Builder b)
 }
 
 /// What a press on `id` selects, or `size_t.max` when the id is not a theme row.
-size_t themeAt(size_t id) pure nothrow @nogc
-    => id >= hitTheme && id < hitTheme + themeNames.length
-        ? id - hitTheme : size_t.max;
+size_t themeAt(in GalleryState s, size_t id) pure nothrow @nogc
+{
+    size_t at;
+    return s.hits.find(themeRowsKey).indexOf(id, at) ? at : size_t.max;
+}
 
 /// ditto — the shell's activation hook. Selecting from the list is the same
 /// transition `]` makes, notice and all, so the two routes cannot drift.
 bool handleActivate(ref GalleryState s, size_t id)
 {
-    const which = themeAt(id);
+    const which = themeAt(s, id);
     if (which == size_t.max)
         return false;
     s.useFileTheme = false;
@@ -228,14 +241,22 @@ private string hex(in RgbColor c)
 @("ui_gallery.pages.themesRowIdsMapBackToThemes")
 @safe pure nothrow @nogc unittest
 {
+    import state : navKey;
+
+    GalleryState s;
+    s.hits.beginFrame();
+    const nav = s.hits.block(navKey, 20);      // the shell's rows, issued first
+    claimHits(s);
+    const rows = s.hits.find(themeRowsKey);
     foreach (i; 0 .. themeNames.length)
-        assert(themeAt(hitTheme + i) == i);
+        assert(themeAt(s, rows[i]) == i);
 
     // Anything else is not a theme row — including the shell's own ids, which
-    // is the collision the hit-id bases exist to prevent.
-    assert(themeAt(0) == size_t.max);
-    assert(themeAt(hitTheme + themeNames.length) == size_t.max);
-    assert(themeAt(1000) == size_t.max);
+    // is the collision the registry exists to prevent.
+    assert(themeAt(s, 0) == size_t.max);
+    assert(themeAt(s, rows.base + themeNames.length) == size_t.max);
+    foreach (i; 0 .. nav.length)
+        assert(themeAt(s, nav[i]) == size_t.max);
 }
 
 @("ui_gallery.pages.themesEveryBuiltinRendersItsOwnScene")

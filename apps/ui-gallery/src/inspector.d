@@ -20,7 +20,7 @@ module inspector;
 
 import std.conv : text;
 
-import sparkles.ui.hit_ids : HitBlock;
+import sparkles.ui.hit_ids : HitKey;
 import sparkles.ui.components.inspector : DetailRow, inspectorView,
     inspectWidgets, WidgetInspect;
 import sparkles.ui.components.tree_view : treeActivate = activate, TreeStep,
@@ -36,9 +36,9 @@ import state : GalleryState;
 
 @safe:
 
-/// The panel tree's hit-id base — far above the shell's chrome bases and any
-/// page's own ids, so a widget tree of any size cannot collide.
-enum uint hitInspTree = 100_000;
+/// The panel tree's hit key (`INP27`), one id per inspected node: its own
+/// block, so a widget tree of any size cannot collide with the page it shows.
+enum HitKey inspectorTreeKey = HitKey("gallery.inspector.tree");
 
 /// The width the panel's rows are built at: the dock-arranged column less its
 /// own horizontal padding and the bar's gutter. Fixed rather than `grow`,
@@ -64,12 +64,16 @@ private WidgetInspect inspectShowing(in GalleryState s,
     return inspectWidgets(subjectTree, frames);
 }
 
-/// The panel's body: the component over the showing page's tree.
-uint inspectorBody(ref Builder b, in GalleryState s)
+/// The panel's body: the component over the showing page's tree. It claims
+/// the panel rows' block, sized by the tree it inspects, so call it every
+/// frame the panel shows.
+uint inspectorBody(ref Builder b, ref GalleryState s)
 {
     WidgetTree subjectTree;
     size_t frames;
     auto wi = inspectShowing(s, subjectTree, frames);
+    const rowHits = s.hits.block(inspectorTreeKey,
+        wi.data.nodes.length ? wi.data.nodes.length : 1);
 
     // The panel's tree state, made concrete for this frame: the persistent
     // pieces (disclosure, selection) from the state, rows from the current
@@ -101,22 +105,23 @@ uint inspectorBody(ref Builder b, in GalleryState s)
 
     return inspectorView(b, wi.data, tv, (uint n) => open.isOpen(n),
         text("inspector · ", pages[s.page].title), null, details,
-        inspectorInnerWidth(s), hits: HitBlock(hitInspTree, wi.data.nodes.length));
+        inspectorInnerWidth(s), hits: rowHits);
 }
 
 /// A completed press on a panel row: select it; a container also toggles its
 /// subtree. Returns false for ids that are not the panel's.
 bool inspectorActivate(ref GalleryState s, size_t id) @safe
 {
-    if (id < hitInspTree)
+    size_t at;
+    if (!s.hits.find(inspectorTreeKey).indexOf(id, at))
         return false;
 
     WidgetTree subjectTree;
     size_t frames;
     auto wi = inspectShowing(s, subjectTree, frames);
-    const node = cast(uint)(id - hitInspTree);
-    if (node >= wi.data.nodes.length)
+    if (at >= wi.data.nodes.length)
         return false;
+    const node = cast(uint) at;
 
     auto open = s.insp.open;
     s.insp.rows = flatten(wi.data, (uint n) => open.isOpen(n));
@@ -202,17 +207,24 @@ bool inspectorActivate(ref GalleryState s, size_t id) @safe
     GalleryState s;
     s.page = pageIndexOf("primitives");
 
-    // Ids below the panel's base are not the panel's.
+    // Before the panel is built its rows hold no ids, and ids outside its
+    // block are not the panel's.
     assert(!inspectorActivate(s, 5));
+    s.hits.beginFrame();
+    auto b = Builder();
+    cast(void) inspectorBody(b, s);
+    const rows = s.hits.find(inspectorTreeKey);
+    assert(rows, "building the panel claims its rows");
+    assert(!inspectorActivate(s, 5) && !inspectorActivate(s, rows.base + rows.length));
 
     // The root (node 0) is a container: activating selects and folds it.
-    assert(inspectorActivate(s, hitInspTree + 0));
+    assert(inspectorActivate(s, rows[0]));
     assert(s.insp.selectedNode == 0);
     assert(!s.insp.open.isOpen(0), "a container click folds its subtree");
     assert(s.insp.rows.length >= 1);
 
     // A second activation opens it again.
-    assert(inspectorActivate(s, hitInspTree + 0));
+    assert(inspectorActivate(s, rows[0]));
     assert(s.insp.open.isOpen(0));
 }
 

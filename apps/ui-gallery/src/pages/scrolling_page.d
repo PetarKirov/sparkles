@@ -28,7 +28,9 @@ import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 import kit;
 import scrollbars;
 import keymap : GalleryCommand;
-import state : GalleryState, hitDemoBar;
+import sparkles.ui.hit_ids : HitKey;
+
+import state : GalleryState, hitOf;
 
 @safe:
 
@@ -44,6 +46,15 @@ private enum int viewRows = 8;
 /// clamp, the thumb and the grab all read it.
 private enum BarGeometry geom =
     BarGeometry(content: docRows, viewport: viewRows, track: viewRows);
+
+/// The specimen bar's hit key (`INP27`): its painted rect is looked up by it.
+enum HitKey demoBarKey = HitKey("gallery.scrolling.bar");
+
+/// ditto — the page's `claimHits` hook.
+void claimHits(ref GalleryState s) pure nothrow @nogc
+{
+    s.hits.block(demoBarKey);
+}
 
 /// ditto
 uint view(ref Builder b, in GalleryState s)
@@ -71,7 +82,7 @@ uint view(ref Builder b, in GalleryState s)
                 // hit id the page's own pointer handler looks its rect up by.
                 // No gap — the bar brings its own gutter, which is what keeps
                 // the document's width the same whichever width the bar is.
-                verticalBar(b, s.demoView, geom, hitDemoBar),
+                verticalBar(b, s.demoView, geom, s.hitOf(demoBarKey)),
             ],
         )),
     ]);
@@ -182,7 +193,7 @@ the page looks the rect up and the two cannot disagree.
 bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
     in Frame[] frames)
     => driveVertical(s.demoView, s.capture, capDemoBar, p,
-        rectOf(tree, frames, hitDemoBar), geom, s.guiCellH, s.guiPointerY);
+        rectOf(tree, frames, s.hitOf(demoBarKey)), geom, s.guiCellH, s.guiPointerY);
 
 /// Eases the specimen bar's width. Called by the shell, which owns the clock.
 void step(ref GalleryState s, int dtMs)

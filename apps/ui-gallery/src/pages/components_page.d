@@ -27,7 +27,9 @@ import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 import kit;
 import scrollbars;
 import keymap : GalleryCommand;
-import state : GalleryState, hitActions, hitChromeBar, hitChromeSamples, hitTabs;
+import sparkles.ui.hit_ids : HitKey;
+
+import state : GalleryState, hitOf;
 
 @safe:
 
@@ -55,6 +57,24 @@ private static immutable string[] tabLabels = ["config.js", "config.ts", "π.md"
 /// The action bar's segments.
 private static immutable string[] actionLabels =
     ["◀ prev", "next ▶", "reload", "close"];
+
+/// The page's hit keys (`INP27`): the two tab strips (fitted, equal shares),
+/// the action bar's segments, the four formula specimens and the live bar.
+enum HitKey tabsKey = HitKey("gallery.components.tabs"),
+    equalTabsKey = HitKey("gallery.components.tabs", 1),
+    actionsKey = HitKey("gallery.components.actions"),
+    samplesKey = HitKey("gallery.components.samples"),
+    chromeBarKey = HitKey("gallery.components.chrome-bar");
+
+/// ditto — the page's `claimHits` hook.
+void claimHits(ref GalleryState s) pure nothrow @nogc
+{
+    s.hits.block(tabsKey, tabLabels.length);
+    s.hits.block(equalTabsKey, tabLabels.length);
+    s.hits.block(actionsKey, actionLabels.length);
+    s.hits.block(samplesKey, s.componentBars.length);
+    s.hits.block(chromeBarKey);
+}
 
 /// ditto
 uint view(ref Builder b, in GalleryState s)
@@ -96,11 +116,11 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= spacer(b);
 
     body_ ~= section(b, "tabStrip — one active, the rest idle", [
-        tabStrip(b, tabLabels, s.componentsTab, hitTabs, s.press),
+        tabStrip(b, tabLabels, s.componentsTab, s.hits.find(tabsKey).base, s.press),
         spacer(b),
         label(b, "fitLabels: false — each tab takes an equal share instead",
             Slot.muted),
-        tabStrip(b, tabLabels, s.componentsTab, hitTabs + 100, s.press,
+        tabStrip(b, tabLabels, s.componentsTab, s.hits.find(equalTabsKey).base, s.press,
             fitLabels: false),
     ]);
     body_ ~= spacer(b);
@@ -111,7 +131,7 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= spacer(b);
 
     body_ ~= section(b, "actionBar — equal segments, each a target", [
-        actionBar(b, actionLabels, hitActions, s.press),
+        actionBar(b, actionLabels, s.hits.find(actionsKey).base, s.press),
         spacer(b),
         row(b, [
             label(b, "last activated", Slot.muted),
@@ -141,13 +161,13 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= section(b, "scrollbar — the one thumb formula", [
         row(b, [
             verticalBar(b, s.componentBars[0], specimenGeom,
-                hitChromeSamples),
+                s.hitOf(samplesKey, 0)),
             label(b, text("offset ", s.componentBars[0].v.offset), Slot.muted),
             verticalBar(b, s.componentBars[1], specimenGeom,
-                hitChromeSamples + 1),
+                s.hitOf(samplesKey, 1)),
             label(b, text("offset ", s.componentBars[1].v.offset), Slot.muted),
             verticalBar(b, s.componentBars[2], specimenGeom,
-                hitChromeSamples + 2),
+                s.hitOf(samplesKey, 2)),
             label(b, text("offset ", s.componentBars[2].v.offset,
                 " (end specimen)"), Slot.muted),
         ]),
@@ -157,7 +177,7 @@ uint view(ref Builder b, in GalleryState s)
         row(b, [
             glyphScrollbar(b, s.componentBars[3], specimenGeom,
                 ScrollbarGlyphs(thumb: '#', track: '|'),
-                hitChromeSamples + 3),
+                s.hitOf(samplesKey, 3)),
         ]),
     ]);
     body_ ~= spacer(b);
@@ -171,7 +191,7 @@ uint view(ref Builder b, in GalleryState s)
                 // Grabbable, hover-expanding, eased — the page's own pointer
                 // handler drives it by its painted rect, like every live bar
                 // in the catalog.
-                verticalBar(b, s.chromeView, chromeGeom, hitChromeBar),
+                verticalBar(b, s.chromeView, chromeGeom, s.hitOf(chromeBarKey)),
             ],
         )),
     ]);
@@ -287,12 +307,12 @@ bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
     foreach (i, ref bar; s.componentBars)
     {
         const handled = driveVertical(bar, s.capture, capChromeSamples + i, p,
-            rectOf(tree, frames, hitChromeSamples + i), specimenGeom,
+            rectOf(tree, frames, s.hitOf(samplesKey, i)), specimenGeom,
             i == 3 ? 0 : s.guiCellH, s.guiPointerY);
         consumed = handled || consumed;
     }
     const handled = driveVertical(s.chromeView, s.capture, capChromeBar, p,
-        rectOf(tree, frames, hitChromeBar), chromeGeom, s.guiCellH,
+        rectOf(tree, frames, s.hitOf(chromeBarKey)), chromeGeom, s.guiCellH,
         s.guiPointerY);
     return handled || consumed;
 }
@@ -317,22 +337,18 @@ bool animating(in GalleryState s)
 /// ditto
 bool handleActivate(ref GalleryState s, size_t id)
 {
-    // Two strips share a base region but not a base: the `fitLabels: false`
-    // copy is offset by 100, so pressing either selects the same tab and
-    // neither can be mistaken for the other.
-    if (id >= hitTabs && id < hitTabs + tabLabels.length)
+    // Two strips, two keys: the `fitLabels: false` copy holds a block of its
+    // own, so pressing either selects the same tab and neither can be
+    // mistaken for the other.
+    size_t at;
+    if (s.hits.find(tabsKey).indexOf(id, at) || s.hits.find(equalTabsKey).indexOf(id, at))
     {
-        s.componentsTab = id - hitTabs;
+        s.componentsTab = at;
         return true;
     }
-    if (id >= hitTabs + 100 && id < hitTabs + 100 + tabLabels.length)
+    if (s.hits.find(actionsKey).indexOf(id, at))
     {
-        s.componentsTab = id - hitTabs - 100;
-        return true;
-    }
-    if (id >= hitActions && id < hitActions + actionLabels.length)
-    {
-        s.componentsAction = id - hitActions;
+        s.componentsAction = at;
         return true;
     }
     return false;
@@ -350,6 +366,8 @@ bool handleActivate(ref GalleryState s, size_t id)
     // cells; a strip measuring with `.length` would put every tab after it
     // ~25 % too far right, and this walks the painted rects to notice.
     GalleryState s;
+    s.hits.beginFrame();
+    claimHits(s);
     auto b = Builder();
     auto tree = b.finish(view(b, s));
     auto frames = layout(tree, Constraints(maxW: s.contentWidth));
@@ -361,12 +379,12 @@ bool handleActivate(ref GalleryState s, size_t id)
         // Find the tab's own rect, then aim at its centre.
         bool found;
         foreach (t; targets)
-            if (t.hitId == hitTabs + i)
+            if (t.hitId == s.hitOf(tabsKey, i))
             {
                 hover.update(PointerEvent(action: PointerAction.move,
                     pos: Point(t.rect.x + t.rect.width / 2,
                         t.rect.y + t.rect.height / 2)), targets);
-                assert(hover.hot == hitTabs + i, "tab " ~ tabLabels[i]);
+                assert(hover.hot == s.hitOf(tabsKey, i), "tab " ~ tabLabels[i]);
                 found = true;
                 break;
             }
@@ -379,22 +397,29 @@ bool handleActivate(ref GalleryState s, size_t id)
 {
     // Every id the page mints maps back to something, and nothing else does —
     // an id that fell through would be a segment that paints and does nothing.
+    import state : navKey;
+
     GalleryState s;
+    s.hits.beginFrame();
+    const nav = s.hits.block(navKey, 20);
+    claimHits(s);
     foreach (i; 0 .. tabLabels.length)
     {
-        assert(handleActivate(s, hitTabs + i));
+        assert(handleActivate(s, s.hitOf(tabsKey, i)));
         assert(s.componentsTab == i);
-        assert(handleActivate(s, hitTabs + 100 + i));
+        assert(handleActivate(s, s.hitOf(equalTabsKey, i)));
         assert(s.componentsTab == i, "both strips select the same tab");
     }
     foreach (i; 0 .. actionLabels.length)
     {
-        assert(handleActivate(s, hitActions + i));
+        assert(handleActivate(s, s.hitOf(actionsKey, i)));
         assert(s.componentsAction == i);
     }
 
     assert(!handleActivate(s, 0), "nothing is not a target");
-    assert(!handleActivate(s, 1), "the shell's own ids are not this page's");
+    assert(!handleActivate(s, 1), "slot 0 is never issued");
+    foreach (i; 0 .. nav.length)
+        assert(!handleActivate(s, nav[i]), "the shell's own ids are not this page's");
 }
 
 @("ui_gallery.pages.componentsScrollbarThumbIsFlushAtTheEnd")
@@ -419,13 +444,15 @@ bool handleActivate(ref GalleryState s, size_t id)
     import sparkles.ui.layout : layout;
 
     GalleryState s;
+    s.hits.beginFrame();
+    claimHits(s);
     auto b = Builder();
     auto tree = b.finish(view(b, s));
     auto frames = layout(tree, Constraints(maxW: s.contentWidth));
 
     foreach (i; 0 .. s.componentBars.length)
     {
-        const r = rectOf(tree, frames, hitChromeSamples + i);
+        const r = rectOf(tree, frames, s.hitOf(samplesKey, i));
         assert(!r.empty, "every specimen has a painted hit rect");
 
         const before = s.componentBars[i].v.offset;
@@ -450,10 +477,12 @@ bool handleActivate(ref GalleryState s, size_t id)
     // GUI. Sending it through the semantic pixel primitive turns both into a
     // generic rectangle, which is the regression this pins.
     GalleryState s;
+    s.hits.beginFrame();
+    claimHits(s);
     s.componentBars[3].vAnim.percent = 100;
     auto b = Builder();
     auto tree = b.finish(glyphScrollbar(b, s.componentBars[3], specimenGeom,
-        ScrollbarGlyphs(thumb: '#', track: '|'), hitChromeSamples + 3));
+        ScrollbarGlyphs(thumb: '#', track: '|'), s.hitOf(samplesKey, 3)));
 
     size_t thumbs, tracks, semanticBars;
     foreach (ref node; tree.nodes)

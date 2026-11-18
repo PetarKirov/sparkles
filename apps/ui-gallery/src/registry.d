@@ -23,6 +23,7 @@ import state : GalleryState;
 // catalog below is called — and the collision is a compile error, not a
 // shadowing surprise.
 import pages.components_page : componentsAnimating = animating,
+    componentsClaimHits = claimHits,
     componentsOnActivate = handleActivate,
     componentsOnCommand = handleCommand,
     componentsOnPointer = handlePointer, componentsStep = step,
@@ -30,28 +31,33 @@ import pages.components_page : componentsAnimating = animating,
 import pages.decoration_page : decorationView = view;
 import pages.effects_page : effectsView = view;
 import pages.dock_page : dockOnCommand = handleCommand,
-    dockOnPointer = handlePointer, dockStep = step, dockView = view;
+    dockClaimHits = claimHits, dockOnPointer = handlePointer, dockStep = step,
+    dockView = view;
 import pages.machines_page : machinesAnimating = animating,
     machinesOnActivate = handleActivate, machinesOnCommand = handleCommand,
-    machinesStep = step, machinesView = view;
+    machinesClaimHits = claimHits, machinesStep = step, machinesView = view;
 import pages.scrolling_page : scrollingOnCommand = handleCommand,
-    scrollingOnPointer = handlePointer,
+    scrollingClaimHits = claimHits, scrollingOnPointer = handlePointer,
     scrollingStep = step, scrollingView = view;
-import pages.split_page : splitOnCommand = handleCommand, splitView = view;
-import pages.tree_page : treeOnActivate = handleActivate,
+import pages.split_page : splitClaimHits = claimHits,
+    splitOnCommand = handleCommand, splitView = view;
+import pages.tree_page : treeClaimHits = claimHits,
+    treeOnActivate = handleActivate,
     treeOnCommand = handleCommand, treeView_ = view;
 import pages.layout_page : layoutOnCommand = handleCommand,
     layoutView = view;
 import pages.primitives : primitivesView = view;
-import pages.property_page : propertyOnActivate = handleActivate,
+import pages.property_page : propertyClaimHits = claimHits,
+    propertyOnActivate = handleActivate,
     propertyOnCommand = handleCommand, propertyStep = step,
     propertyView_ = view;
 import pages.slots_page : slotsView = view;
-import pages.themes_page : themesOnActivate = handleActivate,
-    themesView = view;
+import pages.themes_page : themesClaimHits = claimHits,
+    themesOnActivate = handleActivate, themesView = view;
 import pages.table_page : tableOnCommand = handleCommand, tableView = view;
 import pages.terminal_page : terminalOnActivate = handleActivate,
-    terminalOnCommand = handleCommand, terminalOnPointer = handlePointer,
+    terminalClaimHits = claimHits, terminalOnCommand = handleCommand,
+    terminalOnPointer = handlePointer,
     terminalStep = step, terminalView = view;
 import pages.text_page : textOnCommand = handleCommand, textView = view;
 import pages.tracks_page : tracksOnCommand = handleCommand,
@@ -120,6 +126,14 @@ struct Page
     check walks it: every step must show the move without color.
     */
     dchar focusKey;
+
+    /**
+    Asks $(REF GalleryState.hits, state) for the page's hit blocks, or `null`
+    for a page that stamps no ids (`INP27`). The shell calls it every frame
+    the page shows, after beginning the registry's frame and before the view
+    — which, being pure over the state, reads the blocks with `find`.
+    */
+    void function(ref GalleryState s) @safe claimHits;
 }
 
 /**
@@ -138,7 +152,7 @@ static immutable Page[] pages = [
     Page("Text", "wrapping and measurement", &textView,
         GalleryScope.pageText, &textOnCommand),
     Page("Themes", "thirty-six built-ins, live", &themesView,
-        onActivate: &themesOnActivate),
+        onActivate: &themesOnActivate, claimHits: &themesClaimHits),
     Page("Slots", "the semantic colour vocabulary", &slotsView),
     Page("Decoration", "box and text chrome", &decorationView),
     Page("Effects", "subtree effects, tier by tier", &effectsView),
@@ -146,26 +160,30 @@ static immutable Page[] pages = [
         GalleryScope.pageGrid, &gridOnCommand),
     Page("Components", "the application chrome", &componentsView,
         GalleryScope.pageComponents, &componentsOnCommand,
-        &componentsOnActivate, &componentsOnPointer),
+        &componentsOnActivate, &componentsOnPointer,
+        claimHits: &componentsClaimHits),
     Page("Tree", "data, interaction, view", &treeView_,
-        GalleryScope.pageTree, &treeOnCommand, &treeOnActivate),
+        GalleryScope.pageTree, &treeOnCommand, &treeOnActivate,
+        claimHits: &treeClaimHits),
     Page("Property tree", "one value, reflected", &propertyView_,
-        GalleryScope.pageProperty, &propertyOnCommand, &propertyOnActivate),
+        GalleryScope.pageProperty, &propertyOnCommand, &propertyOnActivate,
+        claimHits: &propertyClaimHits),
     Page("Table", "one grid, two views", &tableView,
         GalleryScope.pageTable, &tableOnCommand),
     Page("Scrolling", "one thumb formula", &scrollingView,
         GalleryScope.pageScrolling, &scrollingOnCommand, null,
-        &scrollingOnPointer),
+        &scrollingOnPointer, claimHits: &scrollingClaimHits),
     Page("State", "the interaction machines", &machinesView,
         GalleryScope.pageMachines, &machinesOnCommand, &machinesOnActivate,
-        null, 'f'),
+        null, 'f', &machinesClaimHits),
     Page("Split", "a divider between two panes", &splitView,
-        GalleryScope.pageSplit, &splitOnCommand),
+        GalleryScope.pageSplit, &splitOnCommand, claimHits: &splitClaimHits),
     Page("Dock", "panes as a value", &dockView,
-        GalleryScope.pageDock, &dockOnCommand, null, &dockOnPointer, 'f'),
+        GalleryScope.pageDock, &dockOnCommand, null, &dockOnPointer, 'f',
+        &dockClaimHits),
     Page("Terminal", "a shell as a widget", &terminalView,
         GalleryScope.pageTerminal, &terminalOnCommand, &terminalOnActivate,
-        &terminalOnPointer),
+        &terminalOnPointer, claimHits: &terminalClaimHits),
 ];
 
 /// The Property page's index — the shell needs it by name: its live filter
@@ -197,6 +215,14 @@ bool stepPage(ref GalleryState s, int dtMs)
     dockStep(s, dtMs);
     terminalStep(s, dtMs);
     return machinesAnimating(s) || componentsAnimating(s);
+}
+
+/// Claims the showing page's hit blocks (`Page.claimHits`): what the shell
+/// does each frame, and what a test that builds a page view alone does first.
+void claimPageHits(ref GalleryState s)
+{
+    if (pages[s.page].claimHits !is null)
+        pages[s.page].claimHits(s);
 }
 
 /// The index of the page `name` refers to — a title prefix (case-insensitive)

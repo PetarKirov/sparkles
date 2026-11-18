@@ -25,17 +25,29 @@ import sparkles.ui.widget : Builder, Widget, WidgetKind;
 
 import kit;
 import keymap : GalleryCommand;
-import state : GalleryState, hitMachines, MachinesDemo;
+import sparkles.ui.hit_ids : HitKey;
+
+import state : GalleryState, hitOf, MachinesDemo;
 
 @safe:
 
 /// ditto
 // The page's keys are `galleryBindings` rows in `GalleryScope.pageMachines`.
 
+/// The three tiles' hit key (`INP27`), one id per tile in paint order.
+enum HitKey tilesKey = HitKey("gallery.machines.tiles");
+
+/// ditto — the page's `claimHits` hook.
+void claimHits(ref GalleryState s) pure nothrow @nogc
+{
+    s.hits.block(tilesKey, 3);
+}
+
 /// The focus order the `f` key walks — the same identity space `hoverTargets`
-/// uses, so a view's focus order is its paint order unless it says otherwise.
-private static immutable size_t[] focusOrder =
-    [hitMachines + 1, hitMachines + 2, hitMachines + 3];
+/// uses (the tiles' issued ids), so a view's focus order is its paint order
+/// unless it says otherwise.
+private size_t[3] focusOrder(in GalleryState s) pure nothrow @nogc
+    => [s.hitOf(tilesKey, 0), s.hitOf(tilesKey, 1), s.hitOf(tilesKey, 2)];
 
 /// ditto
 uint view(ref Builder b, in GalleryState s)
@@ -55,11 +67,11 @@ uint view(ref Builder b, in GalleryState s)
 
     body_ ~= section(b, "HoverState — topmost wins", [
         row(b, [
-            tile(b, s, hitMachines + 1, "one"),
-            tile(b, s, hitMachines + 2, "two"),
-            tile(b, s, hitMachines + 3, "three"),
+            tile(b, s, s.hitOf(tilesKey, 0), "one"),
+            tile(b, s, s.hitOf(tilesKey, 1), "two"),
+            tile(b, s, s.hitOf(tilesKey, 2), "three"),
         ]),
-        kv(b, "hot", s.hover.hot == 0 ? "nothing" : idName(s.hover.hot),
+        kv(b, "hot", s.hover.hot == 0 ? "nothing" : idName(s, s.hover.hot),
             14, Slot.chromeAccent),
         label(b, s.pointerAffordances
             ? "Move the pointer over a tile."
@@ -68,15 +80,15 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= spacer(b);
 
     body_ ~= section(b, "PressState — arm, then activate on the same target", [
-        kv(b, "armed", s.press.armed == 0 ? "—" : idName(s.press.armed), 14),
-        kv(b, "activated", s.press.activated == 0 ? "—" : idName(s.press.activated), 14),
+        kv(b, "armed", s.press.armed == 0 ? "—" : idName(s, s.press.armed), 14),
+        kv(b, "activated", s.press.activated == 0 ? "—" : idName(s, s.press.activated), 14),
         label(b, "Press one tile and release over another: nothing fires.",
             Slot.muted),
     ]);
     body_ ~= spacer(b);
 
     body_ ~= section(b, "FocusState — deterministic traversal", [
-        kv(b, "focused", s.focus.focused == 0 ? "nothing" : idName(s.focus.focused), 14),
+        kv(b, "focused", s.focus.focused == 0 ? "nothing" : idName(s, s.focus.focused), 14),
         row(b, [
             label(b, "order", Slot.muted),
             label(b, "one → two → three → (wrap)", Slot.code),
@@ -123,7 +135,7 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= spacer(b);
 
     body_ ~= section(b, "CaptureState — press owns the drag", [
-        kv(b, "owner", m.capture.isFree ? "free" : idName(ownerOf(m.capture)), 14),
+        kv(b, "owner", m.capture.isFree ? "free" : idName(s, ownerOf(s, m.capture)), 14),
         label(b, "Whatever the press landed on keeps every subsequent move "
             ~ "until the release, however far the pointer travels.", Slot.muted),
     ]);
@@ -186,15 +198,13 @@ private uint[] discloseChips(ref Builder b, in DisclosureState!size_t d)
     return chips;
 }
 
-private string idName(size_t id)
+private string idName(in GalleryState s, size_t id)
 {
-    switch (id - hitMachines)
-    {
-        case 1: return "one";
-        case 2: return "two";
-        case 3: return "three";
-        default: return text(id);
-    }
+    size_t tile;
+    if (!s.hits.find(tilesKey).indexOf(id, tile))
+        return text(id);
+    static immutable string[3] names = ["one", "two", "three"];
+    return names[tile];
 }
 
 private string phaseName(Timeline.Phase p)
@@ -210,9 +220,9 @@ private string phaseName(Timeline.Phase p)
 
 /// `CaptureState` reports freedom rather than an owner, so the page asks the
 /// only question it can: which of the three tiles owns it.
-private size_t ownerOf(in CaptureState c)
+private size_t ownerOf(in GalleryState s, in CaptureState c)
 {
-    foreach (id; focusOrder)
+    foreach (id; focusOrder(s))
         if (c.ownedBy(id))
             return id;
     return 0;
@@ -235,11 +245,17 @@ bool handleCommand(ref GalleryState s, GalleryCommand cmd, ubyte arg)
                 (s.machines.selection.focus + 1) % 8);
             return true;
         case GalleryCommand.machFocusNext:
-            s.focus = s.focus.next(focusOrder);
+        {
+            const order = focusOrder(s);
+            s.focus = s.focus.next(order[]);
             return true;
+        }
         case GalleryCommand.machFocusPrev:
-            s.focus = s.focus.previous(focusOrder);
+        {
+            const order = focusOrder(s);
+            s.focus = s.focus.previous(order[]);
             return true;
+        }
         case GalleryCommand.machFoldToggle:
             s.machines.folds = s.machines.folds.toggled(3);
             return true;
@@ -274,13 +290,10 @@ version (unittest)
 /// target expects and the keyboard route already has.
 bool handleActivate(ref GalleryState s, size_t id)
 {
-    foreach (candidate; focusOrder)
-        if (candidate == id)
-        {
-            s.focus = FocusState(id);
-            return true;
-        }
-    return false;
+    if (!s.hits.find(tilesKey).contains(id))
+        return false;
+    s.focus = FocusState(id);
+    return true;
 }
 
 /// The page's animation: advanced by the shell, since only it has the clock.
@@ -297,18 +310,20 @@ bool animating(in GalleryState s) => s.machines.pulse.visible;
 @safe unittest
 {
     GalleryState s;
+    s.hits.beginFrame();
+    claimHits(s);
     assert(s.focus.focused == 0);
 
     handleKey(s, KeyEvent(Key.char_, 'f'));
-    assert(s.focus.isFocused(focusOrder[0]), "nothing focused → the first");
+    assert(s.focus.isFocused(focusOrder(s)[0]), "nothing focused → the first");
     handleKey(s, KeyEvent(Key.char_, 'f'));
     handleKey(s, KeyEvent(Key.char_, 'f'));
-    assert(s.focus.isFocused(focusOrder[2]));
+    assert(s.focus.isFocused(focusOrder(s)[2]));
     handleKey(s, KeyEvent(Key.char_, 'f'));
-    assert(s.focus.isFocused(focusOrder[0]), "and wraps");
+    assert(s.focus.isFocused(focusOrder(s)[0]), "and wraps");
 
     handleKey(s, KeyEvent(Key.char_, 'F'));
-    assert(s.focus.isFocused(focusOrder[2]), "backwards wraps too");
+    assert(s.focus.isFocused(focusOrder(s)[2]), "backwards wraps too");
 }
 
 @("ui_gallery.pages.machinesSelectionIsNormalised")
@@ -370,7 +385,9 @@ bool animating(in GalleryState s) => s.machines.pulse.visible;
 @safe unittest
 {
     GalleryState s;
-    assert(handleActivate(s, focusOrder[1]));
-    assert(s.focus.isFocused(focusOrder[1]));
+    s.hits.beginFrame();
+    claimHits(s);
+    assert(handleActivate(s, focusOrder(s)[1]));
+    assert(s.focus.isFocused(focusOrder(s)[1]));
     assert(!handleActivate(s, 42), "an id this page did not mint is not its own");
 }

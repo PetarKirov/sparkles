@@ -36,7 +36,7 @@ module pages.property_page;
 import std.conv : text;
 
 import sparkles.input : Key, KeyEvent;
-import sparkles.ui.hit_ids : HitBlock;
+import sparkles.ui.hit_ids : HitBlock, HitKey;
 import sparkles.ui.components.property_view : matchedFieldsText,
     propertyView, PropertyViewOptions, refusalText, valueText;
 import sparkles.ui.components.tree_view : treeActivate = activate,
@@ -64,8 +64,17 @@ private size_t registry_propertyPageIndex() @safe
 
 @safe:
 
-/// The tree rows' hit ids start here (`node + hitBase`).
-private enum uint hitBase = 1;
+/// The tree rows' hit key (`INP27`), one id per property node.
+enum HitKey rowsKey = HitKey("gallery.property.rows");
+
+/// ditto — the page's `claimHits` hook: the persistent demo's rows, once it
+/// is built (the first paint draws a fresh, inert copy).
+void claimHits(ref GalleryState s)
+{
+    const nodes = s.prop.tree.data.nodes.length;
+    if (s.prop.built)
+        s.hits.block(rowsKey, nodes ? nodes : 1);
+}
 
 /// The selected row's node value, or `null`.
 private const(PropertyNode)* selectedNode(ref const PropertyDemo d)
@@ -103,16 +112,18 @@ uint view(ref Builder b, in GalleryState s)
         // step / first key builds the persistent one.
         PropertyDemo fresh;
         fresh.ensure();
-        builtSections(b, body_, fresh, w);
+        builtSections(b, body_, fresh, w, HitBlock.init);
         return column(b, body_);
     }
-    builtSections(b, body_, d, w);
+    builtSections(b, body_, d, w, s.hits.find(rowsKey));
     return column(b, body_);
 }
 
-/// Everything below the intro, over a built demo.
+/// Everything below the intro, over a built demo; `rowHits` numbers the
+/// tree's rows by node (empty for the unbuilt first paint, which no press
+/// can reach).
 private void builtSections(ref Builder b, ref uint[] body_,
-    ref const PropertyDemo d, int w)
+    ref const PropertyDemo d, int w, HitBlock rowHits)
 {
 
     // ── the filter line ─────────────────────────────────────────────────────
@@ -150,7 +161,7 @@ private void builtSections(ref Builder b, ref uint[] body_,
         valueColumn: w > 44 ? 26 : 18,
         rangeBarCells: w > 50 ? 8 : 4,
     );
-    const treeCol = propertyView(b, d.tree.data, d.tv, d.edits, opt, HitBlock(hitBase, d.tree.data.nodes.length));
+    const treeCol = propertyView(b, d.tree.data, d.tv, d.edits, opt, rowHits);
     // Wide rows clip inside the pane rather than overflowing it.
     const clipped = b.add(Widget(kind: WidgetKind.column,
         children: [treeCol], clipX: true, width: SizeSpec.grow()));
@@ -467,11 +478,11 @@ bool handleCommand(ref GalleryState s, GalleryCommand cmd, ubyte arg)
 bool handleActivate(ref GalleryState s, size_t id)
 {
     auto d = &s.prop;
-    if (!d.built || id < hitBase)
+    size_t at;
+    if (!d.built || !s.hits.find(rowsKey).indexOf(id, at)
+        || at >= d.tree.data.nodes.length)
         return false;
-    const node = cast(uint)(id - hitBase);
-    if (node >= d.tree.data.nodes.length)
-        return false;
+    const node = cast(uint) at;
     foreach (i, ref const r; d.tv.rows)
         if (r.node == node)
         {
@@ -618,4 +629,31 @@ version (unittest)
         "the linked self-cycle runs into ⋯ (capped)");
     key(s, KeyEvent(Key.char_, 'C'));
     assert(!s.prop.tree.wasCapped);
+}
+
+@("ui_gallery.pages.propertyRowPressDecodesThroughTheRegistry")
+@safe unittest
+{
+    import state : navKey;
+
+    // INP27: the rows carry the ids the registry issued under `rowsKey`, and
+    // a press decodes through that block, not through a base the page picked.
+    GalleryState s;
+    s.hits.beginFrame();
+    claimHits(s);
+    assert(!s.hits.find(rowsKey), "the unbuilt demo claims nothing");
+
+    key(s, KeyEvent(Key.down));      // builds the persistent demo
+    s.hits.beginFrame();
+    const nav = s.hits.block(navKey, 20);
+    claimHits(s);
+    const rows = s.hits.find(rowsKey);
+    assert(rows.length == s.prop.tree.data.nodes.length);
+    assert(!rows.contains(nav[0]) && !nav.contains(rows[0]));
+
+    const target = s.prop.tv.rows[1].node;
+    s.prop.tv.sel = 0;
+    assert(handleActivate(s, rows[target]));
+    assert(s.prop.tv.sel == 1, "the press selected the row its id names");
+    assert(!handleActivate(s, nav[0]) && !handleActivate(s, 1));
 }

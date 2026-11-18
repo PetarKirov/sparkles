@@ -24,7 +24,9 @@ import sparkles.ui.widget : Builder, Widget, WidgetKind;
 
 import kit;
 import keymap : GalleryCommand;
-import state : GalleryState, hitSplit;
+import sparkles.ui.hit_ids : HitKey;
+
+import state : GalleryState, hitOf;
 
 @safe:
 
@@ -37,6 +39,16 @@ enum int minPane = 10;
 /// ditto
 int maxPane(int available) pure nothrow @nogc
     => available - minPane > minPane ? available - minPane : minPane;
+
+/// The divider's hit key (`INP27`): the shell captures the pointer under the
+/// id it issues and drags the split while it holds it.
+enum HitKey dividerKey = HitKey("gallery.split.divider");
+
+/// ditto — the page's `claimHits` hook.
+void claimHits(ref GalleryState s) pure nothrow @nogc
+{
+    s.hits.block(dividerKey);
+}
 
 /// ditto
 uint view(ref Builder b, in GalleryState s)
@@ -62,7 +74,7 @@ uint view(ref Builder b, in GalleryState s)
         kv(b, "dragging", s.split.dragging ? "yes" : "no", 16),
         kv(b, "bounds", text(minPane, " … ", maxPane(available)), 16),
         kv(b, "pointer shape", shapeName(
-            wantedPointerShape(s.split, s.hover.isHot(hitSplit))), 16),
+            wantedPointerShape(s.split, s.hover.isHot(s.hitOf(dividerKey)))), 16),
     ]);
     body_ ~= spacer(b);
     body_ ~= para(b,
@@ -105,7 +117,7 @@ private uint splitRow(ref Builder b, in GalleryState s, int size, int available)
     // glyphs rather than a background fill, so it is visible on a target with
     // no colour at all — the same reason the sidebar's selection marker is a
     // character and not a tint.
-    const hot = s.pointerAffordances && s.hover.isHot(hitSplit);
+    const hot = s.pointerAffordances && s.hover.isHot(s.hitOf(dividerKey));
     const slot = hot || s.split.dragging ? Slot.chromeAccent : Slot.border;
     auto bars = new uint[](5);
     foreach (i; 0 .. 5)
@@ -115,7 +127,7 @@ private uint splitRow(ref Builder b, in GalleryState s, int size, int available)
         children: bars,
         width: SizeSpec.fixed(1),
         height: SizeSpec.fixed(5),
-        hitId: hitSplit,
+        hitId: s.hitOf(dividerKey),
     ));
 
     const right = b.add(Widget(
