@@ -960,6 +960,7 @@ struct ActionDriver
             if (ran.status != 0)
                 return "cannot make " ~ producer ~ ": it exited " ~ text(ran.status);
             stats.count(text((**pa).kind), false);
+            stats.executedTasks ~= producer;
             ResultRecord record;
             record.task = producer;
             record.toolchain = layout.toolchain;
