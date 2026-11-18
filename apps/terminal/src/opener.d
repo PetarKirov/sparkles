@@ -16,6 +16,7 @@ gesture (D42).
 module opener;
 
 import sparkles.ui.geometry : Insets, SizeSpec;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
@@ -23,14 +24,37 @@ import chrome : label, uiLabel;
 import settings : TabsOpener;
 import tab_tree : TreeTab;
 
-/// The opener's targets.
-enum OpenerHit : size_t
+/// The opener's controls, by their index in its `"terminal.opener"` block.
+enum OpenerControl : ubyte
 {
-    none,
-    tree = 0x0BE0_0000, /// open (or close) the tree
+    tree,   /// open (or close) the tree
     newTab,
-    guide, /// the touch key guide (`TSS16`)
-    tab0 = 0x0BE0_0100, /// `tab0 + i` selects tab `i`
+    guide,  /// the touch key guide (`TSS16`)
+}
+
+/// The opener's hit keys (`INP27`): its controls, and the rail's tab
+/// buttons by tab index.
+enum HitKey openerKey = HitKey("terminal.opener");
+/// ditto
+enum HitKey openerTabsKey = HitKey("terminal.opener.tabs");
+
+/// The blocks the opener's targets carry.
+struct OpenerHits
+{
+    HitBlock controls; /// by `OpenerControl`
+    HitBlock tabs;     /// by tab index
+
+    /// Asks `hits` for this frame's blocks, for `tabCount` tabs.
+    static OpenerHits ask(ref HitRegistry hits, size_t tabCount) @safe pure nothrow @nogc
+        => OpenerHits(hits.block(openerKey, OpenerControl.max + 1),
+            tabCount ? hits.block(openerTabsKey, tabCount) : HitBlock.init);
+
+    /// The blocks the last built frame carried, to decode a hit against.
+    static OpenerHits find(in HitRegistry hits) @safe pure nothrow @nogc
+        => OpenerHits(hits.find(openerKey), hits.find(openerTabsKey));
+
+    /// Control `c`'s id.
+    size_t opIndex(OpenerControl c) const @safe pure nothrow @nogc => controls[c];
 }
 
 /// Which opener applies: the setting, with `auto` a pill on a phone in
@@ -56,9 +80,10 @@ private uint tall(ref Builder b, uint id) @safe
 /**
 The pill band, `rows` tall: `❯ title  2/4  ●1 ▾` centred on a phone, at the
 start on the desktop with `hint` (the key that opens the tree) beside it. `guide`
-adds the touch guide's `⋯` after the pill (`TSS16`).
+adds the touch guide's `⋯` after the pill (`TSS16`). `ids` numbers the
+targets.
 */
-WidgetTree pillBand(in TreeTab[] tabs, int rows, bool centred, string hint,
+WidgetTree pillBand(in TreeTab[] tabs, in OpenerHits ids, int rows, bool centred, string hint,
     bool guide = false) @safe
 {
     import std.conv : text;
@@ -90,7 +115,7 @@ WidgetTree pillBand(in TreeTab[] tabs, int rows, bool centred, string hint,
         height: SizeSpec.fixed(rows),
         slot: Slot.surfaceRaised, paintBackground: true,
         decoration: Decoration(borderRadius: pillDp / 2, drawHeight: pillDp),
-        hitId: OpenerHit.tree));
+        hitId: ids[OpenerControl.tree]));
     uint[] band = [pill];
     if (!centred && hint.length)
         band ~= tall(b, label(b, hint, Slot.muted));
@@ -103,7 +128,7 @@ WidgetTree pillBand(in TreeTab[] tabs, int rows, bool centred, string hint,
             height: SizeSpec.fixed(rows),
             slot: Slot.surfaceRaised, paintBackground: true,
             decoration: Decoration(borderRadius: pillDp / 2, drawHeight: pillDp),
-            hitId: OpenerHit.guide));
+            hitId: ids[OpenerControl.guide]));
     // An opaque band, so the pill and ⋯ stand apart from the terminal output
     // below them (the E mockups' band). The host draws its rule, in pixels.
     return b.finish(b.add(Widget(kind: WidgetKind.row, children: band, gap: 2,
@@ -114,7 +139,8 @@ WidgetTree pillBand(in TreeTab[] tabs, int rows, bool centred, string hint,
 
 /// The rail, `cols` wide and `rows` tall, each button `buttonRows` tall;
 /// `guide` adds the touch guide's `⋯` under `☰` (`TSS16`).
-WidgetTree rail(in TreeTab[] tabs, int cols, int rows, int buttonRows, bool guide = false) @safe
+WidgetTree rail(in TreeTab[] tabs, in OpenerHits ids, int cols, int rows, int buttonRows,
+    bool guide = false) @safe
 {
     Builder b;
 
@@ -133,17 +159,17 @@ WidgetTree rail(in TreeTab[] tabs, int cols, int rows, int buttonRows, bool guid
                 borderSlot: Slot.accentPrimary) : Decoration.init));
     }
 
-    uint[] items = [button("☰", Slot.accentPrimary, OpenerHit.tree)];
+    uint[] items = [button("☰", Slot.accentPrimary, ids[OpenerControl.tree])];
     if (guide) // the touch guide, under the tree (`TSS16`)
-        items ~= button("⋯", Slot.textPrimary, OpenerHit.guide);
+        items ~= button("⋯", Slot.textPrimary, ids[OpenerControl.guide]);
     foreach (i, ref t; tabs)
     {
         if ((items.length + 2) * buttonRows > rows)
             break;
         items ~= button(t.icon.length ? t.icon : "❯", t.current ? Slot.accentPrimary : Slot.muted,
-            OpenerHit.tab0 + i, t.current, t.unread != 0);
+            ids.tabs[i], t.current, t.unread != 0);
     }
-    items ~= button("+", Slot.muted, OpenerHit.newTab);
+    items ~= button("+", Slot.muted, ids[OpenerControl.newTab]);
     return b.finish(b.add(Widget(kind: WidgetKind.column, children: items,
         width: SizeSpec.fixed(cols), height: SizeSpec.fixed(rows),
         slot: Slot.chrome, paintBackground: true)));
@@ -175,12 +201,15 @@ version (unittest)
 
     import chrome : place, Place;
 
-    const l = place(pillBand(two(), 2, true, null), 40, 2, 0, 0, 1, 1, Place.top);
+    HitRegistry hits;
+    const ids = OpenerHits.ask(hits, 2);
+
+    const l = place(pillBand(two(), ids, 2, true, null), 40, 2, 0, 0, 1, 1, Place.top);
     const(char)[][] texts;
     foreach (ref n; l.tree.nodes)
         texts ~= n.text;
     assert(texts.canFind("❯") && texts.canFind("~/sparkles") && texts.canFind("1/2") && texts.canFind("●2"));
-    assert(l.hitAt(20, 0) == OpenerHit.tree, "the pill is the target");
+    assert(l.hitAt(20, 0) == ids[OpenerControl.tree], "the pill is the target");
 }
 
 @("opener.rail.treeTabsAndNewTab")
@@ -188,11 +217,14 @@ version (unittest)
 {
     import chrome : place, Place;
 
-    const l = place(rail(two(), 4, 20, 2), 4, 20, 0, 0, 1, 1, Place.top);
-    assert(l.hitAt(1, 0) == OpenerHit.tree);
-    assert(l.hitAt(1, 2) == OpenerHit.tab0);
-    assert(l.hitAt(1, 4) == OpenerHit.tab0 + 1);
-    assert(l.hitAt(1, 6) == OpenerHit.newTab);
+    HitRegistry hits;
+    const ids = OpenerHits.ask(hits, 2);
+
+    const l = place(rail(two(), ids, 4, 20, 2), 4, 20, 0, 0, 1, 1, Place.top);
+    assert(l.hitAt(1, 0) == ids[OpenerControl.tree]);
+    assert(l.hitAt(1, 2) == ids.tabs[0]);
+    assert(l.hitAt(1, 4) == ids.tabs[1]);
+    assert(l.hitAt(1, 6) == ids[OpenerControl.newTab]);
 }
 
 @("opener.guide.onTouchOnly")
@@ -200,16 +232,19 @@ version (unittest)
 {
     import chrome : place, Place;
 
+    HitRegistry hits;
+    const ids = OpenerHits.ask(hits, 2);
+
     // `TSS16`: the rail's `⋯` under `☰`, the pill band's after the pill; neither
     // without `guide` (the desktop).
-    const r = place(rail(two(), 4, 20, 2, guide: true), 4, 20, 0, 0, 1, 1, Place.top);
-    assert(r.hitAt(1, 0) == OpenerHit.tree && r.hitAt(1, 2) == OpenerHit.guide);
-    assert(r.hitAt(1, 4) == OpenerHit.tab0, "the tabs follow");
-    const p = place(pillBand(two(), 2, true, null, guide: true), 40, 2, 0, 0, 1, 1, Place.top);
+    const r = place(rail(two(), ids, 4, 20, 2, guide: true), 4, 20, 0, 0, 1, 1, Place.top);
+    assert(r.hitAt(1, 0) == ids[OpenerControl.tree] && r.hitAt(1, 2) == ids[OpenerControl.guide]);
+    assert(r.hitAt(1, 4) == ids.tabs[0], "the tabs follow");
+    const p = place(pillBand(two(), ids, 2, true, null, guide: true), 40, 2, 0, 0, 1, 1, Place.top);
     bool sawGuide;
     foreach (ref t; p.hits)
-        sawGuide |= t.hitId == OpenerHit.guide;
+        sawGuide |= t.hitId == ids[OpenerControl.guide];
     assert(sawGuide);
-    foreach (ref t; place(rail(two(), 4, 20, 2), 4, 20, 0, 0, 1, 1, Place.top).hits)
-        assert(t.hitId != OpenerHit.guide);
+    foreach (ref t; place(rail(two(), ids, 4, 20, 2), 4, 20, 0, 0, 1, 1, Place.top).hits)
+        assert(t.hitId != ids[OpenerControl.guide]);
 }

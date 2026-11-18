@@ -23,14 +23,30 @@ import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import chrome : band, label, row, uiLabel;
-import page_kit : PageClipboard, QueryField, ScrollBody, scrollSeconds, searchRow;
+import page_kit : hitBlock, PageClipboard, QueryField, ScrollBody, scrollSeconds, searchRow;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.editor.keys : editorBinds, windowTarget;
 import keymap : Binding, Chord, KeyCommand, TermCommand, TermContext;
 import surfaces : Pasteable, Placement, Scrollable, Surface, SurfaceContext;
 
-/// Hit ids.
-private enum size_t crumbHit = 0x6C00_0000, rowHit = 0x6C10_0000, recentHit = 0x6C20_0000,
-    backHit = 0x6BFF_FFFF, searchHit = 0x6C30_0002;
+/// The guide's own controls, by their index in its `"terminal.guide"` block.
+private enum GuideControl : ubyte
+{
+    back,   /// the ← chip
+    search, /// the search row
+}
+
+/// The guide's hit keys (`INP27`): its controls; the breadcrumbs by depth;
+/// the Recent chips; a level's rows and the search's results, as listed.
+private enum HitKey controlsKey = HitKey("terminal.guide");
+/// ditto
+private enum HitKey crumbsKey = HitKey("terminal.guide.crumbs");
+/// ditto
+private enum HitKey recentKey = HitKey("terminal.guide.recent");
+/// ditto
+private enum HitKey rowsKey = HitKey("terminal.guide.rows");
+/// ditto
+private enum HitKey resultsKey = HitKey("terminal.guide.results");
 
 /// The commands run from the guide most recently, newest first (shared by
 /// every guide opened in this run).
@@ -52,6 +68,8 @@ final class TouchGuide : Surface, Scrollable, Pasteable
     private KeyCommand[] found; // the search results
     private ScrollBody list; // the list's scroll and bar
     private size_t builtDepth, builtQuery; // what `list`'s position belongs to
+    // The blocks the last build numbered its targets from.
+    private HitBlock controls, crumbHits, recentHits, rowHits, resultHits;
     private enum unknownRoom = int.max; // no area to fit: show every row
 
     /// A tap on the search field: the embedder brings up a keyboard to type
@@ -69,8 +87,11 @@ final class TouchGuide : Surface, Scrollable, Pasteable
         this.run = run;
     }
 
-    WidgetTree build(in SurfaceContext sctx, int cols) @safe
+    WidgetTree build(in SurfaceContext sctx, int cols, ref HitRegistry hits) @safe
     {
+        controls = hits.block(controlsKey, GuideControl.max + 1);
+        crumbHits = hits.block(crumbsKey, path.length);
+        recentHits = rowHits = resultHits = HitBlock.init;
         Builder b;
         uint[] lines;
         lines ~= crumbs(b, sctx);
@@ -95,22 +116,23 @@ final class TouchGuide : Surface, Scrollable, Pasteable
         list.wide = sctx.touch && sctx.wideBars;
         uint port, bar;
         if (query.length)
-            lines ~= viewport(b, searchResults(b, sctx), room, per, port, bar);
+            lines ~= viewport(b, searchResults(b, sctx, hits), room, per, port, bar);
         else
         {
-            lines ~= viewport(b, levelRows(b, sctx), room, per, port, bar);
+            lines ~= viewport(b, levelRows(b, sctx, hits), room, per, port, bar);
             if (showRecent)
             {
+                recentHits = hits.block(recentKey, recent.length);
                 uint[] chips = [uiLabel(b, "Recent", Slot.muted)];
                 foreach (i, c; recent)
-                    chips ~= chip(b, sctx, iconOf(c.cmd), descOf(c), recentHit + i);
+                    chips ~= chip(b, sctx, iconOf(c.cmd), descOf(c), recentHits[i]);
                 lines ~= b.add(Widget(kind: WidgetKind.row, children: chips, gap: 1,
                     alignY: Alignment.center));
             }
         }
         // The logs' search row (`TPG8`), a tap on it bringing up the keyboard.
         lines ~= searchRow(b, query.idup, query.length > 0, "Search all commands",
-            sctx.targetRows, searchHit, inBand: true);
+            controls[GuideControl.search], sctx.targetRows, inBand: true);
         auto tree = b.finish(band(b, lines));
         // The position, now that the list's extent is known.
         import sparkles.ui.components.chrome : fracByte;
@@ -172,26 +194,28 @@ final class TouchGuide : Surface, Scrollable, Pasteable
 
     bool activate(size_t id) @system
     {
-        if (id == searchHit)
+        size_t i;
+        if (controls.indexOf(id, i))
+            final switch (cast(GuideControl) i)
+            {
+                case GuideControl.search:
+                    if (onSearch !is null)
+                        onSearch();
+                    return false;
+                case GuideControl.back:
+                    return pop();
+            }
+        if (crumbHits.indexOf(id, i) && i < path.length)
         {
-            if (onSearch !is null)
-                onSearch();
+            path.length = i + 1;
             return false;
         }
-        if (id == backHit)
-            return pop();
-        if (id >= crumbHit && id < crumbHit + path.length)
+        if (recentHits.indexOf(id, i) && i < recent.length)
+            return execute(recent[i]);
+        if (resultHits.indexOf(id, i) && i < found.length)
+            return execute(found[i]);
+        if (rowHits.indexOf(id, i) && i < shown.length)
         {
-            path.length = id - crumbHit + 1;
-            return false;
-        }
-        if (id >= recentHit && id < recentHit + recent.length)
-            return execute(recent[id - recentHit]);
-        if (id >= rowHit && id < rowHit + shown.length + found.length)
-        {
-            const i = id - rowHit;
-            if (query.length)
-                return execute(found[i]);
             const r = shown[i];
             if (r.group.length || r.cmd == TermCommand.none)
             {
@@ -300,25 +324,26 @@ final class TouchGuide : Surface, Scrollable, Pasteable
 
     private uint crumbs(ref Builder b, in SurfaceContext sctx) @safe
     {
-        uint[] parts = [chip(b, sctx, "←", null, backHit)];
+        uint[] parts = [chip(b, sctx, "←", null, controls[GuideControl.back])];
         foreach (i, c; path)
         {
             if (i)
                 parts ~= label(b, "›", Slot.muted);
             parts ~= chip(b, sctx, null, i == 0 ? "leader" : groupName(i),
-                crumbHit + i, current: i + 1 == path.length);
+                crumbHits[i], current: i + 1 == path.length);
         }
         return b.add(Widget(kind: WidgetKind.row, children: parts, gap: 1,
             alignY: Alignment.center));
     }
 
-    private uint[] levelRows(ref Builder b, in SurfaceContext sctx) @safe
+    private uint[] levelRows(ref Builder b, in SurfaceContext sctx, ref HitRegistry hits) @safe
     {
         import sparkles.base.buffer : SharedBuffer;
         import keymap : bindingsAt;
 
         SharedBuffer!(Binding, 64) rows;
         (() @trusted => bindingsAt(rows, table, ctx, path))();
+        rowHits = hitBlock(hits, rowsKey, rows.length);
         uint[] lines;
         foreach (ref r; rows[])
         {
@@ -326,7 +351,7 @@ final class TouchGuide : Surface, Scrollable, Pasteable
             const key = chordText(r.path[path.length], false);
             const name = isGroup ? "+" ~ (r.group.length ? r.group : "more") : r.desc;
             lines ~= entry(b, sctx, key, isGroup ? "›" : iconOf(r.cmd), name, null,
-                rowHit + shown.length);
+                rowHits[shown.length]);
             shown ~= r;
         }
         if (!lines.length)
@@ -334,7 +359,7 @@ final class TouchGuide : Surface, Scrollable, Pasteable
         return lines;
     }
 
-    private uint[] searchResults(ref Builder b, in SurfaceContext sctx) @safe
+    private uint[] searchResults(ref Builder b, in SurfaceContext sctx, ref HitRegistry registry) @safe
     {
         import std.algorithm.sorting : sort;
 
@@ -362,6 +387,7 @@ final class TouchGuide : Surface, Scrollable, Pasteable
         }
         hits.sort!((a, b) => a.score > b.score || a.score == b.score && a.row < b.row);
 
+        resultHits = hitBlock(registry, resultsKey, hits.length);
         uint[] lines;
         foreach (hit; hits)
         {
@@ -369,7 +395,7 @@ final class TouchGuide : Surface, Scrollable, Pasteable
             string keys;
             foreach (i; 0 .. r.depth)
                 keys ~= (i ? " " : "") ~ chordText(r.path[i], r.path[i] == path[0]);
-            lines ~= entry(b, sctx, null, iconOf(r.cmd), r.desc, keys, rowHit + found.length);
+            lines ~= entry(b, sctx, null, iconOf(r.cmd), r.desc, keys, resultHits[found.length]);
             found ~= KeyCommand(r.cmd, r.arg);
         }
         if (!lines.length)
@@ -534,7 +560,8 @@ version (unittest)
     {
         import chrome : place, Place;
 
-        auto l = place(g.build(SurfaceContext.init, 60), 60, 30, 0, 0, 1, 1, Place.top);
+        HitRegistry hits;
+        auto l = place(g.build(SurfaceContext.init, 60, hits), 60, 30, 0, 0, 1, 1, Place.top);
         foreach (ref t; l.hits)
             foreach (ref n; l.tree.nodes)
                 if (n.hitId == t.hitId)
@@ -551,20 +578,21 @@ version (unittest)
     import std.algorithm.searching : canFind;
 
     auto g = guide();
+    HitRegistry hits;
     assert(g.pathText == "␣");
-    auto shown = texts(g.build(SurfaceContext.init, 60));
+    auto shown = texts(g.build(SurfaceContext.init, 60, hits));
     assert(shown.canFind("+pane") && shown.canFind("+tab"), "the leader's groups");
 
     // Tap `+pane`: one level down; the crumb names it.
     assert(!g.activate(hitOf(g, "+pane")));
     assert(g.pathText == "␣ p");
-    shown = texts(g.build(SurfaceContext.init, 60));
+    shown = texts(g.build(SurfaceContext.init, 60, hits));
     assert(shown.canFind("split right") && shown.canFind("pane"));
 
     // Tap `split right`: it runs and the guide closes.
     assert(g.activate(hitOf(g, "split right")));
     assert(ran.length == 1 && ran[0].cmd == TermCommand.splitRight);
-    const recentShown = texts(g.build(SurfaceContext.init, 60));
+    const recentShown = texts(g.build(SurfaceContext.init, 60, hits));
     assert(recentShown.canFind("◫") && recentShown.canFind("split right"),
         "a Recent chip, described");
 
@@ -580,9 +608,10 @@ version (unittest)
     import std.algorithm.searching : canFind;
 
     auto g = guide();
+    HitRegistry hits;
     foreach (dchar c; "zoom")
         assert(g.key(KeyEvent(Key.char_, c)));
-    const shown = texts(g.build(SurfaceContext.init, 60));
+    const shown = texts(g.build(SurfaceContext.init, 60, hits));
     assert(shown.canFind("zoom") && shown.canFind("␣ p z"), "the full key path");
     assert(g.confirm() && ran[0].cmd == TermCommand.zoomPane);
 }
@@ -591,6 +620,7 @@ version (unittest)
 @system unittest
 {
     auto g = guide();
+    HitRegistry hits;
     assert(g.key(KeyEvent(Key.char_, '\U0001F469')));
     assert(g.key(KeyEvent(Key.char_, '\u200D')));
     assert(g.key(KeyEvent(Key.char_, '\U0001F4BB')));
@@ -606,9 +636,10 @@ version (unittest)
     // Not a substring of anything: "sprt" finds "split right" by its letters,
     // ranked first, and Enter runs the best match.
     auto g = guide();
+    HitRegistry hits;
     foreach (dchar c; "sprt")
         assert(g.key(KeyEvent(Key.char_, c)));
-    cast(void) g.build(SurfaceContext.init, 60);
+    cast(void) g.build(SurfaceContext.init, 60, hits);
     assert(g.confirm() && ran[$ - 1].cmd == TermCommand.splitRight);
 }
 
@@ -623,10 +654,11 @@ version (unittest)
     // The pane group (12 commands) in a 14-row area, two rows a command: it
     // cannot all show, and nothing may be drawn over anything else (`TPG19`).
     auto g = guide();
+    HitRegistry hits;
     assert(!g.activate(hitOf(g, "+pane")));
     SurfaceContext ctx = {area: Rect(0, 0, 60, 14), cellW: 1, cellH: 1, targetRows: 2};
 
-    auto layout() => place(g.build(ctx, 60), 60, 14, 0, 0, 1, 1, Place.bottom);
+    auto layout() => place(g.build(ctx, 60, hits), 60, 14, 0, 0, 1, 1, Place.bottom);
 
     // What is laid out: the texts under each placed target (a row cut from
     // the window is built, but never placed).

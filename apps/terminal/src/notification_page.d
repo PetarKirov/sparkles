@@ -29,11 +29,12 @@ import sparkles.input.events : Key, KeyEvent;
 import sparkles.terminal_view.notification_log : NotificationLog, NotificationRecord,
     NotificationRoute;
 import sparkles.ui.geometry : Insets, Rect, SizeSpec;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.style : Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 
 import chrome : button, column, label, row, uiLabel;
-import page_kit : bodyRowsFor, chip, finishPage, firstOwnHit, header, Page, PageServices, prose;
+import page_kit : bodyRowsFor, chip, finishPage, header, hitBlock, Page, PageServices, prose;
 import settings : ButtonLabels, NotificationGroupRule, NotificationsConfig;
 import surfaces : SurfaceContext;
 
@@ -200,13 +201,13 @@ struct PagesState
     Grouping notificationGrouping = Grouping.tab;
 }
 
-/// Hit ids.
-private enum Hit : size_t
-{
-    markRead = firstOwnHit,
-    grouping = firstOwnHit + 0x10, // + Grouping
-    entry = firstOwnHit + 0x100,   // + the entry's index in the log
-}
+/// The page's hit keys (`INP27`): Mark all read, the grouping chips by
+/// `Grouping`, and the entries by their index in the log.
+private enum HitKey markReadKey = HitKey("terminal.notifications.mark-read");
+/// ditto
+private enum HitKey groupingKey = HitKey("terminal.notifications.grouping");
+/// ditto
+private enum HitKey entryKey = HitKey("terminal.notifications.entries");
 
 /// The notification log page.
 final class NotificationPage : Page
@@ -221,6 +222,8 @@ final class NotificationPage : Page
     private bool keyboard;    // the selection is shown (a key moved it)
     private SysTime now;      // for "… ago"; set per build unless a test pins it
     private bool pinnedNow;
+    // The blocks the last build numbered its targets from.
+    private HitBlock markReadHits, groupingHits, entryHits;
 
     /**
     `log` is the application's (`WorkspaceHost.notifications`); `config` its
@@ -259,21 +262,25 @@ final class NotificationPage : Page
     private bool unseen(size_t i) const @safe pure nothrow @nogc
         => log.total - log.length + i >= seenBefore;
 
-    override WidgetTree buildPage(in SurfaceContext ctx, int cols, int rows) @safe
+    override WidgetTree buildPage(in SurfaceContext ctx, int cols, int rows,
+        ref HitRegistry hits) @safe
     {
         import std.datetime.systime : Clock;
 
         if (!pinnedNow)
             now = Clock.currTime;
         log.markAllSeen(); // the page is open: what arrives is seen
+        markReadHits = hits.block(markReadKey);
+        groupingHits = hits.block(groupingKey, Grouping.max + 1);
+        entryHits = hitBlock(hits, entryKey, log.length);
 
         // A phone held upright: the six chips take two rows, the header's
         // button its icon.
         const narrow = cols < 60;
         Builder b;
-        const head = header(b, "Notifications", ctx,
+        const head = header(b, "Notifications", ctx, backHit,
             [button(b, "✓", "Mark all read", narrow ? ButtonLabels.icon : ctx.labels,
-                Hit.markRead, minRows: ctx.targetRows)]);
+                markReadHits.id, minRows: ctx.targetRows)]);
 
         static immutable string[6] names = ["Time", "Tab/split", "App", "Agents", "Project", "Rules"];
         uint chipRow(ref Builder bb, uint[] children)
@@ -281,7 +288,7 @@ final class NotificationPage : Page
                 alignY: Alignment.center, width: SizeSpec.grow(), padding: Insets(0, 1, 0, 1)));
         uint[] chips;
         foreach (i, name; names)
-            chips ~= chip(b, name, grouping == i, Hit.grouping + i, ctx.targetRows);
+            chips ~= chip(b, name, grouping == i, groupingHits[i], ctx.targetRows);
         uint[] top = [head];
         if (narrow)
             top ~= [chipRow(b, chips[0 .. 3]), chipRow(b, chips[3 .. $])];
@@ -400,7 +407,7 @@ final class NotificationPage : Page
             children: lines,
             width: SizeSpec.grow(),
             height: targetRows > 1 ? SizeSpec(SizeSpec.Kind.fit, 0, targetRows) : SizeSpec.fit_,
-            hitId: open ? Hit.entry + i : 0,
+            hitId: open ? entryHits[i] : 0,
             slot: isSelected ? Slot.chromeAccent : Slot.inherit,
             paintBackground: isSelected,
         ));
@@ -410,20 +417,20 @@ final class NotificationPage : Page
 
     override bool onHit(size_t id) @system
     {
-        if (id == Hit.markRead)
-        {
-            seenBefore = log.total;
-            log.markAllSeen();
-            return false;
-        }
-        if (id >= Hit.grouping && id < Hit.grouping + 6)
-        {
-            setGrouping(cast(Grouping)(id - Hit.grouping));
-            return false;
-        }
-        if (id >= Hit.entry && id < Hit.entry + log.length)
-            return openEntry(id - Hit.entry);
+        size_t i;
+        if (markReadHits.contains(id))
+            markRead();
+        else if (groupingHits.indexOf(id, i))
+            setGrouping(cast(Grouping) i);
+        else if (entryHits.indexOf(id, i) && i < log.length)
+            return openEntry(i);
         return false;
+    }
+
+    private void markRead() @safe
+    {
+        seenBefore = log.total;
+        log.markAllSeen();
     }
 
     /// Focuses entry `i`'s pane: true (the page closes) when it is open.
@@ -470,7 +477,8 @@ final class NotificationPage : Page
                 setGrouping(cast(Grouping)((grouping + 5) % 6));
                 return true;
             case 'r':
-                return !onHit(Hit.markRead);
+                markRead();
+                return true;
             default:
                 return false;
         }
@@ -641,7 +649,8 @@ version (unittest)
     SurfaceContext ctx;
     ctx.cellW = ctx.cellH = 1;
     ctx.area = Rect(0, 0, 70, 40);
-    const l = place(p.build(ctx, 70), 70, 40, 0, 0, 1, 1, Place.top);
+    HitRegistry hits;
+    const l = place(p.build(ctx, 70, hits), 70, 40, 0, 0, 1, 1, Place.top);
     bool closedSaid, dots;
     size_t targets;
     foreach (ref n; l.tree.nodes)
@@ -651,18 +660,18 @@ version (unittest)
             dots |= sp.text == "● ";
     }
     foreach (ref t; l.hits)
-        targets += t.hitId >= Hit.entry;
+        targets += hits.find(entryKey).contains(t.hitId);
     assert(closedSaid && dots, "the closed pane is said; unseen entries keep their dot");
     assert(targets == 1, "a closed pane's entry is inert");
 
     // The open pane's entry focuses it and closes the page.
-    assert(p.activate(Hit.entry + 0) && focused == 1);
+    assert(p.activate(hits.find(entryKey)[0]) && focused == 1);
     // The keyboard: the newest (the closed one) is first; Enter says so.
     p.scrolled(0);
     assert(!p.confirm() && toast == "That pane has closed");
     // Mark all read clears the dots.
-    cast(void) p.activate(Hit.markRead);
-    const after = place(p.build(ctx, 70), 70, 40, 0, 0, 1, 1, Place.top);
+    cast(void) p.activate(hits.find(markReadKey).id);
+    const after = place(p.build(ctx, 70, hits), 70, 40, 0, 0, 1, 1, Place.top);
     foreach (ref n; after.tree.nodes)
         foreach (ref sp; n.spans)
             assert(sp.text != "● ");

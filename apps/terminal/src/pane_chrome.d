@@ -20,6 +20,7 @@ module pane_chrome;
 
 import sparkles.ui.components.dock : DockFrames, PaneId;
 import sparkles.ui.geometry : Insets, Rect, SizeSpec;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
@@ -83,16 +84,18 @@ PaneBox[] paneBoxes(in DockFrames f, in Rect area, int cw, int ch, PaneChrome mo
     return boxes;
 }
 
-/// The toolbar's targets: `toolHit + 4 * pane + k`.
-enum size_t toolHit = 0x7A00_0000;
-/// ditto
-enum ToolAction : size_t
+/// The toolbar's targets, by their index in its hit block.
+enum ToolAction : ubyte
 {
     splitRight,
     splitDown,
     zoom,
     close,
 }
+
+/// Pane `pane`'s toolbar's hit key (`INP27`): one block, by `ToolAction`.
+HitKey toolbarKey(PaneId pane) @safe pure nothrow @nogc
+    => HitKey("terminal.pane-toolbar", cast(size_t) pane);
 
 /// The header of `header` mode: one row, `▍title  directory`.
 WidgetTree paneHeader(string title, string detail, bool focused, int cols) @safe
@@ -141,12 +144,12 @@ private uint keepTitle(ref Builder b, uint title) @safe
 }
 
 /// The toolbar `reveal` shows over a pane's top: its title and directory,
-/// then split, zoom and close.
-WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels labels,
+/// then split, zoom and close, numbered from `ids` (the block of
+/// $(LREF toolbarKey)).
+WidgetTree paneToolbar(in HitBlock ids, string title, string detail, ButtonLabels labels,
     int targetRows, int cols) @safe
 {
     Builder b;
-    const base = toolHit + 4 * pane;
     // Four captioned buttons need about 40 columns; a narrower pane (half a
     // phone) shows their icons, so Close stays on screen.
     if (labels != ButtonLabels.icon && cols < 48)
@@ -157,10 +160,10 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
     const titleRow = b.add(Widget(kind: WidgetKind.row, children: name, gap: 1,
         width: SizeSpec.grow(), alignY: Alignment.center));
     uint[] parts = [titleRow,
-        button(b, "◫", "Right", labels, base + ToolAction.splitRight, minRows: targetRows),
-        button(b, "⬓", "Down", labels, base + ToolAction.splitDown, minRows: targetRows),
-        button(b, "⤢", "Zoom", labels, base + ToolAction.zoom, minRows: targetRows),
-        button(b, "×", "Close", labels, base + ToolAction.close, minRows: targetRows)];
+        button(b, "◫", "Right", labels, ids[ToolAction.splitRight], minRows: targetRows),
+        button(b, "⬓", "Down", labels, ids[ToolAction.splitDown], minRows: targetRows),
+        button(b, "⤢", "Zoom", labels, ids[ToolAction.zoom], minRows: targetRows),
+        button(b, "×", "Close", labels, ids[ToolAction.close], minRows: targetRows)];
     return b.finish(b.add(Widget(kind: WidgetKind.row, children: parts, gap: 1,
         padding: Insets(0, 1, 0, 1), width: SizeSpec.fixed(cols), alignY: Alignment.center,
         slot: Slot.surfaceRaised, paintBackground: true,
@@ -211,14 +214,28 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
 {
     import chrome : place, Place;
 
-    const l = place(paneToolbar(7, "zsh", "~/sparkles", ButtonLabels.icon, 1, 40), 40, 3,
+    // Two panes' toolbars in one frame: each its own block, by action.
+    HitRegistry hits;
+    hits.beginFrame();
+    const seven = hits.block(toolbarKey(7), ToolAction.max + 1);
+    const one = hits.block(toolbarKey(1), ToolAction.max + 1);
+    const l = place(paneToolbar(seven, "zsh", "~/sparkles", ButtonLabels.icon, 1, 40), 40, 3,
         0, 0, 1, 1, Place.top);
     size_t[] ids;
     foreach (ref t; l.hits)
         ids ~= t.hitId;
-    assert(ids == [toolHit + 28 + ToolAction.splitRight, toolHit + 28 + ToolAction.splitDown,
-        toolHit + 28 + ToolAction.zoom, toolHit + 28 + ToolAction.close]);
+    assert(ids == [seven[ToolAction.splitRight], seven[ToolAction.splitDown],
+        seven[ToolAction.zoom], seven[ToolAction.close]]);
+    foreach (id; ids)
+        assert(!one.contains(id), "another pane's toolbar never shares an id");
 }
+
+version (unittest)
+    private HitBlock testIds(PaneId pane) @safe pure nothrow
+    {
+        HitRegistry hits;
+        return hits.block(toolbarKey(pane), ToolAction.max + 1);
+    }
 
 @("pane_chrome.paneToolbar.aLongTitleNeverCutsAButton")
 @safe unittest
@@ -228,7 +245,7 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
 
     // A directory far wider than the pane: the title gives way, the four
     // captions stay whole (they were cut to "S", "Zo", "Cl").
-    const l = place(paneToolbar(1, "sh", "/tmp/a/very/long/working/directory/that/goes/on",
+    const l = place(paneToolbar(testIds(1), "sh", "/tmp/a/very/long/working/directory/that/goes/on",
         ButtonLabels.iconText, 1, 48), 48, 3, 0, 0, 1, 1, Place.top);
 
     // Each hit is a button: its rect holds its whole caption plus padding.
@@ -245,7 +262,7 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
 
     // Half a phone: captions would run past the edge; icons keep all four
     // buttons inside the pane.
-    const l = place(paneToolbar(1, "bash", "~", ButtonLabels.iconText, 1, 20), 20, 3,
+    const l = place(paneToolbar(testIds(1), "bash", "~", ButtonLabels.iconText, 1, 20), 20, 3,
         0, 0, 1, 1, Place.top);
     assert(l.hits.length == 4);
     foreach (ref t; l.hits)
@@ -260,7 +277,7 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
     // A pane of 50 columns in a long directory: "bash" stays whole, the
     // directory takes the cut.
     enum dir = "/data/user/0/dev.petar_kirov.sparkles.terminal/files/home";
-    const l = place(paneToolbar(1, "bash", dir, ButtonLabels.iconText, 1, 50), 50, 3,
+    const l = place(paneToolbar(testIds(1), "bash", dir, ButtonLabels.iconText, 1, 50), 50, 3,
         0, 0, 1, 1, Place.top);
     foreach (i, ref n; l.tree.nodes)
         if (n.text == "bash")

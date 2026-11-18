@@ -53,20 +53,38 @@ import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, Wi
 import chrome : cachedChromeLayout;
 import keymap : Binding, isReserved, KeysConfig, leaderChord, leaderMark, TermCommand,
     TermScope, terminalBindings;
-import page_kit : header, ScrollBody, scrollSeconds;
+import page_kit : header, hitBlock, ScrollBody, scrollSeconds;
 import sparkles.ui.components.chrome : fracByte, scrollbar, ScrollbarSpec;
 import sparkles.ui.state : ScrollAxis;
 import settings : TerminalConfig;
 import settings_store : TerminalApply, TerminalSettingsPane, TerminalSettingsStore;
 import surfaces : Placement, PointerSurface, Scrollable, Surface, SurfaceContext;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 
-// Hit ids: the page's own, the capture's, the bindings', the property rows'.
-private enum size_t hitScrim = 0x5E70_0001, hitPanel = 0x5E70_0002, hitBack = 0x5E70_0003,
-    hitFilter = 0x5E70_0004, hitFilterClear = 0x5E70_0005, hitUndo = 0x5E70_0006,
-    hitKeysHeader = 0x5E70_0007;
-private enum size_t captureBase = 0x5E70_0100;
-private enum size_t bindingBase = 0x5E71_0000;
-private enum size_t sectionBase = 0x6000_0000;
+/// The page's own targets, by their index in its `"terminal.settings"` block.
+private enum SettingsControl : ubyte
+{
+    scrim,       /// around the desktop's panel: closes it
+    panel,       /// the panel itself: takes the tap
+    back,
+    filter,
+    filterClear,
+    undo,        /// the toast's Undo
+    keysHeader,  /// the keys section's header
+}
+
+/// The page's hit keys (`INP27`): its controls; the chord capture's buttons
+/// (by `CaptureHit`); the binding rows and their ✎ (by binding); the
+/// property rows (`sectionHit`'s numbering, from the block's base).
+private enum HitKey controlsKey = HitKey("terminal.settings");
+/// ditto
+private enum HitKey captureKey = HitKey("terminal.settings.capture");
+/// ditto
+private enum HitKey bindingsKey = HitKey("terminal.settings.bindings");
+/// ditto
+private enum HitKey bindingEditsKey = HitKey("terminal.settings.binding-edits");
+/// ditto
+private enum HitKey sectionsKey = HitKey("terminal.settings.sections");
 
 /// The `keys` field: the page shows the bindings in its place.
 private enum keysPath = "keys";
@@ -217,6 +235,9 @@ final class SettingsPage : Surface, PointerSurface, Scrollable
     private Toast toast;
     private bool touch;
     private SectionsOptions opts; // the last build's, so a hit reads the row as drawn
+    // The blocks the last build numbered its targets from; asked for on
+    // every build, the memoised ones included.
+    private HitBlock controls, captureHits, bindingHits, bindingEditHits, sectionHits;
     // The host asks for the tree on every tick, and building it allocates
     // every row: an idle page hands back the last one. Input marks it stale;
     // the rest of what it shows is the key.
@@ -272,8 +293,9 @@ final class SettingsPage : Surface, PointerSurface, Scrollable
 
     Placement placement() const @safe => Placement.page;
 
-    WidgetTree build(in SurfaceContext ctx, int cols) @trusted
+    WidgetTree build(in SurfaceContext ctx, int cols, ref HitRegistry hits) @trusted
     {
+        claimHits(hits);
         touch = ctx.touch;
         const rows = ctx.cellH > 0 ? ctx.area.height / ctx.cellH : 24;
         // A phone: the whole area. The desktop: a modal panel (`TSP6`).
@@ -325,14 +347,14 @@ final class SettingsPage : Surface, PointerSurface, Scrollable
         if (toast.text.length)
             layers ~= toastLayer(b, w, h, ctx.targetRows);
         const panel = b.add(Widget(kind: WidgetKind.stack, children: layers,
-            width: SizeSpec.fixed(w), height: SizeSpec.fixed(h), hitId: hitPanel,
+            width: SizeSpec.fixed(w), height: SizeSpec.fixed(h), hitId: controls[SettingsControl.panel],
             slot: Slot.surface, paintBackground: true,
             decoration: touch ? Decoration.init : Decoration(borderStyle: BorderStyle.solid,
                 borderWidth: Insets.all(1), borderSlot: Slot.border, borderRadius: 6)));
         const root = b.add(Widget(kind: WidgetKind.column, children: [panel],
             width: SizeSpec.fixed(cols), height: SizeSpec.fixed(rows),
             alignX: Alignment.center, alignY: Alignment.center,
-            hitId: touch ? 0 : hitScrim));
+            hitId: touch ? 0 : controls[SettingsControl.scrim]));
         auto tree = b.finish(root);
         // Every row's text wraps here, which a phone takes most of a second
         // over: an unchanged page reuses the last layout, and the scroll
@@ -376,74 +398,89 @@ final class SettingsPage : Surface, PointerSurface, Scrollable
         return tree;
     }
 
+    // Asks for this frame's blocks: every build asks, a memoised one too, so
+    // the ids the reused tree carries stay the page's.
+    private void claimHits(ref HitRegistry hits) @safe
+    {
+        controls = hits.block(controlsKey, SettingsControl.max + 1);
+        captureHits = hits.block(captureKey, CaptureHit.max + 1);
+        bindingHits = hitBlock(hits, bindingsKey, bindings.length);
+        bindingEditHits = hitBlock(hits, bindingEditsKey, bindings.length);
+        // `sectionHit` numbers a node's parts from the base it is given: the
+        // block spans as many ids as it numbers for every node.
+        const nodes = pane.tree.data.nodes.length;
+        sectionHits = hitBlock(hits, sectionsKey, sectionHit(0, cast(uint) nodes, 0));
+    }
+
     bool activate(size_t id) @system
     {
         stale = true;
-        if (id == hitScrim)
-            return close();
-        if (id == hitPanel)
-            return false;
-        if (id == hitBack)
+        size_t i;
+        if (controls.indexOf(id, i))
+            return control(cast(SettingsControl) i);
+        if (captureHits.indexOf(id, i))
         {
-            if (levels.length)
-                popLevel();
-            else
-                return close();
+            if (i >= CaptureHit.min)
+                captureButton(cast(CaptureHit) i);
             return false;
         }
-        if (id == hitFilter)
+        if (bindingHits.indexOf(id, i) || bindingEditHits.indexOf(id, i))
         {
-            if (!pane.tv.searching)
-            {
-                pane.tv.filterStart();
-                pane.refresh();
-            }
-            wantsKeyboard = touch;
-            return false;
-        }
-        if (id == hitFilterClear)
-        {
-            if (pane.tv.searching || pane.tv.filterQuery.length)
-            {
-                pane.tv.filterStart();
-                cast(void) pane.tv.filterKey(KeyEvent(Key.escape));
-                pane.refresh();
-            }
-            return false;
-        }
-        if (id == hitUndo)
-        {
-            undo();
-            return false;
-        }
-        if (id == hitKeysHeader)
-        {
-            toggleFold(keysPath);
-            return false;
-        }
-        if (id >= captureBase && id < captureBase + 16)
-        {
-            captureButton(cast(CaptureHit)(id - captureBase));
-            return false;
-        }
-        if (id >= bindingBase && id < sectionBase)
-        {
-            const row = (id - bindingBase) / 4;
-            focusOnBinding(row);
-            startCapture(row);
+            focusOnBinding(i);
+            startCapture(i);
             return false;
         }
         uint node, part;
-        if (decodeSectionHit(sectionBase, id, node, part))
+        if (sectionHits.contains(id) && decodeSectionHit(sectionHits.base, id, node, part))
             sectionPart(node, part);
         return false;
+    }
+
+    private bool control(SettingsControl c) @system
+    {
+        final switch (c)
+        {
+            case SettingsControl.scrim:
+                return close();
+            case SettingsControl.panel:
+                return false;
+            case SettingsControl.back:
+                if (levels.length)
+                    popLevel();
+                else
+                    return close();
+                return false;
+            case SettingsControl.filter:
+                if (!pane.tv.searching)
+                {
+                    pane.tv.filterStart();
+                    pane.refresh();
+                }
+                wantsKeyboard = touch;
+                return false;
+            case SettingsControl.filterClear:
+                if (pane.tv.searching || pane.tv.filterQuery.length)
+                {
+                    pane.tv.filterStart();
+                    cast(void) pane.tv.filterKey(KeyEvent(Key.escape));
+                    pane.refresh();
+                }
+                return false;
+            case SettingsControl.undo:
+                undo();
+                return false;
+            case SettingsControl.keysHeader:
+                toggleFold(keysPath);
+                return false;
+        }
     }
 
     bool pointer(in PointerEvent p, in WidgetTree tree,
         scope const(Frame)[] frames, Size cellPixels = Size(1, 1)) @system
     {
         SettingsResult result;
-        const used = sections.pointer(*pane, p, tree, frames, sectionBase, result, touch, cellPixels);
+        const used = sections.pointer(*pane, p, tree, frames, sectionHits.base, result, touch,
+            cellPixels);
         if (used)
         {
             stale = true;
@@ -692,14 +729,14 @@ final class SettingsPage : Surface, PointerSurface, Scrollable
                     n += x.kind == Item.Kind.binding;
                 const q = pane.tv.filterQuery.length;
                 return sectionHeader(b, "Keys", q ? text("keys · ", n, " matches") : "keys",
-                    (keysPath in folded) !is null && !q, hitKeysHeader, opt);
+                    (keysPath in folded) !is null && !q, controls[SettingsControl.keysHeader], opt);
             }
             case Item.Kind.binding:
                 return bindingWidget(b, it.binding, focused, opt);
             case Item.Kind.section:
                 break;
         }
-        return sections.row(b, *pane, it.si, focused, opt, sectionBase);
+        return sections.row(b, *pane, it.si, focused, opt, sectionHits.base);
     }
 
     private uint bindingWidget(ref Builder b, size_t i, bool focused, in SectionsOptions opt)
@@ -725,7 +762,7 @@ final class SettingsPage : Surface, PointerSurface, Scrollable
             decoration: Decoration(borderRadius: 4)));
         const edit = b.add(Widget(kind: WidgetKind.panel, children: [b.add(Widget(
             kind: WidgetKind.text, text: "✎", slot: Slot.textPrimary, textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.body)))],
-            padding: Insets(0, 1, 0, 1), hitId: bindingBase + i * 4 + 1,
+            padding: Insets(0, 1, 0, 1), hitId: bindingEditHits[i],
             height: opt.targetRows > 1 ? SizeSpec.fixed(opt.targetRows) : SizeSpec.fit_,
             alignY: Alignment.center));
         foreach (p; [chip, edit])
@@ -733,10 +770,10 @@ final class SettingsPage : Surface, PointerSurface, Scrollable
         const main = b.add(Widget(kind: WidgetKind.row, children: [left, chip, edit], gap: 1,
             width: SizeSpec.grow(),
             height: SizeSpec(SizeSpec.Kind.fit, 0, opt.targetRows > 1 ? opt.targetRows : 0),
-            alignY: Alignment.center, hitId: bindingBase + i * 4));
+            alignY: Alignment.center, hitId: bindingHits[i]));
         uint[] kids = [main];
         if (capture.open && captureRow == i)
-            kids ~= chordCaptureView(b, capture, leader, captureBase, opt.targetRows, touch);
+            kids ~= chordCaptureView(b, capture, leader, captureHits.base, opt.targetRows, touch);
         const capturing = capture.open && captureRow == i;
         return b.add(Widget(kind: WidgetKind.column, children: kids, gap: capturing ? 1 : 0,
             width: SizeSpec.grow(), padding: Insets(0, 1, capturing ? 1 : 0, 2),
@@ -754,7 +791,7 @@ final class SettingsPage : Surface, PointerSurface, Scrollable
                 title ~= " › " ~ sentenceCase(n.label);
         // The pages' one header (`page_kit.header`): the same Back tile,
         // margins and title as the logs and About.
-        return header(b, title, ctx, null, hitBack);
+        return header(b, title, ctx, controls[SettingsControl.back]);
     }
 
     private uint filterRow(ref Builder b, in SurfaceContext ctx) @trusted
@@ -775,12 +812,12 @@ final class SettingsPage : Surface, PointerSurface, Scrollable
             clipX: true))];
         if (q.length || pane.tv.searching)
             kids ~= b.add(Widget(kind: WidgetKind.text, text: " ✕ ", slot: Slot.muted,
-                textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.body), hitId: hitFilterClear));
+                textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.body), hitId: controls[SettingsControl.filterClear]));
         const fieldRows = ctx.targetRows > 1 ? ctx.targetRows : 1;
         const field = b.add(Widget(kind: WidgetKind.row, children: kids,
             width: SizeSpec.grow(),
             height: SizeSpec.fixed(fieldRows),
-            alignY: Alignment.center, padding: Insets(0, 1, 0, 1), hitId: hitFilter,
+            alignY: Alignment.center, padding: Insets(0, 1, 0, 1), hitId: controls[SettingsControl.filter],
             slot: Slot.surfaceSunken, paintBackground: true,
             decoration: Decoration(borderStyle: BorderStyle.solid, borderWidth: Insets.all(1),
                 borderSlot: pane.tv.searching ? Slot.accentPrimary : Slot.border,
@@ -797,7 +834,7 @@ final class SettingsPage : Surface, PointerSurface, Scrollable
         if (toast.undo || toast.keysUndo)
             kids ~= b.add(Widget(kind: WidgetKind.text, text: "↶ UNDO", slot: Slot.textPrimary,
                 textStyle: TextStyle(bold: true, fontRole: FontRole.ui, typeStep: TypeStep.label),
-                hitId: hitUndo, padding: Insets(0, 1, 0, 1)));
+                hitId: controls[SettingsControl.undo], padding: Insets(0, 1, 0, 1)));
         const bar = b.add(Widget(kind: WidgetKind.row, children: kids, gap: 1,
             width: SizeSpec.grow(), height: SizeSpec.fixed(targetRows > 1 ? targetRows : 1),
             alignY: Alignment.center, padding: Insets(0, 1, 0, 1), slot: Slot.chromeAccent,
@@ -1171,6 +1208,7 @@ version (unittest)
         TerminalSettingsStore* store;
         SettingsPage page;
         uint applied;
+        HitRegistry hits; // the frames the page is built in
 
         this(string dir) @system
         {
@@ -1199,7 +1237,7 @@ version (unittest)
     {
         foreach (i, ref nd; p.pane.tree.data.nodes)
             if (nd.value.path == path)
-                return sectionHit(sectionBase, cast(uint) i, part);
+                return sectionHit(p.sectionHits.base, cast(uint) i, part);
         assert(false, path);
     }
 }
@@ -1212,7 +1250,7 @@ version (unittest)
     auto fs = TmpFS.create();
     auto f = new PageFixture(fs.dir);
     f.open();
-    const tree = f.page.build(phone(), 45);
+    const tree = f.page.build(phone(), 45, f.hits);
     const shown = allText(tree);
     // `TSP7`: every section open, in the struct's order, keys in place.
     const order = ["APPEARANCE", "KEYBOARD", "WHEN A PROGRAM EXITS", "LINKS", "PASTE",
@@ -1239,7 +1277,7 @@ version (unittest)
     auto fs = TmpFS.create();
     auto f = new PageFixture(fs.dir);
     f.open();
-    cast(void) f.page.build(phone(), 45);
+    cast(void) f.page.build(phone(), 45, f.hits);
 
     // The stepper: one tap, one committed, saved, applied edit.
     f.page.activate(hitFor(f.page, "appearance.font.size", SectionPart.inc));
@@ -1247,29 +1285,29 @@ version (unittest)
     assert(f.applied & TerminalApply.font);
     assert(f.file.exists && squeezed(f.file).canFind(`"size":14`), squeezed(f.file));
     // The toast names it and offers Undo; Undo is the tree's history.
-    const toasted = allText(f.page.build(phone(), 45));
+    const toasted = allText(f.page.build(phone(), 45, f.hits));
     assert(toasted.canFind("✓ Size 14 · saved") && toasted.canFind("UNDO"));
-    f.page.activate(hitUndo);
+    f.page.activate(f.page.controls[SettingsControl.undo]);
     assert(f.store.resolved.appearance.font.size == 13);
 
     // A segment, then the per-row reset.
     f.page.activate(hitFor(f.page, "extraKeys.visible", SectionPart.choice0 + 2));
     assert(f.store.resolved.extraKeys.visible == f.store.resolved.extraKeys.visible.never);
     assert(f.applied & TerminalApply.extraKeys);
-    cast(void) f.page.build(phone(), 45);
+    cast(void) f.page.build(phone(), 45, f.hits);
     f.page.activate(hitFor(f.page, "extraKeys.visible", SectionPart.reset));
     assert(f.store.resolved.extraKeys.visible == f.store.resolved.extraKeys.visible.automatic);
     // On a phone a three-member enum that fits is a segmented control (G3).
     // Its segment is a target of its own, as drawn.
-    cast(void) f.page.build(phone(), 45);
+    cast(void) f.page.build(phone(), 45, f.hits);
     f.page.activate(hitFor(f.page, "extraKeys.visible", SectionPart.choice0 + 1));
     assert(f.store.resolved.extraKeys.visible == f.store.resolved.extraKeys.visible.always);
-    cast(void) f.page.build(phone(), 45);
+    cast(void) f.page.build(phone(), 45, f.hits);
     f.page.activate(hitFor(f.page, "extraKeys.visible", SectionPart.reset));
 
     // A dropdown opens in place; a choice commits and closes it.
     f.page.activate(hitFor(f.page, "behaviour.onExit", SectionPart.open));
-    assert(allText(f.page.build(phone(), 45)).canFind("✓ prompt on failure"));
+    assert(allText(f.page.build(phone(), 45, f.hits)).canFind("✓ prompt on failure"));
     f.page.activate(hitFor(f.page, "behaviour.onExit", SectionPart.choice0 + 3));
     assert(f.store.resolved.behaviour.onExit == f.store.resolved.behaviour.onExit.hold);
     assert(f.applied & TerminalApply.behaviour);
@@ -1283,13 +1321,13 @@ version (unittest)
     auto fs = TmpFS.create();
     auto f = new PageFixture(fs.dir);
     f.open();
-    cast(void) f.page.build(phone(), 45);
+    cast(void) f.page.build(phone(), 45, f.hits);
     f.page.activate(hitFor(f.page, "appearance.colors.dark", SectionPart.row));
-    const level = allText(f.page.build(phone(), 45));
+    const level = allText(f.page.build(phone(), 45, f.hits));
     assert(level.canFind("Settings › Dark") && level.canFind("#cdd6f4"));
     // Back pops the level; it does not close the page.
     assert(f.page.key(KeyEvent(Key.back)));
-    assert(!allText(f.page.build(phone(), 45)).canFind("Settings › Dark"));
+    assert(!allText(f.page.build(phone(), 45, f.hits)).canFind("Settings › Dark"));
     // At the top, Back is declined — the table's `dismiss` closes the page.
     assert(!f.page.key(KeyEvent(Key.back)));
     f.page.cancel();
@@ -1305,7 +1343,7 @@ version (unittest)
     auto fs = TmpFS.create();
     auto f = new PageFixture(fs.dir);
     f.open();
-    cast(void) f.page.build(phone(), 45);
+    cast(void) f.page.build(phone(), 45, f.hits);
     size_t row = size_t.max;
     foreach (i, ref b; f.page.bindings)
         if (b.cmd == TermCommand.splitDown)
@@ -1313,7 +1351,7 @@ version (unittest)
     assert(row != size_t.max);
 
     // A reserved key is refused with the reason; the capture keeps listening.
-    f.page.activate(bindingBase + row * 4);
+    f.page.activate(f.page.bindingHits[row]);
     assert(f.page.key(KeyEvent(Key.char_, 'c', Mods(ctrl: true))));
     assert(f.page.capture.refusal.canFind("reserved"));
     // A three-key path: each key in turn; `␣ p` then `d`.
@@ -1330,18 +1368,18 @@ version (unittest)
     foreach (i, ref b; f.page.bindings)
         if (b.cmd == TermCommand.splitRight)
             right = i;
-    f.page.activate(bindingBase + right * 4);
+    f.page.activate(f.page.bindingHits[right]);
     assert(f.page.key(leader) && f.page.key(KeyEvent(Key.char_, 'p'))
         && f.page.key(KeyEvent(Key.char_, 'd')));
     assert(f.page.capture.phase == CapturePhase.conflict);
     assert(f.page.capture.conflict == "split down");
-    f.page.activate(captureBase + CaptureHit.swap);
+    f.page.activate(f.page.captureHits[CaptureHit.swap]);
     const text_ = squeezed(f.file);
     assert(text_.canFind(`"space p d":"splitRight"`) && text_.canFind(`"space p v":"splitDown"`),
         text_);
 
     // Esc cancels a capture rather than binding Esc.
-    f.page.activate(bindingBase + right * 4);
+    f.page.activate(f.page.bindingHits[right]);
     assert(f.page.key(KeyEvent(Key.escape)) && !f.page.capture.open);
 
     // The toast's Undo puts the overlay back.
@@ -1355,13 +1393,13 @@ version (unittest)
     auto fs = TmpFS.create();
     auto f = new PageFixture(fs.dir);
     f.open();
-    auto a = f.page.build(phone(), 45);
-    auto b = f.page.build(phone(), 45);
+    auto a = f.page.build(phone(), 45, f.hits);
+    auto b = f.page.build(phone(), 45, f.hits);
     assert(a.nodes is b.nodes, "nothing changed: the same tree");
-    assert(f.page.build(phone(), 44).nodes !is b.nodes, "another width rebuilds");
-    b = f.page.build(phone(), 44);
+    assert(f.page.build(phone(), 44, f.hits).nodes !is b.nodes, "another width rebuilds");
+    b = f.page.build(phone(), 44, f.hits);
     cast(void) f.page.key(KeyEvent(key: Key.down, action: KeyAction.press));
-    assert(f.page.build(phone(), 44).nodes !is b.nodes, "input rebuilds");
+    assert(f.page.build(phone(), 44, f.hits).nodes !is b.nodes, "input rebuilds");
 }
 
 /// The shared slider previews live, saves once on release and cancels on focus loss.
@@ -1376,9 +1414,9 @@ version (unittest)
     f.open();
     auto ctx = phone();
     ctx.touch = false;
-    cast(void) f.page.build(ctx, 80);
+    cast(void) f.page.build(ctx, 80, f.hits);
     f.page.activate(hitFor(f.page, "appearance.font", SectionPart.row));
-    const tree = f.page.build(ctx, 80);
+    const tree = f.page.build(ctx, 80, f.hits);
     const frames = layout(tree, Constraints(maxW: 80, maxH: 80));
     const hit = hitFor(f.page, "appearance.font.size", SectionPart.slider);
     uint track = uint.max;
@@ -1398,7 +1436,7 @@ version (unittest)
         button: PointerButton.left, pos: Point(r.x + r.width + 20, r.y)), tree, frames));
     assert(f.store.resolved.appearance.font.size == 72 && f.file.exists);
     assert(f.page.pane.edits.undo.length == 1, "one history entry for the whole drag");
-    f.page.activate(hitUndo);
+    f.page.activate(f.page.controls[SettingsControl.undo]);
     assert(f.store.resolved.appearance.font.size == before);
 
     assert(f.page.pointer(PointerEvent(action: PointerAction.press,

@@ -212,7 +212,7 @@ struct DroidTerminal
             host.invalidate();
         const g = geometry(h);
         chip.place(host.labels, host.theme.targetRows,
-            Rect(0, g.keysTop - g.chipHeight, g.width, g.chipHeight), cellW, cellH);
+            Rect(0, g.keysTop - g.chipHeight, g.width, g.chipHeight), cellW, cellH, host.hits);
         // The key row moves with the keyboard even when the panes' cell grid
         // does not change (a sub-cell difference): repaint it anyway.
         if (g != lastGeometry)

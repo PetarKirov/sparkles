@@ -13,6 +13,7 @@ module exit_banner;
 import sparkles.ui.glyphs : ActionIcon, iconText;
 import std.datetime.systime : SysTime;
 
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.widget : Builder, WidgetTree;
 
 import chrome : band, button, column, label, row;
@@ -32,15 +33,18 @@ struct ExitInfo
     SysTime started, ended;
 }
 
-/// The banner's targets.
-enum ExitHit : size_t
+/// The banner's targets, by their index in its hit block.
+enum ExitControl : ubyte
 {
-    none,
-    toggle = 0x1E00, /// the status line: expand or collapse
+    toggle, /// the status line: expand or collapse
     rerun,
     shell,
     close,
 }
+
+/// Pane `pane`'s banner's hit key (`INP27`): one block, by `ExitControl`.
+HitKey exitBannerKey(ulong pane) @safe pure nothrow @nogc
+    => HitKey("terminal.exit-banner", cast(size_t) pane);
 
 /// The status line's words: "exited with status 1", "killed by signal 9".
 string statusText(int status) @safe pure
@@ -63,7 +67,7 @@ Expanded, the command wraps at `wrapCols` and takes at most `commandRows`
 rows; a longer one shows the window `scroll` lines down (`commandScroll`
 clamps it), with how many lines lie above and below (`TSS2`).
 */
-WidgetTree exitBanner(ExitInfo info, bool expanded, bool actions, ButtonLabels labels,
+WidgetTree exitBanner(ExitInfo info, in HitBlock ids, bool expanded, bool actions, ButtonLabels labels,
     int targetRows = 1, int wrapCols = int.max, int commandRows = int.max, int scroll = 0) @safe
 {
     Builder b;
@@ -81,7 +85,7 @@ WidgetTree exitBanner(ExitInfo info, bool expanded, bool actions, ButtonLabels l
     const cmd = label(b, info.command.length ? "· " ~ info.command : "", Slot.muted);
     const chevron = label(b, expanded ? "▴" : "▾", Slot.muted);
     auto status = row(b, [mark, cmd, chevron]);
-    b.nodes[status].hitId = ExitHit.toggle;
+    b.nodes[status].hitId = ids[ExitControl.toggle];
     lines ~= status;
 
     if (expanded)
@@ -104,9 +108,9 @@ WidgetTree exitBanner(ExitInfo info, bool expanded, bool actions, ButtonLabels l
     }
     if (actions)
         lines ~= row(b, [
-            button(b, iconText(ActionIcon.rerun), "Re-run", labels, ExitHit.rerun, primary: true, minRows: targetRows),
-            button(b, iconText(ActionIcon.shell), "Shell", labels, ExitHit.shell, minRows: targetRows),
-            button(b, "×", "Close", labels, ExitHit.close, minRows: targetRows),
+            button(b, iconText(ActionIcon.rerun), "Re-run", labels, ids[ExitControl.rerun], primary: true, minRows: targetRows),
+            button(b, iconText(ActionIcon.shell), "Shell", labels, ids[ExitControl.shell], minRows: targetRows),
+            button(b, "×", "Close", labels, ids[ExitControl.close], minRows: targetRows),
         ]);
     return b.finish(band(b, lines));
 }
@@ -183,18 +187,20 @@ private string ranText(SysTime started, SysTime ended) @safe
 
     const t0 = SysTime(DateTime(2026, 10, 2, 9, 41, 7));
     const info = ExitInfo(1, "nix build .#terminal-apk", "/home/u/sparkles", t0, t0 + 165.seconds);
+    HitRegistry hits;
+    const ids = hits.block(exitBannerKey(1), ExitControl.max + 1);
 
     // Collapsed: the status line and the actions, two rows.
-    auto collapsed = place(exitBanner(info, false, true, ButtonLabels.iconText), 60, 20, 0, 0, 1, 1);
+    auto collapsed = place(exitBanner(info, ids, false, true, ButtonLabels.iconText), 60, 20, 0, 0, 1, 1);
     assert(collapsed.bounds.height == 2);
-    size_t[] ids;
+    size_t[] shown;
     foreach (ref t; collapsed.hits)
-        ids ~= t.hitId;
-    assert(ids.canFind(ExitHit.toggle) && ids.canFind(ExitHit.rerun)
-        && ids.canFind(ExitHit.shell) && ids.canFind(ExitHit.close));
+        shown ~= t.hitId;
+    assert(shown.canFind(ids[ExitControl.toggle]) && shown.canFind(ids[ExitControl.rerun])
+        && shown.canFind(ids[ExitControl.shell]) && shown.canFind(ids[ExitControl.close]));
 
     // Expanded: the command, the directory and the times join.
-    auto expanded = place(exitBanner(info, true, true, ButtonLabels.iconText), 60, 20, 0, 0, 1, 1);
+    auto expanded = place(exitBanner(info, ids, true, true, ButtonLabels.iconText), 60, 20, 0, 0, 1, 1);
     assert(expanded.bounds.height == 5);
     bool sawRan;
     foreach (ref n; expanded.tree.nodes)
@@ -202,14 +208,14 @@ private string ranText(SysTime started, SysTime ended) @safe
     assert(sawRan);
 
     // A command far wider than the banner never squeezes out the status.
-    auto squeezed = place(exitBanner(ExitInfo(3, "x".repeat(200).join), false, false,
+    auto squeezed = place(exitBanner(ExitInfo(3, "x".repeat(200).join), ids, false, false,
         ButtonLabels.iconText), 40, 20, 0, 0, 1, 1);
     foreach (i, ref n; squeezed.tree.nodes)
         if (n.text == "✗ exited with status 3")
             assert(squeezed.frames[i].rect.width >= 22);
 
     // `hold`: the status line alone, no actions.
-    auto held = place(exitBanner(info, false, false, ButtonLabels.iconText), 60, 20, 0, 0, 1, 1);
+    auto held = place(exitBanner(info, ids, false, false, ButtonLabels.iconText), 60, 20, 0, 0, 1, 1);
     assert(held.bounds.height == 1 && held.hits.length == 1);
 }
 
@@ -256,6 +262,8 @@ private string ranText(SysTime started, SysTime ended) @safe
     // three show, with the marks above and below (`TSS2`).
     const command = "abcdefghi".repeat(20).join(" ");
     const info = ExitInfo(1, command);
+    HitRegistry hits;
+    const ids = hits.block(exitBannerKey(1), ExitControl.max + 1);
     assert(commandLines(command, 20).length == 10);
     assert(commandScroll(10, 5, 0) == 0 && commandScroll(10, 5, 99) == 7
         && commandScroll(10, 5, -3) == 0);
@@ -264,7 +272,7 @@ private string ranText(SysTime started, SysTime ended) @safe
     const(char)[][] texts(int scroll)
     {
         const(char)[][] t;
-        auto l = place(exitBanner(info, true, false, ButtonLabels.iconText, 1, 20, 5, scroll),
+        auto l = place(exitBanner(info, ids, true, false, ButtonLabels.iconText, 1, 20, 5, scroll),
             40, 30, 0, 0, 1, 1, Place.top);
         foreach (ref n; l.tree.nodes)
             if (n.text.length)

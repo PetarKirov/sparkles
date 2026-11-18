@@ -26,6 +26,7 @@ import sparkles.ui.editor.field : EditorField, FieldClipboard, FieldResult, serv
 import sparkles.ui.editor.keys : editorBinds, windowTarget;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.ui.geometry : Constraints, Insets, Point, Rect, SizeSpec;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.style : Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
@@ -56,16 +57,21 @@ struct PageServices
     void delegate() @safe repaint;
 }
 
-/// The hit ids every page shares; a page's own start at $(LREF firstOwnHit).
-enum PageHit : size_t
+/// The controls every page shares, by their index in the page's
+/// `"terminal.page"` hit block (`INP27`).
+enum PageControl : ubyte
 {
-    none,
-    back = 0x9A6E_0001,
-    search,
+    back,   /// the header's Back
+    search, /// the search field
 }
 
-/// ditto
-enum size_t firstOwnHit = 0x9A6E_0100;
+/**
+The block of `length` ids `hits` issues to `key` — or the empty block, whose
+ids are all 0, when there is nothing to number: a block is at least one id
+long, and a key not asked this frame is freed at the next.
+*/
+HitBlock hitBlock(ref HitRegistry hits, HitKey key, size_t length) @safe pure nothrow @nogc
+    => length ? hits.block(key, length) : HitBlock.init;
 
 /// The clipboard a page's field copies to and pastes from (`EDY5`).
 alias PageClipboard = FieldClipboard!(void delegate(scope const(char)[]) @system,
@@ -175,6 +181,8 @@ abstract class Page : Surface, Scrollable, Pasteable, TextInputSurface
     protected bool searching;
     /// The body's height in rows, as the last build laid it out.
     protected int viewRows = 10;
+    // Back and the search field, as the last build numbered them.
+    private HitBlock chromeHits;
 
     /// The body's height in rows, as the last build laid it out.
     final int bodyRows() const @safe pure nothrow @nogc => viewRows;
@@ -184,8 +192,10 @@ abstract class Page : Surface, Scrollable, Pasteable, TextInputSurface
         this.services = services;
     }
 
-    /// The page's tree, at most `cols` wide and the area's height tall.
-    abstract WidgetTree buildPage(in SurfaceContext ctx, int cols, int rows) @safe;
+    /// The page's tree, at most `cols` wide and the area's height tall; the
+    /// page asks `hits` for the blocks its own controls carry.
+    abstract WidgetTree buildPage(in SurfaceContext ctx, int cols, int rows,
+        ref HitRegistry hits) @safe;
     /// A hit on one of the page's own ids; true when the page is done.
     abstract bool onHit(size_t id) @system;
     /// A key the base did not take (no field focused); true when used.
@@ -212,28 +222,35 @@ abstract class Page : Surface, Scrollable, Pasteable, TextInputSurface
     /// ditto
     ScrollBody* scrolling() @safe return => &scrollBody;
 
-    final WidgetTree build(in SurfaceContext ctx, int cols) @safe
+    final WidgetTree build(in SurfaceContext ctx, int cols, ref HitRegistry hits) @safe
     {
         scrollBody.touch = ctx.touch;
         scrollBody.wide = ctx.touch && ctx.wideBars;
-        return buildPage(ctx, cols, ctx.cellH > 0 ? ctx.area.height / ctx.cellH : 24);
+        chromeHits = hits.block(HitKey("terminal.page"), PageControl.max + 1);
+        return buildPage(ctx, cols, ctx.cellH > 0 ? ctx.area.height / ctx.cellH : 24, hits);
     }
+
+    /// The ids the last build gave the header's Back and the search field.
+    final size_t backHit() const @safe pure nothrow @nogc => chromeHits[PageControl.back];
+    /// ditto
+    final size_t searchHit() const @safe pure nothrow @nogc => chromeHits[PageControl.search];
 
     Placement placement() const @safe => Placement.page;
 
     final bool activate(size_t id) @system
     {
-        switch (id)
-        {
-            case PageHit.back:
-                return true;
-            case PageHit.search:
-                searching = true;
-                return false;
-            default:
-                searching = false;
-                return onHit(id);
-        }
+        size_t control;
+        if (chromeHits.indexOf(id, control))
+            final switch (cast(PageControl) control)
+            {
+                case PageControl.back:
+                    return true;
+                case PageControl.search:
+                    searching = true;
+                    return false;
+            }
+        searching = false;
+        return onHit(id);
     }
 
     bool confirm() @system => false;
@@ -348,10 +365,10 @@ abstract class Page : Surface, Scrollable, Pasteable, TextInputSurface
 /**
 The header band (mockups C1, LG1, N2): Back, the title, then `actions` at the
 right — each a button made by the caller. Every page shares it, Settings
-included (`backHit` is its own Back).
+included: `backHit` is the page's Back ($(LREF Page.backHit)).
 */
-uint header(ref Builder b, string title, in SurfaceContext ctx, uint[] actions = null,
-    size_t backHit = PageHit.back) @safe
+uint header(ref Builder b, string title, in SurfaceContext ctx, size_t backHit,
+    uint[] actions = null) @safe
 {
     const back = button(b, "←", "Back", ButtonLabels.icon, backHit,
         minRows: ctx.targetRows, minCols: squareCols(ctx.targetRows, ctx.cellW, ctx.cellH));
@@ -410,7 +427,7 @@ The search field on its own row (`TPG8`): the query and a caret while it has
 the keyboard, else the query, else `placeholder` — muted.
 */
 uint searchField(ref Builder b, string query, bool focused, string placeholder,
-    int rows = 1, size_t hitId = PageHit.search) @safe
+    size_t hitId, int rows = 1) @safe
 {
     const shown = query.length ? query ~ (focused ? "▏" : "")
         : focused ? "▏" : placeholder;
@@ -449,9 +466,9 @@ sides — the field lines up with the rows above it, and a cell below keeps it
 off the band's edge.
 */
 uint searchRow(ref Builder b, string query, bool focused, string placeholder,
-    int rows = 1, size_t hitId = PageHit.search, bool inBand = false) @safe
+    size_t hitId, int rows = 1, bool inBand = false) @safe
     => b.add(Widget(kind: WidgetKind.panel,
-        children: [searchField(b, query, focused, placeholder, rows, hitId)],
+        children: [searchField(b, query, focused, placeholder, hitId, rows)],
         width: SizeSpec.grow(), padding: inBand ? Insets(0, 0, 1, 0) : Insets(0, 1, 0, 1)));
 
 /**
@@ -699,7 +716,8 @@ version (unittest)
             this.lines = lines;
         }
 
-        override WidgetTree buildPage(in SurfaceContext ctx, int cols, int rows) @safe
+        override WidgetTree buildPage(in SurfaceContext ctx, int cols, int rows,
+            ref HitRegistry hits) @safe
         {
             import chrome : column, label;
 
@@ -708,7 +726,8 @@ version (unittest)
             foreach (i; 0 .. lines)
                 items ~= label(b, "line");
             const body_ = column(b, items);
-            uint[] top = [header(b, "Lines", ctx), searchField(b, query, searching, "search")];
+            uint[] top = [header(b, "Lines", ctx, backHit),
+                searchField(b, query, searching, "search", searchHit)];
             viewRows = bodyRowsFor(b, top, null, cols, rows);
             return finishPage(b, top, body_, null, viewRows, scrollBody, cols, rows);
         }
@@ -779,14 +798,15 @@ version (unittest)
     ctx.cellW = ctx.cellH = 1;
     ctx.area = Rect(0, 0, 80, 12);
     auto p = new Lines(30);
+    HitRegistry hits;
     // 12 rows: the header and the field take one each, the body ten.
-    cast(void) p.build(ctx, 40);
+    cast(void) p.build(ctx, 40, hits);
     assert(p.viewRows == 10);
     // Keys ease (`SCV12`): run the motion out, then look.
     long settled()
     {
         while (p.animate(1.0f / 60)) {}
-        cast(void) p.build(ctx, 40);
+        cast(void) p.build(ctx, 40, hits);
         return p.scrollBody.motion.whole;
     }
     assert(p.key(KeyEvent(Key.end)));
@@ -806,9 +826,10 @@ version (unittest)
     ctx.cellW = ctx.cellH = 1;
     ctx.area = Rect(0, 0, 80, 12);
     auto p = new Lines(30);
-    cast(void) p.build(ctx, 40);
+    HitRegistry hits;
+    cast(void) p.build(ctx, 40, hits);
     p.scroll(WheelEvent(fdy: 2.5f, precise: true)); // a drag: followed at once
-    const t = p.build(ctx, 40);
+    const t = p.build(ctx, 40, hits);
     bool shifted, bar;
     foreach (ref n; t.nodes)
     {
@@ -829,12 +850,16 @@ version (unittest)
     ctx.cellW = ctx.cellH = 1;
     ctx.area = Rect(0, 0, 80, 8);
     auto p = new Lines(2);
-    const l = place(p.build(ctx, 30), 30, 8, 0, 0, 1, 1, Place.top);
+    HitRegistry hits;
+    hits.beginFrame();
+    const l = place(p.build(ctx, 30, hits), 30, 8, 0, 0, 1, 1, Place.top);
     // The back button is the header's first cell; the field fills row 1.
-    assert(l.hitAt(1, 0) == PageHit.back);
-    assert(l.hitAt(10, 1) == PageHit.search);
-    assert(p.activate(PageHit.back), "Back closes the page");
-    assert(!p.activate(PageHit.search) && p.searching);
+    const page = hits.find(HitKey("terminal.page"));
+    assert(p.backHit == page[PageControl.back] && p.searchHit == page[PageControl.search]);
+    assert(l.hitAt(1, 0) == p.backHit);
+    assert(l.hitAt(10, 1) == p.searchHit);
+    assert(p.activate(p.backHit), "Back closes the page");
+    assert(!p.activate(p.searchHit) && p.searching);
 }
 
 @("page_kit.chip.markNotColourAlone")
@@ -864,7 +889,7 @@ version (unittest)
     ctx.cellW = ctx.cellH = 1;
     ctx.targetRows = 3;
     Builder b;
-    const head = header(b, "Settings", ctx);
+    const head = header(b, "Settings", ctx, backHit: 1);
     const body_ = b.add(Widget(kind: WidgetKind.column, height: SizeSpec.grow(),
         children: [b.add(Widget(kind: WidgetKind.box, height: SizeSpec.fixed(40)))]));
     const root = b.add(Widget(kind: WidgetKind.column, children: [head, body_],

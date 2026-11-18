@@ -30,9 +30,10 @@ import core.time : MonoTime;
 import std.algorithm.comparison : min;
 
 import chrome : ChromeTheme, Layer, paintLayer, place, Place;
-import opener : OpenerHit, pillBand, rail, usesPill;
+import opener : OpenerControl, OpenerHits, pillBand, rail, usesPill;
 import pane_chrome : PaneBox, paneBoxes, paneFrame, paneHeader, paneToolbar, ToolAction,
-    toolHit;
+    toolbarKey;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import page_kit : pageClipboard;
 import tab_tree : TabTree, TreePane, TreeTab;
 import confirmations : ClipboardRead, PasteConfirm;
@@ -133,6 +134,13 @@ struct WorkspaceHost
     OverlayStyle overlayStyle;
     /// What shows over the panes: confirmations, menus, pages and toasts.
     Surfaces surfaces;
+    /**
+    The application's one hit-id registry (`INP27`, `INP28`): every target
+    the window draws — the opener, the toolbars, the exit banners, the
+    surfaces, an embedder's own chrome — carries an id it issued. $(LREF
+    frame) begins each frame on it; an embedder asks it for blocks of its own.
+    */
+    HitRegistry hits;
     /// A desktop mouse drives the panes and the chrome, through the host's
     /// events (`notePointer`, `applyWheel`). A touch embedder turns it off
     /// and routes its gestures itself (`tapPane`, the wheel).
@@ -196,6 +204,7 @@ struct WorkspaceHost
     private Layer[] paneChromeLayers;
     private Layer toolbarLayer;
     private PaneId revealed; // the pane whose toolbar shows (`reveal`)
+    private PaneId toolbarPane; // the pane `toolbarLayer` was placed for
     private int cellW = 1, cellH = 1;
 
     /// The cell the panes were last laid out with, in pixels.
@@ -662,6 +671,10 @@ struct WorkspaceHost
     {
         import core.time : msecs;
 
+        // Every target of this frame asks for its ids anew; what the last
+        // frame did not ask for is freed (`INP27`).
+        hits.beginFrame();
+
         // Files programs asked to open (`TDV1`) become panes before the layout
         // is read; a quarter-second wake bounds how long a request waits on an
         // idle window.
@@ -986,6 +999,8 @@ struct WorkspaceHost
         const rows = theme.targetRows > 2 ? theme.targetRows : 2;
         Rect openerRect;
         Rect panelRect;
+        auto tabs = treeTabs();
+        const ids = OpenerHits.ask(hits, tabs.length);
         if (pill)
         {
             openerRect = Rect(area.x, area.y, area.width, rows * cellH);
@@ -993,7 +1008,7 @@ struct WorkspaceHost
             const inset = touch ? cellW : 0;
             const wide = touch ? panesArea.width - 2 * inset : min(panesArea.width, 44 * cellW);
             panelRect = Rect(panesArea.x + inset, panesArea.y, wide, panesArea.height);
-            openerLayer = place(pillBand(treeTabs(), rows, touch, treeHint, guide: touch),
+            openerLayer = place(pillBand(tabs, ids, rows, touch, treeHint, guide: touch),
                 area.width / cellW, rows, area.x, area.y, cellW, cellH, Place.top);
         }
         else
@@ -1004,7 +1019,7 @@ struct WorkspaceHost
                 area.height);
             panelRect = Rect(panesArea.x, panesArea.y, min(panesArea.width, 36 * cellW),
                 panesArea.height);
-            openerLayer = place(rail(treeTabs(), railCols, area.height / cellH, rows, guide: touch),
+            openerLayer = place(rail(tabs, ids, railCols, area.height / cellH, rows, guide: touch),
                 railCols, area.height / cellH, area.x, area.y, cellW, cellH, Place.top);
         }
         this.panelRect = panelRect;
@@ -1455,7 +1470,10 @@ struct WorkspaceHost
                     if (b.id == revealed)
                     {
                         const tcols = (b.outer.width - 2 * padX) / cellW;
-                        toolbarLayer = place(paneToolbar(b.id, paneTitle(b.id), paneDetail(b.id),
+                        toolbarPane = b.id;
+                        toolbarLayer = place(paneToolbar(
+                            hits.block(toolbarKey(b.id), ToolAction.max + 1),
+                            paneTitle(b.id), paneDetail(b.id),
                             labels, theme.targetRows, tcols), tcols, rows,
                             b.outer.x + (b.outer.width - tcols * cellW) / 2, b.outer.y + padTop,
                             cellW, cellH, Place.top);
@@ -1768,7 +1786,7 @@ struct WorkspaceHost
     */
     private void placeBanners() @system
     {
-        import exit_banner : exitBanner, ExitInfo;
+        import exit_banner : ExitControl, exitBanner, exitBannerKey, ExitInfo;
 
         banners = null;
         foreach (ref b; boxes)
@@ -1796,7 +1814,8 @@ struct WorkspaceHost
             const scroll = cast(int) commandScroll(commandLines(info.command, wrapCols).length,
                 commandRows, bannerScroll.get(b.id, 0));
             bannerScroll[b.id] = scroll;
-            banners[b.id] = place(exitBanner(info, open, *kept, labels, theme.targetRows,
+            const ids = hits.block(exitBannerKey(b.id), ExitControl.max + 1);
+            banners[b.id] = place(exitBanner(info, ids, open, *kept, labels, theme.targetRows,
                 wrapCols, commandRows, scroll),
                 b.cols, b.rows, b.content.x, b.content.y, cellW, cellH, Place.bottom);
         }
@@ -1821,7 +1840,7 @@ struct WorkspaceHost
                     ctx.subject = Rect(b.content.x, b.content.y + c.y * cellH, b.content.width,
                         cellH);
             }
-        surfaces.place(ctx);
+        surfaces.place(ctx, hits);
     }
 
     /// Who is running in pane `id`: its foreground program, else its title.
@@ -1985,7 +2004,7 @@ struct WorkspaceHost
     */
     bool tap(H)(ref H h, int x, int y) @system
     {
-        import exit_banner : ExitHit;
+        import exit_banner : ExitControl, exitBannerKey;
 
         if (surfaces.tap(x, y))
         {
@@ -1999,14 +2018,23 @@ struct WorkspaceHost
         if (openerLayer.contains(x, y))
         {
             const hit = openerLayer.hitAt(x, y);
-            if (hit == OpenerHit.tree)
-                toggleTree();
-            else if (hit == OpenerHit.newTab)
-                cast(void) run(h, KeyCommand(TermCommand.newTab), Rect.init);
-            else if (hit == OpenerHit.guide)
-                guideRequested = true; // the embedder opens it (`TSS16`)
-            else if (hit >= OpenerHit.tab0 && hit < OpenerHit.tab0 + ws.tabs.length)
-                cast(void) ws.selectTab(hit - OpenerHit.tab0);
+            const ids = OpenerHits.find(hits);
+            size_t i;
+            if (ids.controls.indexOf(hit, i))
+                final switch (cast(OpenerControl) i)
+                {
+                    case OpenerControl.tree:
+                        toggleTree();
+                        break;
+                    case OpenerControl.newTab:
+                        cast(void) run(h, KeyCommand(TermCommand.newTab), Rect.init);
+                        break;
+                    case OpenerControl.guide:
+                        guideRequested = true; // the embedder opens it (`TSS16`)
+                        break;
+                }
+            else if (ids.tabs.indexOf(hit, i) && i < ws.tabs.length)
+                cast(void) ws.selectTab(i);
             repaint = true;
             return true;
         }
@@ -2014,11 +2042,12 @@ struct WorkspaceHost
         if (toolbarLayer.contains(x, y))
         {
             const hit = toolbarLayer.hitAt(x, y);
-            if (hit >= toolHit)
+            size_t action;
+            if (hits.find(toolbarKey(toolbarPane)).indexOf(hit, action))
             {
-                const pane = cast(PaneId)((hit - toolHit) / 4);
+                const pane = toolbarPane;
                 cast(void) ws.focusPane(pane);
-                final switch (cast(ToolAction)((hit - toolHit) % 4))
+                final switch (cast(ToolAction) action)
                 {
                     case ToolAction.splitRight:
                         cast(void) run(h, KeyCommand(TermCommand.splitRight), Rect.init);
@@ -2044,26 +2073,26 @@ struct WorkspaceHost
                 continue;
             const hit = l.hitAt(x, y);
             cast(void) ws.focusPane(id);
-            switch (hit)
-            {
-                case ExitHit.toggle:
-                    if (id in expanded)
-                        expanded.remove(id);
-                    else
-                        expanded[id] = true;
-                    break;
-                case ExitHit.rerun:
-                    respawnFocused(h, false);
-                    break;
-                case ExitHit.shell:
-                    respawnFocused(h, true);
-                    break;
-                case ExitHit.close:
-                    closePane(id);
-                    break;
-                default:
-                    break;
-            }
+            size_t control;
+            if (hits.find(exitBannerKey(id)).indexOf(hit, control))
+                final switch (cast(ExitControl) control)
+                {
+                    case ExitControl.toggle:
+                        if (id in expanded)
+                            expanded.remove(id);
+                        else
+                            expanded[id] = true;
+                        break;
+                    case ExitControl.rerun:
+                        respawnFocused(h, false);
+                        break;
+                    case ExitControl.shell:
+                        respawnFocused(h, true);
+                        break;
+                    case ExitControl.close:
+                        closePane(id);
+                        break;
+                }
             repaint = true;
             return true;
         }
@@ -2488,4 +2517,69 @@ import sparkles.input : KeyEvent, PointerEvent, WheelEvent;
     assert(!h.chromeAt(4, 40), "below it");
     h.revealed = 0;
     assert(!h.chromeAt(4, 4), "a toolbar that is not shown takes nothing");
+}
+
+/// `INP27`, `INP28`: one frame's targets — the opener, two panes' toolbars,
+/// an exit banner, a confirmation and a page — each carry an id no other
+/// carries, and a press armed on one frame names the same control on the
+/// next, though a banner appeared and asked for its ids first.
+@("workspace_host.hits.aFramesTargetsNeverShareAnId")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+
+    import exit_banner : ExitControl, exitBanner, exitBannerKey, ExitInfo;
+    import notification_page : NotificationPage;
+    import page_kit : PageServices;
+
+    HitRegistry hits;
+    auto paste = new PasteConfirm(null, 2, "a\nb");
+    auto log = new NotificationLog;
+    auto page = new NotificationPage(log, NotificationsConfig.init, null, PageServices.init);
+    const tabs = [TreeTab("~/sparkles", "❯", 0, true), TreeTab("build", "▶", 0, false)];
+    SurfaceContext ctx = {area: Rect(0, 0, 80, 40), cellW: 1, cellH: 1};
+
+    // One frame, the way `frame` builds it; `banner` puts an exit prompt first.
+    size_t[] frame(bool banner)
+    {
+        size_t[] ids;
+        void collect(in Layer l)
+        {
+            foreach (ref t; l.hits)
+                ids ~= t.hitId;
+        }
+
+        hits.beginFrame();
+        if (banner)
+            collect(place(exitBanner(ExitInfo(1, "make"),
+                hits.block(exitBannerKey(2), ExitControl.max + 1), false, true,
+                ButtonLabels.iconText), 60, 20, 0, 0, 1, 1));
+        collect(place(rail(tabs, OpenerHits.ask(hits, tabs.length), 4, 20, 2, guide: true),
+            4, 20, 0, 0, 1, 1, Place.top));
+        foreach (PaneId pane; [1, 2])
+            collect(place(paneToolbar(hits.block(toolbarKey(pane), ToolAction.max + 1), "zsh",
+                "~", ButtonLabels.icon, 1, 40), 40, 3, 0, 0, 1, 1, Place.top));
+        collect(place(paste.build(ctx, 60, hits), 60, 20, 0, 0, 1, 1, Place.top));
+        collect(place(page.build(ctx, 80, hits), 80, 40, 0, 0, 1, 1, Place.top));
+        return ids;
+    }
+
+    const first = frame(banner: false);
+    assert(first.length >= 4 + 2 * 4 + 3 + 1);
+    foreach (i, id; first)
+    {
+        assert(id != 0, "every target is numbered");
+        assert(!first[i + 1 .. $].canFind(id), "two targets share an id");
+    }
+    const tree = OpenerHits.find(hits)[OpenerControl.tree];
+    const close = hits.find(toolbarKey(2))[ToolAction.close];
+
+    const second = frame(banner: true);
+    foreach (i, id; second)
+        assert(!second[i + 1 .. $].canFind(id), "the banner shares an id");
+    size_t control;
+    assert(OpenerHits.find(hits).controls.indexOf(tree, control)
+        && control == OpenerControl.tree, "the press on ☰ still names ☰");
+    assert(hits.find(toolbarKey(2)).indexOf(close, control) && control == ToolAction.close);
+    assert(!hits.find(toolbarKey(1)).contains(close), "and no other pane's button");
 }
