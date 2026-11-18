@@ -211,7 +211,7 @@ Progress, by the gate's items:
   (`--trace-compiles`); two concurrent producers of one graph both succeed,
   the loser adopting the winner's entries (oracle 7 step 1, one file system).
 
-Next: a consumer served from a digest record alone, `ci cache`, `pkg-config`'s
+Next: a consumer served from a digest record alone, `ci cache store`, `pkg-config`'s
 absent candidates, and the remaining oracles over the whole test selection
 (2, 4, 5, 7, 9, 10, 16–19, 21).
 

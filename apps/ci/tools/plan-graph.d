@@ -1533,7 +1533,7 @@ Toolchain toolchainOf(const Tools tools)
 
 /**
 BGS7's operations on the store beneath `cache`, the test-only driver's
-`ci cache`: `size`, `list`, `gc`, `verify`, `evict[=<results bytes>]`,
+`ci cache store`: `size`, `list`, `gc`, `verify`, `evict[=<results bytes>]`,
 and `remove-key=`, `remove-task=`, `remove-package=` or
 `remove-toolchain=` a value.
 */
