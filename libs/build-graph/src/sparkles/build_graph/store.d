@@ -38,6 +38,7 @@ import std.algorithm.iteration : splitter;
 import std.algorithm.searching : startsWith;
 import std.array : array;
 import std.conv : text;
+import std.string : indexOf;
 
 import sparkles.base.vfs.types : Access, Disposition, EntryKind, OpenMode, Rights, Stat, StatMask;
 
@@ -341,16 +342,49 @@ struct Store(D)
         auto r = new ResultRecord;
         if (!parseRecord(source, *r) || r.resultKey != resultKey)
             return null;
+        // BGF4: the store refuses links, so every component an output's path
+        // crosses is checked before anything is read through it.
+        if (const link = linkIn("results/" ~ resultKey ~ "/out"))
+            return discard(resultKey, link);
         auto out_ = v.walk("results/" ~ resultKey ~ "/out");
         if (out_.hasError)
             return discard(resultKey, "its out directory is missing");
         foreach (ref o; r.outputs)
         {
+            if (const link = linkIn("results/" ~ resultKey ~ "/out/" ~ o.path))
+                return discard(resultKey, link);
             auto st = statPath(out_.value, o.path);
             if (st.hasError || st.value.kind != EntryKind.regular || st.value.size != o.size)
                 return discard(resultKey, "output " ~ o.path ~ " is missing or changed size");
         }
         return r;
+    }
+
+    /*
+    BGF4, VFP4: why `path`, beneath the store's top directory, crosses a
+    link, or null. Each component is stat-ed where it lies, and a stat
+    never follows the entry it names (VFO2), so a link planted in an entry
+    is found without reading anything it points to, inside the store or out.
+    A component that does not exist is no link; the lookup reports it.
+    */
+    private string linkIn(string path)
+    {
+        import sparkles.base.vfs.types : StatMask;
+
+        size_t end;
+        while (end < path.length)
+        {
+            end = path.indexOf('/', end + 1);
+            if (end == size_t.max)
+                end = path.length;
+            const prefix = path[0 .. end];
+            auto st = statPath(v, prefix, StatMask.basic);
+            if (st.hasError)
+                return null;
+            if (st.value.kind == EntryKind.symlink)
+                return prefix ~ " is a link, which the store refuses (symlinkRefused)";
+        }
+        return null;
     }
 
     /**
@@ -1143,4 +1177,67 @@ private bool word(scope const(char)[] line, string keyword, out string rest) @sa
     const newer = "format 1\nkind compile\narg -O3\nenv PATH=\ninput " ~ d2 ~ " libs/a.d\n";
     assert(preimageDifferences(older, newer) == "arg, input libs/a.d");
     assert(preimageDifferences(older, older) == "");
+}
+
+/// BGF4: a link planted in a published entry, at its output or at any
+/// directory above it, makes the entry corrupt: the lookup misses, names the
+/// link, and moves the entry to `trash/`.
+@("build_graph.store.find.refusesLinks")
+@system unittest
+{
+    import sparkles.base.hash.blake3 : blake3;
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : DotDotPolicy, ResolvePolicy, SymlinkPolicy;
+    import sparkles.event_horizon.sys : BlockingVfs;
+    import std.algorithm.searching : canFind;
+    import std.process : environment, thisProcessID;
+
+    auto vfs = new BlockingVfs;
+    auto tmp = openRoot!(Rights.all)(vfs, environment.get("TMPDIR", "/tmp"), ambientAuthority(),
+        ResolvePolicy(SymlinkPolicy.beneath, DotDotPolicy.reject));
+    assert(!tmp.hasError);
+    const name = text("sparkles-store-links-", thisProcessID);
+    cast(void) tmp.value.removeTree(name);
+    auto top = tmp.value.walkAll(name);
+    assert(!top.hasError);
+    scope (exit)
+        cast(void) tmp.value.removeTree(name);
+    auto build = top.value.walkAll("build");
+    Store!(typeof(build.value)) store;
+    assert(Store!(typeof(build.value)).open(build.value, "1-1", store));
+    auto out_ = top.value.walkAll("runs/r/out");
+
+    // Publishes `task` with the output `sub/f`, returning its key.
+    string publishOne(string task)
+    {
+        auto dir = out_.value.walkAll(task ~ "/sub");
+        char[8] bytes = 'x';
+        assert(!dir.value.writeFileAtomic("f", bytes[]).hasError);
+        ResultRecord r;
+        r.task = task;
+        r.resultKey = task ~ "-key";
+        r.outputs = [OutputRecord("sub/f", 8, false, blake3(cast(const(ubyte)[]) bytes[]))];
+        assert(store.publish(out_.value, task, r, "../../../build/v1/results/{}/out") !is null, store.note);
+        return r.resultKey;
+    }
+
+    // The output itself replaced by a link to a file of the same size.
+    const a = publishOne("a");
+    assert(store.find(a) !is null);
+    auto sub = build.value.walk("v1/results/" ~ a ~ "/out/sub");
+    assert(!sub.hasError);
+    assert(!sub.value.renameAt("f", sub.value, "g").hasError);
+    assert(!sub.value.symlinkAt("f", "g").hasError);
+    assert(store.find(a) is null);
+    assert(store.note.canFind("out/sub/f is a link"), store.note);
+    assert(!store.published(a));
+
+    // A directory above it replaced by a link to a copy.
+    const b = publishOne("b");
+    auto out2 = build.value.walk("v1/results/" ~ b ~ "/out");
+    assert(!out2.hasError);
+    assert(!out2.value.renameAt("sub", out2.value, "real").hasError);
+    assert(!out2.value.symlinkAt("sub", "real").hasError);
+    assert(store.find(b) is null);
+    assert(store.note.canFind("out/sub is a link"), store.note);
 }
