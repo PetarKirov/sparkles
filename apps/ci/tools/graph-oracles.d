@@ -36,6 +36,7 @@ import std.conv : text;
 import std.file : exists, mkdirRecurse, readText, rmdirRecurse, tempDir, write;
 import std.path : absolutePath, buildNormalizedPath, buildPath, dirName;
 import std.process : thisProcessID;
+static import std.process;
 import std.stdio : stderr, writeln;
 import std.sumtype : match;
 
@@ -96,6 +97,8 @@ struct Oracle
 }
 
 immutable Oracle[] oracles = [
+    Oracle("5", &oracle5),
+    Oracle("8", &oracle8),
     Oracle("10", &oracle10),
     Oracle("11", &oracle11),
     Oracle("13", &oracle13),
@@ -1529,6 +1532,137 @@ Verdict[] oracle10()
         vs ~= Verdict("step 4", !executed(g, gen) ? "an edit to an imported module left the generator a hit"
             : executed(h, gen) ? "an edit to a module the shaders do not import reran the generator" : null,
             "an imported module's edit reran the generator; another module's did not");
+    }
+    return vs;
+}
+
+// === Oracle 8: the layout lint's revert check ===
+
+/// With the lint, a field a library adds under `version (unittest)` fails
+/// planning at its place; without it, the test plans and links, and
+/// misreads the aggregate the library compiled without the field.
+Verdict[] oracle8()
+{
+    auto lib = Fixture.add("o8l", [
+        "dub.sdl": recipeOf("o8l"),
+        "src/sparkles/zz_o8l/s.d": "module sparkles.zz_o8l.s;\n\nstruct S\n{\n    version (unittest) int x;\n    int y;\n}\n\n"
+            ~ "int getY(ref const S s) => s.y;\n",
+    ]);
+    auto test = Fixture.add("o8t", [
+        "dub.sdl": recipeOf("o8t", ["zz-oracle-o8l"]),
+        "src/sparkles/zz_o8t/t.d": "module sparkles.zz_o8t.t;\n\nimport sparkles.zz_o8l.s;\n\n"
+            ~ "unittest\n{\n    S s;\n    s.y = 5;\n    assert(getY(s) == 5);\n}\n",
+    ]);
+    auto linted = run(test.name, freshCache("o8"));
+    RunOptions o;
+    o.noLayoutLint = true;
+    auto unlinted = run(test.name, freshCache("o8"), o);
+    const link = taskOf(unlinted, test.task("link"));
+    const t = taskOf(unlinted, test.task("test"));
+    return [Verdict("revert check",
+        !linted.error.canFind("s.d") ? "with the lint, planning did not fail at the field: " ~ linted.error
+        : unlinted.error.length ? "without the lint, planning failed: " ~ unlinted.error
+        : !executed(unlinted, link) || !stored(unlinted, link) ? "without the lint, the test did not link:" ~ tailOf(unlinted.log)
+        : !executed(unlinted, t) || unlinted.exitCode == 0 ? "without the lint, the test read the aggregate right" : null,
+        "the lint fails planning at the field; without it the test links and misreads the aggregate")];
+}
+
+// === Oracle 5: relocation ===
+
+/// The files of the published result `key` beneath `cache`, by name, but
+/// its log: what the action declared and made.
+string[string] outputsOf(string cache, string key)
+{
+    import std.file : dirEntries, read, SpanMode;
+
+    string[string] files;
+    const out_ = buildPath(cache, "build", "v1", "results", key, "out");
+    if (!exists(out_))
+        return files;
+    foreach (e; dirEntries(out_, SpanMode.depth))
+        if (e.isFile && !e.name.endsWith("/output.log"))
+            files[e.name[out_.length + 1 .. $]] = cast(string) read(e.name);
+    return files;
+}
+
+Verdict[] oracle5()
+{
+    import std.process : execute;
+
+    Verdict[] vs;
+    const other = secondWorktree();
+    scope (exit)
+        removeWorktree(other);
+    const cacheA = freshCache("o5"), cacheB = freshCache("o5");
+    auto a = run("versions", cacheA);
+    auto b = run("versions", cacheB, RunOptions.init, other);
+    if (a.exitCode != 0 || b.exitCode != 0)
+        return [Verdict("setup", "versions did not build in both worktrees:" ~ tailOf(a.log ~ b.log))];
+
+    // Steps 1 and 2: equal keys, byte-identical outputs, and no worktree's path in them.
+    {
+        string why;
+        if (a.stats.declaredKeys != b.stats.declaredKeys)
+            why = "the declared keys differ between the worktrees";
+        else if (a.stats.resultKeys != b.stats.resultKeys)
+            why = "the result keys differ between the worktrees";
+        else
+            foreach (task, key; a.stats.resultKeys)
+            {
+                const fa = outputsOf(cacheA, key), fb = outputsOf(cacheB, key);
+                if (fa != fb)
+                    why ~= " " ~ task ~ "'s outputs differ;";
+                foreach (name, bytes; fa)
+                    if (bytes.canFind(root) || bytes.canFind(other))
+                        why ~= " " ~ task ~ "'s " ~ name ~ " names a worktree;";
+            }
+        vs ~= Verdict("steps 1-2", why, text(a.stats.resultKeys.length,
+            " results with equal keys and byte-identical outputs, naming neither worktree"));
+    }
+
+    // Step 3: the test binary built in A passes from B, opening B's files.
+    {
+        const link = taskOf(a, "link:sparkles.versions:");
+        const key = a.stats.resultKeys.get(link, null);
+        string binary;
+        foreach (name, _; outputsOf(cacheA, key))
+            binary = buildPath(cacheA, "build", "v1", "results", key, "out", name);
+        const traceFile = buildPath(scratch, "o5.trace");
+        const r = execute(["strace", "-f", "-qq", "-e", "trace=openat,open,stat,newfstatat", "-o", traceFile,
+            binary, "--no-runner"], null, std.process.Config.none, size_t.max, other);
+        const trace = exists(traceFile) ? readText(traceFile) : "";
+        vs ~= Verdict("step 3", r.status != 0 ? "the binary from A failed in B:\n" ~ r.output
+            : trace.canFind("\"" ~ root ~ "/") ? "the binary from A opened a file of A" : null,
+            "the binary built in A passes from B and opens nothing of A's");
+    }
+
+    // Step 4: without the prefix map, the keys differ by the root.
+    {
+        RunOptions o;
+        o.adjustPlan = (ref Planned p) {
+            wrapActions(p, "compile:", (string[] argv) => argv.filter!(x => !x.startsWith("--ffile-prefix-map=")).array);
+        };
+        auto na = run("versions", freshCache("o5"), o);
+        auto nb = run("versions", freshCache("o5"), o, other);
+        const compile = taskOf(na, "compile:sparkles.versions:test-root:");
+        vs ~= Verdict("step 4", na.stats.declaredKeys.get(compile, "a") == nb.stats.declaredKeys.get(compile, "b")
+            ? "without a prefix map, the two worktrees' compiles share a key" : null,
+            "without a prefix map, the compile's key differs between the worktrees");
+    }
+
+    // Step 5: examples through the graph.
+    vs ~= Verdict("step 5", "not run: `ci docs verify` builds its examples with dub, not through the graph", null);
+
+    // Step 6: no output names the toolchain's druntime or Phobos sources.
+    {
+        string why;
+        if (!a.toolchain.root.length)
+            why = "the toolchain reported no tree of its own";
+        foreach (task, key; a.stats.resultKeys)
+            foreach (name, bytes; outputsOf(cacheA, key))
+                if (bytes.canFind(a.toolchain.root ~ "/include"))
+                    why ~= " " ~ task ~ "'s " ~ name ~ " names " ~ a.toolchain.root ~ "/include;";
+        vs ~= Verdict("step 6", why, "no output, test binary included, names the toolchain's druntime or Phobos sources");
     }
     return vs;
 }
