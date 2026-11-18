@@ -36,13 +36,13 @@ configuration "library" {
 //
 // The pre-generate step compiles the `shaders` configuration below to SPIR-V
 // in `generated/shaders/` (git-ignored) and is a no-op while its stamp is
-// fresh. `--temp-build` keeps concurrent dependents from racing on the tool's
-// build.
+// fresh. The tool builds once, into dub's cache; later builds reuse it
+// (`SHB7`).
 configuration "gpu-shaders" {
     targetType "sourceLibrary"
     versions "SparklesVulkanWsiTriangle"
     stringImportPaths "generated/shaders"
-    preGenerateCommands "$DUB run --temp-build -q --root=$PACKAGE_DIR/../../apps/shader-compile -- --package=$PACKAGE_DIR --out=$PACKAGE_DIR/generated/shaders --if-stale"
+    preGenerateCommands "$DUB run -q --root=$PACKAGE_DIR/../../apps/shader-compile -- --package=$PACKAGE_DIR --out=$PACKAGE_DIR/generated/shaders --if-stale"
 }
 
 configuration "unittest" {

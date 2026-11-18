@@ -250,8 +250,18 @@ needs the opt-in may itself be reachable only that way, as a backend is, so
 the selection belongs to each package that adds the edge; an application's
 top level leaks into nothing.
 
-**SHB7: Concurrent builds.** Dependents building in parallel **must not**
-race on the build of the step itself or on its output. The pre-generate
-command builds and runs the step with `dub run --temp-build`, which builds in
-a temporary directory rather than into the step's package, and the step's own
-writes are atomic (`SHP8`).
+**SHB7: Concurrent builds.** _(Revised.)_ A dependent **must not** run a
+partly written build of the step, and dependents building in parallel
+**must not** race on its output. The pre-generate command runs the step with
+`dub run`, which builds it once, into dub's cache, and reuses that build
+while its sources are unchanged. dub installs a new build by removing the old
+target and linking the new one in its place, never by rewriting the file, so
+a dependent still running the old build keeps it. The step's own writes are
+atomic (`SHP8`).
+
+_Rationale:_ the command ran `dub run --temp-build`, which built the step and
+its whole dependency closure from scratch on every build of every dependent,
+fresh shaders included: 20 s with LDC, 48 s once the step resolved recipes
+itself (`SHP1`). Two dependents that both find the step stale still build it
+in the same cache directory, as they build every dependency they share: dub
+locks no build.

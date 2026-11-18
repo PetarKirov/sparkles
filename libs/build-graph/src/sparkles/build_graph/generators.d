@@ -278,7 +278,7 @@ size_t indexFrom(string s, char c, size_t from) @safe pure nothrow @nogc
     assert(g.output == "/s/dmd/generated/dub");
     assert(g.arguments == ["$OUT", "/s/dmd/VERSION", "/etc"]);
 
-    const shader = "$DUB run --temp-build -q --root=$PACKAGE_DIR/../../apps/shader-compile -- "
+    const shader = "$DUB run -q --root=$PACKAGE_DIR/../../apps/shader-compile -- "
         ~ "--package=$PACKAGE_DIR --out=$PACKAGE_DIR/generated/shaders --if-stale";
     assert(recognizeGenerator("/r/libs/ui", shader, ["/r/libs/ui/generated/shaders"], g, e), e.message);
     assert(g.kind == GeneratorKind.shaderCompiler && g.program == "/r/apps/shader-compile");
