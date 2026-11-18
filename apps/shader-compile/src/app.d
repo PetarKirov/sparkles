@@ -256,6 +256,8 @@ int main(string[] args)
         "described", "The device configuration as `dub describe` would report it, read from this file instead of running dub: a build graph's direct invocation.", &described,
         "tool", "`<name>=<path>`: run the SPIR-V or GLSL tool `<name>` (`spirv-val`, `glslangValidator`, …) at `<path>` rather than from PATH. Repeatable.", &tools,
         "if-stale", "Do nothing while `--out`'s stamp says its inputs are unchanged — the build step's mode.", &ifStale,
+        "makedeps-digests", "Write, to this file, the digest of every file the unit's device compiles read, as LDC's `-makedeps-digests` writes it: what a build graph keys the step on.", &dependencyOutput.digests,
+        "makedeps-absent", "Write, to this file, the paths those compiles' imports looked for and did not find, as LDC's `-makedeps-absent` writes them.", &dependencyOutput.absent,
         "keep", "Keep the scratch directory (SPIR-V, disassembly) and print its path.", &keep,
         "quiet", "Only report problems.", &quiet);
     if (help.helpWanted)
@@ -390,6 +392,10 @@ int run(in DeviceBuild build, in Unit unit, in string[2][] inputs, string outDir
     scope (exit)
         if (!keep && scratch.exists)
             scratch.rmdirRecurse;
+    // Before the scratch directory goes: what every compile reported reading.
+    scope (exit)
+        dependencyOutput.merge();
+    dependencyOutput.scratch = scratch;
 
     const compileFlags = ["-c", "-m64", "-mdcompute-targets=" ~ build.target]
         ~ build.versions.map!(v => "-d-version=" ~ v).array
@@ -424,7 +430,7 @@ int run(in DeviceBuild build, in Unit unit, in string[2][] inputs, string outDir
     //    the declarations alone (`SHC5`).
     const manifestPath = buildPath(scratch, "manifest.json");
     const listed = tryExecute([ldc] ~ compileFlags ~ ["-mdcompute-manifest=" ~ manifestPath]
-        ~ unit.sources);
+        ~ dependencyOutput.flags ~ unit.sources);
     if (listed.status != 0 || !manifestPath.exists)
     {
         stderr.writeln(listed.output);
@@ -481,7 +487,7 @@ int run(in DeviceBuild build, in Unit unit, in string[2][] inputs, string outDir
             ~ compileFlags.map!(f => f.startsWith("-mdcompute-targets=")
                 ? "-mdcompute-targets=" ~ target : f).array
             ~ profileFlags(profile) ~ ["-mdcompute-file-prefix=" ~ prefix, "-od=" ~ dir]
-            ~ unit.sources);
+            ~ dependencyOutput.flags ~ unit.sources);
         if (compiled.status != 0)
         {
             stderr.writeln(compiled.output);
@@ -1309,6 +1315,53 @@ private struct Run
     int status;
     string output;
 }
+
+// `--makedeps-digests` and `--makedeps-absent`: each device compile of the
+// unit writes its own dependency output into the scratch directory, and
+// they are merged into the requested files, so the step reports every file
+// any of its compiles read (build graph BGG5).
+private struct DependencyOutput
+{
+    string digests, absent; // the requested files; empty for none
+    string scratch;
+    private size_t compiles;
+
+    // The flags of one more compile.
+    string[] flags()
+    {
+        if (!digests.length && !absent.length)
+            return null;
+        const n = text(compiles++);
+        // LDC writes digests and absent candidates beside the make rule.
+        return ["-makedeps=" ~ buildPath(scratch, "deps-" ~ n ~ ".d"),
+            "-makedeps-digests=" ~ buildPath(scratch, "deps-" ~ n ~ ".digests"),
+            "-makedeps-absent=" ~ buildPath(scratch, "deps-" ~ n ~ ".absent")];
+    }
+
+    // Writes the requested files from every compile's: each digest line
+    // once, and the absent candidates' rules one after another.
+    void merge()
+    {
+        string[] lines;
+        string rules;
+        foreach (i; 0 .. compiles)
+        {
+            const base = buildPath(scratch, "deps-" ~ text(i));
+            if (exists(base ~ ".digests"))
+                foreach (line; readText(base ~ ".digests").lineSplitter)
+                    if (!lines.canFind(line))
+                        lines ~= line.idup;
+            if (exists(base ~ ".absent"))
+                rules ~= readText(base ~ ".absent");
+        }
+        if (digests.length)
+            write(digests, lines.map!(l => l ~ "\n").join);
+        if (absent.length)
+            write(absent, rules);
+    }
+}
+
+private __gshared DependencyOutput dependencyOutput;
 
 // The tools `--tool` names, by name: run at their paths, never from PATH.
 private __gshared string[string] toolPaths;

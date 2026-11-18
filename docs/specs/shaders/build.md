@@ -163,8 +163,13 @@ files), and **must not** run dub. With `--tool=<name>=<path>`, it **must**
 run the SPIR-V or GLSL tool `<name>` at `<path>`, never from `PATH`, and the
 device compiler runs the `spirv-opt` it names over an optimised compilation's
 SPIR-V (`-mdcompute-spirv-opt`), so the compilation does not depend on `PATH`
-either. Without
-`--if-stale`, it decides no freshness. Together they are the build graph's
+either. With `--makedeps-digests=<file>` and
+`--makedeps-absent=<file>` it **must** write the digest of every file its
+device compiles read, and the paths their imports looked for and missed,
+merged across the unit's compiles as the compiler writes them, so a build
+graph keys it by what it read, as it keys a compile
+([build graph BGG5](../build-primitives/build-graph/SPEC.md#_7-generators)).
+Without `--if-stale`, it decides no freshness. Together they are the build graph's
 invocation ([build graph BGG3](../build-primitives/build-graph/SPEC.md#_7-generators)):
 the graph resolves the configuration itself, writes the file, names every
 tool by absolute path, and leaves staleness to its cache. `SHP1`'s rules
