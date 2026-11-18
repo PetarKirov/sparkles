@@ -24,7 +24,7 @@
       "mode": "test",
       "legs": ["parallel"],
       "coverage": false,
-      "shards": 2,
+      "shards": 1,
       "timeoutMinutes": 75,
       "runners": {
         "circleci": "linux",
@@ -38,7 +38,7 @@
       "mode": "test",
       "legs": ["parallel"],
       "coverage": false,
-      "shards": 2,
+      "shards": 1,
       "timeoutMinutes": 110,
       "runners": {
         "circleci": "macos",
@@ -52,7 +52,7 @@
       "mode": "test",
       "legs": ["parallel"],
       "coverage": false,
-      "shards": 3,
+      "shards": 2,
       "timeoutMinutes": 120,
       "runners": {
         "github": "ubuntu-24.04-arm"
