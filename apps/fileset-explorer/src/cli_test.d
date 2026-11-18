@@ -26,6 +26,11 @@ import sparkles.fileset_tools.stats : formatStats;
     assert(bare, bare.error.message);
     assert(bare.value.query == "src/**");
     assert(bare.value.command.match!((ref View v) => v.renderPlain, (ref _) => false), "the default is view");
+    // Hue's Nerd Font icons in a terminal unless told otherwise (FXU9).
+    assert(bare.value.command.match!((ref View v) => v.nerdFont, (ref _) => false));
+    auto plainIcons = parseCli!Explorer(["fileset-explorer", "view", "--no-nerd-font"]);
+    assert(plainIcons, plainIcons.error.message);
+    assert(plainIcons.value.command.match!((ref View v) => !v.nerdFont, (ref _) => false));
 
     foreach (args; [["fileset-explorer", "--dir", "d", "stats"], ["fileset-explorer", "stats", "--dir", "d"]])
     {

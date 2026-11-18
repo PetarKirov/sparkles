@@ -56,7 +56,7 @@ drag scrolls the pane under it by its exact distance, and a lifted finger
 flings it on.
 */
 RunExpected!void launch(Root dir, string query, GuiOptions gui, bool touch = false,
-    NativeOptions native = NativeOptions.init)
+    NativeOptions native = NativeOptions.init, bool nerdFont = true)
 {
     auto app = new ExplorerApp(dir, query);
     if (touch)
@@ -67,6 +67,8 @@ RunExpected!void launch(Root dir, string query, GuiOptions gui, bool touch = fal
         native: native,
         fractionalScroll: true,
         touchGestures: TouchGestures.all,
+        // Hue's file icons in a terminal too, as hue draws them (`FXU9`).
+        nerdFont: nerdFont,
     };
     cast(void) cfg.app.id.assign("dev.petar_kirov.sparkles.fileset_explorer");
     cast(void) cfg.app.name.assign("Fileset Explorer");
