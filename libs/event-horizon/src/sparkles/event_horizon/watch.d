@@ -147,15 +147,18 @@ unittest
     Sched s;
     schedOrSkip(s);
 
-    enum dir = "/tmp/sparkles-event-horizon-watch-test";
+    // Beneath `TMPDIR`, the one place a confined test may write outside its own
+    // directories (build-graph D39); per process, as tests run in several.
+    import std.conv : text;
+    import std.file : tempDir;
+    import std.process : thisProcessID;
+
+    const dir = text(tempDir, "/sparkles-event-horizon-watch-test-", thisProcessID);
     (() @trusted {
         import core.sys.posix.sys.stat : mkdir;
         import std.conv : octal;
 
-        char[64] z = void;
-        z[0 .. dir.length] = dir[];
-        z[dir.length] = '\0';
-        mkdir(z.ptr, octal!700);
+        mkdir((dir ~ "\0").ptr, octal!700);
     })();
 
     Watcher w;
@@ -187,9 +190,9 @@ unittest
     (() @trusted {
         import core.stdc.stdio : remove;
 
-        remove(dir ~ "/hello.txt\0");
+        remove((dir ~ "/hello.txt\0").ptr);
         import core.sys.posix.unistd : rmdir;
 
-        rmdir(dir ~ "\0");
+        rmdir((dir ~ "\0").ptr);
     })();
 }
