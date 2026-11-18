@@ -1,0 +1,1 @@
+{"tasks":[{"id":"test:vulkan:unittest:parallel","series":"72c996bd214bcda0643e8c491aceae92678d2fb4f2c1c82e62c21837556c6594","outcome":"passed","start":368905183300,"end":371254002900,"metrics":{"task.wall":2348819600}}]}

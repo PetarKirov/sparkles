@@ -1,0 +1,1 @@
+{"tasks":[{"id":"test:dmd-fmt:unittest:parallel","series":"4b38c638f5319b5806d3871d93ba6126d266b971d2cc3dd3645956f162fa7bdf","outcome":"passed","start":164467409100,"end":244139146900,"metrics":{"task.wall":79671737800}}]}
