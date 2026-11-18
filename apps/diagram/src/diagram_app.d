@@ -26,6 +26,7 @@ import sparkles.ui.components.lantern_view : BoxLayout, LabelArena, LanternStyle
     Placement, viewLantern;
 import sparkles.ui.display_list : buildDisplayListInto;
 import sparkles.ui.geometry : Constraints, Size;
+import sparkles.ui.hit_ids : HitKey, HitRegistry;
 import sparkles.ui.interp.immediate : paint;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.state : CaptureState;
@@ -101,6 +102,11 @@ struct DiagramApp
     only `settingsOpen`, which is the flag the keymap and the systems read.
     */
     SettingsPane settingsPane;
+    /**
+    The board's one hit-id registry (`INP27`). `paint` begins its frame; the
+    settings pane claims its rows from it every frame it is shown.
+    */
+    HitRegistry hits;
     /**
     Where `s` writes (`SET5`), set by `main`: `--config-file`'s path, or the
     platform config dir. Empty means the pane has nowhere to save and says so
@@ -298,6 +304,7 @@ struct DiagramApp
     */
     void paint(H)(ref H h, in WidgetTree, in Frame[])
     {
+        hits.beginFrame();
         systemRender(world, camera, h.size, theme.palette, theme.pageFg,
             theme.pageBg, frameOps);
         paintGuide(h.size);
@@ -367,6 +374,7 @@ struct DiagramApp
 
         const g = paneGeometryFor(viewport);
         settingsPane.ensure(world.settings, g);
+        settingsPane.claimHits(hits);
         auto tree = settingsPane.buildView();
         auto frames = layout(tree, Constraints(maxW: g.cols));
         const start = frameOps.length;
@@ -695,6 +703,30 @@ unittest
             && op.rect.width >= g.cols - 4)
             framed = true;
     assert(framed, "the pane's framed surface is on the frame, and centred");
+}
+
+@("diagram.app.theSettingsRowsHoldIssuedIdsOnlyWhileShown")
+@safe
+unittest
+{
+    // INP27: the pane's rows are issued from the app's registry on the frames
+    // it is shown, and the block frees once a frame no longer asks for it.
+    import settings_pane : settingsRowsTag;
+
+    auto appOwner = themedApp();
+    ref DiagramApp app() => appOwner.get();
+
+    cast(void) runAppRecorded(app, RunConfig.init, []);
+    assert(!app.hits.find(HitKey(settingsRowsTag)), "a closed pane asks for nothing");
+
+    cast(void) runAppRecorded(app, RunConfig.init, [charEvent(',')]);
+    const rows = app.hits.find(HitKey(settingsRowsTag));
+    assert(rows && rows == app.settingsPane.rowHits);
+    assert(rows.length == app.settingsPane.tree.data.nodes.length);
+
+    cast(void) runAppRecorded(app, RunConfig.init, [keyEvent(Key.escape)]);
+    cast(void) runAppRecorded(app, RunConfig.init, []);
+    assert(!app.hits.find(HitKey(settingsRowsTag)), "the closed pane's block freed");
 }
 
 @("diagram.app.savingWithoutAPathSaysSoInsteadOfGuessing")
