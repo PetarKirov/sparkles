@@ -15,7 +15,7 @@ module graph_driver;
 
 
 import core.time : Duration, hours, minutes, seconds;
-import std.algorithm : canFind, endsWith, filter, map, sort, startsWith;
+import std.algorithm : canFind, endsWith, filter, map, sort, startsWith, uniq;
 import std.array : array, join, replace, split;
 import std.conv : octal, text, to;
 import std.file : dirEntries, readText, SpanMode;
@@ -518,7 +518,8 @@ Nullable!Duration parseLimit(string s)
     }
 }
 
-unittest
+@("graph_driver.parseLimit")
+@system unittest
 {
     assert(parseLimit("90s").get == 90.seconds && parseLimit("2h").get == 2.hours);
     assert(parseLimit("0").get == Duration.zero);
@@ -669,16 +670,21 @@ int runPackage(string root, string only, string into, string cache, bool checkDe
 /// The toolchain as a run names it (§8).
 struct Toolchain
 {
-    string identity; /// the digest of every tool's store-path closure (BGT2)
+    string identity; /// the digest of BGT1's components: store closures (BGT2) and host files (BGT3)
     string config;   /// the compiler's configuration file (BGT1)
     string root;     /// the compiler's own tree, holding druntime's and Phobos' sources
 }
 
 /*
 §8: the compiler reports its configuration file and where `object` lies,
-so the run passes the one explicitly and remaps the other's tree (BGA11);
-the identity is the SHA-256 of the sorted store-path closure of every tool
-the run names, the test runner included (BGT1, BGT2).
+so the run passes the one explicitly and remaps the other's tree (BGA11).
+The identity covers BGT1's components: every tool the run names (the test
+runner included), the configuration's import and library directories
+(druntime's and Phobos' sources and libraries), and the C compiler's
+startup objects, C library and system include directories, as it reports
+them. Each that resolves into the Nix store is named by its store-path
+closure (BGT2); each other file by its digest, each other directory by the
+digest of its files (BGT3).
 */
 Toolchain toolchainOf(const Tools tools)
 {
@@ -707,17 +713,222 @@ Toolchain toolchainOf(const Tools tools)
                 t.root = line[open + 1 .. at].idup;
         }
     }
-    string[] paths = [tools.compiler, t.config, tools.cc, tools.linker, tools.archiver, tools.fail,
+    string[] files = [tools.compiler, t.config, tools.cc, tools.linker, tools.archiver, tools.fail,
         tools.deviceCompiler, environment.get("SPARKLES_TEST_RUNNER", "")];
     foreach (tool; tools.shaderTools)
-        paths ~= tool[1];
-    paths = paths.filter!(p => p.length).array;
-    const closure = execute(["nix-store", "--query", "--requisites"] ~ paths);
-    // A toolchain outside the store is named by its paths alone (BGT3 is E3's).
-    const listing = closure.status == 0 ? closure.output.lineSplitter.map!(l => l.idup).array.sort.release.join("\n")
-        : paths.join("\n");
-    t.identity = hexOf(sha256Of(listing));
+        files ~= tool[1];
+    string[] trees = configDirectories(t.config);
+    if (tools.cc.length)
+    {
+        files ~= cRuntimeFiles(tools.cc);
+        trees ~= cIncludeDirectories(tools.cc);
+    }
+    import std.functional : toDelegate;
+
+    t.identity = hexOf(sha256Of(identityListing(files, trees, toDelegate(&storeClosure))));
     return t;
+}
+
+// The directories an LDC configuration (a file, or a directory of them) names: its `-I` import roots
+// (druntime's and Phobos' sources) and its library directories.
+string[] configDirectories(string config)
+{
+    import std.file : exists, isDir, readText;
+
+    string[] dirs;
+    if (!config.length || !exists(config))
+        return dirs;
+    // A configuration may be a directory of files, as Nix's LDC has it.
+    string text_;
+    if (isDir(config))
+    {
+        string[] names;
+        foreach (e; dirEntries(config, SpanMode.depth))
+            if (e.isFile)
+                names ~= e.name;
+        foreach (name; names.sort)
+            text_ ~= readText(name) ~ "\n";
+    }
+    else
+        text_ = readText(config);
+    for (size_t i; i < text_.length; ++i)
+    {
+        if (text_[i] != '"')
+            continue;
+        size_t j = i + 1;
+        while (j < text_.length && text_[j] != '"')
+            ++j;
+        auto s = text_[i + 1 .. j];
+        i = j;
+        if (s.startsWith("-I="))
+            s = s[3 .. $];
+        else if (s.startsWith("-I"))
+            s = s[2 .. $];
+        else if (s.startsWith("-L-L"))
+            s = s[4 .. $];
+        if (s.startsWith("/") && !s.canFind('%') && exists(s) && isDir(s) && !dirs.canFind(s))
+            dirs ~= s.idup;
+    }
+    return dirs;
+}
+
+// The C compiler's startup objects and C library, as it resolves them in the
+// environment a build action has, which is cleared (BGA4): the dev shell's
+// wrapper adds every package's headers through `NIX_CFLAGS_COMPILE`.
+string[] cRuntimeFiles(string cc)
+{
+    import std.process : Config, execute;
+    import std.string : strip;
+
+    string[] found;
+    foreach (name; ["crt1.o", "crti.o", "crtn.o", "Scrt1.o", "libc.so", "libc.a", "libgcc.a"])
+    {
+        const r = execute([cc, "-print-file-name=" ~ name], null, Config.newEnv);
+        const path = r.output.strip;
+        // A name it cannot resolve comes back bare.
+        if (r.status == 0 && path.startsWith("/"))
+            found ~= path.idup;
+    }
+    return found;
+}
+
+// The directories the C compiler searches for `#include <…>`, in a build
+// action's cleared environment.
+string[] cIncludeDirectories(string cc)
+{
+    import std.process : Config, execute;
+    import std.string : lineSplitter, strip;
+
+    string[] dirs;
+    bool inList;
+    foreach (line; execute([cc, "-E", "-v", "-x", "c", "/dev/null", "-o", "/dev/null"], null, Config.newEnv)
+            .output.lineSplitter)
+    {
+        if (line.startsWith("#include <...> search starts here:"))
+            inList = true;
+        else if (line.startsWith("End of search list."))
+            break;
+        else if (inList && line.strip.startsWith("/"))
+            dirs ~= line.strip.idup;
+    }
+    return dirs;
+}
+
+// The store-path closure of `paths` (BGT2), sorted; null when it cannot be
+// queried, as without Nix.
+string[] storeClosure(const string[] paths)
+{
+    import std.process : execute;
+    import std.string : lineSplitter;
+
+    if (!paths.length)
+        return [];
+    const r = execute(["nix-store", "--query", "--requisites"] ~ paths);
+    return r.status == 0 ? r.output.lineSplitter.map!(l => l.idup).array.sort.release : null;
+}
+
+/**
+The text a toolchain identity digests (BGT1–BGT3): each component of
+`files` and `trees` that resolves into the Nix store, by the sorted closure
+`closure` gives of them all; each other file as `file <digest> <path>`, each
+other directory as `tree <digest> <path>` (the digest of its files' paths and
+digests, sorted), and a component that is not there as `absent <path>`.
+Without a closure (no Nix), store paths are read as host ones.
+*/
+string identityListing(const string[] files, const string[] trees, scope string[] delegate(const string[]) closure)
+{
+    import std.file : exists, isDir, isFile, read;
+    import sparkles.base.hash.blake3 : blake3;
+    import sparkles.build_graph.store : hexOf;
+
+    static string resolved(string path)
+    {
+        import core.stdc.stdlib : free;
+        import core.sys.posix.stdlib : realpath;
+        import std.string : fromStringz, toStringz;
+
+        auto r = (() @trusted => realpath(path.toStringz, null))();
+        if (r is null)
+            return path;
+        scope (exit)
+            (() @trusted => free(r))();
+        return (() @trusted => r.fromStringz.idup)();
+    }
+    static string fileDigest(string path) => hexOf(blake3(cast(const(ubyte)[]) read(path)));
+    static string treeDigest(string dir)
+    {
+        string[] entries;
+        foreach (e; dirEntries(dir, SpanMode.depth))
+            if (e.isFile)
+                entries ~= e.name ~ " " ~ fileDigest(e.name);
+        return hexOf(blake3(cast(const(ubyte)[]) entries.sort.release.join("\n")));
+    }
+
+    string[] store, host;
+    bool[string] isTree;
+    foreach (i, p; files ~ trees)
+    {
+        if (!p.length)
+            continue;
+        const r = resolved(p);
+        isTree[r] = i >= files.length;
+        (r.startsWith("/nix/store/") ? store : host) ~= r;
+    }
+    string[] lines;
+    if (store.length)
+    {
+        const c = closure(store);
+        if (c is null)
+            host ~= store;
+        else
+            lines ~= c;
+    }
+    foreach (p; host)
+        lines ~= !exists(p) ? "absent " ~ p
+            : isTree[p] && isDir(p) ? "tree " ~ treeDigest(p) ~ " " ~ p
+            : "file " ~ fileDigest(p) ~ " " ~ p;
+    return lines.sort.uniq.array.join("\n");
+}
+
+/// A host component is named by its contents, a store one by its closure,
+/// and both kinds may mix (BGT2, BGT3).
+@("graph_driver.identityListing.hostAndStore")
+@system unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.process : thisProcessID;
+
+    const dir = buildPath(tempDir, text("toolchain-identity-test-", thisProcessID));
+    mkdirRecurse(buildPath(dir, "include", "sys"));
+    scope (exit)
+        rmdirRecurse(dir);
+    write(buildPath(dir, "cc"), "#!/bin/sh\n");
+    write(buildPath(dir, "include", "sys", "types.h"), "typedef int t;\n");
+    string[] queried;
+    string[] closure(const string[] paths)
+    {
+        queried = paths.dup;
+        return ["/nix/store/aaa-ldc"];
+    }
+    const files = [buildPath(dir, "cc"), "/nix/store/aaa-ldc/bin/ldc2", buildPath(dir, "gone")];
+    const trees = [buildPath(dir, "include")];
+    const before = identityListing(files, trees, &closure);
+    assert(queried == ["/nix/store/aaa-ldc/bin/ldc2"]);
+    assert(before.canFind("/nix/store/aaa-ldc\n"));
+    assert(before.canFind("absent " ~ buildPath(dir, "gone")));
+    assert(before.canFind(" " ~ buildPath(dir, "cc")) && before.canFind("tree "));
+
+    // An edited host header changes the identity; so does an edited tool.
+    write(buildPath(dir, "include", "sys", "types.h"), "typedef long t;\n");
+    const header = identityListing(files, trees, &closure);
+    assert(header != before);
+    write(buildPath(dir, "cc"), "#!/bin/sh\nexit 0\n");
+    assert(identityListing(files, trees, &closure) != header);
+
+    // Without Nix, a store path is read as a host one.
+    string[] none(const string[]) => null;
+    assert(identityListing([buildPath(dir, "cc"), "/nix/store/aaa-ldc/bin/ldc2"], null, &none)
+        .canFind("absent /nix/store/aaa-ldc/bin/ldc2"));
 }
 
 
