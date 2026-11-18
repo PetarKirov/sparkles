@@ -90,6 +90,8 @@ and O6.
 Gate: `apps/ci` M3a's gate. Oracle 12's signature and append steps pass against
 a local remote.
 
+Progress: delivered, with M3a's gate met (`apps/ci` PLAN M3a).
+
 ## O3: Compile and link families
 
 - The fork's time-trace summary mode (OBC8), with tests that fail without it,
@@ -164,7 +166,7 @@ Gate: oracles 2, 3 and 8 on macOS and Windows, and oracle 10's Nix scenario.
 | --------- | ----------------------------------- | ----------- |
 | O0        | Specification and spikes            | in review   |
 | O1        | Vocabulary and action accounting    | not started |
-| O2a       | Test wall times for placements      | in progress |
+| O2a       | Test wall times for placements      | done        |
 | O2        | Run records and reports             | not started |
 | O3        | Compile and link families           | not started |
 | O4        | Test usage                          | not started |

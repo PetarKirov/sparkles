@@ -110,7 +110,9 @@ shards are packed from them, with no package named in any workflow; every
 shard of a run packs identically, checked by a test that packs one placement
 from two `--history-tip` reads; a forged or unsigned record is not read.
 
-Progress: delivered on `feat/ci-placements`, waiting for the gate's landings.
+Progress: delivered. The landings of #742 and #743 appended their records
+(`8133e639f`, `311256477`), and every shard of #744's run 44294916592
+packed from the 15 records at `311256477`.
 Run records (`perf_record`, `perf_run`), the signed history (`perf_history`),
 publishing (`perf_publish`: `ci perf append`, `ci perf push`,
 `ci perf import`), `ci/placements.json` with `ci placements list`
@@ -279,7 +281,7 @@ workflow or user-facing document uses a removed flag.
 | --------- | --------------------------------- | ----------- |
 | M0        | Specifications                    | in review   |
 | M3        | Prerequisite gate                 | partial     |
-| M3a       | Placements before the build graph | in progress |
+| M3a       | Placements before the build graph | done        |
 | M7a       | Canonical command line            | in progress |
 | M7b       | `ci test` on the build graph      | not started |
 | M8        | Coverage and special modes        | not started |
