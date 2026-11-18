@@ -251,13 +251,22 @@ string manifestListText(const Manifest[] list) @safe pure
     return s;
 }
 
+/**
+The version of the manifest extraction: how a compiler's dependency output
+becomes a manifest (BGK2). It enters every compile's result key, so a
+change to the extraction alone, which no declared key sees, still changes
+them (BGK1, oracle 9). Mutable only so the oracle can play another.
+*/
+__gshared uint manifestExtraction = 1;
+
 /// A compile's result key: the digest of its declared key and its
-/// manifest's entries (BGK3).
-string resultKey(string declaredKey, const ref Manifest m) @safe pure
+/// manifest's entries (BGK3), under the manifest extraction's version.
+string resultKey(string declaredKey, const ref Manifest m, uint extraction = manifestExtraction) @safe pure
 {
     import std.digest.sha : sha256Of;
 
-    return hexOf(sha256Of("result " ~ formatVersion.text ~ "\n" ~ declaredKey ~ "\n" ~ m.text));
+    return hexOf(sha256Of("result " ~ formatVersion.text ~ "\nmanifest " ~ extraction.text ~ "\n" ~ declaredKey
+        ~ "\n" ~ m.text));
 }
 
 /// A declared key: the SHA-256 of its preimage, the text naming each
