@@ -309,8 +309,8 @@ TargetCapabilities sessionCapabilities(in TermCaps t) @safe pure nothrow @nogc
     return c;
 }
 
-/// GLY4, D29: the Nerd Font is the application's say-so. Declared, a folder
-/// icon is painted as itself; undeclared, it folds to its Unicode mark.
+/// GLY4, D29: the Nerd Font is the application's say-so. Declared, an open
+/// folder is painted as itself; undeclared, it folds to its Unicode shape.
 @("ui_tui.session.nerdFontIsConfigured")
 @safe pure nothrow @nogc unittest
 {
@@ -319,7 +319,7 @@ TargetCapabilities sessionCapabilities(in TermCaps t) @safe pure nothrow @nogc
     TermCaps t;
     t.unicode = true;
     assert(!sessionCapabilities(t).nerdFont, "no terminal can be asked");
-    assert(projectGlyph('\uF115', sessionCapabilities(t)) == '\u21D7');
+    assert(projectGlyph('\uF115', sessionCapabilities(t)) == '\u25BE');
     t.nerdFont = true;
     assert(sessionCapabilities(t).nerdFont);
     assert(projectGlyph('\uF115', sessionCapabilities(t)) == '\uF115');

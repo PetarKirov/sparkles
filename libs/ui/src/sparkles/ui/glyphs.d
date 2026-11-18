@@ -118,6 +118,14 @@ dchar fallbackOf(dchar g)
         if (g == ig.unicode)
             return ig.ascii;
     }
+    // A file-type icon steps to its kind's shape, then to ASCII.
+    foreach (ref fg; fileIconLadder)
+    {
+        if (g == fg.nerdFont)
+            return fg.unicode;
+        if (g == fg.unicode)
+            return fg.ascii;
+    }
     if (g >= 0x2500 && g <= 0x257F)
         return asciiStroke(g);
     switch (g)
@@ -251,7 +259,7 @@ names are those of the Nerd Fonts release the flake pins (`GLY4`).
 enum ActionIcon : ubyte
 {
     @iconGlyphs('', '↗', '^') share,             /// nf-fa-share_alt
-    @iconGlyphs('', '⇗', '>') open,              /// nf-fa-folder_open_o
+    @iconGlyphs('\uF08E', '⇗', '>') open,          /// nf-fa-external_link
     @iconGlyphs('', '⧉', '=') copy,              /// nf-fa-copy
     @iconGlyphs('', '⎘', 'v') paste,             /// nf-fa-clipboard_alt
     @iconGlyphs('', '⌕', '/') search,            /// nf-fa-search
@@ -270,6 +278,44 @@ enum ActionIcon : ubyte
     @iconGlyphs('\uF08A', '♡', 'c') credits,       /// nf-fa-heart_o
     @iconGlyphs('\uF013', '⚙', '*') settings,      /// nf-fa-gear
 }
+
+/**
+The file-type icons' ladders (`GLY1`): each Nerd Font glyph
+`sparkles.ui.components.file_icons` hands out, with a Unicode stand-in by kind
+and a one-cell ASCII one below it, so a file tree on a target without Nerd
+Font icons still tells a folder from a file and code from a document. Every
+stand-in is a geometric shape, one cell under every width profile (base/text
+`TXT-CELL7`), and one already in this module's fold keeps its ASCII step.
+*/
+static immutable iconGlyphs[] fileIconLadder = [
+    iconGlyphs('\uF114', '▸', '>'), // nf-fa-folder_o: a closed folder
+    iconGlyphs('\uF115', '▾', 'v'), // nf-fa-folder_open_o: an open folder
+    iconGlyphs('\uF016', '▫', '.'), // nf-fa-file_o: any other file
+    // Documents: markdown, text, PDF.
+    iconGlyphs('\uE609', '▤', '='),
+    iconGlyphs('\uF15C', '▤', '='),
+    iconGlyphs('\uF1C1', '▤', '='),
+    // Code and data: D, JavaScript, TypeScript, shell, Nix, Python, Rust,
+    // C, C++, Go, HTML, CSS, shaders, JSON.
+    iconGlyphs('\uE7AF', '◇', '.'),
+    iconGlyphs('\uE781', '◇', '.'),
+    iconGlyphs('\uE628', '◇', '.'),
+    iconGlyphs('\uE795', '◇', '.'),
+    iconGlyphs('\U000F1105', '◇', '.'),
+    iconGlyphs('\uE606', '◇', '.'),
+    iconGlyphs('\uE7A8', '◇', '.'),
+    iconGlyphs('\uE61E', '◇', '.'),
+    iconGlyphs('\uE61D', '◇', '.'),
+    iconGlyphs('\uE627', '◇', '.'),
+    iconGlyphs('\uE736', '◇', '.'),
+    iconGlyphs('\uE749', '◇', '.'),
+    iconGlyphs('\uE6A2', '◇', '.'),
+    iconGlyphs('\uE60B', '◇', '.'),
+    iconGlyphs('\uE615', '◈', '%'), // seti-config: a recipe or a config file
+    iconGlyphs('\uF023', '▣', '#'), // fa-lock: a lock file
+    iconGlyphs('\uF1C5', '◩', '@'), // fa-file_image
+    iconGlyphs('\uF1C6', '▦', '#'), // fa-file_zip_o: an archive
+];
 
 /// Each icon's glyphs, by ordinal, read from the members' UDAs.
 static immutable iconGlyphs[] iconTable = () {
@@ -319,7 +365,10 @@ version (unittest)
         ~ "\U0001FB00\U0001FB1E\U0001FB3B\U0001CD00\U0001CDE5⠀⠁⣿"
         ~ "▸▶►→›»⟩◂◀◄←‹«⟨⏎⇄↔▾▼↓▴▲↑·•∙▪■◆♦▫□◇—–‒―…✕×✗✓●◉○◌◯⊘✔✖⚠◐"
         ~ "\uF00C\uF00D\uF071\uF05A\uF10C\uF110\uF068\uE0B0\U000F0001"
-        ~ "\uF1E0\uF115\uF0C5\uF07F\uF002\uF01D\uF01E\uEA85\U000F07F5\uEE29\uF05E"
+        ~ "\uF1E0\uF08E\uF0C5\uF07F\uF002\uF01D\uF01E\uEA85\U000F07F5\uEE29\uF05E"
+        ~ "\uF114\uF115\uF016\uE609\uF15C\uF1C1\uE7AF\uE781\uE628\uE795\U000F1105\uE606"
+        ~ "\uE7A8\uE61E\uE61D\uE627\uE736\uE749\uE6A2\uE60B\uE615\uF023\uF1C5\uF1C6"
+        ~ "▤◈▣◩▦"
         ~ "\u2197\u21D7\u29C9\u2398\u2315\u21BB\u276F\u26BF\u221E"
         ~ "日é€π";
 }
