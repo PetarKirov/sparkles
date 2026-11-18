@@ -116,11 +116,11 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= spacer(b);
 
     body_ ~= section(b, "tabStrip — one active, the rest idle", [
-        tabStrip(b, tabLabels, s.componentsTab, s.hits.find(tabsKey).base, s.press),
+        tabStrip(b, tabLabels, s.componentsTab, s.hits.find(tabsKey), s.press),
         spacer(b),
         label(b, "fitLabels: false — each tab takes an equal share instead",
             Slot.muted),
-        tabStrip(b, tabLabels, s.componentsTab, s.hits.find(equalTabsKey).base, s.press,
+        tabStrip(b, tabLabels, s.componentsTab, s.hits.find(equalTabsKey), s.press,
             fitLabels: false),
     ]);
     body_ ~= spacer(b);
@@ -131,7 +131,7 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= spacer(b);
 
     body_ ~= section(b, "actionBar — equal segments, each a target", [
-        actionBar(b, actionLabels, s.hits.find(actionsKey).base, s.press),
+        actionBar(b, actionLabels, s.hits.find(actionsKey), s.press),
         spacer(b),
         row(b, [
             label(b, "last activated", Slot.muted),

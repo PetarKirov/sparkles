@@ -1897,7 +1897,7 @@ struct Gallery
 
         BoxLayout box;
         const panel = viewLantern(b, guideLabels, items, s.lantern.pending.length,
-            width, box, Placement.classic, LanternStyle.init, 0, s.lantern.scroll);
+            width, box, Placement.classic, LanternStyle.init, scroll: s.lantern.scroll);
         // Bottom-aligned by the layout engine over a full-surface column, so
         // nothing here measures a label or a height.
         return b.add(Widget(

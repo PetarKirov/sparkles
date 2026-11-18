@@ -879,7 +879,7 @@ struct PreviewTui
         BoxLayout box;
         const root = viewLantern(b, ltnLabels, listed[],
             lantern.pending.length, width, box, lanternPlacement,
-            LanternStyle.init, 0, lantern.scroll);
+            LanternStyle.init, scroll: lantern.scroll);
         auto tree = b.finish(root);
         auto frames = layout(tree, Constraints(maxW: width));
         const panel = frames[tree.root].rect;

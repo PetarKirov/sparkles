@@ -32,6 +32,7 @@ import sparkles.base.buffer : SharedBuffer;
 import sparkles.input.events : altModifierName, Key, namedKeyLabel, superModifierName;
 public import sparkles.input.events : formatKbdChord, formatSymbolChord;
 import sparkles.ui.geometry : Insets, SizeSpec;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.style : FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind;
 
@@ -228,7 +229,7 @@ enum Slot[] lanternSlots = [Slot.chromeAccent, Slot.surface, Slot.muted, Slot.do
 uint viewLantern(B)(ref Builder b, ref LabelArena arena,
     scope const(B)[] items, size_t depth, int availWidth,
     out BoxLayout layout, Placement placement = Placement.classic,
-    in LanternStyle st = LanternStyle.init, size_t hitBase = 0, int scroll = 0)
+    in LanternStyle st = LanternStyle.init, HitBlock hits = HitBlock.init, int scroll = 0)
 {
     // ── pass 1: every label into the arena, positions recorded ───────────
     arena.clear();
@@ -274,7 +275,7 @@ uint viewLantern(B)(ref Builder b, ref LabelArena arena,
                 continue;
             cells ~= itemCell(b, label(keys[i]), label(descs[i]),
                 items[i].group.length != 0, keyWidth, layout.width, st,
-                hitBase == 0 ? 0 : hitBase + i);
+                hits[i]);
         }
         if (cells.length == 0)
             continue;
@@ -504,7 +505,7 @@ unittest
         LabelArena arena2;
         BoxLayout l2;
         const r2 = viewLantern(b2, arena2, items, 0, 120, l2,
-            Placement.classic, LanternStyle.init, 0, cast(int) items.length);
+            Placement.classic, LanternStyle.init, HitBlock.init, cast(int) items.length);
         auto t2 = b2.finish(r2);
         bool sawLast;
         foreach (ref w; t2.nodes)

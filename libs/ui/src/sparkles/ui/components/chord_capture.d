@@ -28,6 +28,7 @@ module sparkles.ui.components.chord_capture;
 import sparkles.input.events : altModifierName, isModifierKey, Key, KeyAction,
     KeyEvent, namedKeyLabel, superModifierName;
 import sparkles.ui.geometry : Insets, SizeSpec;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.keymap : acceptsTyped, Chord, maxPathLength, normalise,
     ShiftReq;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle, TypeStep;
@@ -281,7 +282,8 @@ string pathLabel(in Chord[] path, in Chord leader = Chord.init, string leaderGly
 // The view.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The capture's buttons, as offsets from the view's `hitBase`.
+/// The capture's buttons, as indices into the view's block: ask for
+/// `CaptureHit.max + 1` ids.
 enum CaptureHit : size_t
 {
     cancel = 1, ///
@@ -302,7 +304,7 @@ and Swap; a refusal's reason; and the hint. `leader` reads as `␣`;
 Done button that settles a shorter sequence.
 */
 uint chordCaptureView(ref Builder b, ref const ChordCapture cap, in Chord leader,
-    size_t hitBase, int targetRows = 1, bool touch = false) @safe
+    in HitBlock hits, int targetRows = 1, bool touch = false) @safe
 {
     uint[] body_;
 
@@ -345,7 +347,7 @@ uint chordCaptureView(ref Builder b, ref const ChordCapture cap, in Chord leader
         return b.add(Widget(kind: WidgetKind.panel, children: [t], alignX: Alignment.center,
             padding: Insets(0, 1, 0, 1),
             height: targetRows > 1 ? SizeSpec.fixed(targetRows) : SizeSpec.fit_,
-            alignY: Alignment.center, hitId: hitBase + part,
+            alignY: Alignment.center, hitId: hits[part],
             slot: primary ? Slot.chromeAccent : Slot.surfaceRaised, paintBackground: true,
             decoration: Decoration(borderRadius: 8, drawHeight: 36)));
     }
@@ -516,7 +518,7 @@ version (unittest)
     cap.begin(1);
     cast(void) cap.feed(KeyEvent(Key.char_, 'W', Mods(ctrl: true)), toDelegate(&reservedCtrlC), toDelegate(&boundLike));
     Builder b;
-    auto tree = b.finish(chordCaptureView(b, cap, Chord.init, 100, 3));
+    auto tree = b.finish(chordCaptureView(b, cap, Chord.init, HitBlock(100, CaptureHit.max + 1), 3));
     const(char)[] all;
     foreach (ref n; tree.nodes)
     {

@@ -211,7 +211,7 @@ void paintGuide(H)(ref H h, ref KeyRouter router, in TermContext ctx, int cols,
     Builder b;
     BoxLayout box;
     const root = viewLantern(b, labels, listed[], router.lantern.pending.length, cols,
-        box, Placement.classic, LanternStyle.init, 0, router.lantern.scroll);
+        box, Placement.classic, LanternStyle.init, scroll: router.lantern.scroll);
     auto tree = b.finish(root);
     auto frames = chromeLayout(tree, Constraints(maxW: cols));
     const dy = rows - frames[tree.root].rect.height;

@@ -35,7 +35,7 @@ import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 import kit;
 import scrollbars : rectOf;
 import keymap : GalleryCommand;
-import sparkles.ui.hit_ids : HitKey;
+import sparkles.ui.hit_ids : HitBlock, HitKey;
 
 import state : GalleryState, hitOf;
 
@@ -258,7 +258,7 @@ private uint renderNode(ref Builder b, in DockContainer c, uint idx)
                 active = labels.length - 1;
         }
         auto inert = new size_t[](labels.length);
-        const strip = tabStrip(b, labels, active, 0, ids: inert);
+        const strip = tabStrip(b, labels, active, HitBlock.init, ids: inert);
         const shown = n.children[n.active < n.children.length ? n.active : 0];
         return b.add(Widget(
             kind: WidgetKind.column,

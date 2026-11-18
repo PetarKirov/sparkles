@@ -123,7 +123,7 @@ uint view(ref Builder b, in GalleryState s)
         "+ new",
         "✕ close",
         s.terms.keepExited ? "hold: all" : "hold: fail",
-    ], s.hits.find(termActionsKey).base, s.press);
+    ], s.hits.find(termActionsKey), s.press);
     body_ ~= spacer(b);
 
     const paneRows = paneHeight(s);
