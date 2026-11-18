@@ -96,6 +96,7 @@ struct Oracle
 }
 
 immutable Oracle[] oracles = [
+    Oracle("10", &oracle10),
     Oracle("11", &oracle11),
     Oracle("13", &oracle13),
     Oracle("16", &oracle16),
@@ -1398,6 +1399,136 @@ Verdict[] oracle24()
             : !lines.canFind(": miss (") || !lines.canFind("zz_o24/a.d")
                 ? "a file of another identity, its size and time the same, was trusted:\n" ~ lines : null,
             "the hard link, same size and time, was rehashed and missed");
+    }
+    return vs;
+}
+
+// === Oracle 10: generators ===
+
+/// An edit to a tracked file, undone when it goes.
+struct Edited
+{
+    string path;
+    private string before;
+
+    @disable this(this);
+
+    static Edited append(string relative, string more)
+    {
+        Edited e;
+        e.path = buildPath(root, relative);
+        e.before = readText(e.path);
+        write(e.path, e.before ~ more);
+        return e;
+    }
+
+    ~this()
+    {
+        if (path.length)
+            write(path, before);
+    }
+}
+
+/// The plan's process action whose argument vector has `arg`, by id, or null.
+string actionWithArgument(ref const GraphRun g, string prefix, string arg)
+{
+    foreach (ref a; g.plan.graph.actions)
+        if (a.id.text.startsWith(prefix))
+        {
+            bool has;
+            a.action.match!((ref const ProcessAction p) { has = p.argv.canFind(arg); }, (ref const _) {});
+            if (has)
+                return a.id.text;
+        }
+    return null;
+}
+
+/// The argument vector of `task` in `g`'s plan.
+const(string)[] argvOf(ref const GraphRun g, string task)
+{
+    foreach (ref a; g.plan.graph.actions)
+        if (a.id.text == task)
+            return a.action.match!((ref const ProcessAction p) => p.argv, (ref const _) => cast(const(string)[]) null);
+    return null;
+}
+
+Verdict[] oracle10()
+{
+    Verdict[] vs;
+    const cache = freshCache("o10");
+    auto base = run("ui-raylib", cache);
+    const gen = actionWithArgument(base, "generate:shader-compile:generator:", "--package=libs/ui");
+    if (base.exitCode != 0 || !gen.length)
+        return [Verdict("setup", "ui-raylib did not build:" ~ tailOf(base.log))];
+    // The compiles that read its outputs.
+    string[] consumers;
+    foreach (ref a; base.plan.graph.actions)
+        if (a.kind == ActionKind.compile && argvOf(base, a.id.text).canFind!(x => x.canFind("$IN(" ~ gen ~ ")")))
+            consumers ~= a.id.text;
+
+    // Step 3: no staleness flag, and no dub.
+    {
+        const argv = argvOf(base, gen);
+        vs ~= Verdict("step 3", argv.canFind("--if-stale") ? "the generator is invoked with --if-stale"
+            : argv.canFind!(x => x.canFind("dub")) ? "the generator's invocation names dub: " ~ argv.join(" ") : null,
+            "the shader compiler runs without --if-stale, and nothing names dub");
+    }
+
+    // Step 2: stale files in the in-tree directory are not read.
+    {
+        import std.file : remove;
+
+        const stale = buildPath(root, "libs/ui/generated/shaders/zz-oracle-10-stale.frag");
+        write(stale, "this is not GLSL\n");
+        scope (exit)
+            remove(stale);
+        bool inTree;
+        foreach (c; consumers)
+            inTree |= argvOf(base, c).canFind!(x => x.startsWith("-J=") && x.canFind("generated/shaders"));
+        auto g = run("ui-raylib", cache);
+        vs ~= Verdict("step 2", !consumers.length ? "no compile reads the generator's outputs"
+            : inTree ? "a compile string-imports the in-tree generated directory"
+            : g.exitCode != 0 ? "a run with stale in-tree files failed:" ~ tailOf(g.log) : null,
+            text(consumers.length, " compiles read the generator's outputs, none the in-tree directory with its stale file"));
+    }
+
+    // Step 1: a shader edit reruns the generator and its consumers, and no
+    // other compile.
+    {
+        auto edit = Edited.append("libs/ui/shaders/effects.d", "\n/// oracle 10\n"
+            ~ "@fragment vec4 zzOracle10(@input vec2 fragTexCoord, @input vec4 fragColor,\n"
+            ~ "    Sampler2D texture0, @uniform vec2 uExtentCells)\n    => fragColor;\n");
+        auto g = run("ui-raylib", cache);
+        string[] others;
+        foreach (t; g.stats.executedTasks)
+            if (t.startsWith("compile:") && !consumers.canFind(t))
+                others ~= t;
+        string[] missed;
+        foreach (c; consumers)
+            if (!executed(g, c))
+                missed ~= c;
+        vs ~= Verdict("step 1", g.exitCode != 0 ? "the edited shader failed:" ~ tailOf(g.log)
+            : !executed(g, gen) ? "the generator did not rerun"
+            : missed.length ? text("its consumers did not rerun: ", missed)
+            : others.length ? text("other compiles reran: ", others) : null,
+            text("the generator and its ", consumers.length, " consumers reran, and no other compile"));
+    }
+    cast(void) run("ui-raylib", cache); // the tree as it is, published again
+
+    // Step 4: an edit to a module the shaders import reruns the generator;
+    // one to a module they do not import does not.
+    {
+        auto g = () {
+            auto edit = Edited.append("libs/shaders/src/sparkles/shaders/math.d", "\n// oracle 10\n");
+            return run("ui-raylib", cache);
+        }();
+        auto h = () {
+            auto edit = Edited.append("libs/ui/src/sparkles/ui/css.d", "\n// oracle 10\n");
+            return run("ui-raylib", cache);
+        }();
+        vs ~= Verdict("step 4", !executed(g, gen) ? "an edit to an imported module left the generator a hit"
+            : executed(h, gen) ? "an edit to a module the shaders do not import reran the generator" : null,
+            "an imported module's edit reran the generator; another module's did not");
     }
     return vs;
 }
