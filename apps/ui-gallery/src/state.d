@@ -7,9 +7,9 @@ toolkit's state level is for (`docs/specs/ui/state-machines.md`) and what makes
 the recorded tests able to script an event sequence and then assert on the
 result. A page never owns state; it reads this and returns a subtree.
 
-Hit ids are allocated from named bases rather than ad-hoc constants, so two
-regions cannot mint the same id and a page's ids do not renumber when another
-page grows.
+Hit ids are issued by one registry ($(LREF GalleryState.hits), `INP27`) under
+named keys rather than chosen by hand, so two regions cannot mint the same id
+and a page's ids do not renumber when another page grows.
 */
 module state;
 
@@ -21,6 +21,7 @@ import sparkles.wired.policy : AnyFormat, CaseStyle, resolveCaseStyle, WireCase,
 import sparkles.ui.image : ImageHandle;
 import sparkles.input : InputCapabilities;
 import sparkles.ui.geometry : Size;
+import sparkles.ui.hit_ids : HitKey, HitRegistry;
 import sparkles.ui.lantern : LanternState;
 import sparkles.ui.components.scroll_view : ScrollbarAnim, ScrollView;
 import sparkles.ui.components.dock : DockContainer;
@@ -74,35 +75,13 @@ enum Region : ubyte
 }
 
 /**
-Hit-id bases, one per region that mints ids.
-
-Spread far enough apart that a region can grow without colliding, and non-zero
-throughout — `hitId == 0` means "not hit-testable" in the toolkit, so a base of
-zero would silently disarm a whole region.
+The shell's hit keys (`INP27`). Every id the gallery stamps is issued by
+$(LREF GalleryState.hits) under a key like these; a page declares its own
+beside its view and claims them in its `claimHits` hook.
 */
-enum size_t hitNav = 1000;      /// the sidebar's page rows: `hitNav + pageIndex`
-enum size_t hitTheme = 3000;    /// the theme browser's rows
-enum size_t hitTabs = 4000;     /// the components page's tab strip
-enum size_t hitActions = 5000;  /// the components page's action bar
-enum size_t hitTree = 6000;     /// the tree page's rows
-enum size_t hitContentBar = 7000; /// the shell's content-pane scrollbar
-enum size_t hitDemoBar = 7100;    /// the Scrolling page's specimen bar
-enum size_t hitChromeSamples = 7150; /// four Components formula specimens
-enum size_t hitChromeBar = 7200;  /// the Components page's live scroll view
-enum size_t hitInspBar = 7300;    /// the inspector panel's scrollbar
-enum size_t hitSplit = 8000;    /// the split page's divider
-enum size_t hitDock = 8100;     /// the dock page's live container
-enum size_t hitMachines = 9000; /// the state-machine page's tiles
-enum size_t hitTermActions = 10000; /// the Terminal page's action bar (3 ids)
-enum size_t hitTermBar = 10050;     /// the terminal pane's scrollback bar
-/**
-The Terminal page's pane (`+ 0`) and its per-tab $(B lanes): select is
-`hitTerminal + 2·id`, close is `hitTerminal + 2·id + 1`. Tab ids mint
-monotonically forever, so this base is the $(B last) one and owns everything
-above it — with the old layout the 101st spawn would have collided with the
-action bar. Ids start at 1, so the `+ 0` slot can never name a tab.
-*/
-enum size_t hitTerminal = 10100;
+enum HitKey navKey = HitKey("gallery.nav");                /// the sidebar's page rows, by page index
+enum HitKey contentBarKey = HitKey("gallery.content-bar"); /// the content pane's scrollbar
+enum HitKey inspectorBarKey = HitKey("gallery.inspector-bar"); /// the inspector panel's scrollbar
 
 /// Element keys (`Widget.key`) for state that must survive a rebuild.
 enum size_t keyContentScroll = 101; ///
@@ -180,7 +159,8 @@ enum size_t maxTerms = 8;
 One terminal tab, as the $(B page) sees it: identity, liveness, label. The
 `TerminalView` instance itself lives outside this value — it is non-copyable
 and pointer-pinned — keyed by `id`, which is minted once and never reused, so
-a tab's hit id (`hitTerminal + id`) survives its neighbours closing.
+a tab's hit key (`tabKey(id)`, `"gallery.terminal.tab"`) survives its
+neighbours closing.
 */
 struct TermTab
 {
@@ -409,6 +389,13 @@ struct GalleryState
     EmulatorChoice emulator;
 
     // ── shared machines ─────────────────────────────────────────────────────
+    /**
+    The gallery's one hit-id registry (`INP27`). The shell begins its frame
+    at the top of `Gallery.view` and claims its own keys and the showing
+    page's (`Page.claimHits`) before any view reads them; views stamp
+    `s.hits.find(key)[i]`, handlers decode with `contains`/`indexOf`.
+    */
+    HitRegistry hits;
     FocusState focus;    ///
     HoverState hover;    ///
     PressState press;    ///
@@ -571,6 +558,11 @@ struct GalleryState
     }
 }
 
+/// The id `key`'s block holds at `index` this frame, `0` when the key is not
+/// issued: what a pure view stamps and a hover test compares.
+size_t hitOf(in GalleryState s, HitKey key, size_t index = 0) pure nothrow @nogc
+    => s.hits.find(key)[index];
+
 /// The rows the shell's own chrome occupies: header, footer, and the blank
 /// separator between the body and the footer.
 enum int shellChromeRows = 3;
@@ -697,9 +689,9 @@ Timeline.Config toastConfigFor(bool hasFrameClock) @safe pure nothrow @nogc
 @("ui_gallery.state.terms.idsAreMonotonicAndNeverReused")
 @safe pure nothrow @nogc unittest
 {
-    // Closing a tab must not renumber the rest — hit ids are hitTerminal +
-    // id, and a press resolved against last frame's tree must land on the
-    // same tab this frame.
+    // Closing a tab must not renumber the rest — a tab's hit ids are issued
+    // under its id, and a press resolved against last frame's tree must land
+    // on the same tab this frame.
     TermsState t;
     assert(t.spawn() == 1 && t.spawn() == 2 && t.spawn() == 3);
     assert(t.count == 3 && t.active == 2);
@@ -764,27 +756,6 @@ Timeline.Config toastConfigFor(bool hasFrameClock) @safe pure nothrow @nogc
     t.close(1);
     t.cycle(1);
     assert(t.active == 0, "a single tab does not move");
-}
-
-@("ui_gallery.state.hitBasesDoNotCollide")
-@safe pure nothrow @nogc unittest
-{
-    // Every base is non-zero (zero means "not hit-testable") and they are
-    // ordered with room to grow — an overlap would let a press on one region
-    // activate an affordance in another.
-    // Ascending, non-zero, and never equal. The gap is a thousand except
-    // between the scrollbar regions, which are close because they are one
-    // kind of thing. The Components specimen base owns four consecutive ids.
-    static immutable size_t[] bases = [hitNav, hitTheme, hitTabs, hitActions,
-        hitTree, hitContentBar, hitDemoBar, hitChromeSamples, hitChromeBar,
-        hitInspBar, hitSplit, hitMachines, hitTermActions, hitTermBar,
-        hitTerminal];
-    foreach (i, b; bases)
-    {
-        assert(b != 0);
-        if (i > 0)
-            assert(b > bases[i - 1]);
-    }
 }
 
 /// The Primitives page's specimen image, in pixels (`IMG2` needs an extent;

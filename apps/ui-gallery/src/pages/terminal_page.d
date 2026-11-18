@@ -37,30 +37,59 @@ import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 import kit;
 import scrollbars;
 import keymap : GalleryCommand;
-import state : GalleryState, hitTerminal, hitTermActions, hitTermBar,
-    keyTermPane, maxTerms;
+import sparkles.ui.hit_ids : HitKey;
+
+import state : GalleryState, hitOf, keyTermPane, maxTerms;
 
 @safe:
 
 /// ditto
 // The page's keys are `galleryBindings` rows in `GalleryScope.pageTerminal`.
 
-/// The pane's own hit id. Tab lanes start at `+ 2` (ids start at 1), so the
-/// `+ 0` slot is the pane's alone.
-enum size_t hitPane = hitTerminal;
+/// The prefix every key of this page's tags carries — what $(LREF ownsId)
+/// recognises.
+private enum string tagPrefix = "gallery.terminal.";
 
-/// A tab's select lane: pressing it activates the tab. Unbounded upward —
-/// `hitTerminal` is the last base for exactly this reason.
-size_t tabHit(uint id) @safe pure nothrow @nogc => hitTerminal + 2 * id;
+/// The page's hit keys (`INP27`): the action bar (new, close, hold), the
+/// scrollback bar and the pane.
+enum HitKey termActionsKey = HitKey(tagPrefix ~ "actions"),
+    termBarKey = HitKey(tagPrefix ~ "bar"),
+    termPaneKey = HitKey(tagPrefix ~ "pane");
+
+/// A tab's two lanes, keyed by its minted id — never reused, so a press
+/// resolved against last frame's tree names the same tab after a neighbour
+/// closed: `[0]` selects the tab, `[1]` is its hover ✕.
+HitKey tabKey(uint id) @safe pure nothrow @nogc => HitKey(tagPrefix ~ "tab", id);
+
+/// ditto — the page's `claimHits` hook.
+void claimHits(ref GalleryState s) pure nothrow @nogc
+{
+    s.hits.block(termActionsKey, 3);
+    if (!s.terms.any)
+        return;
+    s.hits.block(termBarKey);
+    s.hits.block(termPaneKey);
+    foreach (i; 0 .. s.terms.count)
+        s.hits.block(tabKey(s.terms.tabs[i].id), 2);
+}
+
+/// A tab's select lane: pressing it activates the tab.
+size_t tabHit(in GalleryState s, uint id) @safe pure nothrow @nogc
+    => s.hits.find(tabKey(id))[0];
 
 /// A tab's close lane — the hover ✕.
-size_t closeHit(uint id) @safe pure nothrow @nogc => tabHit(id) + 1;
+size_t closeHit(in GalleryState s, uint id) @safe pure nothrow @nogc
+    => s.hits.find(tabKey(id))[1];
 
 /// Whether `id` is this page's own chrome — the shell keeps a focused
 /// terminal's capture across presses on these, and drops it for anything else.
-bool ownsId(size_t id) @safe pure nothrow @nogc
-    => (id >= hitTermActions && id < hitTermActions + 3)
-    || id == hitTermBar || id >= hitTerminal;
+bool ownsId(in GalleryState s, size_t id) @safe pure nothrow @nogc
+{
+    HitKey key;
+    size_t index;
+    return s.hits.ownerOf(id, key, index) && key.tag.length > tagPrefix.length
+        && key.tag[0 .. tagPrefix.length] == tagPrefix;
+}
 
 /// The chrome rows the page spends beyond the pane: heading, spacer, action
 /// bar, spacer, status line.
@@ -94,7 +123,7 @@ uint view(ref Builder b, in GalleryState s)
         "+ new",
         "✕ close",
         s.terms.keepExited ? "hold: all" : "hold: fail",
-    ], hitTermActions, s.press);
+    ], s.hits.find(termActionsKey).base, s.press);
     body_ ~= spacer(b);
 
     const paneRows = paneHeight(s);
@@ -120,7 +149,7 @@ uint view(ref Builder b, in GalleryState s)
         const paneBox = b.add(Widget(
             kind: WidgetKind.box,
             key: keyTermPane,
-            hitId: hitPane,
+            hitId: s.hitOf(termPaneKey),
             width: SizeSpec.fixed(paneW),
             height: SizeSpec.fixed(paneRows - 2),
         ));
@@ -128,7 +157,7 @@ uint view(ref Builder b, in GalleryState s)
         // catalog — grabbable, capture-arbitrated, hover-expanding — over
         // the terminal's own numbers. The machine's offset is reconciled
         // with ghostty's each frame by the shell.
-        const bar = verticalBar(b, s.termView, termBarGeometry(s), hitTermBar);
+        const bar = verticalBar(b, s.termView, termBarGeometry(s), s.hitOf(termBarKey));
         across ~= b.add(Widget(
             kind: WidgetKind.row,
             children: [paneBox, bar],
@@ -196,7 +225,7 @@ the terminal owns the real offset.
 bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
     in Frame[] frames)
     => driveVertical(s.termView, s.capture, capTermBar, p,
-        rectOf(tree, frames, hitTermBar), termBarGeometry(s), s.guiCellH,
+        rectOf(tree, frames, s.hitOf(termBarKey)), termBarGeometry(s), s.guiCellH,
         s.guiPointerY);
 
 /// Eases the bar's hover-expand width. The shell owns the clock.
@@ -249,7 +278,7 @@ private uint termRow(ref Builder b, in GalleryState s, size_t i)
     const t = s.terms.tabs[i];
     const active = i == s.terms.active;
     const hot = s.pointerAffordances
-        && (s.hover.isHot(tabHit(t.id)) || s.hover.isHot(closeHit(t.id)));
+        && (s.hover.isHot(tabHit(s, t.id)) || s.hover.isHot(closeHit(s, t.id)));
 
     const caption = truncateField(
         t.labelText.idup ~ (t.exited ? text(" (", t.exitStatus, ")") : ""),
@@ -266,7 +295,7 @@ private uint termRow(ref Builder b, in GalleryState s, size_t i)
         children ~= b.add(Widget(
             kind: WidgetKind.text,
             text: "✕",
-            hitId: closeHit(t.id),
+            hitId: closeHit(s, t.id),
             slot: Slot.error,
         ));
     else
@@ -276,7 +305,7 @@ private uint termRow(ref Builder b, in GalleryState s, size_t i)
         kind: WidgetKind.row,
         children: children,
         width: SizeSpec.grow(),
-        hitId: tabHit(t.id),
+        hitId: tabHit(s, t.id),
         paintBackground: true,
         // Adjacent rows divide by wash: zebra when idle, selection under the
         // pointer, the accent wash + bold for the active tab.
@@ -300,11 +329,11 @@ private uint termMini(ref Builder b, in GalleryState s, int paneRows)
         const t = s.terms.tabs[i];
         const active = i == s.terms.active;
         const hot = s.pointerAffordances
-            && (s.hover.isHot(tabHit(t.id)) || s.hover.isHot(closeHit(t.id)));
+            && (s.hover.isHot(tabHit(s, t.id)) || s.hover.isHot(closeHit(s, t.id)));
         rows ~= b.add(Widget(
             kind: WidgetKind.text,
             text: hot ? "✕" : positionGlyph(s, i + 1),
-            hitId: hot ? closeHit(t.id) : tabHit(t.id),
+            hitId: hot ? closeHit(s, t.id) : tabHit(s, t.id),
             paintBackground: true,
             slot: active ? Slot.chromeFocused : hot ? Slot.selection : Slot.chip,
             textStyle: TextStyle(bold: active),
@@ -442,24 +471,23 @@ version (unittest)
 /// ditto
 bool handleActivate(ref GalleryState s, size_t id)
 {
-    if (id == hitPane)
+    if (s.hits.find(termPaneKey).contains(id))
     {
         if (s.terms.any)
             s.terms.focused = true;
         return true;
     }
-    if (id > hitTerminal)
+    HitKey key;
+    size_t lane;
+    if (s.hits.ownerOf(id, key, lane) && key.tag == tabKey(0).tag)
     {
-        // A tab lane, by identity: even offset selects, odd closes. The find
-        // is by minted id, so a press resolved against last frame's tree
-        // lands on the same tab after a neighbour closed.
-        const offset = id - hitTerminal;
-        const tabId = offset / 2;
-        const isClose = (offset & 1) == 1;
+        // A tab lane, by identity: the key names the minted id and the index
+        // the lane (0 selects, 1 closes), so a press resolved against last
+        // frame's tree lands on the same tab after a neighbour closed.
         foreach (i; 0 .. s.terms.count)
-            if (s.terms.tabs[i].id == tabId)
+            if (s.terms.tabs[i].id == key.instance)
             {
-                if (isClose)
+                if (lane == 1)
                     s.terms.closeRequested = cast(int) i;
                 else
                     s.terms.active = i;
@@ -467,24 +495,22 @@ bool handleActivate(ref GalleryState s, size_t id)
             }
         return true; // one of ours, even if the tab just closed under it
     }
-    if (id == hitTermActions + 0)
+    size_t action;
+    if (!s.hits.find(termActionsKey).indexOf(id, action))
+        return false;
+    if (action == 0)
     {
         if (!s.terms.full)
             s.terms.spawnRequested = true;
-        return true;
     }
-    if (id == hitTermActions + 1)
+    else if (action == 1)
     {
         if (s.terms.any)
             s.terms.closeRequested = cast(int) s.terms.active;
-        return true;
     }
-    if (id == hitTermActions + 2)
-    {
+    else
         s.terms.keepExited = !s.terms.keepExited;
-        return true;
-    }
-    return false;
+    return true;
 }
 
 @("ui_gallery.pages.terminalKeysDriveTheModel")
@@ -521,51 +547,74 @@ bool handleActivate(ref GalleryState s, size_t id)
     GalleryState s;
     const id1 = s.terms.spawn();
     const id2 = s.terms.spawn();
-    cast(void) id1;
+    s.hits.beginFrame();
+    claimHits(s);
+    const firstTab = tabHit(s, id1);
 
     // Closing the first tab must not redirect a press aimed at the second:
-    // the hit id carries the identity, not the slot.
+    // the hit id carries the identity, not the slot. The next frame claims
+    // only the surviving tab, and its block is the one it held.
+    const before = tabHit(s, id2);
     s.terms.close(0);
-    assert(handleActivate(s, tabHit(id2)));
+    s.hits.beginFrame();
+    claimHits(s);
+    assert(tabHit(s, id2) == before, "a tab's lanes keep their ids");
+    assert(handleActivate(s, firstTab), "the closed tab's press is still ours…");
+    assert(s.terms.count == 1, "…and aims at nothing");
+    assert(handleActivate(s, tabHit(s, id2)));
     assert(s.terms.tabs[s.terms.active].id == id2);
 
     // The close lane aims at the same tab's slot.
-    assert(handleActivate(s, closeHit(id2)));
+    assert(handleActivate(s, closeHit(s, id2)));
     assert(s.terms.closeRequested == cast(int) s.terms.active);
     s.terms.closeRequested = -1;
 
     // The action bar: spawn, close, and the hold toggle.
-    assert(handleActivate(s, hitTermActions + 0));
+    assert(handleActivate(s, s.hitOf(termActionsKey, 0)));
     assert(s.terms.spawnRequested);
-    assert(handleActivate(s, hitTermActions + 1));
+    assert(handleActivate(s, s.hitOf(termActionsKey, 1)));
     assert(s.terms.closeRequested == cast(int) s.terms.active);
-    assert(handleActivate(s, hitTermActions + 2));
+    assert(handleActivate(s, s.hitOf(termActionsKey, 2)));
     assert(s.terms.keepExited);
 
     // The pane focuses; foreign ids fall through.
-    assert(handleActivate(s, hitPane));
+    assert(handleActivate(s, s.hitOf(termPaneKey)));
     assert(s.terms.focused);
     assert(!handleActivate(s, 1));
 }
 
 @("ui_gallery.pages.terminalHitLanesNeverCollide")
-@safe pure nothrow @nogc unittest
+@safe pure nothrow unittest
 {
-    // Two unbounded id streams from one base: they must interleave without
-    // touching each other, the pane, or the action bar — for ANY minted id,
-    // not just the first eight (ids are never reused, so they grow forever;
-    // the old single-lane layout collided with the actions at id 100).
-    foreach (id; 1 .. 201)
+    import state : navKey;
+
+    // Every tab's two lanes, the pane, the bar and the action bar hold
+    // disjoint ids however many tabs were ever minted — the old single-base
+    // layout collided with the actions at id 100 — and every one of them is
+    // the page's own, while the shell's are not.
+    GalleryState s;
+    foreach (round; 0 .. 50)
     {
-        const t = tabHit(cast(uint) id);
-        const c = closeHit(cast(uint) id);
-        assert(t != c);
-        assert(t > hitPane && c > hitPane);
-        assert(t >= hitTermActions + 3 && c >= hitTermActions + 3);
-        assert(ownsId(t) && ownsId(c));
+        while (!s.terms.full)
+            cast(void) s.terms.spawn();
+        s.hits.beginFrame();
+        s.hits.block(navKey, 20);
+        claimHits(s);
+        size_t[] ids = [s.hitOf(termPaneKey), s.hitOf(termBarKey)];
+        foreach (a; 0 .. 3)
+            ids ~= s.hitOf(termActionsKey, a);
+        foreach (i; 0 .. s.terms.count)
+            ids ~= [tabHit(s, s.terms.tabs[i].id), closeHit(s, s.terms.tabs[i].id)];
+        foreach (i, x; ids)
+        {
+            assert(x != 0 && ownsId(s, x));
+            foreach (y; ids[i + 1 .. $])
+                assert(x != y);
+        }
+        assert(!ownsId(s, s.hitOf(navKey)) && !ownsId(s, 0) && !ownsId(s, 1));
+        s.terms.close(0);
+        s.terms.close(0);
     }
-    assert(ownsId(hitPane) && ownsId(hitTermActions));
-    assert(!ownsId(0) && !ownsId(1));
 }
 
 @("ui_gallery.pages.terminalLabelsTruncateByCellsNotBytes")
@@ -656,11 +705,13 @@ bool handleActivate(ref GalleryState s, size_t id)
     s.terms.sbLen = 15;
     s.terms.sbOffset = 185; // pinned at the bottom, as a live shell is
     s.termView.v = s.termView.v.scrolledTo(185);
+    s.hits.beginFrame();
+    claimHits(s);
 
     auto b = Builder();
     auto tree = b.finish(view(b, s));
     auto frames = layout(tree, Constraints(maxW: s.contentWidth));
-    const bar = rectOf(tree, frames, hitTermBar);
+    const bar = rectOf(tree, frames, s.hitOf(termBarKey));
     assert(bar.width > 0, "the bar must be laid out and hit-testable");
 
     // Press near the top of the track: the thumb's leading edge jumps there.

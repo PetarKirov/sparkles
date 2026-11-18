@@ -35,7 +35,9 @@ import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 import kit;
 import scrollbars : rectOf;
 import keymap : GalleryCommand;
-import state : GalleryState, hitDock;
+import sparkles.ui.hit_ids : HitKey;
+
+import state : GalleryState, hitOf;
 
 @safe:
 
@@ -46,6 +48,16 @@ enum PaneId sidePane = 1, docPane = 2, notesPane = 3;
 /// The demo area's height in cells — fixed, so the page's prose does not
 /// reflow while a divider moves.
 enum int dockRows = 12;
+
+/// The live container's hit key (`INP27`): its painted rect, found by the
+/// id issued under it, is the origin the pointer handler translates against.
+enum HitKey dockAreaKey = HitKey("gallery.dock.area");
+
+/// ditto — the page's `claimHits` hook.
+void claimHits(ref GalleryState s) pure nothrow @nogc
+{
+    s.hits.block(dockAreaKey);
+}
 
 /// ditto
 // The page's keys are `galleryBindings` rows in `GalleryScope.pageDock`.
@@ -122,7 +134,7 @@ private uint viewWith(ref Builder b, in DockContainer c, in GalleryState s)
         children: [renderNode(b, c, c.layout.root)],
         width: SizeSpec.grow(),
         height: SizeSpec.fixed(dockRows),
-        hitId: hitDock,
+        hitId: s.hitOf(dockAreaKey),
     ));
 
     // The drop preview goes OVER the arrangement, which is the only place it
@@ -233,8 +245,10 @@ private uint renderNode(ref Builder b, in DockContainer c, uint idx)
 
     if (n.kind == DockKind.tabs)
     {
-        // The strip is the shared component (`WGT23`), and the ids are the
-        // container's own tab ids so a click resolves without a second map.
+        // The strip is the shared component (`WGT23`). Its tabs stamp no hit
+        // ids: the container resolves a press on a tab by its own arranged
+        // geometry (`handlePointer`), so an id here would name nothing —
+        // and the strip's default `0 + i` would be ids picked by hand.
         string[] labels;
         size_t active;
         foreach (i, ch; n.children)
@@ -243,7 +257,8 @@ private uint renderNode(ref Builder b, in DockContainer c, uint idx)
             if (i == n.active)
                 active = labels.length - 1;
         }
-        const strip = tabStrip(b, labels, active, 0);
+        auto inert = new size_t[](labels.length);
+        const strip = tabStrip(b, labels, active, 0, ids: inert);
         const shown = n.children[n.active < n.children.length ? n.active : 0];
         return b.add(Widget(
             kind: WidgetKind.column,
@@ -435,7 +450,7 @@ bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
     in Frame[] frames)
 {
     ensure(s);
-    const area = rectOf(tree, frames, hitDock);
+    const area = rectOf(tree, frames, s.hitOf(dockAreaKey));
     if (area.width <= 0)
         return false;
     // Translate into the container's own space before handing it over: the
@@ -542,6 +557,8 @@ bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
     GalleryState s;
     s.surface = Size(100, 40);
     ensure(s);
+    s.hits.beginFrame();
+    claimHits(s);
 
     // The arrangement's origin, found the way the handler finds it.
     auto b = Builder();
@@ -549,7 +566,7 @@ bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
     auto tree = b.finish(root);
     auto frames = layout(tree, Constraints(maxW: s.surface.width,
         maxH: s.surface.height));
-    const area = rectOf(tree, frames, hitDock);
+    const area = rectOf(tree, frames, s.hitOf(dockAreaKey));
     assert(area.width > 0, "the demo has an origin to translate against");
 
     // A tab to carry, and a pane to carry it to, both from the container's
@@ -607,7 +624,7 @@ bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
 
         const want = dockHintRect(hint.targetRect, hint.zone);
         const got = midFrames[hintNode].rect;
-        const origin = rectOf(midTree, midFrames, hitDock);
+        const origin = rectOf(midTree, midFrames, s.hitOf(dockAreaKey));
         assert(got.width == want.width && got.height == want.height);
         assert(got.x - origin.x == want.x && got.y - origin.y == want.y,
             "and it sits where the container said, not where the page guessed");
