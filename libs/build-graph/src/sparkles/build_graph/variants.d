@@ -226,6 +226,9 @@ struct PlanOptions
     /// The worktree, beneath which a generator's description names paths as
     /// `$ROOT/…`.
     string root;
+    /// The platform the build runs on, which a generator's tool is planned
+    /// for whatever its reader targets (BGG6); empty takes the reader's.
+    BuildPlatform host;
 }
 
 /// Resolves a request for a generator (see `PlanOptions.resolveTool`).
@@ -452,8 +455,8 @@ PlanError* planGenerators(ref VariantPlan plan, PlanOptions options, ResolveTree
                 // dub's default build type for a single file, `debug`.
                 t.settings.options = BuildOption.debugMode | BuildOption.debugInfo;
                 t.toolchain = options.toolchain;
-                // BGG6: the host's; planning builds for the host alone.
-                t.platform = plan.variants[vi].platform.dup;
+                // BGG6: the host's, whatever its reader targets: the build runs it.
+                t.platform = options.host.compiler.length ? options.host.dup : plan.variants[vi].platform.dup;
                 t.key = sha256Of(t.keyText);
                 g.tool = plan.variants.length;
                 plan.variants ~= t;
@@ -1121,4 +1124,37 @@ version (unittest)
     const reported = planVariants([r.value], options, tree);
     assert(reported.hasValue);
     assert(reported.value.layout.length == 1 && reported.value.layout[0].registry);
+}
+
+/// BGG6: a generator's tool is planned for the host, whatever the platform of
+/// the variant that reads its output; a WebAssembly variant's tool still
+/// runs on the build machine.
+@("build_graph.variants.planVariants.generatorToolIsHost")
+@safe unittest
+{
+    import sparkles.build_primitives.resolve.configure : ResolveRequest, resolve;
+    import sparkles.build_primitives.resolve.tree : memoryTree;
+
+    auto tree = memoryTree([
+        "/r/dub.sdl": "name \"r\"\nsubPackage \"g\"\n",
+        "/r/g/dub.sdl": "name \"g\"\nstringImportPaths \"gen\"\n"
+            ~ "preGenerateCommands `\"$DUB_EXE\" --single \"${PACKAGE_DIR}/tool.d\" -- \"${PACKAGE_DIR}/gen\"`\n",
+        "/r/g/source/g.d": "module g;\n",
+        "/r/g/tool.d": "/+ dub.sdl:\n    name \"tool\"\n+/\nmodule tool;\nvoid main() {}\n",
+    ]);
+    auto wasm = BuildPlatform(["wasi"], ["wasm32"], "ldc", "ldc2", 2113, "1.43.0");
+    auto host = BuildPlatform(["linux", "posix"], ["x86_64"], "ldc", "ldc2", 2113, "1.43.0");
+    auto r = resolve(ResolveRequest(directory: "/r", subPackage: ":g", platform: wasm), tree);
+    assert(r.hasValue, r.hasError ? r.error.message : null);
+    auto options = PlanOptions(ToolchainIdentity("ldc", "toolchain-1"));
+    options.host = host;
+    const plan = planVariants([r.value], options, tree);
+    assert(plan.hasValue, plan.hasError ? plan.error.message : null);
+    assert(plan.value.generators.length == 1);
+    const tool = &plan.value.variants[plan.value.generators[0].tool];
+    assert(tool.role == Role.application && tool.platform == host, text(tool.platform));
+    // Its reader is the WebAssembly variant.
+    foreach (ref v; plan.value.variants)
+        if (v.package_ == "r:g")
+            assert(v.platform == wasm);
 }
