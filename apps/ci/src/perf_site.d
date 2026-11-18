@@ -10,8 +10,10 @@ $(LIST
     $(ITEM Panels: each tab is a list of $(LREF Panel) values, built by a
         pure function of the data. A panel is data: its kind, its series,
         its labels.)
-    $(ITEM Renderers: one per panel kind, writing plain HTML and CSS. No
-        script, no chart library, nothing loaded from elsewhere (OBW3).)
+    $(ITEM Renderers: one per panel kind, writing plain HTML and CSS, with
+        data attributes the site's one script (`views/perf_site.js`) reads
+        for legend toggles and tooltips. No chart library, nothing loaded
+        from elsewhere (OBW3), and the pages read without the script.)
 )
 
 The same panel functions, filtered to one pull request, make its page.
@@ -174,6 +176,7 @@ struct Seg
     double value;
     string color;
     bool hatch;
+    string label; /// its series, as the legend names it
 }
 
 /// One entry of a panel's legend.
@@ -254,6 +257,8 @@ struct Point
     string label;
     string color;
     string title;
+    string series; /// the legend entry it belongs to
+    double files, minutes;
 }
 
 /// A panel: its kind, and the fields that kind reads.
@@ -279,6 +284,8 @@ struct Panel
     Point[] points;
     string xLabel, yLabel;
     string emptyTitle, emptyText;
+    /// How the tooltip reads values: `min`, `s` (seconds, as durations) or `jobs`.
+    string unit = "min";
 }
 
 /// The colours of the series: design-system tokens, each with its fallback.
@@ -378,7 +385,7 @@ private Seg[] runnerSegs(const ref PrFigures f, Scope s, in string[] runners) @s
     long[string] secs;
     foreach (ref t; s == Scope.every ? f.every : s == Scope.final_ ? f.final_ : f.latest)
         secs[t.runner] = t.seconds;
-    return runners.map!(r => Seg(secs.get(r, 0) / 60.0, colorOf(r))).array;
+    return runners.map!(r => Seg(secs.get(r, 0) / 60.0, colorOf(r), false, r)).array;
 }
 
 private Key[] runnerKeys(in string[] runners) @safe pure => runners.map!(r => Key(r, colorOf(r))).array;
@@ -398,14 +405,15 @@ immutable string[3][] tabs = [
     ["efficiency", "Efficiency", "Later"],
 ];
 
-private string href(string route) @safe pure => "/" ~ route;
-private string prHref(long n) @safe pure => format("/pr/%d", n);
+private string href(string route) @safe pure => route.length ? "/" ~ route ~ ".html" : "/";
+private string prHref(long n) @safe pure => format("/pr/%d.html", n);
 
 private const(PrFigures)[] recent(const ref SiteData d) @safe pure => d.figures[max(0, cast(long) d.figures.length - window) .. $];
 
 private Panel splitRows(const(PrFigures)[] figs, string title, bool link) @safe pure
 {
     Panel p = Panel(Kind.rows, title, "bar: 0 → 300 min; dashed: the 15-minute goal");
+    p.unit = "s";
     p.legend = splitKeys;
     p.mark = 15.0 / 300;
     p.heads = ["to green", "green → merge", "job that finished last"];
@@ -414,7 +422,7 @@ private Panel splitRows(const(PrFigures)[] figs, string title, bool link) @safe 
         const parts = [f.before, f.waiting, f.running, f.after];
         Row r = Row("#" ~ f.number.to!string, link ? prHref(f.number) : null, min(f.timeToGreen / 60.0, 300) / 300);
         foreach (i, k; splitKeys)
-            r.segs ~= Seg(parts[i], k.color);
+            r.segs ~= Seg(parts[i], k.color, false, k.label);
         r.cells = [Cell(dur(f.timeToGreen), true), Cell(dur(f.greenToMerge), true,
             f.greenToMerge > f.timeToGreen ? "bad" : ""), Cell(f.lastJob)];
         p.rows ~= r;
@@ -456,7 +464,7 @@ Panel[] overview(const ref SiteData d) @safe
             "median, last 10: " ~ num(median(values[max(0, cast(long) values.length - 10) .. $])) ~ unit, dl[0], dl[1],
             href(route), tabs[tabs.countUntil!(t => t[0] == route)][1], cap, goal);
         foreach (i, v; values)
-            s.cols ~= Column(null, null, format("#%d: %s%s", figs[i].number, num(v), unit), segsOf(i));
+            s.cols ~= Column(null, null, format("#%d", figs[i].number), segsOf(i));
         return s;
     }
     Panel m = Panel(Kind.multiples, format("Over the last %d pull requests", figs.length), "oldest left");
@@ -467,12 +475,12 @@ Panel[] overview(const ref SiteData d) @safe
     const sel = figs.map!(f => skippable(d, f) / 60.0).array;
     const wasted = figs.map!(f => (f.rerunSeconds + f.cancelledSeconds) / 60.0).array;
     m.smalls = [
-        small("Time to green", "green", ttg, 300, 15, " min", i => [Seg(ttg[i], Colors.neutral)]),
-        small("Green → merge", "green", g2m, 900, double.nan, " min", i => [Seg(g2m[i], Colors.before)]),
+        small("Time to green", "green", ttg, 300, 15, " min", i => [Seg(ttg[i], Colors.neutral, false, "time to green")]),
+        small("Green → merge", "green", g2m, 900, double.nan, " min", i => [Seg(g2m[i], Colors.before, false, "green → merge")]),
         small("Runner minutes", "minutes", mins, 3600, double.nan, "", i => runnerSegs(figs[i], Scope.every, runners)),
-        small("Longest wait for a runner", "load", wait, 90, double.nan, " min", i => [Seg(wait[i], Colors.wait)]),
-        small("Skippable test minutes", "selection", sel, 320, double.nan, " min", i => [Seg(sel[i], Colors.arm)]),
-        small("Rerun and cancelled minutes", "minutes", wasted, 400, double.nan, " min", i => [Seg(wasted[i], Colors.before)]),
+        small("Longest wait for a runner", "load", wait, 90, double.nan, " min", i => [Seg(wait[i], Colors.wait, false, "longest wait")]),
+        small("Skippable test minutes", "selection", sel, 320, double.nan, " min", i => [Seg(sel[i], Colors.arm, false, "skippable")]),
+        small("Rerun and cancelled minutes", "minutes", wasted, 400, double.nan, " min", i => [Seg(wasted[i], Colors.before, false, "reruns and cancelled")]),
     ];
     return [k, m];
 }
@@ -524,27 +532,31 @@ Panel[] load(const ref SiteData d) @safe
     Panel a = Panel(Kind.columns, "Jobs running, hour by hour", format("peak hour: %.0f jobs", peakRun));
     a.legend = runnerKeys(runners);
     a.height = 150;
+    a.unit = "jobs";
     a.cap = max(peakRun, 1);
     Panel b = Panel(Kind.columns, "Jobs waiting for a runner, hour by hour", format("peak hour: %.0f", peakWait));
     b.height = 110;
+    b.unit = "jobs";
     b.cap = max(peakWait, 1);
     foreach (i, row; running)
     {
         const h = lo + cast(long) i * 3600;
         const label = (h % 86_400 == 0) ? dayOf(h) : null;
-        a.columns ~= Column(label, null, format("%s %02d:00: %.1f running", dayOf(h), SysTime.fromUnixTime(h).toUTC.hour,
-            row.sum), runners.length.iota.map!(k => Seg(row[k], colorOf(runners[k]))).array);
-        b.columns ~= Column(label, null, format("%.1f waiting", waiting[i]), [Seg(waiting[i], Colors.wait)]);
+        const x = format("%s %02d:00 UTC", dayOf(h), SysTime.fromUnixTime(h).toUTC.hour);
+        a.columns ~= Column(label, null, x, runners.length.iota.map!(k => Seg(row[k], colorOf(runners[k]), false,
+            runners[k])).array);
+        b.columns ~= Column(label, null, x, [Seg(waiting[i], Colors.wait, false, "waiting")]);
     }
     Panel c = Panel(Kind.columns, "Jobs waiting, by hour of day (UTC)", "the average over these hours");
     c.height = 120;
+    c.unit = "jobs";
     double[24] avg;
     foreach (i; 0 .. 24)
         avg[i] = hoursOf[i] ? byHour[i] / hoursOf[i] : 0;
     c.cap = max(avg[].maxElement, 0.1);
     foreach (i; 0 .. 24)
         c.columns ~= Column(format("%02d", i), avg[i] ? format("%.1f", avg[i]) : null, format("%02d:00 UTC", i),
-            [Seg(avg[i], Colors.wait)]);
+            [Seg(avg[i], Colors.wait, false, "waiting, on average")]);
     c.note = "Waiting follows the busy hours: pull requests that run together queue behind each other's shards.";
     return [a, b, c];
 }
@@ -573,7 +585,7 @@ Panel[] minutes(const ref SiteData d) @safe
         {
             const total = f.seconds(s) / 60.0;
             p.columns ~= Column("#" ~ f.number.to!string, total > p.cap ? "↑" ~ num(total) : null,
-                format("#%d: %s min", f.number, num(total)), runnerSegs(f, s, runners));
+                "#" ~ f.number.to!string, runnerSegs(f, s, runners));
         }
         out_ ~= p;
     }
@@ -661,7 +673,8 @@ Panel[] jobs(const ref SiteData d) @safe
         if (secs.get(r, 0))
         {
             const share = setup.get(r, 0) / cast(double) secs[r];
-            s.rows ~= Row(r, null, 1, [Seg(share, Colors.wait), Seg(1 - share, Colors.light)],
+            s.rows ~= Row(r, null, 1, [Seg(setup.get(r, 0) / 60.0, Colors.wait, false, s.legend[0].label),
+                Seg((secs[r] - setup.get(r, 0)) / 60.0, Colors.light, false, s.legend[1].label)],
                 [Cell(format("%.0f%% of %s min", share * 100, num(secs[r] / 60.0)), true)]);
         }
 
@@ -771,7 +784,8 @@ Panel[] selection(const ref SiteData d) @safe
         const keep = x[0].everything ? 1 : x[0].testShare;
         const saved = skippable(d, f);
         r.rows ~= Row("#" ~ f.number.to!string, prHref(f.number), testSeconds(f) / widest,
-            [Seg(keep, Colors.ubuntu), Seg(1 - keep, Colors.arm, true)],
+            [Seg(keep * testSeconds(f) / 60, Colors.ubuntu, false, r.legend[0].label),
+                Seg((1 - keep) * testSeconds(f) / 60, Colors.arm, true, r.legend[1].label)],
             [Cell(format("%d/%d", x[0].reached, x[0].total), true), Cell(saved ? num(saved / 60.0) : "—", true,
                 saved > 3600 ? "good" : "muted"), Cell(x[0].everything ? x[0].why.join(" ") : "(packages only)")]);
         foreach (w; x[0].why)
@@ -792,9 +806,10 @@ Panel[] selection(const ref SiteData d) @safe
     foreach (ref f; figs)
     {
         const x = d.reach.filter!(y => y.pr == f.number).array;
+        const every = x.length && x[0].everything;
         s.points ~= Point(sqrt(cast(double) f.paths.length) / fmax, f.seconds(Scope.every) / mmax, "#" ~ f.number.to!string,
-            x.length && x[0].everything ? Colors.neutral : Colors.ubuntu,
-            format("#%d: %d files, %s min", f.number, f.paths.length, num(f.seconds(Scope.every) / 60.0)));
+            every ? Colors.neutral : Colors.ubuntu, "#" ~ f.number.to!string,
+            every ? "reached every package" : "packages only", f.paths.length, f.seconds(Scope.every) / 60.0);
     }
     s.legend = [Key("reached every package", Colors.neutral), Key("packages only", Colors.ubuntu)];
     s.note = "Reach follows package ownership and the sparkles: dependencies of the dub.sdl files; each package's "
@@ -837,7 +852,7 @@ Panel[] prPage(const ref SiteData d, size_t i) @safe
     m.rows = [Row("all", null, 1, runnerSegs(f, Scope.every, runners), [Cell(num(f.seconds(Scope.every) / 60.0), true)])];
     // The final head's runs, from their push.
     Panel g = Panel(Kind.gantt, "Jobs of the final run, from its push");
-    g.legend = [Key("waiting for a runner", Colors.light, true), Key("running, by runner type", Colors.ubuntu)];
+    g.legend = [Key("waiting for a runner", Colors.light, true), Key("running", Colors.ubuntu)];
     long t0 = long.max;
     foreach (ref run; rec.runs)
         if (run.head == rec.head && run.created < t0)
@@ -871,17 +886,29 @@ private string pct(double frac) @safe pure => format("%.2f%%", max(0.0, min(1.0,
 private string fill(string color, bool hatch) @safe pure
     => hatch ? "repeating-linear-gradient(45deg, " ~ color ~ " 0 3px, transparent 3px 6px)" : color;
 
+/// A segment's data, which the site's script reads for the tooltip and the
+/// legend: its series and its value (`site.js`).
+private void segData(ref Appender!string w, string series, double value) @safe pure
+{
+    w ~= ` data-k="`;
+    esc(w, series);
+    w ~= format(`" data-n="%.6g"`, value);
+}
+
+/// The legend: each entry a toggle that hides its series in the panel.
 private void legend(ref Appender!string w, in Key[] keys) @safe pure
 {
     if (keys.length == 0)
         return;
-    w ~= `<div class="legend">`;
+    w ~= `<div class="legend" role="group" aria-label="Series">`;
     foreach (ref k; keys)
     {
-        w ~= `<span><i aria-hidden="true" style="background:` ~ fill(k.color, k.hatch) ~ (k.hatch ? ";border:1px solid "
+        w ~= `<button type="button" class="key" aria-pressed="true" data-k="`;
+        esc(w, k.label);
+        w ~= `"><i aria-hidden="true" style="background:` ~ fill(k.color, k.hatch) ~ (k.hatch ? ";border:1px solid "
             ~ k.color : "") ~ `"></i>`;
         esc(w, k.label);
-        w ~= `</span>`;
+        w ~= `</button>`;
     }
     w ~= "</div>\n";
 }
@@ -890,10 +917,22 @@ private void stack(ref Appender!string w, in Seg[] segs, double cap, double heig
 {
     const total = segs.map!(s => s.value).sum;
     const scale = total > cap && total > 0 ? cap / total : 1;
-    foreach_reverse (ref s; segs) // drawn top first in a column-reverse flex
+    foreach (ref s; segs) // bottom first, in a column-reverse flex
         if (s.value > 0)
-            w ~= format(`<b style="height:%.1fpx;background:%s"></b>`, max(1.0, s.value * scale / cap * height),
+        {
+            w ~= `<b class="seg"`;
+            segData(w, s.label, s.value);
+            w ~= format(` style="height:%.1fpx;background:%s"></b>`, max(1.0, s.value * scale / cap * height),
                 fill(s.color, s.hatch));
+        }
+}
+
+/// A slot: what the tooltip names its X, and what hovering highlights.
+private void slotOpen(ref Appender!string w, string tag, string cls, string x) @safe pure
+{
+    w ~= "<" ~ tag ~ ` class="slot ` ~ cls ~ `" data-x="`;
+    esc(w, x);
+    w ~= `">`;
 }
 
 private void cell(ref Appender!string w, in Cell c, string tag) @safe pure
@@ -926,7 +965,7 @@ private void cell(ref Appender!string w, in Cell c, string tag) @safe pure
 /// One panel's HTML.
 void render(ref Appender!string w, in Panel p) @safe pure
 {
-    w ~= `<section class="panel">` ~ "\n";
+    w ~= `<section class="panel" data-u="` ~ p.unit ~ `">` ~ "\n";
     if (p.title.length)
     {
         w ~= `<header><h2>`;
@@ -964,14 +1003,12 @@ void render(ref Appender!string w, in Panel p) @safe pure
                 esc(w, s.sub);
                 w ~= `</span><span class="` ~ s.tone ~ `">`;
                 esc(w, s.delta);
-                w ~= `</span></span><span class="cols mini">`;
+                w ~= `</span></span><span class="cols mini" data-u="` ~ (s.latest.endsWith(" min") ? "min" : "") ~ `">`;
                 if (s.goal == s.goal)
                     w ~= format(`<i class="goal" style="bottom:%.1fpx"></i>`, s.goal / s.cap * 52);
                 foreach (ref c; s.cols)
                 {
-                    w ~= `<span class="col" title="`;
-                    esc(w, c.title);
-                    w ~= `">`;
+                    slotOpen(w, "span", "col", c.title);
                     stack(w, c.segs, s.cap, 52);
                     w ~= "</span>";
                 }
@@ -987,9 +1024,7 @@ void render(ref Appender!string w, in Panel p) @safe pure
                 w ~= format(`<i class="goal" style="bottom:%.1fpx"></i>`, p.goal / p.cap * p.height);
             foreach (ref c; p.columns)
             {
-                w ~= `<span class="col" title="`;
-                esc(w, c.title);
-                w ~= `">`;
+                slotOpen(w, "span", "col", c.title);
                 stack(w, c.segs, p.cap, p.height);
                 if (c.top.length)
                 {
@@ -1019,7 +1054,8 @@ void render(ref Appender!string w, in Panel p) @safe pure
             w ~= "</tr></thead><tbody>\n";
             foreach (ref r; p.rows)
             {
-                w ~= `<tr><th scope="row">`;
+                slotOpen(w, "tr", "", r.label);
+                w ~= `<th scope="row">`;
                 if (r.href.length)
                 {
                     w ~= `<a href="` ~ r.href ~ `">`;
@@ -1035,8 +1071,12 @@ void render(ref Appender!string w, in Panel p) @safe pure
                 const total = r.segs.map!(s => s.value).sum;
                 foreach (ref s; r.segs)
                     if (s.value > 0)
-                        w ~= `<b style="width:` ~ pct(total > 0 ? s.value / total : 0) ~ `;background:`
+                    {
+                        w ~= `<b class="seg"`;
+                        segData(w, s.label, s.value);
+                        w ~= ` style="width:` ~ pct(total > 0 ? s.value / total : 0) ~ `;background:`
                             ~ fill(s.color, s.hatch) ~ `"></b>`;
+                    }
                 w ~= `</span></span></td>`;
                 foreach (ref c; r.cells)
                     cell(w, c, "td");
@@ -1051,19 +1091,21 @@ void render(ref Appender!string w, in Panel p) @safe pure
             w ~= "</th></tr></thead><tbody>\n";
             foreach (ref s; p.spans)
             {
-                w ~= `<tr><th scope="row" title="`;
-                esc(w, s.name);
-                w ~= `">`;
+                slotOpen(w, "tr", "", s.name);
+                w ~= `<th scope="row">`;
                 esc(w, s.name);
                 w ~= `</th><td class="track"><span class="trackbar">`;
                 w ~= `<i class="mark" style="left:` ~ pct(15 / p.span) ~ `"></i>`;
                 if (s.start > s.created)
-                    w ~= `<b class="wait" style="left:` ~ pct(s.created / p.span) ~ `;width:` ~ pct((s.start - s.created) / p.span)
-                        ~ `"></b>`;
-                w ~= `<b class="run" style="left:` ~ pct(s.start / p.span) ~ `;width:` ~ pct(max(0.004, (s.end - s.start) / p.span))
-                    ~ `;background:` ~ s.color ~ `" title="`;
-                esc(w, format("%s: waited %.1f, ran %.1f min", s.name, s.start - s.created, s.end - s.start));
-                w ~= "\"></b></span></td></tr>\n";
+                {
+                    w ~= `<b class="wait seg"`;
+                    segData(w, p.legend[0].label, s.start - s.created);
+                    w ~= ` style="left:` ~ pct(s.created / p.span) ~ `;width:` ~ pct((s.start - s.created) / p.span) ~ `"></b>`;
+                }
+                w ~= `<b class="run seg"`;
+                segData(w, p.legend[1].label, s.end - s.start);
+                w ~= ` style="left:` ~ pct(s.start / p.span) ~ `;width:` ~ pct(max(0.004, (s.end - s.start) / p.span))
+                    ~ `;background:` ~ s.color ~ `"></b></span></td></tr>` ~ "\n";
             }
             w ~= "</tbody></table></div>\n";
             break;
@@ -1091,11 +1133,19 @@ void render(ref Appender!string w, in Panel p) @safe pure
             w ~= `</span><div class="plot">`;
             foreach (ref pt; p.points)
             {
-                w ~= format(`<span class="pt" style="left:%s;bottom:%s" title="`, pct(pt.x * 0.92 + 0.04), pct(pt.y * 0.9 + 0.04));
+                w ~= format(`<span class="slot pt" style="left:%s;bottom:%s"`, pct(pt.x * 0.92 + 0.04), pct(pt.y * 0.9 + 0.04));
+                w ~= ` data-x="`;
                 esc(w, pt.title);
+                w ~= `" data-k="`;
+                esc(w, pt.series);
                 w ~= `"><i style="background:` ~ pt.color ~ `"></i>`;
                 esc(w, pt.label);
-                w ~= `</span>`;
+                // The values the tooltip lists, drawn by the point itself.
+                w ~= `<b class="seg val" data-u=""`;
+                segData(w, "files changed", pt.files);
+                w ~= `></b><b class="seg val"`;
+                segData(w, "runner minutes", pt.minutes);
+                w ~= `></b></span>`;
             }
             w ~= `</div><span class="xlabel">`;
             esc(w, p.xLabel);
@@ -1144,7 +1194,7 @@ string page(const ref SiteData d, string route, string heading, string lede, in 
     w ~= "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
         ~ "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>";
     esc(w, heading);
-    w ~= " · sparkles-perf</title>\n<link rel=\"stylesheet\" href=\"/site.css\">\n<style>.site-sidebar a.sb-link[href=\"";
+    w ~= " · sparkles-perf</title>\n<link rel=\"stylesheet\" href=\"/site.css\">\n<script src=\"/site.js\" defer></script>\n<style>.site-sidebar a.sb-link[href=\"";
     esc(w, href(route));
     w ~= "\"] { font-weight: 600; background: var(--spk-surface-raised-bg, #e9e9e6); }</style>\n</head>\n<body>\n"
         ~ "<div class=\"shell\">\n<aside class=\"site-sidebar\"><nav aria-label=\"Dashboard\">\n"
@@ -1192,6 +1242,7 @@ string[string] buildSite(const ref SiteData d) @safe
 {
     string[string] files;
     files["site.css"] = siteCss();
+    files["site.js"] = import("perf_site.js");
     immutable string[2][string] ledes = [
         "": ["Overview", "Headline figures, and one small chart per question; each opens the tab that answers it."],
         "green": ["Time to green", "Each pull request's last push to every workflow done, split along the job that "
@@ -1249,7 +1300,7 @@ string[string] buildSite(const ref SiteData d) @safe
         foreach (m; content.matchAll(regex(`(?:src|href)="(https?:)?//`)))
             assert(false, path ~ " loads from another origin: " ~ m.hit);
     assert(a["pr/7.html"].canFind("Jobs of the final run"));
-    assert(a["green.html"].canFind(`href="/pr/7"`), "a row opens its pull request");
+    assert(a["green.html"].canFind(`href="/pr/7.html"`), "a row opens its pull request");
 }
 
 // === Loading (impure) ===
