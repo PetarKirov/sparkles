@@ -994,7 +994,7 @@ struct ActionDriver
     // its manifest (BGK2, BGK3); any other compile is keyed conservatively
     // (BGK6).
     private static bool withManifest(ref const Action a) @safe pure nothrow
-        => a.kind == ActionKind.compile && a.action.match!(
+        => (a.kind == ActionKind.compile || a.kind == ActionKind.generate) && a.action.match!(
             (ref const ProcessAction p) => p.argv.canFind!(x => x.startsWith("--makedeps-digests=")),
             (ref const _) => false);
 
@@ -1083,11 +1083,11 @@ struct ActionDriver
                             if (arg.startsWith(prefix) && !arg[prefix.length .. $].startsWith("/")
                                     && !arg[prefix.length .. $].startsWith("$"))
                                 s ~= "root " ~ arg[prefix.length .. $] ~ " " ~ treeDigest(arg[prefix.length .. $]) ~ "\n";
-                // BGG5: the shader compiler resolves imports and reports no
-                // manifest, so it keys on every file beneath its device
-                // configuration's import roots (BGK6).
-                foreach (dir; shaderRoots(p.argv))
-                    s ~= "shader-root " ~ dir ~ " " ~ treeDigest(dir) ~ "\n";
+                // BGG5: a shader compiler that reports no manifest keys on every
+                // file beneath its device configuration's import roots (BGK6).
+                if (!withManifest(a))
+                    foreach (dir; shaderRoots(p.argv))
+                        s ~= "shader-root " ~ dir ~ " " ~ treeDigest(dir) ~ "\n";
                 const env = a.kind == ActionKind.generate && p.envDelta.length ? p.envDelta : buildEnvironment();
                 foreach (e; env)
                     s ~= "env " ~ e.name ~ "=" ~ e.value ~ "\n";
@@ -1222,8 +1222,9 @@ struct ActionDriver
 
     // The worktree import roots of the device configuration a shader
     // compiler's `--described=$IN(<id>)/device.json` names, from the
-    // description its producer writes.
-    private string[] shaderRoots(const string[] argv)
+    // description its producer writes; with `withSources`, its source files
+    // too, which BGK8 counts among the roots a manifest may lie in.
+    private string[] shaderRoots(const string[] argv, bool withSources = false)
     {
         import std.json : JSONException, JSONType, parseJSON;
 
@@ -1246,7 +1247,9 @@ struct ActionDriver
             try
             {
                 foreach (t; parseJSON(described)["targets"].array)
-                    foreach (p; t["buildSettings"]["importPaths"].array)
+                    foreach (p; t["buildSettings"]["importPaths"].array
+                            ~ (withSources && "sourceFiles" in t["buildSettings"].objectNoRef
+                                ? t["buildSettings"]["sourceFiles"].array : null))
                         if (p.type == JSONType.string && p.str.startsWith("$ROOT/"))
                         {
                             auto d = p.str["$ROOT/".length .. $];
@@ -1458,11 +1461,14 @@ struct ActionDriver
     generators it reads (`$RUN/out/`); and the store, which holds the
     toolchain and the registry sources.
     */
-    private string outsideRoots(ref const Action a, const ref Manifest m) const
+    private string outsideRoots(ref const Action a, const ref Manifest m)
     {
         string[] roots;
         a.action.match!(
             (ref const ProcessAction p) {
+                // A shader compiler's roots are its device configuration's.
+                foreach (dir; shaderRoots(p.argv, withSources: true))
+                    roots ~= dir;
                 foreach (arg; p.argv)
                 {
                     foreach (prefix; ["-I=", "-J=", "-P-I"])
@@ -1533,11 +1539,15 @@ struct ActionDriver
     }
 
     // A compiler's path as a manifest names it: one in the run directory
-    // from `$RUN/`, any other as given.
+    // from `$RUN/`, one in the worktree relative to it (a shader compiler
+    // reads its configuration's roots by absolute path), any other as given,
+    // so a manifest is the same in every run and every worktree.
     private string named(string path) const @safe pure
     {
         if (path.startsWith(layout.runDirectory ~ "/"))
             return "$RUN/" ~ path[layout.runDirectory.length + 1 .. $];
+        if (path.startsWith(layout.root ~ "/"))
+            return path[layout.root.length + 1 .. $];
         return path;
     }
 

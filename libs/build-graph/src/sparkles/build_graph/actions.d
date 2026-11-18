@@ -288,6 +288,10 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
             foreach (tool; tools.shaderTools)
                 argv ~= "--tool=" ~ tool[0] ~ "=" ~ tool[1];
             argv ~= "--quiet";
+            // BGG5: the device compiles report what they read, so the action is
+            // keyed by its manifest, as a compile is (BGK2).
+            if (tools.dependencyOutput)
+                argv ~= ["--makedeps-digests=$MEASURE/digests", "--makedeps-absent=$MEASURE/absent"];
             id = taskId("generate", "shader-compile", "generator", vendor, d).value;
             add(Action(ActionKind.generate, id, gen.tool,
                 TaskAction(ProcessAction(argv: argv,
