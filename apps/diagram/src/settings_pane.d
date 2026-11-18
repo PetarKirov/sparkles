@@ -31,7 +31,7 @@ import sparkles.input.events : Event, Key, KeyEvent, PointerAction,
     PointerButton, PointerEvent, WheelEvent;
 import std.sumtype : match;
 
-import sparkles.ui.hit_ids : HitBlock;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.components.property_view : propertyView,
     PropertyViewOptions;
 import sparkles.ui.components.tree_view : treeActivate = activate,
@@ -112,10 +112,11 @@ PaneGeometry paneGeometryFor(in Size viewport) @safe pure nothrow @nogc
 // The component.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Tree rows' hit ids start here (`node + hitBase`).
-private enum uint hitBase = 1;
+/// The key the pane's tree rows are issued their hit ids under (`INP27`),
+/// one id per property node; its instance tells panes apart.
+enum string settingsRowsTag = "diagram.settings.rows";
 
-/// ditto
+/// The pane over a subject `T`.
 struct SettingsPaneT(T)
 {
     /// The per-rebuild row snapshot and the ranked filter (`PRT29`).
@@ -131,6 +132,19 @@ struct SettingsPaneT(T)
 
     private bool _built;
     private PaneGeometry _geom;
+
+    /// The tree rows' hit ids, indexed by node: claimed from the host's
+    /// registry each frame the pane is shown (`INP27`). Empty, the rows are
+    /// not hit-testable and a press on them selects nothing.
+    HitBlock rowHits;
+
+    /// Asks `hits` for the rows' block under `instance` — call it every frame
+    /// the pane is shown, after $(LREF ensure) and before $(LREF buildView).
+    void claimHits(ref HitRegistry hits, size_t instance = 0) @safe pure nothrow @nogc
+    {
+        const nodes = tree.data.nodes.length;
+        rowHits = hits.block(HitKey(settingsRowsTag, instance), nodes ? nodes : 1);
+    }
 
     /**
     First-use build plus a rebuild; idempotent, so the caller may say it every
@@ -294,9 +308,9 @@ struct SettingsPaneT(T)
                 auto frames = layout(view, Constraints(maxW: self._geom.cols));
                 foreach (t; hoverTargets(view, frames))
                 {
-                    if (t.hitId < hitBase || !t.rect.contains(p.pos))
+                    size_t node;
+                    if (!t.rect.contains(p.pos) || !self.rowHits.indexOf(t.hitId, node))
                         continue;
-                    const node = cast(uint)(t.hitId - hitBase);
                     foreach (i, ref const r; self.tv.rows)
                         if (r.node == node)
                         {
@@ -528,7 +542,7 @@ struct SettingsPaneT(T)
             valueColumn: _geom.cols > 60 ? 30 : 20,
             rangeBarCells: _geom.cols > 50 ? 8 : 4,
         );
-        const treeCol = propertyView(b, tree.data, tv, edits, opt, HitBlock(hitBase, tree.data.nodes.length));
+        const treeCol = propertyView(b, tree.data, tv, edits, opt, rowHits);
         body_ ~= b.add(Widget(kind: WidgetKind.column, children: [treeCol],
             clipX: true, clipY: true, width: SizeSpec.grow(),
             height: SizeSpec.grow()));
@@ -948,6 +962,52 @@ unittest
     foreach (ref n; tree.nodes)
         panel |= n.kind == WidgetKind.panel;
     assert(panel, "the pane is a framed surface, not loose rows");
+}
+
+/// INP27: the rows carry the ids the registry issued, and a press on one
+/// decodes through that block; unclaimed, the rows are inert.
+@("diagram.settings_pane.aPressDecodesThroughTheRegistry")
+@safe unittest
+{
+    import sparkles.ui.state : hoverTargets;
+
+    DiagramSettings s;
+    SettingsPane pane;
+    pane.ensure(s, testGeom);
+    assert(pane.tv.rows.length >= 2);
+
+    // The row the cursor is not on, and where it lies in the built view.
+    Point rowAt(ref SettingsPane pn, size_t row)
+    {
+        auto view = pn.buildView();
+        auto frames = layout(view, Constraints(maxW: testGeom.cols));
+        foreach (t; hoverTargets(view, frames))
+            if (t.hitId && t.hitId == pn.rowHits[pn.tv.rows[row].node])
+                return Point(t.rect.x + 1, t.rect.y);
+        return Point(-1, -1);
+    }
+    auto click(Point at)
+        => Event(PointerEvent(action: PointerAction.press, button: PointerButton.left, pos: at));
+
+    pane.tv.sel = 0;
+    assert(rowAt(pane, 1) == Point(-1, -1), "an unclaimed pane stamps no ids");
+
+    HitRegistry hits;
+    hits.beginFrame();
+    hits.block(HitKey("diagram.other"), 4);      // another key, issued first
+    pane.claimHits(hits);
+    assert(pane.rowHits == hits.find(HitKey(settingsRowsTag)));
+    assert(!hits.find(HitKey("diagram.other")).contains(pane.rowHits[0]));
+    const at = rowAt(pane, 1);
+    assert(at != Point(-1, -1), "the claimed rows are hit-testable");
+    assert(pane.handleOverlay(s, click(at)) == PaneOutcome.consumed);
+    assert(pane.tv.sel == 1, "the press selected the row its id names");
+
+    // The next frame re-asks and gets the same block: a held id still names it.
+    const before = pane.rowHits;
+    hits.beginFrame();
+    pane.claimHits(hits);
+    assert(pane.rowHits.base == before.base);
 }
 
 @("diagram.settings_pane.theKeyHintAlwaysSaysHowToLeave")
