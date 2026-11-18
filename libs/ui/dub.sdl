@@ -94,7 +94,7 @@ configuration "unittest" {
     dependency "sparkles:test-runner" path="../.."
 }
 // The device build: what LDC's dcompute target compiles for the GPU. Never
-// built by dub — `shader-compile` asks `dub describe` for it and compiles the
+// built by dub — `shader-compile` resolves it as dub would and compiles the
 // `@compute` modules among its sources (with `sparkles:shaders`'s), and
 // `sparkles:dmd-lsp` analyzes those modules under it (`TGT6`). It adds
 // `shaders/`, the device-only entry points: `@compute(CompileFor.deviceOnly)`

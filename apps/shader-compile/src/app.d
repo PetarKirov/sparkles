@@ -11,18 +11,19 @@ ES 100 for Android), proves each with glslang, and writes them to `--out`.
 $(B Dub is the unit table.) What gets compiled, against which import paths,
 with which flags, is the package's $(I device configuration) — a dub
 configuration whose dflags name a dcompute target (`-mdcompute-targets=`),
-`shaders` by convention. The tool asks `dub describe` for it and compiles the
-modules among its source files (the package's and its dependencies') whose
-declaration carries `@compute`: that set $(I is) the unit, so there is nothing
-to declare per unit and nothing to keep in step. `sparkles:dmd-lsp` analyzes
-the same modules under the same configuration, so an editor sees a shader the
-way this tool compiles it (`TGT6`).
+`shaders` by convention. The tool resolves it as `dub describe` would report
+it, in-process with `sparkles:build-primitives`' resolver (it runs no dub),
+and compiles the modules among its source files (the package's and its
+dependencies') whose declaration carries `@compute`: that set $(I is) the
+unit, so there is nothing to declare per unit and nothing to keep in step.
+`sparkles:dmd-lsp` analyzes the same modules under the same configuration, so
+an editor sees a shader the way this tool compiles it (`TGT6`).
 
 $(B It runs as a build step.) `sparkles:ui`'s `gpu-effects` configuration
 runs it with `--if-stale` before every build, into a git-ignored directory: a
 stamp there records the SHA-256 of the unit's modules and their packages'
 recipes, so a build whose shaders are current pays a hash check and needs
-neither dub nor the compiler. The stamp is a shortcut for the edit loop, not
+no resolution and no compiler. The stamp is a shortcut for the edit loop, not
 a build system: it does not track the compiler, the tools, or a module the
 unit imports without being one of its own. Output that ships is built by Nix
 (`nix build .#ui-shaders`), whose inputs are all of those, and copied in
@@ -33,9 +34,10 @@ $(B The compiler) is `ldc2-vulkan` on `PATH` — dlang.nix's `ldc-vulkan` (LDC's
 `@fragment`), which the dev shell and `nix run .#shader-compile` both provide
 under that name — or whatever `--ldc` names.
 
-$(B Dependency-free on purpose.) It uses Phobos and `sparkles:shaders` alone:
-`sparkles:core-cli` depends on `sparkles:ui`, whose build runs this tool, so
-depending on it would make the tool a prerequisite of itself.
+$(B Below `sparkles:ui` on purpose.) It uses Phobos, `sparkles:shaders`,
+`sparkles:wired` and `sparkles:build-primitives`, none of which reaches
+`sparkles:ui`: `sparkles:core-cli` depends on `sparkles:ui`, whose build runs
+this tool, so depending on it would make the tool a prerequisite of itself.
 */
 module app;
 
@@ -288,9 +290,10 @@ int main(string[] args)
     if (ifStale && isFresh(outDir, packageDir))
         return 0;
 
-    // Then, in this order (`SHP10`): the tools exist (3) — `dub describe`
-    // itself runs the compiler; the configuration is a device build (2); the
-    // unit compiles (1), or the compiler lacks the fragment stage (3, `run`).
+    // Then, in this order (`SHP10`): the tools exist (3) — describing the
+    // configuration asks the compiler for its identity; the configuration is
+    // a device build (2); the unit compiles (1), or the compiler lacks the
+    // fragment stage (3, `run`).
     if (tryExecute([ldc, "--version"]).status == 127)
     {
         stderr.writefln("shader-compile: no dcompute-enabled LDC (`%s`). Enter the dev shell " ~
@@ -298,24 +301,20 @@ int main(string[] args)
             "`sparkles/main` build.", ldc);
         return 3;
     }
-    // dub only describes the configuration, which `--described` already holds.
-    foreach (tool; ["dub", "spirv-val", "spirv-opt", "spirv-dis", "spirv-as", "spirv-cross",
+    foreach (tool; ["spirv-val", "spirv-opt", "spirv-dis", "spirv-as", "spirv-cross",
             "glslangValidator"])
-        if ((tool != "dub" || !described.length) && tryExecute([tool, "--version"]).status == 127)
+        if (tryExecute([tool, "--version"]).status == 127)
         {
             stderr.writefln("shader-compile: `%s` is not on PATH. The dev shell (`nix develop`) " ~
-                "and `nix run .#shader-compile` carry dub and the SPIR-V and GLSL tools.", tool);
+                "and `nix run .#shader-compile` carry the SPIR-V and GLSL tools.", tool);
             return 3;
         }
 
-    // Without `$DFLAGS`: dub folds it into the dflags it reports, and it
-    // tunes the host build that runs this step (`ci` adds `-linkonce-templates`, the
-    // sanitizer job `-fsanitize=address`), which the device compiler must not see.
     string description;
     if (described.length)
     {
         // A build graph's direct invocation: it resolved the configuration
-        // itself, and the tool reads no recipe and runs no dub.
+        // itself, and the tool reads no recipe.
         try
             description = readText(described);
         catch (FileException e)
@@ -326,17 +325,14 @@ int main(string[] args)
     }
     else
     {
-        const run_ = tryExecute(["dub", "describe", "--root=" ~ packageDir,
-            "--config=" ~ configuration, "--compiler=" ~ ldc], captureStderr: false,
-            env: withoutHostFlags(environment.toAA));
-        if (run_.status != 0)
+        string error;
+        description = describeConfiguration(packageDir, configuration, ldc, error);
+        if (description is null)
         {
-            stderr.writeln(run_.output);
-            stderr.writefln("shader-compile: `dub describe --config=%s` failed in %s, so there is " ~
-                "no device configuration to read", configuration, packageDir);
+            stderr.writefln("shader-compile: resolving the configuration `%s` failed in %s, so there " ~
+                "is no device configuration to read: %s", configuration, packageDir, error);
             return 2;
         }
-        description = run_.output;
     }
     const build = parseDescribe(description);
     if (!build.hasTarget)
@@ -1230,6 +1226,67 @@ string renameCombinedSamplers(string glsl, in string[] samplers)
         == "atlas_nearest atlas_sampler photo");
 }
 
+
+/**
+The device configuration `configuration` of the package at `packageDir`, as
+`dub describe --config=<configuration> --compiler=<ldc>` reports it, resolved
+in-process by `sparkles:build-primitives`' resolver (build-graph SPEC §2):
+the step runs no dub. A registry dependency resolves to the version the
+package's `dub.selections.json` selects, found where dub keeps it
+(`$DUB_HOME`, `~/.dub`) or in the flake's DUB sources
+(`$SPARKLES_DUB_SOURCES`). `$DFLAGS` is left out: it tunes the host build
+that runs this step (`ci` adds `-linkonce-templates`, the sanitizer job
+`-fsanitize=address`), which the device compiler must not see.
+
+Returns the description, or null with `error` set.
+*/
+string describeConfiguration(string packageDir, string configuration, string ldc, out string error)
+{
+    import sparkles.build_primitives.dub_manifest : hostPlatformTokens;
+    import sparkles.build_primitives.resolve : BuildPlatform, describeDevice, readCompilerIdentity,
+        resolve, ResolveRequest, selectedRegistrySources, systemTree;
+
+    const dir = packageDir.absolutePath.buildNormalizedPath;
+    BuildPlatform platform;
+    platform.platform = hostPlatformTokens();
+    version (X86_64)
+        platform.architecture = ["x86_64"];
+    else version (AArch64)
+        platform.architecture = ["aarch64"];
+    const identity = tryExecute([ldc, "--version"]);
+    if (identity.status != 0 || !readCompilerIdentity(ldc, identity.output, platform))
+    {
+        error = text("`", ldc, " --version` does not name an LDC");
+        return null;
+    }
+
+    auto tree = systemTree();
+    string[] homes;
+    if (const home = environment.get("DUB_HOME"))
+        homes ~= home;
+    if (const home = environment.get("HOME"))
+        homes ~= buildPath(home, ".dub");
+    if (const sources = environment.get("SPARKLES_DUB_SOURCES"))
+        homes ~= buildPath(sources, ".dub");
+    auto registry = selectedRegistrySources(buildPath(dir, "dub.selections.json"), homes, tree);
+    if (registry.hasError)
+    {
+        error = registry.error;
+        return null;
+    }
+
+    auto request = ResolveRequest(directory: dir, configuration: configuration, platform: platform);
+    foreach (name, source; registry.value)
+        request.registry[name] = source;
+    request.environment = withoutHostFlags(environment.toAA);
+    auto resolved = resolve(request, tree);
+    if (resolved.hasError)
+    {
+        error = resolved.error.message;
+        return null;
+    }
+    return describeDevice(resolved.value);
+}
 /// `env` without the variables that tune the host build — the device build
 /// described from it must come from the recipe alone.
 string[string] withoutHostFlags(string[string] env)

@@ -11,7 +11,9 @@
 #   * spirv-tools (spirv-val, spirv-opt, spirv-dis), spirv-cross, glslang.
 #     Their versions shape the output (an spirv-opt upgrade rewrites a branch),
 #     so a build's GLSL is only as reproducible as their pins.
-#   * dub, which the tool asks for the package's device configuration.
+#
+# It runs no dub: it resolves the device configuration in-process, with
+# `sparkles:build-primitives`' resolver.
 #
 # The wrapper carries all of it, so
 #
@@ -50,7 +52,6 @@
               --prefix PATH : ${
                 lib.makeBinPath [
                   config.packages.ldc2-vulkan
-                  pkgs.dub
                   pkgs.spirv-tools
                   pkgs.spirv-cross
                   pkgs.glslang

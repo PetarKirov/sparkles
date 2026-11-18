@@ -60,7 +60,7 @@ configuration "unittest" {
 }
 
 // The device build: what LDC's dcompute target compiles for the GPU. Never
-// built by dub — `shader-compile` asks `dub describe` for it and compiles the
+// built by dub — `shader-compile` resolves it as dub would and compiles the
 // `@compute` modules among its sources (`triangle_shader.d`, with
 // `sparkles:shaders`'s).
 configuration "shaders" {

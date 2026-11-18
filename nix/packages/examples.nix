@@ -32,6 +32,7 @@
         manifestFileset
         libsClosure
         refsIn
+        shaderCompileDirs
         placeVulkanWsiShaders
         needsUiShaders
         needsUiVulkanShaders
@@ -142,7 +143,7 @@
               # `views/` string-import assets alongside the script itself.
               (fromRoot "libs/${libName}/examples")
             ]
-            ++ lib.optional (selectsVulkanWsiShaders libName) (fromRoot "apps/shader-compile/src")
+            ++ lib.optionals (selectsVulkanWsiShaders libName) (map fromRoot shaderCompileDirs)
             ++ map fromRoot (uiShaderDirs (libSourceDirsFor libName))
           );
         };

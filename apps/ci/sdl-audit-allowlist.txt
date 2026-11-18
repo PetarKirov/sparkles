@@ -12,4 +12,4 @@ apps/ci/tools/scan-recipe-vocabulary.d | buildType | as `subPackage`: a parsed d
 libs/build-primitives/src/sparkles/build_primitives/resolve/recipe.d | listSettings | a compile-time list of the schema's field names, joined for `__traits(getMember)`; no SDL text is built
 libs/build-primitives/src/sparkles/build_primitives/workspace/input_sets.d | /dub.sdl: | `writeOpaqueDiagnostic` names the recipe file a diagnostic is about, after its directory; no SDL is read, matched or built
 apps/ci/src/perf_publish.d | ^╭──╼ \[\d+/\d+\] (\S+) › dub test :\S+ -- (.*?) ╾ | the importer reads `ci test`'s own log boxes back from a CI job log; `dub test :<package>` is the text `ci` printed, not a recipe
-libs/build-graph/src/sparkles/build_graph/variants.d | dflags | `describeDevice` writes the device configuration as `dub describe` reports it, in JSON; `dflags` is that document's key, not SDL
+libs/build-primitives/src/sparkles/build_primitives/resolve/describe.d | dflags | `describeDevice` writes the device configuration as `dub describe` reports it, in JSON; `dflags` is that document's key, not SDL
