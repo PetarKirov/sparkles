@@ -500,6 +500,8 @@ struct Store(D)
             return failed("cannot write the record");
         if (parent.renameAt(name, entry.value, "out").hasError)
             return failed("cannot move the outputs into staging");
+        if (beforePublication !is null)
+            beforePublication(key);
 
         lease(key);
         if (replacing && published(key))
@@ -1035,6 +1037,13 @@ string[] collectOlderLayouts(D)(ref D top, scope bool delegate(string holder) al
     }
     return removed;
 }
+
+/**
+Called with the key of each publication once its staging entry is written,
+just before the rename that publishes it: oracle 7 pauses a producer there
+to kill it between its write and its rename. Null in every real run.
+*/
+__gshared void function(string key) @safe beforePublication;
 
 /// The `CACHEDIR.TAG` a store's top directory and the runs' directory hold
 /// (BGS7), so backup tools skip them.
