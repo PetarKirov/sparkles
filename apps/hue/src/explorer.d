@@ -34,7 +34,7 @@ import sparkles.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     WheelEvent;
 import sparkles.ui.components.chrome : headerBar;
 import sparkles.ui.components.file_icons : fileIcon, folderFg, folderGlyph;
-import sparkles.ui.hit_ids : HitBlock;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.components.tree_view : filterServe, jumpMatching, measureContent,
     treeActivate = activate, treeCollapseOrUp = collapseOrUp, TreeStep,
     TreeViewState, viewSlice;
@@ -114,6 +114,11 @@ private GitStatus sessionGitStatus(FileChange c) @safe pure nothrow @nogc
 /// state (`XPL6`).
 TreeGlyphs explorerGlyphs(in GlyphSet theme) @safe pure nothrow @nogc
     => TreeGlyphs(guides: theme.guides, closed: "", open: "", leaf: "");
+
+/// The explorer rows' hit block, `nodes` ids long (`INP27`): what both
+/// backends' views stamp on the tree, asked for each frame the pane shows.
+HitBlock explorerRowHits(ref HitRegistry hits, size_t nodes) @safe pure nothrow @nogc
+    => hits.block(HitKey("hue.explorer.rows"), nodes ? nodes : 1);
 
 /// The explorer session: the arena is rebuilt (cheap, flat) whenever the open
 /// set or the filter changes — the tree IS a function of (fs, open, query).
@@ -583,7 +588,8 @@ struct ExplorerTui
         return any;
     }
 
-    void paint(ref Grid g) @system
+    /// Paints the pane into `g`; its rows take their ids from `hits`.
+    void paint(ref Grid g, ref HitRegistry hits) @system
     {
         CellStyle page;
         page.fg = Color.fromRgb(pageFg);
@@ -625,7 +631,7 @@ struct ExplorerTui
         const tree2 = viewSlice(tb, data, tv,
             (uint i) @safe => filter.text.length != 0 || open.isOpen(data.nodes[i].value.path),
             explorerGlyphs(palette.glyphs), selBg,
-            hasSelectionBg: true, hits: HitBlock(1, data.nodes.length));
+            hasSelectionBg: true, hits: explorerRowHits(hits, data.nodes.length));
         Widget colW = Widget(kind: WidgetKind.column, children: [tree2],
             width: SizeSpec.fixed(width + hx));
         const framed = scrollBox(tb, tb.add(colW), scrollFrame,
@@ -1080,7 +1086,9 @@ unittest
     // Paint: header, guides, labels, status all through the widget pipeline.
     Grid g;
     g.resize(50, 8);
-    x.paint(g);
+    HitRegistry hits;
+    hits.beginFrame();
+    x.paint(g, hits);
     string row(ushort y)
     {
         string s;
@@ -1334,7 +1342,9 @@ unittest
 
     Grid g;
     g.resize(40, 10);
-    x.paint(g);
+    HitRegistry hits;
+    hits.beginFrame();
+    x.paint(g, hits);
 
     bool sawBandAndAccent;
     foreach (ushort y; 0 .. g.rows)

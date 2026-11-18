@@ -79,8 +79,8 @@ import format_preview : formatPreviewActive, formatPreviewChip,
 // The composable markdown view (M10): the preview is one widget tree; the
 
 // The explorer pane (XPL2): the same tree model the TUI workspace uses.
-import explorer : ExplorerTui, explorerGlyphs;
-import sparkles.ui.hit_ids : HitBlock, HitRegistry;
+import explorer : ExplorerTui, explorerGlyphs, explorerRowHits;
+import sparkles.ui.hit_ids : HitKey, HitRegistry;
 import sparkles.ui.components.tree_view : viewSlice;
 
 // 2D table grid selection (TBL): pure region/serialize logic over grid hits.
@@ -1779,10 +1779,9 @@ int runGui(GuiArgs guiArgs) @system
     // where a segment sits.
     enum toolbarSegments = 5;
 
-    // The hit-id block this bar owns. Segment i is `toolbarHitBase + i`;
-    // an activation maps back by subtracting the base. Non-zero because
-    // `0` is `hitId`'s "not hit-testable".
-    enum size_t toolbarHitBase = 0x7B_00;
+    // What this bar's hit block is asked for under (`INP27`): segment `i`
+    // is the block's `i`-th id, and an activation decodes back through it.
+    enum toolbarHitKey = HitKey("hue.toolbar");
 
     // The press in flight over the bar, across frames: a press arms a
     // segment, a release over the SAME segment activates it (STM10).
@@ -2193,7 +2192,7 @@ int runGui(GuiArgs guiArgs) @system
             const tv = viewSlice(tb, pn.tree.data, pn.tree.tv,
                 (uint i) @safe => pn.tree.open.isOpen(pn.tree.data.nodes[i].value.path),
                 explorerGlyphs(vm.palette.glyphs), pn.tree.selBg, hasSelectionBg: true,
-                hits: HitBlock(1, pn.tree.data.nodes.length));
+                hits: explorerRowHits(hitRegistry, pn.tree.data.nodes.length));
             Widget paneW = Widget(kind: WidgetKind.column, children: [tv],
                 width: SizeSpec.fixed(treeBodyCols), clipX: true);
             auto wt = tb.finish(tb.add(paneW));
@@ -2248,7 +2247,7 @@ int runGui(GuiArgs guiArgs) @system
                 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 
                 auto ib = Builder();
-                const iv = pn.insp.view(ib, ir.width);
+                const iv = pn.insp.view(ib, ir.width, hitRegistry);
                 Widget ipane = Widget(kind: WidgetKind.column,
                     children: [iv], width: SizeSpec.fixed(ir.width),
                     clipX: true);
@@ -2423,6 +2422,7 @@ int runGui(GuiArgs guiArgs) @system
             const cellsW = screenW / cellW;
             const cellsH = screenH / cellH;
             const pkGeometry = pickerGeometryFor(cellsW, cellsH);
+            filePicker.get.claimHits(hitRegistry);
             auto pkTree = filePicker.get.buildView(pkGeometry);
             auto pkFrames = layout(pkTree,
                 Constraints(maxW: 2 * pkGeometry.panelCols));
@@ -2488,6 +2488,7 @@ int runGui(GuiArgs guiArgs) @system
             // Same function of the screen size the input path keeps rows
             // sized to; paint itself never resizes.
             const sg = settingsGeometryFor(cellsW, cellsH);
+            settingsPane.claimHits(hitRegistry);
             auto sTree = settingsPane.buildView(sg);
             auto sFrames = layout(sTree, Constraints(maxW: sg.panelCols));
             const sPanel = sFrames[sTree.root].rect;
@@ -2846,7 +2847,8 @@ int runGui(GuiArgs guiArgs) @system
 
             auto barB = Builder();
             const barLabels = toolbarLabels();
-            const barRoot = actionBar(barB, barLabels[], toolbarHitBase,
+            const toolbarHits = hitRegistry.block(toolbarHitKey, toolbarSegments);
+            const barRoot = actionBar(barB, barLabels[], toolbarHits.base,
                 toolbarPress);
             if (inputMode)
                 barB.nodes[barRoot].visibility = Visibility.collapsed;
@@ -2916,9 +2918,10 @@ int runGui(GuiArgs guiArgs) @system
             // geometry here at all — and no `!inputMode` gate, because a
             // collapsed bar contributes no hit targets, so `activated` cannot
             // fire while an input line owns the row.
-            if (toolbarPress.activated != 0)
+            size_t segment;
+            if (toolbarHits.indexOf(toolbarPress.activated, segment))
             {
-                switch (toolbarPress.activated - toolbarHitBase)
+                switch (segment)
                 {
                     case 0: applyTheme(vm.themeIdx == 0 ? themes.length - 1 : vm.themeIdx - 1); break;
                     case 1: applyTheme(vm.themeIdx + 1 == themes.length ? 0 : vm.themeIdx + 1); break;
