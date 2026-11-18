@@ -211,9 +211,20 @@ Progress, by the gate's items:
   (`--trace-compiles`); two concurrent producers of one graph both succeed,
   the loser adopting the winner's entries (oracle 7 step 1, one file system).
 
-Next: a consumer served from a digest record alone, `ci cache store`, `pkg-config`'s
-absent candidates, and the remaining oracles over the whole test selection
-(2, 4, 5, 7, 9, 10, 16–19, 21).
+Next: `ci cache store explain` (BGS8), `pkg-config`'s absent candidates
+(BGK9), the store on the VFS (BGF4) with digest caching from its `Stat`
+(BGF6), host toolchains (BGT3), D39's list over the whole test selection, and
+the remaining oracles (2, 4, 5, 7, 9, 10, 16–19, 21).
+
+Follow-up, after the gate: **`ci commits build-each` through the graph.** At
+each commit of the range it plans the packages it builds, their application
+configurations included (`hue`, `ui-gallery` and `diagram` with their GUI
+arms), and executes them against the shared store, so a commit compiles only
+the actions whose keys it changes: an unchanged package and closure cost a
+plan and the lookups, and a change no compile reads costs nothing more. A
+package whose recipe the graph cannot model builds with dub, and the report
+names it. It is the store's heaviest user, so it waits for oracles 4 and 7,
+and it replaces no gate item.
 
 ## E4: The Nix backend
 
