@@ -344,9 +344,9 @@ on aarch64-linux before the fix); **not run** = the test was read, not run again
 | `3e6235059b` tests: DefaultTraceInfo records traces with the unwinder                                        | (test-only: the test itself)                                                                                                                                                                                | n/a           | yes, with the commit it covers                                 |
 | `0a4e8b9a9f` tests: Bionic x86 scans TLS through `__tls_get_addr`                                            | (test-only: the test itself)                                                                                                                                                                                | n/a           | yes, with the commit it covers                                 |
 
-### LDC fork after the review (`0a4e8b9a9f..sparkles/main`, tip `64e6453968`, 10 commits)
+### LDC fork after the review (`0a4e8b9a9f..sparkles/main`, tip `4aa7f4a1a9`, 13 commits)
 
-dlang.nix `0b49f46` builds tip `64e6453968`, which the flake pins through its
+dlang.nix `7bf1b17` builds tip `4aa7f4a1a9`, which the flake pins through its
 `ldc-sparkles` input. The first three commits fix reproducibility, WASI
 linking and an ASan hang. The next six complete the compiler's dependency
 output for the
@@ -356,21 +356,32 @@ output for the
 - the digest of the bytes the compile read from each of them (BGK2, BGK7);
 - relocatable coverage and ImportC paths (BGA5).
 
-The last names the `spirv-opt` a Vulkan compilation runs, so a build that names
-its tools runs none from `PATH` (shader build SHP11).
+The next names the `spirv-opt` a Vulkan compilation runs, so a build that names
+its tools runs none from `PATH` (shader build SHP11). The last three make every
+build work with `-ftime-trace`: naming a template instance no longer expands
+an enum that is still being initialized (which failed `sparkles:dub-manifest`,
+`sparkles:build-primitives` and `sparkles:event-horizon`); without
+`-ftime-trace-file` the trace is named after the object file instead of
+failing every compilation; and a trace over 2 GiB (`hue` at granularity 0) is
+written whole. DMD 2.112, the shell's `dmd`, had the first and the last bugs
+too: dlang.nix `4ef5441` and `7bf1b17` patch it with the same fixes. With both
+compilers, every sub-package builds traced at granularity 0.
 
-| Commit                                                                                      | Regression test                                                                                                                                                          | Red on revert | Upstreamable            |
-| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------- | ----------------------- |
-| `f62832cc17` WasmPointersSpill: spill and split in a deterministic order                    | `tests/codegen/wasm_spill_pointers_deterministic.d` (compiles Phobos' gammafunction five times, compares the objects)                                                    | not run       | yes                     |
-| `66e41cd8c9` phobos: no getprotobynumber() reference in std.socket on WASI                  | none: a link fix (wasi-libc declares the function and does not define it), exercised by any wasip2 program that links `socket.o`                                         | not run       | Phobos commit yes       |
-| `5d81911f60` fix(druntime): keep collections out of createLowLevelThread's pthread_create   | `tests/sanitizers/asan_gc_lowlevel_thread.d` (ASan, alarm as the hang check)                                                                                             | yes           | yes                     |
-| `bd9396c726` Map the file name coverage registers a module under                            | `tests/codegen/file_prefix_map.d`, extended: `-cov` registers the remapped path                                                                                          | not run       | yes (with `3d8b19d533`) |
-| `ca5abb238f` List the headers an ImportC file includes in -makedeps                         | `tests/driver/makedeps_importc.c` (a header two includes deep)                                                                                                           | not run       | yes                     |
-| `6ebdb35ffb` Add `-makedeps-absent=<file>`: the paths the import searches missed            | `tests/driver/makedeps_absent.d`: misses before an import, a string import and a `__traits(compiles, { import … })` probe resolved, and no hit                           | not run       | yes (a new option)      |
-| `10d6c6b987` List the config file lookup's misses in -makedeps-absent                       | `tests/driver/makedeps_absent.d`, extended: the `ldc2.conf` candidates searched before the one used                                                                      | not run       | yes, with `6ebdb35ffb`  |
-| `8d5c3c8887` Pass the macro prefix maps to the C preprocessor                               | `tests/codegen/file_prefix_map_importc.c`: `__FILE__` in an ImportC header is remapped                                                                                   | not run       | yes (with `3d8b19d533`) |
+| Commit                                                                                      | Regression test                                                                                                                                                          | Red on revert       | Upstreamable            |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------- | ----------------------- |
+| `f62832cc17` WasmPointersSpill: spill and split in a deterministic order                    | `tests/codegen/wasm_spill_pointers_deterministic.d` (compiles Phobos' gammafunction five times, compares the objects)                                                    | not run             | yes                     |
+| `66e41cd8c9` phobos: no getprotobynumber() reference in std.socket on WASI                  | none: a link fix (wasi-libc declares the function and does not define it), exercised by any wasip2 program that links `socket.o`                                         | not run             | Phobos commit yes       |
+| `5d81911f60` fix(druntime): keep collections out of createLowLevelThread's pthread_create   | `tests/sanitizers/asan_gc_lowlevel_thread.d` (ASan, alarm as the hang check)                                                                                             | yes                 | yes                     |
+| `bd9396c726` Map the file name coverage registers a module under                            | `tests/codegen/file_prefix_map.d`, extended: `-cov` registers the remapped path                                                                                          | not run             | yes (with `3d8b19d533`) |
+| `ca5abb238f` List the headers an ImportC file includes in -makedeps                         | `tests/driver/makedeps_importc.c` (a header two includes deep)                                                                                                           | not run             | yes                     |
+| `6ebdb35ffb` Add `-makedeps-absent=<file>`: the paths the import searches missed            | `tests/driver/makedeps_absent.d`: misses before an import, a string import and a `__traits(compiles, { import … })` probe resolved, and no hit                           | not run             | yes (a new option)      |
+| `10d6c6b987` List the config file lookup's misses in -makedeps-absent                       | `tests/driver/makedeps_absent.d`, extended: the `ldc2.conf` candidates searched before the one used                                                                      | not run             | yes, with `6ebdb35ffb`  |
+| `8d5c3c8887` Pass the macro prefix maps to the C preprocessor                               | `tests/codegen/file_prefix_map_importc.c`: `__FILE__` in an ImportC header is remapped                                                                                   | not run             | yes (with `3d8b19d533`) |
 | `7bee3fbdeb` Add `-makedeps-digests=<file>`: what the compilation read from each dependency | `tests/driver/makedeps_digests.d` (a module and a string import, each once) and `tests/driver/makedeps_digests_importc.c` (a header digested after the preprocessor ran) |
 | `64e6453968` dcompute: name the spirv-opt an optimised compilation runs                     | `tests/codegen/dcompute_spirv_opt_path.d` (a recording spirv-opt: the named one runs, an empty name runs none, and only without the option is PATH searched)             |
+| `0b25dd4ad7` Print a template argument in use without expanding it                          | `tests/dmd/compilable/timetrace_eponymous.d` (an eponymous enum passed to `anySatisfy` inside its own initializer, traced at granularity 0)                              | yes                 | yes (DMD frontend)      |
+| `84afab43cc` Name the time trace after the output when no file is given                     | `tests/driver/ftime-trace-default-file.d` (an object and a library's object, no `--ftime-trace-file`)                                                                    | yes                 | yes                     |
+| `4aa7f4a1a9` Write a frontend output file in as many write() calls as it takes              | none: the failure needs a file over 2 GiB; `hue` built with `-ftime-trace-granularity=0` fails before the fix and builds after                                           | yes (by that build) | yes (DMD frontend)      |
 
 ### LLVM fork (`upstream/main..sparkles/main`, tip `275dcf2887`, 31 commits)
 

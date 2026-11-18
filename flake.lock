@@ -18,11 +18,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1793564865,
-        "narHash": "sha256-GaZ+sF7i664U0gQgOhOuLv2AS/gatofLIR7laCUBbGk=",
+        "lastModified": 1795005256,
+        "narHash": "sha256-GbvEdmnjd9CWKYgGCjibQu+CEEXi6BrzSs3lBEAFLNA=",
         "owner": "PetarKirov",
         "repo": "dlang.nix",
-        "rev": "0b49f4618542ed7117d5d9d56c4775b0971f6513",
+        "rev": "7bf1b178b1034a1b1f8ebcec89a568b48cb0de50",
         "type": "github"
       },
       "original": {
@@ -342,11 +342,11 @@
     "ldc-sparkles": {
       "flake": false,
       "locked": {
-        "lastModified": 1794904326,
-        "narHash": "sha256-Uux9DyInJ4OKWToPjSaKWYU2eOg/hQcxeGLg3zp5GKg=",
+        "lastModified": 1795004856,
+        "narHash": "sha256-3cv2RAdyokpyDWGYE9MNlXqbGTxKkaml2rzr2DpCMtg=",
         "ref": "sparkles/main",
-        "rev": "64e6453968ca5deff80d4b61101190600513ca2c",
-        "revCount": 49397,
+        "rev": "4aa7f4a1a98ecf939354ecec233a0dcd52dd0663",
+        "revCount": 49400,
         "submodules": true,
         "type": "git",
         "url": "https://github.com/PetarKirov/ldc"
