@@ -803,8 +803,8 @@ struct Toolchain
 /*
 §8: the compiler reports its configuration file and where `object` lies,
 so the run passes the one explicitly and remaps the other's tree (BGA11).
-The identity covers BGT1's components: every tool the run names (the test
-runner included), the configuration's import and library directories
+The identity covers BGT1's components but the test runner, which keys only
+a test action: every tool the run names, the configuration's import and library directories
 (druntime's and Phobos' sources and libraries), and the C compiler's
 startup objects, C library and system include directories, as it reports
 them. Each that resolves into the Nix store is named by its store-path
@@ -838,8 +838,11 @@ Toolchain toolchainOf(const Tools tools)
                 t.root = line[open + 1 .. at].idup;
         }
     }
+    // The test runner's core keys a test action (BGT1), and E3 keys no test
+    // (BGX2): in this identity it would change every build action's key
+    // with the runner, which none of them reads.
     string[] files = [tools.compiler, t.config, tools.cc, tools.linker, tools.archiver, tools.fail,
-        tools.deviceCompiler, environment.get("SPARKLES_TEST_RUNNER", "")];
+        tools.deviceCompiler];
     foreach (tool; tools.shaderTools)
         files ~= tool[1];
     string[] trees = configDirectories(t.config);
