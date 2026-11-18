@@ -38,6 +38,7 @@ import sparkles.input : EndOfInput, Event, isEndOfInput, isNoEvent, Key,
     KeyEvent, linesPerNotch, match, mousePointer, NoEvent, PointerAction,
     PointerButton, PointerEvent, ResizeEvent, WheelEvent;
 import sparkles.ui.components.dock : DockAxis, DockContainer, PaneId, RouteKind;
+import sparkles.ui.hit_ids : HitRegistry;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
 import sparkles.ui.geometry : Point, Rect, Size;
@@ -95,6 +96,9 @@ alias WsLoader = WorkspaceDoc delegate(string path) @system;
 /// coordinates.
 struct WorkspaceTui
 {
+    /// The terminal's hit ids (`INP27`): every hit-testable control of a
+    /// painted frame asks it for its block, the frame having begun it once.
+    package HitRegistry hitRegistry;
     ExplorerTui tree;
     PreviewTui viewer;
     WsLoader loadDoc;
@@ -485,6 +489,11 @@ struct WorkspaceTui
 
     void paint(ref Grid g) @system
     {
+        // The frame's hit ids; the document pane's tree is retained, so it
+        // re-asks for its blocks every frame it is shown.
+        hitRegistry.beginFrame();
+        viewer.claimHits(hitRegistry, instance: 0);
+
         CellStyle page;
         page.fg = Color.fromRgb(pageFg);
         page.bg = Color.fromRgb(pageBg);
@@ -714,6 +723,8 @@ struct WorkspaceTui
         const hole = pickerPreviewRect(view, frames);
         if (pickerDoc is null || hole.width <= 0 || hole.height <= 0)
             return;
+        // The preview is a second document pane: its own instance.
+        pickerDoc.pane.claimHits(hitRegistry, instance: 1);
         auto pane = &pickerDoc.paint(hole.width, hole.height);
         foreach (y; 0 .. pane.rows)
         {

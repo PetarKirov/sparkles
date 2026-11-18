@@ -409,8 +409,8 @@ uint viewDiffInto(ref Builder b, const ref DiffDoc doc, in FileEntry file,
 size_t diffFileKey(size_t fileIndex) @safe pure nothrow @nogc => fileIndex + 1;
 
 /// `DVG1`: the key a hunk's container carries. A disjoint id space above the
-/// file keys (the `fenceHitBase`/`foldHitBase` precedent), so one `keyedRects`
-/// sweep answers both "where is file 3" and "where is the next hunk".
+/// file keys, so one `keyedRects` sweep answers both "where is file 3" and
+/// "where is the next hunk".
 enum size_t diffHunkKeyBase = size_t.max / 2 + 1;
 
 /// ditto

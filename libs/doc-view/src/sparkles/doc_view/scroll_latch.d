@@ -24,6 +24,7 @@ import core.time : MonoTime, msecs;
 import sparkles.ui.scroll_motion : ScrollMotion;
 
 import sparkles.doc_view.viewer_model : ViewerModel;
+version (unittest) import sparkles.ui.hit_ids : HitRegistry;
 
 /// What a gesture is latched to.
 enum LatchTarget : ubyte
@@ -177,6 +178,10 @@ version (unittest)
         vm.names = ["dark"];
         vm.widthCols = 30;
         vm.applyTheme(0);
+        // The bars are measured by their hit ids: the viewer needs its blocks.
+        HitRegistry registry;
+        registry.beginFrame();
+        vm.claimHits(registry);
         string src;
         foreach (_; 0 .. 25)
             src ~= "a";
@@ -289,6 +294,9 @@ version (unittest)
     vm.widthCols = 30;
     vm.codeMaxLines = 5;
     vm.applyTheme(0);
+    HitRegistry registry;
+    registry.beginFrame();
+    vm.claimHits(registry);
     vm.setDocument("code.md", "", src, null, PreviewModel(present: true,
         doc: MdDoc(MdBlock(kind: MdBlockKind.document, children: [
             MdBlock(kind: MdBlockKind.codeFence, span: Span(0, src.length),

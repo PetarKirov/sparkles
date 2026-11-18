@@ -76,13 +76,11 @@ void emitVisibleOps(ref ViewerModel vm, long docRows, scope void delegate(ref Dr
                     const h = bar.edge == RuleEdge.centerY;
                     const isFence = vm.activeFenceOwner != size_t.max;
                     const want = isFence
-                        ? (h ? vm.fenceHBarHitBase : vm.fenceVBarHitBase)
-                            + vm.activeFenceOwner
-                        : (h ? vm.tableHBarHitBase : vm.tableVBarHitBase)
-                            + vm.activeTableOwner;
+                        ? (h ? vm.hits.fenceHBar : vm.hits.fenceVBar)[vm.activeFenceOwner]
+                        : (h ? vm.hits.tableHBar : vm.hits.tableVBar)[vm.activeTableOwner];
                     foreach (ref const t; vm.targets)
                     {
-                        if (t.hitId != want || t.rect != bar.rect)
+                        if (want == 0 || t.hitId != want || t.rect != bar.rect)
                             continue;
                         bar.expandPercent = barPercent(h
                             ? activeSv.hAnim.percent
