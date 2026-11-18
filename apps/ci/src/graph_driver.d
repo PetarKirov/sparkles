@@ -224,6 +224,7 @@ Planned planRepository(string root, bool markers = false, string only = null, To
         return planErr!Resolution(PlanError("a generator names a directory that holds no package", directory));
     }
     auto options = PlanOptions(ToolchainIdentity("ldc", toolchain), layoutLint(), registry.value.keys, pkgConfig);
+    options.host = platform;
     options.resolveTool = &resolveTool;
     options.root = root;
     auto planned = planVariants(rs, options, tree);
