@@ -1,0 +1,77 @@
+name: Deploy the CI dashboard
+
+# The dashboard (observability §17, OBW4): static pages built from the
+# verified refs/perf/data history by `ci perf site`, deployed to the Cloudflare
+# Pages project `sparkles-perf`. main-checks.yml calls this after every
+# successful append, which deploys production; a pull request that changes the
+# site's code deploys a preview of the current history, and comments its URL.
+# Building needs no signing key: the site reads the history and verifies it.
+
+on:
+  workflow_call:
+  pull_request:
+    paths:
+      - 'apps/ci/src/perf_pr.d'
+      - 'apps/ci/src/perf_site.d'
+      - 'apps/ci/src/views/**'
+      - 'ci/runner-rates.json'
+      - 'ci/deploy-cloudflare-pages.sh'
+      - '.github/workflows/perf-site.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: perf-site-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  site:
+    name: Build and deploy the CI dashboard
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      deployments: write
+      pull-requests: write # the preview comment
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+      # A fork's pull request has no secrets: it builds the site and skips the deploy.
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+
+      - name: Build the site from refs/perf/data
+        run: |
+          nix run .#ci-minimal -- perf site --out "$RUNNER_TEMP/perf-site" \
+            --history-remote "https://github.com/$GITHUB_REPOSITORY.git"
+
+      # wrangler is the repository's locked devDependency, as for the docs.
+      - name: Setup Node.js
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Install wrangler
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        run: |
+          corepack enable
+          yarn install --immutable
+
+      - name: Deploy to Cloudflare Pages
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        env:
+          CF_PAGES_PROJECT: sparkles-perf
+          CF_PAGES_DIST: ${{ runner.temp }}/perf-site
+          CF_PAGES_CREATE: '1'
+          CF_PAGES_COMMENT: perf-site-preview
+          CF_PAGES_LABEL: '📊 CI dashboard preview deployed to:'
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ci/deploy-cloudflare-pages.sh

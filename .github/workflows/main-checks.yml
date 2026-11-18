@@ -141,7 +141,8 @@ jobs:
     environment: perf-data
     permissions:
       contents: write # the push to refs/perf/data
-      actions: read # the validating run's artifacts
+      actions: read # the validating run's artifacts and jobs
+      pull-requests: read # the landing's pull request record (OBJ4)
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -194,6 +195,7 @@ jobs:
         if: steps.run.outputs.id != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
           SIGNING_KEY: ${{ secrets.PERF_DATA_SIGNING_KEY }}
           RUN_ID: ${{ steps.run.outputs.id }}
           ATTEMPT: ${{ steps.run.outputs.attempt }}
@@ -209,4 +211,17 @@ jobs:
           nix run .#ci-minimal -- perf append --records "$RUNNER_TEMP/records" \
             --run-id "$RUN_ID" --run-attempt "$ATTEMPT" --run-date "$DATE" \
             --landed-commit "$SHA" --signing-key "$key" \
-            --history-remote "https://github.com/$GITHUB_REPOSITORY.git"
+            --history-remote "https://github.com/$GITHUB_REPOSITORY.git" \
+            --repo "$GITHUB_REPOSITORY"
+
+  # The dashboard, rebuilt from the history this run just appended to (OBW4).
+  perf-site:
+    name: Deploy the CI dashboard
+    needs: perf-append
+    if: ${{ !cancelled() && needs.perf-append.result == 'success' }}
+    uses: ./.github/workflows/perf-site.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      deployments: write
+      pull-requests: write
