@@ -12,13 +12,15 @@ import sparkles.font : openFace, UserCoordinate;
 import sparkles.input : Event, FocusEvent, GestureEvent, Key, KeyAction, KeyEvent, PointerAction, PointerEvent, WheelEvent, match;
 import sparkles.ui.components.controls : chip, ControlSize;
 import sparkles.ui.components.picker : PickerState;
-import sparkles.ui.components.property_sections : decodeSectionHit, SectionItem, SectionPart, SectionsOptions;
+import sparkles.ui.components.property_sections : decodeSectionHit, SectionItem, SectionPart, sectionHit,
+    SectionsOptions;
 import sparkles.ui.components.settings_pane : SettingsPane, SettingsResult;
 import sparkles.ui.components.settings_sections : SettingsSections;
 import sparkles.ui.components.scroll_body : ScrollBody;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Constraints, Insets, Point, Rect, Size, SizeSpec;
+import sparkles.ui.hit_ids : HitKey, HitRegistry;
 import sparkles.ui.interp.immediate : paint;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.property_tree : EditValue, LeafKind;
@@ -31,8 +33,15 @@ import sparkles.ui_app.font_library : FontEntry, FontFinder, FontLibrary, FontLo
 import font_settings : applyVariations, axisSettings, LabSettings;
 import unicode_samples : Showcase, showcaseFonts, unicodeSamples;
 
-private enum size_t sectionBase = 0x7100_0000, fontHit = 0x7000_0001,
-    pickerApply = 0x7000_0002, pickerCancel = 0x7000_0003, pickerBase = 0x7200_0000;
+/// The keys the sheet's hit ids are issued under (`INP27`): the generated
+/// rows (`sectionHit` parts of each node), the font chip, the picker's
+/// listed rows (by row number) and its two buttons.
+private enum HitKey sectionsKey = HitKey("text-lab.sections"),
+    fontChipKey = HitKey("text-lab.font-chip"),
+    pickerRowsKey = HitKey("text-lab.picker.rows"),
+    pickerActionsKey = HitKey("text-lab.picker.actions");
+/// The picker buttons' indices in `pickerActionsKey`'s block.
+private enum size_t pickerApply = 0, pickerCancel = 1;
 
 private double secondsNow() @safe nothrow @nogc
     => MonoTime.currTime.ticks / cast(double) MonoTime.ticksPerSecond;
@@ -63,7 +72,7 @@ private double secondsNow() @safe nothrow @nogc
     foreach (i, widget; controls.tree.nodes)
     {
         uint node, part;
-        if (decodeSectionHit(sectionBase, widget.hitId, node, part)
+        if (controls.decodeSection(widget.hitId, node, part)
             && part == SectionPart.slider
             && controls.pane.tree.data.nodes[node].value.path == "font.size")
             track = controls.frames[i].rect;
@@ -82,6 +91,49 @@ private double secondsNow() @safe nothrow @nogc
     assert(!controls.capturing && !controls.scrollBody.motion.active);
     controls.frame(host);
     assert(!host.pointerCaptured);
+}
+
+/// INP27: the sheet's ids come from the registry — the font chip and the
+/// generated rows hold disjoint blocks — and a press on the chip decodes
+/// through it, opening the picker, whose rows and buttons then hold blocks
+/// of their own.
+@("text_lab.controls.pressDecodesThroughRegistry")
+@system unittest
+{
+    import sparkles.input : PointerButton;
+    import sparkles.ui.canvas : RecordingCanvas;
+    import sparkles.ui_app.record : RecordingHost;
+
+    LabSettings model;
+    auto controls = new LabControls(&model);
+    RecordingHost host;
+    RecordingCanvas canvas;
+    bool shown = true;
+    controls.draw(&canvas, Size(49, 50), shown, Palette.init);
+    const chipHits = controls.hits.find(fontChipKey), rowHits = controls.hits.find(sectionsKey);
+    assert(chipHits && rowHits);
+    assert(!rowHits.contains(chipHits.id) && !chipHits.contains(rowHits[0])
+        && !chipHits.contains(rowHits[rowHits.length - 1]));
+    Rect chipRect;
+    size_t sectionWidgets;
+    foreach (i, widget; controls.tree.nodes)
+    {
+        uint node, part;
+        if (widget.hitId == chipHits.id) chipRect = controls.frames[i].rect;
+        else if (controls.decodeSection(widget.hitId, node, part)) ++sectionWidgets;
+        else assert(!widget.hitId, "every id the sheet stamps is one of its blocks'");
+    }
+    assert(chipRect.height && sectionWidgets);
+    const at = Point(chipRect.x + 1, chipRect.y + 1);
+    cast(void) controls.handle(host, Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: at)), shown);
+    assert(controls.picker.active, "the chip's press opened the picker");
+
+    // The next frame asks for the picker's keys; the closed sheet's free.
+    controls.draw(&canvas, Size(49, 50), shown, Palette.init);
+    controls.draw(&canvas, Size(49, 50), shown, Palette.init);
+    assert(controls.hits.find(pickerActionsKey).length == 2);
+    assert(!controls.hits.find(fontChipKey) && !controls.hits.find(sectionsKey));
 }
 
 /// A changing numeric badge and reset visibility must not move the captured
@@ -106,7 +158,7 @@ private double secondsNow() @safe nothrow @nogc
             foreach (i, widget; controls.tree.nodes)
             {
                 uint node, part;
-                if (!decodeSectionHit(sectionBase, widget.hitId, node, part)
+                if (!controls.decodeSection(widget.hitId, node, part)
                     || part != SectionPart.slider) continue;
                 const path = controls.pane.tree.data.nodes[node].value.path;
                 const rect = controls.frames[i].rect;
@@ -161,6 +213,35 @@ final class LabControls
     /// (`PickerState.scrollRowsTo`); keys still move the selection.
     private ScrollBody pickerBody;
     private enum pickerRowCells = 3; // a picker row's height, in cells
+
+    /// The lab's one hit-id registry (`INP27`): the sheet is the only
+    /// surface the lab marks hit-testable. `draw` begins its frame and
+    /// re-asks the shown keys even when it repaints the cached sheet.
+    HitRegistry hits;
+
+    // Ask for the blocks the sheet shows in its current mode.
+    private void claimHits() @safe pure nothrow @nogc
+    {
+        if (picker.active)
+        {
+            hits.block(pickerRowsKey, picker.rowCount ? picker.rowCount : 1);
+            hits.block(pickerActionsKey, 2);
+        }
+        else
+        {
+            hits.block(fontChipKey);
+            const nodes = pane.tree.data.nodes.length;
+            hits.block(sectionsKey, sectionHit(0, cast(uint)(nodes ? nodes : 1), 0));
+        }
+    }
+
+    /// The generated row's node and part `hit` names, when it is one.
+    bool decodeSection(size_t hit, out uint node, out uint part) const @safe pure nothrow @nogc
+    {
+        const block = hits.find(sectionsKey);
+        return block.contains(hit) && decodeSectionHit(block.base, hit, node, part)
+            && node < pane.tree.data.nodes.length;
+    }
 
     // Follow the list where a key or a new query left it, unless it is
     // coasting.
@@ -697,6 +778,9 @@ final class LabControls
         const nextBounds = overlayBounds(size, shown);
         if (bounds != nextBounds) overlayDirty = true;
         bounds = nextBounds;
+        // A hidden sheet asks for nothing, so its blocks free next frame.
+        hits.beginFrame();
+        if (bounds.width && bounds.height) claimHits();
         if (!bounds.width || !bounds.height)
         {
             cast(void) sections.cancel(pane);
@@ -726,6 +810,7 @@ final class LabControls
             else
             {
                 picker.viewRows = cast(size_t)(height > 9 ? (height - 9) / target : 1);
+                const pickerRows = hits.block(pickerRowsKey, picker.rowCount ? picker.rowCount : 1);
                 size_t number;
                 foreach (ranked; picker.visible)
                 {
@@ -743,21 +828,25 @@ final class LabControls
                     }
                     if (at < label.length) spans ~= TextSpan(text: label[at .. $], slot: Slot.textPrimary);
                     rows ~= b.add(Widget(kind: WidgetKind.rich, spans: spans,
-                        height: SizeSpec.fixed(target), hitId: pickerBase + picker.firstRow + number,
+                        height: SizeSpec.fixed(target), hitId: pickerRows[picker.firstRow + number],
                         slot: picker.firstRow + number == picker.selection ? Slot.selection : Slot.surface,
                         paintBackground: true, clipX: true));
                     ++number;
                 }
                 if (picker.rowCount == 0) rows ~= b.add(Widget(kind: WidgetKind.text, text: "No matching fonts"));
             }
-            const apply = chip(b, "Use font", pickerApply, false, ControlSize(rows: 3));
-            const cancel = chip(b, "Cancel", pickerCancel, false, ControlSize(rows: 3));
+            const actions = hits.block(pickerActionsKey, 2);
+            const apply = chip(b, "Use font", actions[pickerApply], false, ControlSize(rows: 3));
+            const cancel = chip(b, "Cancel", actions[pickerCancel], false, ControlSize(rows: 3));
             rows ~= b.add(Widget(kind: WidgetKind.row, children: [apply, cancel]));
         }
         else
         {
             pane.refresh();
-            rows ~= chip(b, "Font: " ~ subject.font.face, fontHit, false, ControlSize(target));
+            claimHits();     // the refreshed tree may hold more nodes
+            const sectionHits = hits.find(sectionsKey);
+            rows ~= chip(b, "Font: " ~ subject.font.face, hits.find(fontChipKey).id, false,
+                ControlSize(target));
             items = sections.items(pane, true);
             if (focus >= items.length) focus = items.length ? items.length - 1 : 0;
             foreach (i, item; items)
@@ -767,7 +856,7 @@ final class LabControls
                 if (n.path == "font.face" || n.path == "font.path" || n.path == "font.index") continue;
                 if (n.path.length >= 5 && n.path[0 .. 5] == "axes[") displayed.label = n.label;
                 rows ~= sections.row(b, pane, displayed, i == focus,
-                    SectionsOptions(targetRows: target, width: width - 2, touch: true), sectionBase);
+                    SectionsOptions(targetRows: target, width: width - 2, touch: true), sectionHits.base);
             }
         }
         if (error.length) rows ~= b.add(Widget(kind: WidgetKind.text, text: error));
@@ -790,7 +879,8 @@ final class LabControls
             double next = scrollBody.motion.pos < scrollMax ? scrollBody.motion.pos : scrollMax;
             if (focusMoved && focus < items.length)
                 foreach (i, widget; tree.nodes)
-                    if (widget.hitId == sectionBase + items[focus].node * 64)
+                    if (widget.hitId == sectionHit(hits.find(sectionsKey).base, items[focus].node,
+                            SectionPart.row))
                     {
                         const r = frames[i].rect;
                         const top = r.y - scrollBody.motion.frac;
@@ -948,7 +1038,8 @@ final class LabControls
                 {
                     const hit = hoverTargets(tree, frames).hitAt(
                         p.pos.x / cast(float) cw, p.pos.y / cast(float) ch);
-                    if (hit >= pickerBase) picker.selection = hit - pickerBase;
+                    size_t row;
+                    if (hits.find(pickerRowsKey).indexOf(hit, row)) picker.selection = row;
                     return;
                 }
                 if (touch)
@@ -968,7 +1059,7 @@ final class LabControls
                         }
                         if (!picker.active)
                             cast(void) sections.pointer(pane, p, tree, frames,
-                                sectionBase, result, true, Size(cw, ch));
+                                hits.find(sectionsKey).base, result, true, Size(cw, ch));
                         return;
                     }
                     if (!touching || p.pointerId != touchPress.pointerId) return;
@@ -1012,7 +1103,7 @@ final class LabControls
                     }
                     if (sections.drag.active || ax >= slop && ax > ay)
                         if (!picker.active && sections.pointer(pane, p, tree, frames,
-                                sectionBase, result, true, Size(cw, ch)))
+                                hits.find(sectionsKey).base, result, true, Size(cw, ch)))
                         {
                             scrollBody.cancelDrag();
                             if (p.action == PointerAction.release) touching = false;
@@ -1026,24 +1117,28 @@ final class LabControls
                     if (ax >= slop || ay >= slop) return;
                 }
                 if (!picker.active && sections.pointer(pane, p, tree, frames,
-                        sectionBase, result, touch, Size(cw, ch))) return;
+                        hits.find(sectionsKey).base, result, touch, Size(cw, ch))) return;
                 if (!touch && p.action != PointerAction.press) return;
                 const hit = hoverTargets(tree, frames).hitAt(
                     p.pos.x / cast(float) cw, p.pos.y / cast(float) ch);
                 if (hit)
                 {
-                    if (hit == fontHit) { openPicker(); return; }
-                    if (picker.active && hit == pickerApply) { accept(); return; }
-                    if (picker.active && hit == pickerCancel) { cancelPicker(); return; }
-                    if (picker.active && hit >= pickerBase)
+                    size_t index;
+                    if (hits.find(fontChipKey).contains(hit)) { openPicker(); return; }
+                    if (picker.active && hits.find(pickerActionsKey).indexOf(hit, index))
                     {
-                        picker.selection = hit - pickerBase;
+                        if (index == pickerApply) accept();
+                        else cancelPicker();
+                        return;
+                    }
+                    if (picker.active && hits.find(pickerRowsKey).indexOf(hit, index))
+                    {
+                        picker.selection = index;
                         if (!touch) accept();
                         return;
                     }
                     uint node, part;
-                    if (decodeSectionHit(sectionBase, hit, node, part)
-                        && node < pane.tree.data.nodes.length)
+                    if (decodeSection(hit, node, part))
                     {
                         bool header;
                         foreach (item; items)
@@ -1197,7 +1292,7 @@ final class LabControls
     foreach (i, widget; controls.tree.nodes)
     {
         uint node, part;
-        if (decodeSectionHit(sectionBase, widget.hitId, node, part)
+        if (controls.decodeSection(widget.hitId, node, part)
             && node < controls.pane.tree.data.nodes.length
             && controls.pane.tree.data.nodes[node].value.path == "font")
             axes = controls.frames[i].rect;
@@ -1231,7 +1326,7 @@ final class LabControls
     foreach (i, widget; controls.tree.nodes)
     {
         uint node, part;
-        if (decodeSectionHit(sectionBase, widget.hitId, node, part)
+        if (controls.decodeSection(widget.hitId, node, part)
             && part == SectionPart.slider
             && controls.pane.tree.data.nodes[node].value.path == "font.size")
             track = controls.frames[i].rect;
@@ -1272,7 +1367,7 @@ final class LabControls
     foreach (i, widget; controls.tree.nodes)
     {
         uint node, part;
-        if (decodeSectionHit(sectionBase, widget.hitId, node, part)
+        if (controls.decodeSection(widget.hitId, node, part)
             && part == SectionPart.open
             && controls.pane.tree.data.nodes[node].value.path == "font.size")
             badge = controls.frames[i].rect;
