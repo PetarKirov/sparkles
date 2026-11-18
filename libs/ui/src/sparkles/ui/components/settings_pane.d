@@ -57,6 +57,7 @@ import sparkles.input.events : Event, Key, KeyEvent, Point, PointerEvent,
     WheelEvent;
 import std.sumtype : match;
 
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.components.editor : EditorViewOptions, editorLineSpans;
 import sparkles.ui.editor.field : EditorField, FieldSetup;
 import sparkles.ui.components.property_view : propertyView, propertyViewSlots,
@@ -311,8 +312,6 @@ unittest
 // The component.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The tree rows' hit ids start here (`node + hitBase`).
-private enum uint hitBase = 1;
 
 /// The tree area's widget key (pointer routing finds its rect by it) and
 /// the capture-id base the scrollbar grabs claim.
@@ -387,6 +386,19 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
     InputCapabilities caps = mousePointer;
 
     private SettingsGeometry geom;
+
+    /// The tree rows' hit ids, indexed by node: the host's, claimed each
+    /// frame the pane is shown (`INP27`). Empty, the rows are not hit-testable
+    /// — the pane routes its own pointer by position either way.
+    HitBlock rowHits;
+
+    /// Asks `hits` for the rows' block under `instance` — call it every frame
+    /// the pane is shown, before $(LREF buildView).
+    void claimHits(ref HitRegistry hits, size_t instance = 0) @safe pure nothrow @nogc
+    {
+        const nodes = tree.data.nodes.length;
+        rowHits = hits.block(HitKey("settings-pane.rows", instance), nodes ? nodes : 1);
+    }
 
     /**
     Opens over the shared config. `fileValue` seeds the save draft: every
@@ -1129,7 +1141,7 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
         // The framed tree (rows + the machine-driven animated bar) carries
         // its own fixed size; the keyed wrapper is what pointer routing finds
         // its origin by.
-        const treeCol = propertyView(b, tree.data, tv, edits, opt, hitBase);
+        const treeCol = propertyView(b, tree.data, tv, edits, opt, rowHits);
         body_ ~= b.add(Widget(kind: WidgetKind.column, children: [treeCol],
             key: settingsTreeKey, width: SizeSpec.grow(),
             height: SizeSpec.grow()));

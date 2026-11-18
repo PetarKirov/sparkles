@@ -20,6 +20,7 @@ module inspector;
 
 import std.conv : text;
 
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.components.inspector : DetailRow, inspectorView,
     inspectWidgets, WidgetInspect;
 import sparkles.ui.components.tree_view : treeActivate = activate, TreeStep,
@@ -100,7 +101,7 @@ uint inspectorBody(ref Builder b, in GalleryState s)
 
     return inspectorView(b, wi.data, tv, (uint n) => open.isOpen(n),
         text("inspector · ", pages[s.page].title), null, details,
-        inspectorInnerWidth(s), hitBase: hitInspTree);
+        inspectorInnerWidth(s), hits: HitBlock(hitInspTree, wi.data.nodes.length));
 }
 
 /// A completed press on a panel row: select it; a container also toggles its

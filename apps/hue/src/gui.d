@@ -80,6 +80,7 @@ import format_preview : formatPreviewActive, formatPreviewChip,
 
 // The explorer pane (XPL2): the same tree model the TUI workspace uses.
 import explorer : ExplorerTui, explorerGlyphs;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.components.tree_view : viewSlice;
 
 // 2D table grid selection (TBL): pure region/serialize logic over grid hits.
@@ -2188,7 +2189,8 @@ int runGui(GuiArgs guiArgs) @system
             auto tb = Builder();
             const tv = viewSlice(tb, pn.tree.data, pn.tree.tv,
                 (uint i) @safe => pn.tree.open.isOpen(pn.tree.data.nodes[i].value.path),
-                explorerGlyphs(vm.palette.glyphs), pn.tree.selBg, hasSelectionBg: true);
+                explorerGlyphs(vm.palette.glyphs), pn.tree.selBg, hasSelectionBg: true,
+                hits: HitBlock(1, pn.tree.data.nodes.length));
             Widget paneW = Widget(kind: WidgetKind.column, children: [tv],
                 width: SizeSpec.fixed(treeBodyCols), clipX: true);
             auto wt = tb.finish(tb.add(paneW));

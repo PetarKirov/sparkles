@@ -45,6 +45,7 @@ module inspector_pane;
 
 import sparkles.input : Event, EndOfInput, InputKey = Key, KeyEvent, match,
     Point, PointerAction, PointerButton, PointerEvent, WheelEvent;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.components.inspector : actionAt, DetailRow, InspectorAction,
     inspectorView;
 import sparkles.ui.components.tree_view : treeActivate = activate,
@@ -246,7 +247,7 @@ struct InspectorPane
         return inspectorView(b, data, tv,
             (uint n) => open.isOpen(n),
             title, actions,
-            details, innerWidth, TreeGlyphs.init, hitInspectorTree);
+            details, innerWidth, TreeGlyphs.init, HitBlock(hitInspectorTree, data.nodes.length));
     }
 
     /// One pane-local event. Returns `true` while the pane stays open

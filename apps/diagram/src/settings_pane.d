@@ -31,6 +31,7 @@ import sparkles.input.events : Event, Key, KeyEvent, PointerAction,
     PointerButton, PointerEvent, WheelEvent;
 import std.sumtype : match;
 
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.components.property_view : propertyView,
     PropertyViewOptions;
 import sparkles.ui.components.tree_view : treeActivate = activate,
@@ -527,7 +528,7 @@ struct SettingsPaneT(T)
             valueColumn: _geom.cols > 60 ? 30 : 20,
             rangeBarCells: _geom.cols > 50 ? 8 : 4,
         );
-        const treeCol = propertyView(b, tree.data, tv, edits, opt, hitBase);
+        const treeCol = propertyView(b, tree.data, tv, edits, opt, HitBlock(hitBase, tree.data.nodes.length));
         body_ ~= b.add(Widget(kind: WidgetKind.column, children: [treeCol],
             clipX: true, clipY: true, width: SizeSpec.grow(),
             height: SizeSpec.grow()));

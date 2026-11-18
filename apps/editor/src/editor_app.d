@@ -14,6 +14,7 @@ import sparkles.ui.components.command_palette : PaletteHit, paletteHitAt, Palett
 import sparkles.ui_app.pointer_cells : pointerCells;
 import sparkles.ui.components.editor : DragSelection, drawIndentGuides, editorLineSpans, editorView, EditorViewOptions, markSpans, PaintedRow, PaintedRows, TextMark, visualRows;
 import sparkles.ui.components.history_view : HistoryViewOptions, travelHistory = travelTo, viewHistory;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.components.gutter : blankCell, GutterCell, GutterChannel, lineNumberCell, lineNumberWidth, withGutterCells;
 import sparkles.ui.editor.presentation : bracketMarks, CaretPosition, matchMarks, trailingWhitespaceMarks;
 import std.array : Appender, appender;
@@ -304,7 +305,7 @@ private struct ClipboardHooks
         presentApp(*app, host, AppTheme(defaultTwoslashPalette()), frame);
         app.paint(host, frame.tree, frame.frames);
         foreach (target; app.hits)
-            if (target.hitId == PaletteViewOptions.init.hitBase)
+            if (target.hitId == EditorApp.paletteRowHits[0])
                 return Point(target.rect.x + 1, target.rect.y);
         assert(false, "the palette draws its row");
     }
@@ -1113,6 +1114,8 @@ struct EditorApp
     private enum size_t saveHit = 0x7900_0002;
     private enum size_t inspectorHit = 0x7900_0003;
     private enum size_t paletteCloseHit = 0x7900_0004;
+    private enum paletteRowHits = HitBlock(0x7300_0000, 0xffff);
+    private enum size_t paletteQueryHit = 0x7300_ffff;
     // One hit per undo revision the inspector lists, by creation index (EAP6).
     private enum size_t undoHitBase = 0x7A00_0000, undoHitLimit = 0x7B00_0000;
     // The find bar's controls: a command per hit, `findHitBase + Command`.
@@ -1228,7 +1231,7 @@ struct EditorApp
     is hit `undoHitBase + i`, and a press travels there.
     */
     private uint[] undoRows(ref Builder b, size_t limit) @safe
-        => viewHistory(b, document.field.state.history, HistoryViewOptions(limit: limit, hitBase: undoHitBase,
+        => viewHistory(b, document.field.state.history, HistoryViewOptions(limit: limit, hits: HitBlock(undoHitBase, undoHitLimit - undoHitBase),
             hint: "Alt+U earlier, Alt+Shift+U later; select one to travel"));
 
     /**
@@ -1410,7 +1413,8 @@ struct EditorApp
 
     /// `hit` on the open palette; the header's Commands chip dismisses it too.
     private PaletteHit paletteTarget(size_t hit) const @safe
-        => paletteHitAt(hit, paletteChoices.length, PaletteViewOptions(closeHit: paletteCloseHit), paletteHit);
+        => paletteHitAt(hit, paletteChoices.length, PaletteViewOptions(rowHits: paletteRowHits, closeHit: paletteCloseHit),
+            paletteHit);
 
     private void choosePalette(in PaletteHit target) @safe
     {
@@ -2156,6 +2160,7 @@ struct EditorApp
                 }
                 const paletteView = viewCommandPalette(b, commands.palette, commands.query.state, context,
                     PaletteViewOptions(visibleRows: rows, rowHeight: paletteRowHeight,
+                        rowHits: paletteRowHits, queryHit: paletteQueryHit,
                         closeHit: paletteCloseHit, compact: true, maxWidth: paletteWidth,
                         smoothScroll: true, hostCursor: true,
                         scrollWhole: paletteScroll.motion.whole,

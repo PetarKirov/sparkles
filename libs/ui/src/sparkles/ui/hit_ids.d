@@ -79,10 +79,15 @@ struct HitBlock
     /// Whether the block was issued.
     bool opCast(T : bool)() const => base != 0;
 
-    /// The `index`-th id of the block.
-    size_t opIndex(size_t index) const
-    in (base == 0 || index < length, "a hit index past the block it was issued")
-        => base == 0 ? 0 : base + index;
+    /**
+    The `index`-th id of the block, or `0` (not hit-testable) past its end.
+
+    A retained component can outgrow the block it claimed at the start of
+    the frame — an event adds a row before the next claim — and the row it
+    cannot number yet is inert for that frame rather than an id of another
+    key's slot.
+    */
+    size_t opIndex(size_t index) const => base == 0 || index >= length ? 0 : base + index;
 
     /// The block's first id: the id of a single-control block.
     size_t id() const => this[0];
@@ -330,6 +335,7 @@ unittest
     size_t index;
     assert(!HitBlock.init);
     assert(HitBlock.init[0] == 0);
+    assert(HitBlock(64, 2)[1] == 65 && HitBlock(64, 2)[2] == 0, "past the end is inert");
     assert(!HitBlock.init.contains(0) && !HitBlock.init.indexOf(0, index));
 }
 

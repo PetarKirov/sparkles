@@ -4,13 +4,14 @@ An undo-history inspector (`TXB-HIS7`): the revisions of a branching
 current one, each naming its parent, its text length and whether it is a
 branch point, indented by depth; and travel to a listed revision through
 the editor's own `earlier`/`later`, so the move is one ordinary history
-step. Each row's hit identity is the caller's `hitBase` plus the revision's
-index; the host maps a press back with `revisionAtHit`.
+step. Revision `i`'s row carries hit id `hits[i]` from the caller's block (`INP27`),
+and the host maps a press back with the block's `indexOf`.
 */
 module sparkles.ui.components.history_view;
 
 import core.time : MonoTime;
 import sparkles.ui.geometry : Insets;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 
@@ -19,8 +20,9 @@ struct HistoryViewOptions
 {
     /// The most revisions listed.
     size_t limit = 6;
-    /// Revision `i`'s row has hit identity `hitBase + i`; 0 gives rows none.
-    size_t hitBase;
+    /// Revision `i`'s row has hit id `hits[i]`; the empty block gives rows none.
+    /// Ask for as many ids as the history has revisions.
+    HitBlock hits;
     /// Appended to the header, such as the keys that travel.
     string hint;
 }
@@ -61,20 +63,11 @@ uint[] viewHistory(H)(ref Builder b, ref const H history, HistoryViewOptions opt
         const label = text(i == current ? "● " : "○ ", i == 0 ? "root" : text("#", i),
             i == 0 ? "" : text(" from ", info.parent == 0 ? "root" : text("#", info.parent)),
             "  ", info.length, " B", info.children > 1 ? text("  ⑂ ", info.children, " branches") : "");
-        rows ~= b.add(Widget(kind: WidgetKind.text, text: label, hitId: options.hitBase ? options.hitBase + i : 0,
+        rows ~= b.add(Widget(kind: WidgetKind.text, text: label, hitId: options.hits[i],
             slot: i == current ? Slot.selection : Slot.docs, paintBackground: i == current,
             padding: Insets(0, 0, 0, 2 * (info.depth < 8 ? cast(int) info.depth : 8))));
     }
     return rows;
-}
-
-/// The revision whose row has hit identity `hit` under `hitBase`, when
-/// `history` (of `length` revisions) has one.
-bool revisionAtHit(size_t hit, size_t hitBase, size_t length, out size_t index) @safe pure nothrow @nogc
-{
-    if (!hitBase || hit < hitBase || hit - hitBase >= length) return false;
-    index = hit - hitBase;
-    return true;
 }
 
 /**
@@ -119,7 +112,7 @@ bool travelTo(Field)(ref Field field, size_t index, MonoTime now = MonoTime.init
     field.run(EditCommand.of(EditKind.undo), at + 2.seconds);
     field.insert("b", false, at + 4.seconds); // #2, a second branch of the root
     Builder b;
-    const rows = viewHistory(b, field.state.history, HistoryViewOptions(hitBase: 100, hint: "select one"));
+    const rows = viewHistory(b, field.state.history, HistoryViewOptions(hits: HitBlock(100, field.state.history.length), hint: "select one"));
     const(char)[][] texts;
     size_t[] hits;
     foreach (row; rows)
@@ -131,9 +124,10 @@ bool travelTo(Field)(ref Field field, size_t index, MonoTime now = MonoTime.init
         "○ #1 from root  1 B", "● #2 from root  1 B"], texts[1]);
     assert(hits == [0, 100, 101, 102]);
     size_t index;
-    assert(revisionAtHit(101, 100, field.state.history.length, index) && index == 1);
+    const block = HitBlock(100, field.state.history.length);
+    assert(block.indexOf(101, index) && index == 1);
     size_t none;
-    assert(!revisionAtHit(103, 100, field.state.history.length, none));
+    assert(!block.indexOf(103, none));
     assert(travelTo(field, index) && field.text == "a", "travel reaches the abandoned branch");
     assert(!travelTo(field, 1) && !travelTo(field, 9));
 }

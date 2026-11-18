@@ -34,6 +34,7 @@ import sparkles.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     WheelEvent;
 import sparkles.ui.components.chrome : headerBar;
 import sparkles.ui.components.file_icons : fileIcon, folderFg, folderGlyph;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.components.tree_view : filterServe, jumpMatching, measureContent,
     treeActivate = activate, treeCollapseOrUp = collapseOrUp, TreeStep,
     TreeViewState, viewSlice;
@@ -624,7 +625,7 @@ struct ExplorerTui
         const tree2 = viewSlice(tb, data, tv,
             (uint i) @safe => filter.text.length != 0 || open.isOpen(data.nodes[i].value.path),
             explorerGlyphs(palette.glyphs), selBg,
-            hasSelectionBg: true);
+            hasSelectionBg: true, hits: HitBlock(1, data.nodes.length));
         Widget colW = Widget(kind: WidgetKind.column, children: [tree2],
             width: SizeSpec.fixed(width + hx));
         const framed = scrollBox(tb, tb.add(colW), scrollFrame,

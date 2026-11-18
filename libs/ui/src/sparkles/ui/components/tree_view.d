@@ -47,6 +47,7 @@ module sparkles.ui.components.tree_view;
 import sparkles.base.term_color : RgbColor;
 import sparkles.input : CompositionEvent, InputCapabilities, InputKey = Key, KeyEvent,
     PointerAction, PointerButton, PointerEvent;
+import sparkles.ui.hit_ids : HitBlock;
 import sparkles.ui.components.scroll_view : scrollLayout, ScrollArea,
     ScrollAreaAxis, ScrollLayout, ScrollView;
 import sparkles.ui.components.tree_widget : FlatTreeRow, nodeExpandable, treeWidgetSlots,
@@ -564,13 +565,13 @@ uint viewSlice(Key, T)(ref Builder b, in TreeData!T data,
     in TreeViewState!Key s, scope bool delegate(uint) @safe isOpen,
     TreeGlyphs glyphs = TreeGlyphs.init,
     RgbColor selectionBg = RgbColor.init, bool hasSelectionBg = false,
-    uint hitBase = 1)
+    HitBlock hits = HitBlock.init)
 {
     const first = cast(size_t)(s.top < 0 ? 0 : s.top);
     const last = first + s.bodyRows > s.rows.length ? s.rows.length
         : first + s.bodyRows;
     return treeView(b, data, s.rows[first < last ? first : last .. last],
-        isOpen, s.selectedNode, glyphs, selectionBg, hasSelectionBg, hitBase);
+        isOpen, s.selectedNode, glyphs, selectionBg, hasSelectionBg, hits);
 }
 
 // ---------------------------------------------------------------------------
