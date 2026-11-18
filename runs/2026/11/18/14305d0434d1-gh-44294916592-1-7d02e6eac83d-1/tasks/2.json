@@ -1,0 +1,1 @@
+{"tasks":[{"id":"pin-build:toolchain-snix-castore-aarch64-linux","series":"43c383b89944eacba1d85bc25fb3f5af9d8261670d7d0a6bf26a2e3f72edd5ff","outcome":"passed","start":300,"end":300257372200,"metrics":{"task.wall":300257371900}}]}
