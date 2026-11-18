@@ -45,7 +45,7 @@ module inspector_pane;
 
 import sparkles.input : Event, EndOfInput, InputKey = Key, KeyEvent, match,
     Point, PointerAction, PointerButton, PointerEvent, WheelEvent;
-import sparkles.ui.hit_ids : HitBlock;
+import sparkles.ui.hit_ids : HitKey, HitRegistry;
 import sparkles.ui.components.inspector : actionAt, DetailRow, InspectorAction,
     inspectorView;
 import sparkles.ui.components.tree_view : treeActivate = activate,
@@ -59,8 +59,6 @@ import sparkles.doc_view.viewer_model : ViewerModel;
 
 @safe:
 
-/// The pane's hit-id base (its rows live in the hosts' one id space).
-enum uint hitInspectorTree = 200_000;
 
 /// The picker chip's glyph — Uiua's `⌕ find`, so the GUI's default
 /// codepoint map already routes it to a face that has it.
@@ -233,7 +231,11 @@ struct InspectorPane
     /// sparkles,ui,components,tree_view)): painting must not chase the
     /// cursor, or a scrollbar drag and a wheel notch are both undone before
     /// they reach the screen.
-    uint view(ref Builder b, int innerWidth) @system
+    ///
+    /// The rows' hit ids are a block of the host's `hits`, asked for here
+    /// under `HitKey("hue.inspector.rows", instance)` — the view is built
+    /// every frame the pane is shown (`INP27`).
+    uint view(ref Builder b, int innerWidth, ref HitRegistry hits, size_t instance = 0) @system
     {
         auto details = ci.details(tv.selectedNode);
         tv.width = innerWidth;
@@ -247,7 +249,8 @@ struct InspectorPane
         return inspectorView(b, data, tv,
             (uint n) => open.isOpen(n),
             title, actions,
-            details, innerWidth, TreeGlyphs.init, HitBlock(hitInspectorTree, data.nodes.length));
+            details, innerWidth, TreeGlyphs.init,
+            hits.block(HitKey("hue.inspector.rows", instance), data.nodes.length ? data.nodes.length : 1));
     }
 
     /// One pane-local event. Returns `true` while the pane stays open
@@ -531,7 +534,9 @@ version (unittest)
     pane.handle(Event(WheelEvent(dy: 3)), vm);
     assert(pane.tv.top == 3 && pane.tv.sel == 0);
     auto b = Builder();
-    b.finish(pane.view(b, 28));
+    HitRegistry hits;
+    hits.beginFrame();
+    b.finish(pane.view(b, 28, hits));
     assert(pane.tv.top == 3, "painting must not scroll back to the cursor");
 
     // …and a press on the bar's column jumps the view, not the selection.
@@ -543,7 +548,7 @@ version (unittest)
     const grabbed = pane.tv.top;
     assert(grabbed > 0);
     auto b2 = Builder();
-    b2.finish(pane.view(b2, 28));
+    b2.finish(pane.view(b2, 28, hits));
     assert(pane.tv.top == grabbed, "…and the grab survives the repaint");
 }
 
@@ -564,7 +569,9 @@ version (unittest)
     pane.tv.top = 3; // published by the outer dock after a vertical scroll
 
     auto b = Builder();
-    b.finish(pane.view(b, 28));
+    HitRegistry hits;
+    hits.beginFrame();
+    b.finish(pane.view(b, 28, hits));
     const firstVisible = pane.tv.top;
     assert(firstVisible == 3);
     pane.handle(Event(PointerEvent(action: PointerAction.press,
@@ -588,7 +595,9 @@ version (unittest)
     pane.selectAt(1); // something selected → details exist
 
     auto b = Builder();
-    auto tree = b.finish(pane.view(b, 28));
+    HitRegistry hits;
+    hits.beginFrame();
+    auto tree = b.finish(pane.view(b, 28, hits));
 
     bool sawPicker, sawNode;
     foreach (ref n; tree.nodes)

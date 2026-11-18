@@ -40,9 +40,9 @@ import sparkles.ui.components.scroll_view : ScrollArea, ScrollAreaAxis,
     scrollLayout;
 import sparkles.ui.state : CaptureState;
 
-import picker_view : GrepRowText, pickerHBarHitId, pickerListBox,
-    pickerVBarHitId,
+import picker_view : GrepRowText, pickerListBox, PickerHits,
     pickerMaxPanelRows;
+import sparkles.ui.hit_ids : HitRegistry;
 import picker_view : PickerGeometry, PickerLayout, pickerPreviewRect,
     pickerView, RowHighlight;
 
@@ -103,6 +103,15 @@ struct PickerHost
     @disable this(this);
 
     PickerState!pickerTopK state;
+    /// The view's hit blocks, the ones its last tree was built with.
+    PickerHits hits;
+
+    /// Asks `registry` for the view's hit blocks (`INP27`): call it every
+    /// frame the picker is shown, before $(LREF buildView).
+    void claimHits(ref HitRegistry registry, size_t instance = 0) @safe pure nothrow @nogc
+    {
+        hits = PickerHits.claim(registry, instance);
+    }
     PickerScheduler!(DefaultFuzzyCaps, pickerTopK) scheduler;
     FilesFinder finder;
     /**
@@ -513,7 +522,7 @@ struct PickerHost
             highlights[0 .. shown],
             path.length ? baseName(path) : null, geometry, preset,
             focus.focused,
-            source == PickerSource.grep ? rows[0 .. shown] : null, mode);
+            source == PickerSource.grep ? rows[0 .. shown] : null, mode, hits);
 
         // The list's extent, measured off the tree that was just built
         // rather than re-derived — the rendered spans ARE the row, so
@@ -763,15 +772,16 @@ struct PickerHost
                 if (!press)
                     return;
                 // A press on a ranked row selects it and focuses the list;
-                // rows carry their corpus index as `hitId + 1`.
+                // a row's id decodes to its corpus index.
                 import sparkles.ui.state : hoverTargets;
 
                 foreach (t; hoverTargets(tree, frames))
                 {
-                    if (t.hitId == 0 || !t.rect.contains(p.pos))
+                    size_t corpusIndex;
+                    if (!t.rect.contains(p.pos) || !hits.rows.indexOf(t.hitId, corpusIndex))
                         continue;
                     foreach (i; 0 .. state.rowCount)
-                        if (state.rows[i].corpusIndex + 1 == t.hitId)
+                        if (state.rows[i].corpusIndex == corpusIndex)
                         {
                             state.selection = i;
                             focus = ScopeFocus!Scope_(Scope_.pickerList);
@@ -877,6 +887,8 @@ private:
     {
         import sparkles.ui.state : hoverTargets;
 
+        if (id == 0)
+            return Rect.init; // no block claimed: the bar is not hit-testable
         foreach (t; hoverTargets(tree, frames))
             if (t.hitId == id)
                 return t.rect;
@@ -894,7 +906,7 @@ private:
     {
         if (state.rowCount <= state.viewRows && !state.scroll.v.dragging)
             return false;
-        const rect = barRect(pickerVBarHitId, tree, frames);
+        const rect = barRect(hits.vBar.id, tree, frames);
         if (rect.height == 0 && !state.scroll.v.dragging)
             return false;
 
@@ -936,7 +948,7 @@ private:
         // no arithmetic outside the layout can know. That is `SCV7`
         // precisely — one derivation, or paint and hit disagree — and its
         // test passed only because the test picked the same wrong rect.
-        const hRect = barRect(pickerHBarHitId, tree, frames);
+        const hRect = barRect(hits.hBar.id, tree, frames);
         if (hRect.width == 0 && !state.scroll.h.dragging)
             return false;
 
@@ -1066,6 +1078,9 @@ unittest
 
     auto owner = makeUnique!PickerHost();
     auto host = &owner.get();
+    HitRegistry registry; // the frame the view is built in (`INP27`)
+    registry.beginFrame();
+    host.claimHits(registry);
     scope (exit) host.shutdown();
     host.open(root);
     assert(host.state.active);
@@ -1101,6 +1116,9 @@ unittest
 
     auto owner = makeUnique!PickerHost();
     auto host = &owner.get();
+    HitRegistry registry; // the frame the view is built in (`INP27`)
+    registry.beginFrame();
+    host.claimHits(registry);
     scope (exit) host.shutdown();
     host.open(root);
     drain(*host);
@@ -1134,6 +1152,9 @@ unittest
 
     auto owner = makeUnique!PickerHost();
     auto host = &owner.get();
+    HitRegistry registry; // the frame the view is built in (`INP27`)
+    registry.beginFrame();
+    host.claimHits(registry);
     scope (exit) host.shutdown();
     host.open(root);
     drain(*host);
@@ -1198,6 +1219,9 @@ unittest
 
     auto owner = makeUnique!PickerHost();
     auto host = &owner.get();
+    HitRegistry registry; // the frame the view is built in (`INP27`)
+    registry.beginFrame();
+    host.claimHits(registry);
     scope (exit) host.shutdown();
     host.open(root);
     drain(*host);
@@ -1230,7 +1254,7 @@ unittest
     // A press on a ranked row selects it and focuses the list.
     Rect rowRect;
     foreach (t; hoverTargets(tree, frames))
-        if (t.hitId == host.state.rows[0].corpusIndex + 1)
+        if (t.hitId == host.hits.rows[host.state.rows[0].corpusIndex])
             rowRect = t.rect;
     assert(rowRect.width > 0, "the rows are hit-testable");
     assert(host.handleOverlay(Event(PointerEvent(
@@ -1276,6 +1300,9 @@ unittest
 
     auto owner = makeUnique!PickerHost();
     auto host = &owner.get();
+    HitRegistry registry; // the frame the view is built in (`INP27`)
+    registry.beginFrame();
+    host.claimHits(registry);
     scope (exit) host.shutdown();
     host.open(root);
     drain(*host);
@@ -1323,6 +1350,9 @@ unittest
 
     auto owner = makeUnique!PickerHost();
     auto host = &owner.get();
+    HitRegistry registry; // the frame the view is built in (`INP27`)
+    registry.beginFrame();
+    host.claimHits(registry);
     scope (exit) host.shutdown();
 
     host.openGrep(root);
@@ -1380,6 +1410,9 @@ unittest
 
     auto owner = makeUnique!PickerHost();
     auto host = &owner.get();
+    HitRegistry registry; // the frame the view is built in (`INP27`)
+    registry.beginFrame();
+    host.claimHits(registry);
     scope (exit) host.shutdown();
     host.openGrep(root);
     foreach (ch; "needleHere")
@@ -1395,7 +1428,6 @@ unittest
     // re-derives the geometry under test cannot catch the geometry being
     // wrong (`SCV7`).
     import sparkles.ui.state : hoverTargets;
-    import picker_view : pickerHBarHitId;
 
     const geometry = PickerGeometry(panelCols: 30, panelRows: 12);
     auto tree = host.buildView(geometry);
@@ -1405,7 +1437,7 @@ unittest
 
     Rect bar;
     foreach (t; hoverTargets(tree, frames))
-        if (t.hitId == pickerHBarHitId)
+        if (t.hitId == host.hits.hBar.id)
             bar = t.rect;
     assert(bar.width > 0, "the bar must be findable by its identity");
 
@@ -1448,7 +1480,6 @@ unittest
     // would open something they cannot see.
     import sparkles.ui.state : hoverTargets;
     import std.conv : to;
-    import picker_view : pickerVBarHitId;
 
     auto fixture = pickerFixture("hue-picker-vbar");
     const root = fixture.dir;
@@ -1457,6 +1488,9 @@ unittest
 
     auto owner = makeUnique!PickerHost();
     auto host = &owner.get();
+    HitRegistry registry; // the frame the view is built in (`INP27`)
+    registry.beginFrame();
+    host.claimHits(registry);
     scope (exit) host.shutdown();
     host.open(root);
     foreach (ch; "zeta")
@@ -1471,7 +1505,7 @@ unittest
 
     Rect bar;
     foreach (t; hoverTargets(tree, frames))
-        if (t.hitId == pickerVBarHitId)
+        if (t.hitId == host.hits.vBar.id)
             bar = t.rect;
     assert(bar.height > 0, "the vertical bar is findable by its identity");
     assert(host.state.firstRow == 0);
@@ -1517,6 +1551,9 @@ unittest
 
     auto owner = makeUnique!PickerHost();
     auto host = &owner.get();
+    HitRegistry registry; // the frame the view is built in (`INP27`)
+    registry.beginFrame();
+    host.claimHits(registry);
     scope (exit) host.shutdown();
     host.open(root);
     foreach (ch; "zeta")
@@ -1576,6 +1613,9 @@ unittest
     clipboard.read = () => board;
     auto owner = makeUnique!PickerHost();
     auto host = &owner.get();
+    HitRegistry registry; // the frame the view is built in (`INP27`)
+    registry.beginFrame();
+    host.claimHits(registry);
     scope (exit) host.shutdown();
     host.state.prompt.setup = FieldSetup.of(EditorTarget.window, clipboard);
     host.open(fixture.dir);

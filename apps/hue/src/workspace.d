@@ -477,7 +477,7 @@ struct WorkspaceTui
         applyDockScrolls();
         insp.focused = dock.focused == inspPane;
         auto b = Builder();
-        const iv = insp.view(b, inspRect.width);
+        const iv = insp.view(b, inspRect.width, hitRegistry);
         Widget col = Widget(kind: WidgetKind.column, children: [iv],
             width: SizeSpec.fixed(inspRect.width), clipX: true);
         auto wt = b.finish(b.add(col));
@@ -507,7 +507,7 @@ struct WorkspaceTui
 
         if (treeVisible)
         {
-            tree.paint(g);
+            tree.paint(g, hitRegistry);
             // The dividers the container placed: a full-height │ rule,
             // tinted toward the focused side — the tree's accent when the
             // tree holds focus, the muted chrome color otherwise.
@@ -676,6 +676,7 @@ struct WorkspaceTui
         if (!settings.active)
             return;
         const geometry = settingsGeometry();
+        settings.claimHits(hitRegistry);
         auto view = settings.buildView(geometry);
         auto frames = layout(view, Constraints(maxW: geometry.panelCols));
         const panel = frames[view.root].rect;
@@ -708,6 +709,7 @@ struct WorkspaceTui
         if (picker.empty || !picker.get.state.active)
             return;
         const geometry = pickerGeometry();
+        picker.get.claimHits(hitRegistry);
         auto view = picker.get.buildView(geometry);
         auto frames = layout(view,
             Constraints(maxW: 2 * geometry.panelCols));
@@ -4836,10 +4838,11 @@ unittest
     static string leadSpan(ref WorkspaceTui w) @system
     {
         const geometry = w.pickerGeometry();
+        w.picker.get.claimHits(w.hitRegistry);
         auto tree = w.picker.get.buildView(geometry);
         auto frames = layout(tree, Constraints(maxW: 2 * geometry.panelCols));
         foreach (ref const node; tree.nodes)
-            if (node.kind == WidgetKind.rich && node.hitId != 0
+            if (node.kind == WidgetKind.rich && w.picker.get.hits.rows.contains(node.hitId)
                 && node.spans.length)
                 return node.spans[0].text.idup;
         return null;

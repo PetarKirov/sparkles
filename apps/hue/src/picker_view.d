@@ -5,6 +5,7 @@ import std.conv : text;
 
 import sparkles.fuzzy : CandidateSnapshot, RankedResult, TextRange;
 import sparkles.ui.geometry : Insets, Rect, SizeSpec;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.components.editor : EditorViewOptions, editorLineSpans;
 import sparkles.ui.components.chrome : scrollbar,
@@ -85,13 +86,27 @@ struct PickerGeometry
 /// laid-out rect and paint the document pane into it.
 enum size_t pickerPreviewKey = 0x9c4b_9e77;
 
-/// Identity for the list's horizontal bar (`WGT5`), so the host finds the
-/// rect it was painted at rather than re-deriving one — `SCV7`'s rule that
-/// paint geometry and hit geometry are the same derivation.
-enum size_t pickerHBarHitId = 0x9c4b_9e78;
+/**
+The picker's hit blocks (`INP27`), asked of the host's registry every frame
+the picker is shown: the ranked rows, by corpus index, and the list's bars
+(`WGT5`), whose ids let the host find the rect a bar was painted at rather
+than re-derive one — `SCV7`'s rule that paint geometry and hit geometry are
+the same derivation.
+*/
+struct PickerHits
+{
+    HitBlock rows;      /// a row's id is `rows[corpusIndex]`
+    HitBlock hBar;      /// the list's horizontal bar
+    HitBlock vBar;      /// ditto, the vertical one
 
-/// ditto, for the list's vertical bar.
-enum size_t pickerVBarHitId = 0x9c4b_9e79;
+    /// The blocks, under `HitKey("hue.picker.<kind>", instance)`. A corpus
+    /// index is any of the slot's offsets, so the rows take the whole slot.
+    static PickerHits claim(ref HitRegistry registry, size_t instance = 0) @safe pure nothrow @nogc
+        => PickerHits(
+            rows: registry.block(HitKey("hue.picker.rows", instance), HitRegistry.stride - 1),
+            hBar: registry.block(HitKey("hue.picker.hBar", instance)),
+            vBar: registry.block(HitKey("hue.picker.vBar", instance)));
+}
 
 /// The eased 0..100 the scrollbar op carries, clamped from a float.
 private ubyte clampPercent(float v) @safe pure nothrow @nogc
@@ -214,7 +229,8 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
     PickerLayout preset = PickerLayout.default_,
     Scope_ focus = Scope_.pickerInput,
     scope const(GrepRowText)[] grepRows = null,
-    const(char)[] modeLabel = null)
+    const(char)[] modeLabel = null,
+    in PickerHits hits = PickerHits.init)
 {
     auto builder = Builder();
     // The focused pane's panel carries the accent chrome, and INSIDE the
@@ -353,7 +369,7 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
             spans: spans,
             slot: rowSlot,
             paintBackground: rowSlot != Slot.inherit,
-            hitId: ranked.corpusIndex + 1,
+            hitId: hits.rows[ranked.corpusIndex],
             width: SizeSpec.grow()));
     }
     if (state.rowCount == 0)
@@ -382,7 +398,7 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
                 offset: cast(long) state.firstRow,
                 axis: ScrollAxis.vertical,
                 expandPercent: clampPercent(state.scroll.vAnim.percent),
-                hitId: pickerVBarHitId),
+                hitId: hits.vBar.id),
                 cast(int) state.viewRows);
         else
             listChildren ~= builder.add(Widget(kind: WidgetKind.box,
@@ -415,7 +431,7 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
             // never a pixel width, which is the bargain that let the five
             // rail-width copies be deleted.
             expandPercent: clampPercent(state.scroll.hAnim.percent),
-            hitId: pickerHBarHitId), track);
+            hitId: hits.hBar.id), track);
     }
 
     const inspection = state.debugScore;
@@ -924,11 +940,14 @@ unittest
         state.open();
         RankedResult[1] ranked;
         state.publish(ranked[], 1, false);
+        HitRegistry registry;
+        registry.beginFrame();
+        const hits = PickerHits.claim(registry);
         auto tree = pickerView(state, CandidateSnapshot.init, null, null,
             PickerGeometry.init, PickerLayout.default_, Scope_.pickerPreview,
-            [row]);
+            [row], null, hits);
         foreach (ref const node; tree.nodes)
-            if (node.kind == WidgetKind.rich && node.hitId != 0)
+            if (node.kind == WidgetKind.rich && hits.rows.contains(node.hitId))
                 return node.paintBackground && node.slot == Slot.highlight;
         return false;
     }
