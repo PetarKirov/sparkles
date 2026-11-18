@@ -548,6 +548,10 @@ struct RunOptions
     string cache;  /// the cache directory holding the store; empty runs without one
     bool check;    /// BGS9's determinism check
     string[] checkTasks; /// with `check`, the tasks it checks (CIC13's sample); empty for every keyed one
+    /// The tasks to run, each an id or a prefix only one id has, with every
+    /// action they need; empty runs the whole plan.
+    string[] tasks;
+    string[] replaceTasks; /// BGS7: tasks whose published result a fresh execution replaces
     Confinement confine;    /// D39's spike
     bool traceCompiles;     /// oracle 3: every compile under `strace`
     uint jobs;              /// the weight admitted at once; 0 for one per processor
@@ -651,6 +655,26 @@ GraphRun runGraph(string root, string only, RunOptions o)
     }
     if (o.adjustPlan !is null)
         o.adjustPlan(g.plan);
+    if (o.tasks.length)
+    {
+        string[] targets;
+        foreach (t; o.tasks)
+        {
+            string why;
+            const id = uniqueTask(g.plan.graph, t, why);
+            if (!id.length)
+                return GraphRun(why);
+            targets ~= id;
+        }
+        g.plan.graph = needing(g.plan.graph, targets);
+        string[] replaced;
+        foreach (t; o.replaceTasks)
+        {
+            string why;
+            replaced ~= uniqueTask(g.plan.graph, t, why);
+        }
+        o.replaceTasks = replaced;
+    }
     // Generators and tests run with the environment they are given here,
     // declared whole (BGX1): the driver's own, with a `dub` first on `PATH`
     // that records each call and fails (oracle 11 step 1).
@@ -658,6 +682,7 @@ GraphRun runGraph(string root, string only, RunOptions o)
     const declared = declaredEnvironment(trap);
     auto layout = RunLayout(root, o.into, o.cache, g.toolchain.identity, o.check);
     layout.checkTasks = o.checkTasks.dup;
+    layout.replaceTasks = o.replaceTasks.dup;
     g.into = o.into;
     auto nodes = executionNodes(g.plan.graph, layout, declared);
     if (o.adjustExecution !is null)
@@ -1370,4 +1395,84 @@ int explainTask(W)(string root, string cache, string task, ref W writer)
     say(verdict.length ? "explain " ~ verdict : text("explain ", target, ": not reached: ",
         misses.length ? misses.join("; ") : "a prerequisite did not complete"));
     return 0;
+}
+
+/**
+The id of `g`'s task named `task`: that id, or the one id it is a prefix of.
+Null, with `why` saying so, when no id or several match.
+*/
+string uniqueTask(ref const ActionGraph g, string task, out string why)
+{
+    string[] matches;
+    foreach (ref a; g.actions)
+        if (a.id.text == task)
+            return a.id.text;
+        else if (a.id.text.startsWith(task))
+            matches ~= a.id.text;
+    if (matches.length == 1)
+        return matches[0];
+    why = matches.length ? text(matches.length, " tasks start with ", task, ": ",
+        matches[0 .. matches.length < 5 ? $ : 5].join(", "), matches.length > 5 ? ", …" : "")
+        : "no task " ~ task;
+    return null;
+}
+
+/// `g` cut to the tasks `targets` and every action they need, through any edge.
+ActionGraph needing(ref ActionGraph g, const string[] targets)
+{
+    bool[string] needed;
+    foreach (t; targets)
+        needed[t] = true;
+    for (bool grew = true; grew;)
+    {
+        grew = false;
+        foreach (ref e; g.edges)
+            if (e.dependent.text in needed && e.prerequisite.text !in needed)
+            {
+                needed[e.prerequisite.text] = true;
+                grew = true;
+            }
+    }
+    ActionGraph sub;
+    foreach (ref a; g.actions)
+        if (a.id.text in needed)
+            sub.actions ~= a;
+    foreach (ref e; g.edges)
+        if (e.prerequisite.text in needed && e.dependent.text in needed)
+            sub.edges ~= e;
+    return sub;
+}
+
+/**
+`ci cache store replace <task>` (BGS7): plans the repository's test selection
+with the tools a run would name, and executes `task` (an id, or a prefix only
+one id has) with its lookup bypassed, after looking up or building what it
+needs; its result replaces the published one, which moves to `trash/`. A live
+lease another process holds keeps the published result, and is reported.
+Returns 0, 1 when the task failed or a lease held the replacement back, or 2
+when the task is unknown or ambiguous.
+*/
+int replaceTask(W)(string root, string cache, string task, ref W writer)
+{
+    import std.datetime.systime : Clock;
+    import std.process : thisProcessID;
+
+    void say(string line) { writer.put(line); writer.put("\n"); }
+
+    auto g = runGraph(root, null, RunOptions(into: buildPath(cache, "runs",
+        text("replace-", Clock.currTime.toUnixTime, "-", thisProcessID)), cache: cache, tasks: [task],
+        replaceTasks: [task]));
+    if (g.error.length)
+    {
+        say("replace: " ~ g.error);
+        return 2;
+    }
+    string why;
+    const target = g.plan.graph.actions.length ? uniqueTask(g.plan.graph, task, why) : null;
+    const key = g.stats.resultKeys.get(target, null);
+    const held = g.log.canFind("waits for a live lease");
+    say(g.exitCode != 0 ? text("replace ", target, ": the action failed; the published result stays")
+        : held ? text("replace ", target, ": a live lease another process holds keeps the published result")
+        : text("replace ", target, ": published ", key, "; the result it replaced is in trash/"));
+    return g.exitCode != 0 || held ? 1 : 0;
 }
