@@ -336,6 +336,41 @@ struct Store(D)
         return true;
     }
 
+    /*
+    BGS5's manifests: drops from each manifest list every manifest whose
+    result is neither published nor recorded, removing a list left empty.
+    Returns the bytes freed, counting each list removed in `dropped`.
+    */
+    private ulong pruneManifests(ref size_t dropped)
+    {
+        auto dir = v.walk("manifests");
+        if (dir.hasError)
+            return 0;
+        ulong freed;
+        foreach (declared; names("manifests"))
+        {
+            string source;
+            if (!readAll(v, "manifests/" ~ declared, source))
+                continue;
+            Manifest[] kept;
+            foreach (ref m; parseManifestList(source))
+            {
+                const key = resultKey(declared, m);
+                if (published(key) || !statPath(v, "records/" ~ key).hasError)
+                    kept ~= m;
+            }
+            const text_ = kept.length ? manifestListText(kept) : null;
+            if (text_ == source)
+                continue;
+            if (kept.length ? dir.value.writeFileAtomic(declared, text_).hasError : dir.value.unlinkAt(declared).hasError)
+                continue;
+            freed += source.length - text_.length;
+            if (!kept.length)
+                ++dropped;
+        }
+        return freed;
+    }
+
     /// The manifests recorded for `declaredKey`, most recently used first.
     Manifest[] manifests(string declaredKey)
     {
@@ -835,13 +870,16 @@ struct Store(D)
             }
         }
         report.resultBytes = total;
-        // The records' bound: the oldest preimages and digest records first.
+        // The records' bound: first the manifests no result serves, then the
+        // oldest preimages and digest records, then the manifests those left
+        // without a result.
         ulong records = recordBytes();
         if (records > recordsBound)
         {
             import sparkles.base.vfs.types : StatMask;
 
             const target = recordsBound / 10 * 9;
+            records -= pruneManifests(report.recordsDropped);
             foreach (dir; ["records", "preimages"])
             {
                 auto d = v.walk(dir);
@@ -859,6 +897,7 @@ struct Store(D)
                     }
                 }
             }
+            records -= pruneManifests(report.recordsDropped);
         }
         report.recordBytes = records;
         return report;
