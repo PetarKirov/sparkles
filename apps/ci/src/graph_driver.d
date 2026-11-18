@@ -547,21 +547,28 @@ struct RunOptions
     string into;   /// the run directory, absolute; made when missing
     string cache;  /// the cache directory holding the store; empty runs without one
     bool check;    /// BGS9's determinism check
+    string[] checkTasks; /// with `check`, the tasks it checks (CIC13's sample); empty for every keyed one
     Confinement confine;    /// D39's spike
     bool traceCompiles;     /// oracle 3: every compile under `strace`
     uint jobs;              /// the weight admitted at once; 0 for one per processor
     bool echo;              /// the reporter's lines also go to standard output
+    bool failFast;          /// cancel the rest at the first failure
     /// Changes the tools found on `PATH` before the toolchain is identified
     /// (oracle 9's substitutions).
     void delegate(ref Tools) adjustTools;
     /// Changes the plan before it runs (the oracles' wrapped actions).
     void delegate(ref Planned) adjustPlan;
+    /// Changes the process a task runs, after its key is planned: a tool that
+    /// behaves otherwise under the same key (oracle 19's nondeterministic
+    /// compiler). Called with each process task's id and its concrete action.
+    void delegate(string task, ref ProcessAction concrete) adjustExecution;
 }
 
 /// What a run of the graph did.
 struct GraphRun
 {
     string error;        /// why it could not run; null when it ran
+    string into;         /// its run directory; a check's is discarded after it (BGS9)
     Planned plan;        ///
     Toolchain toolchain; ///
     int exitCode;        /// the run's
@@ -649,8 +656,19 @@ GraphRun runGraph(string root, string only, RunOptions o)
     // that records each call and fails (oracle 11 step 1).
     const trap = buildPath(o.into, "dub-trap");
     const declared = declaredEnvironment(trap);
-    const layout = RunLayout(root, o.into, o.cache, g.toolchain.identity, o.check);
+    auto layout = RunLayout(root, o.into, o.cache, g.toolchain.identity, o.check);
+    layout.checkTasks = o.checkTasks.dup;
+    g.into = o.into;
     auto nodes = executionNodes(g.plan.graph, layout, declared);
+    if (o.adjustExecution !is null)
+        foreach (ref n; nodes)
+        {
+            auto action = n.action;
+            action.match!(
+                (ref ProcessAction pa) { o.adjustExecution(n.id.text, pa); },
+                (ref _) {});
+            (() @trusted { n.action = action; })();
+        }
     static struct Tee
     {
         typeof(appender!string())* log;
@@ -666,7 +684,8 @@ GraphRun runGraph(string root, string only, RunOptions o)
     }
     auto log = appender!string;
     auto w = Tee(&log, o.echo);
-    const r = runActions(nodes, g.plan.graph, layout, w, o.jobs ? o.jobs : cast(uint) totalCPUs, &g.stats);
+    const r = runActions(nodes, g.plan.graph, layout, w, o.jobs ? o.jobs : cast(uint) totalCPUs, &g.stats,
+        o.failFast);
     g.exitCode = r.exitCode;
     g.log = log.data;
     // BGS5: eviction after the run, off its publish path.
@@ -679,6 +698,13 @@ GraphRun runGraph(string root, string only, RunOptions o)
     }
     if (exists(buildPath(trap, "calls")))
         g.dubCalls = readText(buildPath(trap, "calls"));
+    // BGS9: the check's outputs are a private store, discarded after it.
+    if (o.check && exists(o.into))
+    {
+        import std.file : rmdirRecurse;
+
+        rmdirRecurse(o.into);
+    }
     return g;
 }
 
