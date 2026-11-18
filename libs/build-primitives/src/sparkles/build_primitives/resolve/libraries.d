@@ -39,8 +39,14 @@ interface PkgConfigDriver
     /// `pkg-config --cflags <names…>`; false when it fails.
     bool cflags(const string[] names, out string output) @safe;
 
-    /// The `.pc` file `name` resolves to (`pkg-config --path`), or null.
+    /// The `.pc` file `name` resolves to, or null.
     string pcFile(string name) @safe;
+
+    /// The directories `pkg-config` searches for `.pc` files, in order.
+    string[] searchPath() @safe;
+
+    /// The packages `name`'s `.pc` file requires, publicly and privately, by name.
+    string[] requires(string name) @safe;
 }
 
 /// What a target's libraries resolve to.
@@ -58,6 +64,9 @@ struct LibraryResolution
     /// The `.pc` files those packages resolved to: inputs of every action
     /// that uses the flags.
     string[] pcFiles;
+    /// BGK9: the search that answered for those packages, as key lines (see
+    /// $(LREF pkgConfigSearch)): inputs of every action that uses the flags.
+    string[] pcSearch;
     /// Whether `pkg-config` failed, so that dub would fall back to plain `-l`.
     bool unavailable;
 }
@@ -104,6 +113,8 @@ LibraryResolution resolveLibraries(ref BuildSettings settings, const BuildPlatfo
     foreach (p; packages)
         if (auto file = driver.pcFile(p))
             result.pcFiles ~= file;
+    if (packages.length)
+        result.pcSearch = pkgConfigSearch(packages, driver);
 
     if (!isLibrary)
         result.libs = plain.dup;
@@ -184,6 +195,83 @@ private string[] preprocessorFlags(string output) @safe pure
     return result;
 }
 
+/**
+BGK9: the inputs of `pkg-config`'s answer for `packages`, as key lines. The
+directories it searched, in order (`pc-dirs <dir>:<dir>…`); each `.pc` file
+the packages and the packages they require resolved to (`pc <file>`); and
+each candidate it looked for first and did not find (`pc-absent <path>`):
+`<name>-uninstalled.pc` in every directory, which `pkg-config` prefers
+wherever it lies, then `<name>.pc` in each directory before the one used. A
+directory beneath `/nix/store` never gains a file, so its candidates are left
+out. An action keys on each file's digest and on each candidate's absence.
+*/
+string[] pkgConfigSearch(const string[] packages, PkgConfigDriver driver) @safe
+{
+    import std.algorithm.searching : startsWith;
+    import std.array : join;
+
+    const dirs = driver.searchPath();
+    string[] lines = ["pc-dirs " ~ dirs.join(":")];
+    bool[string] seen;
+    string[] queue = packages.dup;
+    while (queue.length)
+    {
+        const name = queue[0];
+        queue = queue[1 .. $];
+        if (name in seen)
+            continue;
+        seen[name] = true;
+        size_t until = dirs.length;
+        if (const file = driver.pcFile(name))
+        {
+            lines ~= "pc " ~ file;
+            size_t slash = file.length;
+            while (slash > 0 && file[slash - 1] != '/')
+                --slash;
+            foreach (i, d; dirs)
+                if (slash > 1 && d == file[0 .. slash - 1])
+                {
+                    until = i;
+                    break;
+                }
+        }
+        foreach (i, d; dirs)
+        {
+            if (d.startsWith("/nix/store/"))
+                continue;
+            lines ~= "pc-absent " ~ d ~ "/" ~ name ~ "-uninstalled.pc";
+            if (i < until)
+                lines ~= "pc-absent " ~ d ~ "/" ~ name ~ ".pc";
+        }
+        queue ~= driver.requires(name);
+    }
+    return lines;
+}
+
+///
+@("build_primitives.resolve.libraries.pkgConfigSearch")
+@safe unittest
+{
+    auto driver = new MemoryPkgConfig(["a": "-la", "b": "-lb"], null);
+    driver.dirs = ["/etc/pc", "/pc", "/opt/pc"];
+    driver.requiresOf = ["a": ["b"]];
+    assert(pkgConfigSearch(["a"], driver) == [
+        "pc-dirs /etc/pc:/pc:/opt/pc",
+        // `a` lies in /pc: /etc/pc is searched before it, and any directory
+        // could hold the uninstalled variant `pkg-config` prefers.
+        "pc /pc/a.pc",
+        "pc-absent /etc/pc/a-uninstalled.pc", "pc-absent /etc/pc/a.pc",
+        "pc-absent /pc/a-uninstalled.pc", "pc-absent /opt/pc/a-uninstalled.pc",
+        // `b`, which `a` requires, the same way.
+        "pc /pc/b.pc",
+        "pc-absent /etc/pc/b-uninstalled.pc", "pc-absent /etc/pc/b.pc",
+        "pc-absent /pc/b-uninstalled.pc", "pc-absent /opt/pc/b-uninstalled.pc",
+    ]);
+    driver.dirs = ["/nix/store/x-pc/lib/pkgconfig", "/pc"];
+    assert(pkgConfigSearch(["b"], driver) == ["pc-dirs /nix/store/x-pc/lib/pkgconfig:/pc", "pc /pc/b.pc",
+        "pc-absent /pc/b-uninstalled.pc"]);
+}
+
 /// A driver that runs `pkg-config` (`$PKG_CONFIG`, else `pkg-config`).
 final class SystemPkgConfig : PkgConfigDriver
 {
@@ -203,12 +291,70 @@ final class SystemPkgConfig : PkgConfigDriver
 
     bool cflags(const string[] names, out string output) @safe => query("--cflags", names, output);
 
+    // The directory `pkg-config` found the package in (`pcfiledir`, which
+    // pkg-config 0.29 and pkgconf both define), and the file there that
+    // it read: the uninstalled variant, which it prefers, or the package's.
     string pcFile(string name) @safe
     {
+        import std.file : exists;
         import std.string : strip;
 
-        const r = run(["--path", name]);
-        return r.status == 0 ? r.output.strip : null;
+        const r = run(["--variable=pcfiledir", name]);
+        if (r.status != 0)
+            return null;
+        const dir = r.output.strip;
+        foreach (candidate; [dir ~ "/" ~ name ~ "-uninstalled.pc", dir ~ "/" ~ name ~ ".pc"])
+            if (exists(candidate))
+                return candidate;
+        return null;
+    }
+
+    // pkg-config 0.29 names each directory it adds to its search path, in
+    // order, under `PKG_CONFIG_DEBUG_SPEW`, wherever a wrapper took it from
+    // (Nix's takes a target-specific variable). Otherwise the path is
+    // `PKG_CONFIG_PATH`'s, then `PKG_CONFIG_LIBDIR`'s or the default's.
+    string[] searchPath() @safe
+    {
+        import std.algorithm.iteration : filter, splitter;
+        import std.algorithm.searching : startsWith;
+        import std.array : array;
+        import std.process : environment;
+        import std.string : indexOf, lineSplitter, strip;
+
+        string[] dirs;
+        enum prefix = "Adding directory '";
+        foreach (line; run(["--exists", "sparkles-search-path-probe"], ["PKG_CONFIG_DEBUG_SPEW": "1"]).output
+                .lineSplitter)
+            if (line.startsWith(prefix))
+            {
+                const rest = line[prefix.length .. $];
+                const close = rest.indexOf('\'');
+                if (close > 0)
+                    dirs ~= rest[0 .. close].idup;
+            }
+        if (dirs.length)
+            return dirs;
+        dirs = environment.get("PKG_CONFIG_PATH", "").splitter(':').filter!(d => d.length).array;
+        const libdir = environment.get("PKG_CONFIG_LIBDIR");
+        const defaults = libdir !is null ? libdir : run(["--variable", "pc_path", "pkg-config"]).output.strip;
+        return dirs ~ defaults.splitter(':').filter!(d => d.length).array;
+    }
+
+    string[] requires(string name) @safe
+    {
+        import std.array : split;
+        import std.string : lineSplitter;
+
+        string[] names;
+        foreach (what; ["--print-requires", "--print-requires-private"])
+        {
+            const r = run([what, name]);
+            if (r.status == 0)
+                foreach (line; r.output.lineSplitter)
+                    if (auto words = line.split)
+                        names ~= words[0].idup;
+        }
+        return names;
     }
 
     private bool query(string what, const string[] names, out string output) @safe
@@ -218,13 +364,13 @@ final class SystemPkgConfig : PkgConfigDriver
         return r.status == 0;
     }
 
-    private auto run(const string[] arguments) @safe
+    private auto run(const string[] arguments, const string[string] env = null) @safe
     {
         import std.process : execute;
         import std.typecons : Tuple;
 
         try
-            return execute([executable] ~ arguments);
+            return execute([executable] ~ arguments, env);
         catch (Exception e)
             return Tuple!(int, "status", string, "output")(-1, e.msg);
     }
@@ -283,6 +429,26 @@ final class RecordingPkgConfig : PkgConfigDriver
             ? output : null;
     }
 
+    // Recorded as queries of their own, beside the ones `pkg-config` answers.
+    string[] searchPath() @safe
+    {
+        import std.array : join, split;
+
+        string output;
+        cast(void) ask(["--search-path"], (out string o) { o = inner.searchPath().join("\n"); return true; }, output);
+        return output.length ? output.split("\n") : null;
+    }
+
+    string[] requires(string name) @safe
+    {
+        import std.array : join, split;
+
+        string output;
+        cast(void) ask(["--requires", name], (out string o) { o = inner.requires(name).join("\n"); return true; },
+            output);
+        return output.length ? output.split("\n") : null;
+    }
+
     private bool ask(const string[] arguments, scope bool delegate(out string) @safe query,
         out string output) @safe
     {
@@ -337,6 +503,8 @@ final class MemoryPkgConfig : PkgConfigDriver
 {
     string[string] libsOf;   /// name → `--libs` output
     string[string] cflagsOf; /// name → `--cflags` output
+    string[] dirs = ["/pc"];       /// the search path
+    string[][string] requiresOf; /// name → the packages it requires
 
     ///
     this(string[string] libsOf, string[string] cflagsOf) @safe pure nothrow
@@ -352,6 +520,10 @@ final class MemoryPkgConfig : PkgConfigDriver
     bool cflags(const string[] names, out string output) @safe => join(cflagsOf, names, output);
 
     string pcFile(string name) @safe => name in libsOf ? "/pc/" ~ name ~ ".pc" : null;
+
+    string[] searchPath() @safe => dirs.dup;
+
+    string[] requires(string name) @safe => requiresOf.get(name, null).dup;
 
     private static bool join(const string[string] of, const string[] names, out string output) @safe
     {

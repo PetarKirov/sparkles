@@ -89,6 +89,8 @@ struct Variant
     BuildPlatform platform;         ///
     /// The `.pc` files its `libs` resolved through (BGR5).
     string[] pcFiles;
+    /// The search that resolved them, as key lines (BGK9).
+    string[] pcSearch;
     /// The generators its compile waits for, as indices into
     /// `VariantPlan.generators` (§7), in the order its settings run them.
     size_t[] generators;
@@ -524,7 +526,11 @@ PlanExpected!(Variant, PlanError) variantOf(ref const Resolution r, ref const Re
     v.packages = t.packages.dup;
     v.settings = t.settings.dup;
     if (pkgConfig !is null)
-        v.pcFiles = resolveLibraries(v.settings, r.platform, pkgConfig).pcFiles;
+    {
+        const resolved = resolveLibraries(v.settings, r.platform, pkgConfig);
+        v.pcFiles = resolved.pcFiles.dup;
+        v.pcSearch = resolved.pcSearch.dup;
+    }
     v.inheritance = r.inheritance;
     v.toolchain = options.toolchain;
     v.platform = r.platform.dup;

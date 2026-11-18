@@ -262,6 +262,9 @@ final class MemoPkgConfig : PkgConfigDriver
     private bool[string] exists_;
     private string[string] libs_, cflags_, pc_;
     private bool[string] libsOk, cflagsOk;
+    private string[] path_;
+    private bool searched;
+    private string[][string] requires_;
 
     this(PkgConfigDriver inner) @safe { this.inner = inner; }
 
@@ -303,6 +306,23 @@ final class MemoPkgConfig : PkgConfigDriver
         if (auto p = name in pc_)
             return *p;
         return pc_[name] = inner.pcFile(name);
+    }
+
+    string[] searchPath() @safe
+    {
+        if (!searched)
+        {
+            path_ = inner.searchPath();
+            searched = true;
+        }
+        return path_.dup;
+    }
+
+    string[] requires(string name) @safe
+    {
+        if (auto r = name in requires_)
+            return (*r).dup;
+        return (requires_[name] = inner.requires(name)).dup;
     }
 }
 
