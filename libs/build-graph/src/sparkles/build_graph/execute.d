@@ -1112,12 +1112,21 @@ struct ActionDriver
                     foreach (dir; shaderRoots(p.argv))
                         s ~= "shader-root " ~ dir ~ " " ~ treeDigest(dir) ~ "\n";
                 const env = a.kind == ActionKind.generate && p.envDelta.length ? p.envDelta : buildEnvironment();
+                // BGS8: a redacted value (TDM4) only as a digest keyed with the
+                // store's secret, so the preimage shows it changed and keeps it.
+                string envLine(string name, string value, bool redacted)
+                {
+                    import sparkles.base.hash.blake3 : blake3Keyed;
+
+                    return "env " ~ name ~ "=" ~ (redacted
+                        ? "redacted:" ~ hexOf(blake3Keyed(store.secret, cast(const(ubyte)[]) value)) : value) ~ "\n";
+                }
                 foreach (e; env)
-                    s ~= "env " ~ e.name ~ "=" ~ e.value ~ "\n";
+                    s ~= envLine(e.name, e.value, e.redacted);
                 // D61: a test names the programs it runs by their outputs digests.
                 if (a.kind == ActionKind.test)
                     foreach (e; p.envDelta)
-                        s ~= "env " ~ e.name ~ "=" ~ normalized(e.value) ~ "\n";
+                        s ~= envLine(e.name, normalized(e.value), e.redacted);
                 s ~= "cwd " ~ p.cwd ~ "\n";
             },
             (ref const InProcessAction i) {

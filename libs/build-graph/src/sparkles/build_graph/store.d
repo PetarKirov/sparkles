@@ -44,6 +44,9 @@ import std.string : indexOf;
 
 import sparkles.base.vfs.types : Access, Disposition, EntryKind, OpenMode, Rights, Stat, StatMask;
 
+// The system's random source (glibc 2.36 and later, the BSDs, macOS).
+private extern (C) void arc4random_buf(void* buf, size_t nbytes) nothrow @nogc;
+
 /// The store's layout version: the name of its directory, `v1` (BGS1, BGS10).
 enum uint layoutVersion = 1;
 
@@ -281,6 +284,31 @@ struct Store(D)
     /// Why a publication failed, or what it found; null when nothing.
     string note;
 
+    private ubyte[32] secret_;
+
+    /**
+    BGS8: the key a redacted value is digested with in a preimage, private to
+    this store (`<store>/secret`), so the preimage shows that the value
+    changed without letting it be guessed and checked.
+    */
+    ref const(ubyte[32]) secret() const return @safe pure nothrow @nogc => secret_;
+
+    // Reads the store's secret, making it from the system's random source
+    // on first use. Two processes that make it at once both read the one
+    // whose write landed last.
+    private void loadSecret()
+    {
+        string text_;
+        if (!readAll(v, "secret", text_) || text_.length != 64 || !parseHex(text_, secret_))
+        {
+            ubyte[32] fresh;
+            (() @trusted => arc4random_buf(fresh.ptr, fresh.length))();
+            cast(void) v.writeFileAtomic("secret", hexOf(fresh));
+            if (!readAll(v, "secret", text_) || !parseHex(text_, secret_))
+                secret_ = fresh;
+        }
+    }
+
     @disable this(this);
 
     /**
@@ -303,6 +331,7 @@ struct Store(D)
             if (v.value.walkAll(sub).hasError)
                 return false;
         s.v = move(v.value);
+        s.loadSecret();
         s.holder = holder;
         return true;
     }
