@@ -253,13 +253,18 @@ Planned planRepository(string root, bool markers = false, string only = null, To
 
 // One process's `pkg-config` answers, which no worktree file decides: the
 // gate plans many times, and each plan still records every query it makes.
+__gshared PkgConfigDriver pkgConfigMemo;
+
 PkgConfigDriver answers(string executable)
 {
-    static PkgConfigDriver memo;
-    if (memo is null)
-        memo = new MemoPkgConfig(new SystemPkgConfig(executable));
-    return memo;
+    if (pkgConfigMemo is null)
+        pkgConfigMemo = new MemoPkgConfig(new SystemPkgConfig(executable));
+    return pkgConfigMemo;
 }
+
+/// Forgets the answers: the next plan asks `pkg-config` again (an oracle that
+/// changes its search path between plans).
+void forgetPkgConfigAnswers() { pkgConfigMemo = null; }
 
 final class MemoPkgConfig : PkgConfigDriver
 {
