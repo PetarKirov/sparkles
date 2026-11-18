@@ -50,7 +50,8 @@ the watch ends with it.
 */
 RunExpected!void runWatchMode(WatchAction action, bool failFast)
 {
-    import app : defaultTestThreads, detectRepoRoot;
+    import commands.files : detectRepoRoot;
+    import commands.toolchain : defaultTestThreads;
     import sparkles.build_primitives.dub_manifest : hostPlatformTokens;
     import sparkles.build_primitives.resolve.configure : processEnvironment;
     import repository_inputs : repositoryFocus;
@@ -197,7 +198,7 @@ private struct Watch
     bool round(const(string)[] changed, const ref InputState state)
     {
         import std.conv : text;
-        import app : findWasiCompiler;
+        import commands.toolchain : findWasiCompiler;
         import sparkles.build_primitives.workspace.select : selectChanged;
         import watch_round : planRound, runRound;
 

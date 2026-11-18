@@ -1,0 +1,1207 @@
+/// `ci test`, `ci slow-tests list` and `ci placements list`: dub's builds and
+/// tests of the sub-packages, their coverage, sanitizer, special-mode and slow
+/// variants, and the placement of a run's shard.
+module commands.test_;
+
+import cli : Sanitizer, SpecialModes, TestCommand;
+import commands.files : detectRepoRoot;
+import commands.maintenance : seedDubHome;
+import commands.output :
+    RunMonitor, displayTestRunSummary, flushStdout, resultFooterRight, resultVerdict,
+    streamResultBox, uiWidth;
+import commands.toolchain :
+    compilerIsLdc, dubBuildCommand, dubTestCommand, findWasiCompiler, mergeEnv, parallelTestThreads,
+    resolvedCompiler, sanitizeChildEnv, sanitizePlatformSupported, testBinaryRan, testBuildType,
+    withLdcDflags, withTestArgs;
+import core.time : Duration, msecs;
+import coverage : collectCoverage, PackageCoverage;
+import dub_deps : subPackageDirectories;
+import perf_record : testTaskId;
+import perf_run : RunRecorder;
+import placements : parseShard;
+import placements_run : chooseShard, loadPlacements, PlacementArgs, placementMatrix;
+import slow_tests :
+    exactNamesPattern, matrixJson, SlowTestJob, slowTestsInListing, slowTestsInSource;
+import sparkles.base.hw_caps : hwParallelism, describe;
+import sparkles.base.logger : error, info, LogDelta, warning;
+import sparkles.base.styled_template : styledText;
+import sparkles.core_cli.args : failRun, ranOk, RunExpected;
+import sparkles.core_cli.process_utils :
+    ChildStdin, executeMonitoredLines, MonitoredLineRange, MonitoredResult, ResourceUsage;
+import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
+import std.algorithm : any, canFind, filter, map, sort;
+import std.array : array, join;
+import std.conv : text, to;
+import std.file : exists, mkdirRecurse, readText, write;
+import std.path : baseName, buildPath;
+import std.process : environment, execute;
+import std.stdio : stderr, stdout, writeln;
+import std.string : endsWith, replace;
+import watch_mode : runWatchMode, WatchAction;
+
+/// `ci test`: the mode its options select.
+RunExpected!void runTestCommand(in TestCommand cmd)
+{
+    seedDubHome();
+    const where = PlacementArgs(cmd.placement, cmd.shard, cmd.historyTip, cmd.history.historyRemote);
+    if (cmd.buildOnly)
+        return cmd.watch ? runWatchMode(WatchAction.build, cmd.failFast) : runDubBuildMode(cmd.failFast);
+    if (cmd.slow)
+        return runSlowTestsMode(cmd.from, cmd.tests, cmd.failFast);
+    if (cmd.specialModes != SpecialModes.off)
+        return runExtractedTestsMode(cmd.failFast, cmd.from, where,
+            ExtractedModes(
+                betterC: cmd.specialModes != SpecialModes.wasm,
+                wasm: cmd.specialModes != SpecialModes.betterc));
+    if (cmd.sanitize == Sanitizer.address)
+    {
+        // ASan and `-cov` both instrument every function, and the listings
+        // would describe an ASan build nobody ships while overwriting the
+        // plain run's `build/coverage`.
+        if (cmd.coverage)
+            info(i"coverage is off under --sanitize (ASan and -cov instrumentation do not mix)");
+        return runDubTestsMode(cmd.failFast, false, cmd.from, where, sanitize: true);
+    }
+    if (cmd.watch)
+        return runWatchMode(WatchAction.test, cmd.failFast);
+    return runDubTestsMode(cmd.failFast, cmd.coverage, cmd.from, where);
+}
+
+/// One package's test outcome, and whether coverage came with it.
+private struct PackageRun
+{
+    int status;
+    string output;
+    bool coverageCollected;
+    ResourceUsage usage;
+}
+
+/**
+Live line stream of one package's `dub test`, retrying without coverage if
+that is what broke.
+
+`-cov` changes how a package links, and some cannot take it: under DMD the
+`sparkles:dmd-lsp` family fails to resolve `dmd.backend.*` in a coverage build
+while linking and passing perfectly without one. That is a build incompatibility,
+not a failing test, and `ci test`'s job is to report whether the tests pass — so a
+package that only fails *with* coverage is run again without it and reported on
+its own merits, with its absence from the table noted rather than hidden.
+
+Every attempt states its build type (see $(LREF testBuildType)). Copies share a
+class payload so a streaming box can pull the same child the footer later reads.
+*/
+private struct PackageTestStream
+{
+    this(
+        const(string)[] baseCmd,
+        const(string)[] runnerArgs,
+        CoverageRun cov,
+        const string[string] extraEnv,
+        Duration interval,
+        void delegate(in ResourceUsage sample) @safe onSample,
+    )
+    {
+        _s = new State(baseCmd, runnerArgs, cov, extraEnv, interval, onSample);
+    }
+
+    @property ref PackageRun result() return @safe pure nothrow @nogc
+    in (_s !is null)
+        => _s.result;
+
+    @property bool empty()
+        => _s is null || _s.empty;
+
+    @property string front()
+        => _s.front;
+
+    void popFront()
+    {
+        _s.popFront();
+    }
+
+private:
+    static final class State
+    {
+        this(
+            const(string)[] baseCmd,
+            const(string)[] runnerArgs,
+            CoverageRun cov,
+            const string[string] extraEnv,
+            Duration interval,
+            void delegate(in ResourceUsage sample) @safe onSample,
+        )
+        {
+            this.baseCmd = baseCmd;
+            this.runnerArgs = runnerArgs;
+            this.cov = cov;
+            this.extraEnv = extraEnv;
+            this.interval = interval;
+            this.onSample = onSample;
+        }
+
+        bool empty()
+        {
+            if (finished)
+                return true;
+            if (notePending)
+                return false;
+            startFirst();
+            if (!inner.empty)
+                return false;
+            auto attempt = inner.result;
+            // Retry only a build that broke. Once the binary ran, a nonzero
+            // status is the tests' verdict, and a run without coverage could
+            // only launder it — see `testBinaryRan`.
+            if (cov.enabled && attempt.status != 0 && !retried
+                && !testBinaryRan(attempt.output))
+            {
+                retried = true;
+                notePending = true;
+                note = styledText(i"{dim coverage build failed; retrying without -cov}");
+                inner = executeMonitoredLines(
+                    withTestArgs(baseCmd, testBuildType(false), runnerArgs),
+                    interval, onSample, ChildStdin.empty, Duration.zero,
+                    withLdcDflags(extraEnv));
+                return false;
+            }
+            finishWith(attempt);
+            return true;
+        }
+
+        string front()
+            => notePending ? note : inner.front;
+
+        void popFront()
+        {
+            if (notePending)
+            {
+                notePending = false;
+                return;
+            }
+            inner.popFront();
+        }
+
+        PackageRun result;
+
+    private:
+        void startFirst()
+        {
+            if (started)
+                return;
+            started = true;
+            if (cov.enabled)
+                inner = executeMonitoredLines(
+                    withTestArgs(baseCmd, testBuildType(true), cov.runtimeArgs ~ runnerArgs),
+                    interval, onSample, ChildStdin.empty, Duration.zero,
+                    withLdcDflags(mergeEnv(extraEnv, cov.env)));
+            else
+                inner = executeMonitoredLines(
+                    withTestArgs(baseCmd, testBuildType(false), runnerArgs),
+                    interval, onSample, ChildStdin.empty, Duration.zero,
+                    withLdcDflags(extraEnv));
+        }
+
+        /// The verdict is the last attempt's: the first one, or — after a
+        /// coverage build that never ran the binary — the plain run, the only
+        /// attempt that tested anything. Coverage came with it exactly when it
+        /// was asked for and not retried away.
+        void finishWith(MonitoredResult attempt)
+        {
+            if (finished)
+                return;
+            finished = true;
+            result = PackageRun(attempt.status, attempt.output,
+                cov.enabled && !retried, attempt.usage);
+        }
+
+        const(string)[] baseCmd;
+        const(string)[] runnerArgs;
+        CoverageRun cov;
+        const string[string] extraEnv;
+        Duration interval;
+        void delegate(in ResourceUsage sample) @safe onSample;
+        MonitoredLineRange inner;
+        string note;
+        bool started;
+        bool retried;
+        bool notePending;
+        bool finished;
+    }
+
+    State _s;
+}
+
+// The retry machine, driven end to end with `sh` standing in for dub. The
+// script sees dub's build type as `$1` (`sh -c script -b <type> -- …`), so it
+// can break the coverage attempt and pass the plain one, or fail the way a
+// test does — the difference `testBinaryRan` must see.
+version (Posix)
+@("ci.PackageTestStream.retriesOnlyABrokenBuild")
+@system unittest
+{
+    static PackageRun drive(string script, bool coverage, out string[] lines)
+    {
+        auto cov = CoverageRun(enabled: coverage, dir: "/tmp/cov");
+        auto stream = PackageTestStream(["sh", "-c", script], ["-t", "1"], cov,
+            null, 10.msecs, (in ResourceUsage) @safe {});
+        foreach (line; stream)
+            lines ~= line;
+        return stream.result;
+    }
+
+    static bool retried(const string[] lines)
+        => lines.canFind!(l => l.canFind("retrying without -cov"));
+
+    string[] lines;
+
+    // The coverage build breaks at link time and the plain run passes:
+    // retried, green, and honestly uncovered.
+    auto r = drive(`case "$1" in
+        unittest-cov) echo "Linking x-test-unittest"; echo "ld: error"; exit 1;;
+        *) echo "Running x-test-unittest $3"; exit 0;; esac`, true, lines);
+    assert(r.status == 0);
+    assert(!r.coverageCollected);
+    assert(retried(lines));
+    assert(r.output.canFind("Running x-test-unittest -t"));
+
+    // The coverage build runs and its tests fail: no retry, red, coverage kept.
+    // This is the case that used to launder into a pass.
+    lines = null;
+    r = drive(`echo "Running x-test-unittest"; echo "Error Program exited with code 1"; exit 1`,
+        true, lines);
+    assert(r.status == 1);
+    assert(r.coverageCollected);
+    assert(!retried(lines));
+
+    // Both attempts fail: the plain run's status, never a zero.
+    lines = null;
+    r = drive(`case "$1" in
+        unittest-cov) echo "ld: error"; exit 1;;
+        *) echo "Running x-test-unittest"; exit 3;; esac`, true, lines);
+    assert(r.status == 3);
+    assert(!r.coverageCollected);
+    assert(retried(lines));
+
+    // Coverage off: one attempt, an explicit `-b unittest`, nothing collected.
+    lines = null;
+    r = drive(`echo "bt=$1"; exit 0`, false, lines);
+    assert(r.status == 0);
+    assert(!r.coverageCollected);
+    assert(!retried(lines));
+    assert(r.output.canFind("bt=unittest\n"));
+}
+
+/**
+How a test run collects coverage, or that it does not.
+
+`-cov` is not free — every counted line becomes an atomic increment — so this
+is one value the test stream carries rather than a flag it re-interprets.
+
+The listings all land in **one** directory and are merged (`merge:1`), which is
+what makes them usable afterwards. A run scoped to a single package also emits
+listings for every module it compiled, and those read `0% covered` because that
+package's tests never exercised them; merging every package's run into one set
+replaces those zeroes with the coverage some other package's tests did provide.
+`hue --cov` then has a single directory holding one truthful answer per file.
+*/
+private struct CoverageRun
+{
+    bool enabled;
+    string dir;       /// merged destination, `build/coverage`
+    string dflags;    /// extra `$DFLAGS` for the child, empty when none apply
+
+    /// The runtime arguments — the test binary's, so they belong after `--`.
+    string[] runtimeArgs() const @safe pure nothrow
+        => enabled ? ["--DRT-covopt=merge:1", "--DRT-covopt=dstpath:" ~ dir] : null;
+
+    /// The environment additions for the child.
+    const(string[string]) env() const @safe pure nothrow
+        => enabled && dflags.length ? ["DFLAGS": dflags] : null;
+}
+
+/**
+Prepares `build/coverage` for a run, clearing whatever a previous one left.
+
+Clearing is not optional: `merge:1` accumulates, so a second `ci test` over a
+stale directory would report hit counts summed across both runs. Percentages
+would survive that, but the per-line counts a viewer shows would not.
+
+Params:
+    repoRoot = the repository root
+    wanted = whether the caller asked for coverage at all
+    subPackages = used only to pick a package to resolve the compiler against
+
+Returns: the descriptor; `enabled` is false when `wanted` is false.
+*/
+private CoverageRun prepareCoverage(string repoRoot, bool wanted, in string[] subPackages)
+{
+    import std.file : rmdirRecurse;
+
+    if (!wanted)
+        return CoverageRun.init;
+
+    CoverageRun run = {enabled: true, dir: buildPath(repoRoot, "build", "coverage")};
+    if (run.dir.exists)
+        run.dir.rmdirRecurse;
+    run.dir.mkdirRecurse;   // `dstpath` must exist; druntime will not create it
+
+    // LDC's `--cov-increment` picks how a counter is bumped, and `boolean`
+    // stores a 1 instead of counting — so every covered line reports `1` and a
+    // viewer's hit-count badge becomes noise. `atomic` is already LDC's
+    // default; passing it pins the contract against an inherited `$DFLAGS` or
+    // a future default, and it is the mode whose counts are true under the
+    // parallel test runner. DMD has no equivalent switch and rejects this one,
+    // hence the compiler check.
+    if (resolvedCompiler(repoRoot, subPackages) == "ldc")
+        run.dflags = "--cov-increment=atomic";
+    return run;
+}
+
+private RunExpected!void runDubBuildMode(bool failFast)
+{
+    import each_commit : targetBuildArgs;
+
+    info(i"resolving repository root");
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+    return failRun("Could not detect repository root");
+    info(i"repository root: $(repoRoot)");
+
+    info(i"parsing dub.sdl sub-packages");
+    auto subPackages = subPackageDirectories(repoRoot);
+    if (subPackages.length == 0)
+    return failRun("No sub-packages found in dub.sdl");
+    info(i"$(subPackages.length) sub-package(s) to build");
+    string wasiCompiler;
+    if (!findWasiCompiler(subPackages, wasiCompiler))
+        return failRun("no WebAssembly-capable compiler for a package that needs one");
+
+    i"Building $(subPackages.length) sub-package(s)".text
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
+        .writeln("\n");
+    flushStdout();
+
+    auto monitor = RunMonitor.start();
+    void onSample(in ResourceUsage) @safe
+    {
+        monitor.sample();
+    }
+
+    int failures = 0;
+    size_t processed = 0;
+    string[] failedPackages;
+
+    foreach (i, pkg; subPackages)
+    {
+        const pkgName = pkg.baseName;
+        const progress = i"[$(i + 1)/$(subPackages.length)]".text;
+        const header = styledText(i"{dim $(progress)} {cyan $(pkgName)} {dim › dub build :$(pkgName)}");
+
+        mkdirRecurse(buildPath(repoRoot, pkg, "build"));
+        auto buildCmd = dubBuildCommand(repoRoot, pkg, pkgName,
+            targetBuildArgs(pkgName, wasiCompiler));
+        auto lines = executeMonitoredLines(
+            buildCmd, 250.msecs, &onSample, ChildStdin.empty, Duration.zero,
+            withLdcDflags(null));
+        streamResultBox(header, lines,
+            () => resultVerdict(lines.result.status == 0),
+            (LogDelta d) => resultFooterRight(lines.result.usage, d));
+        monitor.sample();
+
+        if (lines.result.status != 0)
+        {
+            failures++;
+            failedPackages ~= pkgName;
+            if (failFast)
+            {
+                processed = i + 1;
+                writeln();
+                break;
+            }
+        }
+
+        processed = i + 1;
+        writeln();
+    }
+
+    displayTestRunSummary(monitor.finish(processed, subPackages.length, failedPackages));
+    return failures > 0 ? failRun(text(failures, " sub-package(s) failed to build")) : ranOk();
+}
+
+/**
+The sub-package paths a test run covers: those `--from` names, in request
+order, or every one in `all` when it names none. Names no sub-package has are
+returned in `unknown`.
+*/
+private string[] narrowSubPackages(in string[] all, in string[] requested, out string[] unknown) @safe pure
+{
+    import each_commit : selectPackages;
+
+    if (requested.length)
+        return selectPackages(requested, all, unknown);
+    return all.dup;
+}
+
+@("ci.narrowSubPackages.requested")
+@safe pure
+unittest
+{
+    const all = ["libs/base", "libs/ui", "apps/hue"];
+    string[] unknown;
+    assert(narrowSubPackages(all, [], unknown) == all);
+    assert(narrowSubPackages(all, ["hue", "base"], unknown) == ["apps/hue", "libs/base"],
+        "in request order");
+    assert(unknown.length == 0);
+    narrowSubPackages(all, ["uii"], unknown);
+    assert(unknown == ["uii"], "a typo is reported");
+}
+
+/// The options of a test run that change what it runs, as its run record's
+/// `invocation.options` holds them (observability OBR7): not `--fail-fast`.
+private string[] recordedOptions(in string[] requested, bool coverage) @safe pure
+{
+    string[] options;
+    if (requested.length)
+        options ~= ["--from"] ~ requested.dup;
+    if (coverage)
+        options ~= "--coverage";
+    return options;
+}
+
+/**
+The sub-packages a test run covers ($(LREF narrowSubPackages)). A name no
+sub-package has is an error rather than a smaller run: a typo would otherwise
+pass having tested nothing.
+*/
+private bool requestedSubPackages(string repoRoot, in string[] requested, out string[] chosen)
+{
+    const all = subPackageDirectories(repoRoot);
+    if (all.length == 0)
+    {
+        error(i"No sub-packages found in dub.sdl");
+        return false;
+    }
+    string[] unknown;
+    chosen = narrowSubPackages(all, requested, unknown);
+    if (unknown.length)
+    {
+        error(i"--from: no sub-package named $(unknown.join(", "))");
+        return false;
+    }
+    return true;
+}
+
+private RunExpected!void runDubTestsMode(bool failFast, bool coverage, in string[] requested,
+    in PlacementArgs where, bool sanitize = false)
+{
+    if (sanitize)
+    {
+        if (!compilerIsLdc(environment.get("DC", "")))
+        return failRun("ci test --sanitize address requires LDC (set DC=ldc2)");
+        if (!sanitizePlatformSupported())
+        return failRun("ci test --sanitize address is Linux-only: nixpkgs LDC has no ASan runtime on Darwin");
+    }
+
+    info(i"resolving repository root");
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+    return failRun("Could not detect repository root");
+    info(i"repository root: $(repoRoot)");
+
+    info(i"parsing dub.sdl sub-packages");
+    string[] subPackages;
+    if (!requestedSubPackages(repoRoot, requested, subPackages))
+        return failRun("could not resolve the requested sub-packages");
+    if (where.shard.length && !narrowToShard(repoRoot, requested, where, subPackages))
+        return failRun("could not narrow the sub-packages to shard " ~ where.shard);
+    // A placement chooses its legs and whether it collects coverage (OD22).
+    bool serialLeg = true, parallelLeg = true;
+    if (where.placement.length && !sanitize)
+    {
+        auto loaded = loadPlacements(repoRoot);
+        const p = loaded.hasError ? null : loaded.value.find(where.placement);
+        if (p is null)
+        return failRun(text(i"$(loaded.hasError ? loaded.error : "ci/placements.json has no placement " ~ where.placement)"));
+        serialLeg = p.serialLeg;
+        parallelLeg = p.parallelLeg;
+        if (coverage && !p.coverage)
+            info(i"$(where.placement) collects no coverage; testing without -cov");
+        coverage = coverage && p.coverage;
+    }
+    info(i"$(subPackages.length) sub-package(s) to test");
+    if (sanitize)
+        info(i"sanitize: ASan; one -t $(parallelTestThreads(hwParallelism())) leg on 4 MiB workers");
+
+    if (coverage)
+        info(i"preparing coverage (dub describe + listings dir)");
+    const cov = prepareCoverage(repoRoot, coverage, subPackages);
+    if (coverage)
+        info(i"coverage ready at $(cov.dir)");
+
+    i"Testing $(subPackages.length) sub-package(s)".text
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
+        .writeln("\n");
+    flushStdout();
+
+    auto monitor = RunMonitor.start();
+    void onSample(in ResourceUsage) @safe
+    {
+        monitor.sample();
+    }
+
+    int failures = 0;
+    size_t processed = 0;
+    string[] failedPackages, uncovered;
+
+    const parallelN = parallelTestThreads(hwParallelism());
+    static struct TestLeg
+    {
+        string label;
+        string[] runnerArgs; /// the test binary's, after `--`
+        bool serial; /// `-t 1`: the run record's `serial` leg
+    }
+    // Sanitize runs the parallel leg only: the watermark the `-t 1` leg
+    // exists to contrast with is off under ASan (see `stack_budget.d`), and
+    // the runner sizes ASan workers at 4 MiB so a body cannot reach a guard
+    // page. One leg also halves a job that rebuilds every package with ASan.
+    // The plain legs leave the `@slow` tests to `ci test --slow`, which CI runs
+    // as jobs of their own; under ASan they still run, in the one leg.
+    TestLeg[] legs;
+    if (sanitize)
+        legs = [TestLeg("sanitize -t " ~ parallelN.to!string, ["-t", parallelN.to!string], false)];
+    else
+    {
+        if (serialLeg)
+            legs ~= TestLeg("-t 1", ["-t", "1", "--skip-slow"], true);
+        if (parallelLeg)
+            legs ~= TestLeg("-t " ~ parallelN.to!string, ["-t", parallelN.to!string, "--skip-slow"], false);
+    }
+    const extraEnv = sanitize ? sanitizeChildEnv() : (string[string]).init;
+
+    // One task per package leg, in a run record (observability OD21): the
+    // placements pack their shards from the history of these wall times.
+    auto recorder = RunRecorder.open(repoRoot, sanitize ? "test --sanitize address" : "test",
+        recordedOptions(requested, coverage), where.placement, where.shard);
+    scope (exit)
+        if (const degradation = recorder.finish())
+            warning(i"$(degradation)");
+
+    packageLoop: foreach (i, pkg; subPackages)
+    {
+        const pkgName = pkg.baseName;
+        const progress = i"[$(i + 1)/$(subPackages.length)]".text;
+        mkdirRecurse(buildPath(repoRoot, pkg, "build"));
+
+        foreach (leg; legs)
+        {
+            const header = styledText(
+                i"{dim $(progress)} {cyan $(pkgName)} {dim › dub test :$(pkgName) -- $(leg.label)}");
+            // Honour `$DC` so the sub-package tests use the CI matrix's compiler
+            // (the dev shell provides both dmd and ldc). Example verification keeps
+            // `ci`'s own embedded compiler; only the test suite is compiler-matrixed.
+            auto testCmd = dubTestCommand(repoRoot, pkgName);
+            recorder.begin();
+            auto lines = PackageTestStream(testCmd, leg.runnerArgs, cov, extraEnv, 250.msecs, &onSample);
+            streamResultBox(header, lines,
+                () => resultVerdict(lines.result.status == 0),
+                (LogDelta d) => resultFooterRight(lines.result.usage, d));
+            recorder.end(testTaskId(pkgName, sanitize ? "sanitize" : "unittest", leg.serial),
+                lines.result.status == 0);
+            monitor.sample();
+
+            if (cov.enabled && !lines.result.coverageCollected && lines.result.status == 0
+                && !uncovered.canFind(pkgName))
+                uncovered ~= pkgName;
+
+            if (lines.result.status != 0)
+            {
+                failures++;
+                failedPackages ~= pkgName ~ " (" ~ leg.label ~ ")";
+                if (failFast)
+                {
+                    processed = i + 1;
+                    writeln();
+                    break packageLoop;
+                }
+                break;
+            }
+        }
+
+        processed = i + 1;
+        writeln();
+    }
+
+    displayTestRunSummary(monitor.finish(processed, subPackages.length, failedPackages));
+    reportCoverage(subPackages, cov, failedPackages, uncovered);
+    return failures > 0 ? failRun(text(failures, " test package(s) failed")) : ranOk();
+}
+
+/**
+Reports line coverage from the listings a `ci test` run merged into `cov.dir`.
+
+Reports only. There is no threshold and nothing fails on a low number: D's
+`-cov` counts template instantiations per instantiation and emits listings for
+imported modules too, so the figure is a trend indicator rather than a contract.
+Gating on it would buy noise.
+
+A package's row counts only the files it owns, beneath its own directory and no
+nested package's
+($(REF reportedUnder, coverage)), because the merged set describes the whole
+repository — every module any package compiled. What merging changes is the
+*number*: a file now carries the coverage every package's tests gave it, not
+just its own package's, which is both the more useful figure and the one a
+viewer shows.
+
+Params:
+    subPackages = repository-relative sub-package directories
+    cov = the run that produced the listings
+    failedPackages = packages whose tests did not pass, whose rows cannot be read
+        as coverage
+*/
+private void reportCoverage(in string[] subPackages, in CoverageRun cov,
+    in string[] failedPackages, in string[] uncovered)
+{
+    import std.algorithm : sort;
+    import sparkles.base.text.writers : formatted;
+    import sparkles.ui.components.table : drawTable, TableBuilder, TableProps;
+
+    if (!cov.enabled || !cov.dir.exists)
+        return;
+
+    PackageCoverage[] results;
+    foreach (pkg; subPackages)
+        results ~= collectCoverage(cov.dir, pkg.baseName, pkg, subPackages);
+    results.sort!((a, b) => a.percent < b.percent);
+
+    static void writePercent(W)(ref W w, double p)
+    {
+        import std.format : formattedWrite;
+
+        w.formattedWrite("%.1f", p);
+    }
+
+    TableBuilder rows;
+    rows.row("package", "files", "covered", "coverable", "%");
+    size_t totalCovered, totalCoverable;
+    foreach (r; results)
+    {
+        totalCovered += r.covered;
+        totalCoverable += r.coverable;
+        rows.row(r.name, r.files.length, r.covered, r.coverable);
+        if (r.coverable == 0)
+            rows.cell("—");
+        else
+            rows.cell!writePercent(r.percent);
+    }
+    const total = totalCoverable == 0 ? 100.0 : (100.0 * totalCovered) / totalCoverable;
+    rows.row("TOTAL", "", totalCovered, totalCoverable).cell!writePercent(total);
+
+    writeln();
+    writeln(drawTable(rows, TableProps(headerRows: 1)));
+    styledText(i"{dim listings in} $(cov.dir) {dim — open one with} hue --cov").writeln;
+
+    // The uncovered note goes to stderr; flush so it cannot land in the
+    // middle of the table stdout has not finished writing.
+    stdout.flush();
+
+    // A package that only builds without `-cov` is tested but unmeasured, and
+    // a row of zeroes would read as untested rather than as unmeasured.
+    if (uncovered.length)
+        warning(i"{yellow no coverage} for $(uncovered.length) package(s): $(uncovered.join(", ")) — they do not link under -cov, and were tested without it");
+}
+
+/// Which of the test runner's extracted-test modes a sub-package opts into.
+struct ExtractedModes
+{
+    bool betterC; /// has at least one `@betterC` test
+    bool wasm;    /// has at least one `@wasm` test
+
+    bool any() const @safe pure nothrow @nogc => betterC || wasm;
+}
+
+/// The extracted-test modes a D source file opts into.
+///
+/// A deliberately shallow text scan, not a parse: the marker attributes are
+/// written literally at their use sites, so this has no false negatives —
+/// which is the direction that matters, since a missed module means a mode
+/// silently goes unexercised. False positives (the attribute named in a doc
+/// comment, as the runner's own modules do) merely run a mode that then
+/// reports "no tests found" and exits 0, so they cost a little time and
+/// nothing else.
+ExtractedModes extractedModesInSource(scope const(char)[] source) @safe pure nothrow
+{
+    import std.algorithm.searching : canFind;
+
+    return ExtractedModes(
+        betterC: source.canFind("@betterC"),
+        wasm: source.canFind("@wasm"),
+    );
+}
+
+@("ci.extractedModesInSource")
+@safe pure nothrow
+unittest
+{
+    assert(extractedModesInSource("@betterC @safe unittest {}") == ExtractedModes(betterC: true));
+    assert(extractedModesInSource("@wasm @safe unittest {}") == ExtractedModes(wasm: true));
+    // The value form of the attribute is found the same way.
+    assert(extractedModesInSource("@betterC(selfContained: true)")
+        == ExtractedModes(betterC: true));
+    assert(extractedModesInSource("@wasm(selfContained: true) @betterC")
+        == ExtractedModes(betterC: true, wasm: true));
+
+    auto none = extractedModesInSource("@safe @nogc unittest {}");
+    assert(!none.any);
+    assert(!extractedModesInSource("").any);
+}
+
+/// Whether a sub-package's `dub.sdl` wires in `sparkles:test-runner`, by
+/// either recipe: a `dependency "sparkles:test-runner"` (the common path) or
+/// the cycle-safe `sourcePaths "../test-runner/src" …` source-include used by
+/// `base`, `core-cli`, and `test-utils`.
+///
+/// This gate is what keeps `ci test --special-modes all` honest. Without the runner,
+/// `dub test :pkg -- --better-c` reaches druntime's default tester, which
+/// ignores the flag, runs the ordinary unittests and exits 0 — a green that
+/// means nothing. Better to leave such a package out than to report success
+/// for a mode that never ran.
+///
+/// The recipe is read through the `dub.sdl` schema, in every scope that can
+/// declare either: the top level, each configuration and each build type. A
+/// comment that mentions the runner does not count.
+bool integratesTestRunner(scope const(char)[] dubConfig) @safe pure
+{
+    import std.algorithm.searching : any, canFind, endsWith;
+    import sparkles.build_primitives.dub_manifest : DubBuildSettings, parseDubManifest,
+        valuesOf;
+
+    static bool wires(scope const DubBuildSettings settings)
+        => settings.dependencies.any!(d => d.name == "sparkles:test-runner")
+            || settings.sourcePaths.valuesOf.any!(p => p.endsWith("test-runner/src"));
+
+    const parsed = parseDubManifest(dubConfig);
+    if (parsed.hasError)
+        return false;
+    const manifest = parsed.value;
+    return wires(manifest.buildSettings)
+        || manifest.configurations.any!(c => wires(c.buildSettings))
+        || manifest.buildTypes.any!(b => wires(b.buildSettings));
+}
+
+@("ci.integratesTestRunner")
+@safe pure
+unittest
+{
+    assert(integratesTestRunner(`    dependency "sparkles:test-runner" path="../.."`));
+    assert(integratesTestRunner(`configuration "unittest" {
+    sourcePaths "../test-runner/src" "../test-runner-impl/src"
+}`));
+    assert(!integratesTestRunner(`dependency "sparkles:base" path="../.."`));
+    assert(!integratesTestRunner(""));
+    // A comment, or a package merely named like it, is not the runner.
+    assert(!integratesTestRunner("// test-runner comes later\nname \"x\"\n"));
+    assert(!integratesTestRunner(`dependency "test-runner-extras" version="*"`));
+}
+
+/// The modes any `.d` file under `packagePath` opts into — empty for a
+/// package that does not integrate the runner (see $(LREF integratesTestRunner)).
+private ExtractedModes extractedModesOf(string repoRoot, string packagePath)
+{
+    import std.file : dirEntries, readText, SpanMode;
+    import std.path : buildPath, extension;
+
+    const root = buildPath(repoRoot, packagePath);
+    ExtractedModes modes;
+    if (!root.exists)
+        return modes;
+
+    const dubConfig = buildPath(root, "dub.sdl");
+    if (!dubConfig.exists || !integratesTestRunner(dubConfig.readText))
+        return modes;
+    foreach (entry; dirEntries(root, SpanMode.depth))
+    {
+        if (!entry.isFile || entry.name.extension != ".d")
+            continue;
+        const found = extractedModesInSource(entry.name.readText);
+        modes.betterC |= found.betterC;
+        modes.wasm |= found.wasm;
+        if (modes.betterC && modes.wasm)
+            break; // nothing left to learn
+    }
+    return modes;
+}
+
+/// `ci test --special-modes all`: run the test runner's `--better-c` and `--wasm` modes
+/// for every sub-package whose sources use the matching marker attribute.
+///
+/// These modes are not covered by `ci test`: a `@betterC` test runs as an
+/// ordinary unittest there, and only `--better-c` additionally extracts it,
+/// compiles it without druntime, and runs the result — so a break in the
+/// extraction, the `-betterC` codegen, or the wasm cross-compile is invisible
+/// to `dub test`.
+///
+/// `--require-toolchain` is what makes this job meaningful: both modes
+/// normally $(I skip) when their toolchain is missing (no D compiler, no
+/// wasm-ld, no wasm runtime), which is right for a contributor's machine and
+/// exactly wrong here — without it a missing linker would leave this reporting
+/// success having run nothing.
+private RunExpected!void runExtractedTestsMode(bool failFast, in string[] requested,
+    in PlacementArgs where, ExtractedModes wanted)
+{
+    info(i"resolving repository root");
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+    return failRun("Could not detect repository root");
+    info(i"repository root: $(repoRoot)");
+
+    info(i"scanning sub-packages for @betterC / @wasm");
+    string[] subPackages;
+    if (!requestedSubPackages(repoRoot, requested, subPackages))
+        return failRun("could not resolve the requested sub-packages");
+    if (where.shard.length && !narrowToShard(repoRoot, requested, where, subPackages))
+        return failRun("could not narrow the sub-packages to shard " ~ where.shard);
+
+    struct Job
+    {
+        string packagePath; /// repo-relative, e.g. `libs/base`
+        string packageName;
+        string flag; /// `--better-c` or `--wasm`
+    }
+
+    Job[] jobs;
+    foreach (pkg; subPackages)
+    {
+        const modes = extractedModesOf(repoRoot, pkg);
+        if (modes.betterC && wanted.betterC)
+            jobs ~= Job(pkg, pkg.baseName, "--better-c");
+        if (modes.wasm && wanted.wasm)
+            jobs ~= Job(pkg, pkg.baseName, "--wasm");
+    }
+
+    if (jobs.length == 0)
+    {
+        // Not a pass: the repo is supposed to have such tests, so an empty
+        // sweep means the scan (or the attributes) regressed.
+        return failRun("No sub-package uses @betterC or @wasm — nothing to run");
+    }
+
+    i"Running $(jobs.length) extracted-test mode(s)".text
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
+        .writeln("\n");
+    flushStdout();
+
+    auto monitor = RunMonitor.start();
+    void onSample(in ResourceUsage) @safe
+    {
+        monitor.sample();
+    }
+
+    auto recorder = RunRecorder.open(repoRoot, "test --special-modes",
+        recordedOptions(requested, false), where.placement, where.shard);
+    scope (exit)
+        if (const degradation = recorder.finish())
+            warning(i"$(degradation)");
+
+    int failures = 0;
+    size_t processed = 0;
+    string[] failedJobs;
+    foreach (i, job; jobs)
+    {
+        const progress = i"[$(i + 1)/$(jobs.length)]".text;
+        const header = styledText(
+            i"{dim $(progress)} {cyan $(job.packageName)} {dim › dub test :$(job.packageName) -- $(job.flag)}");
+
+        mkdirRecurse(buildPath(repoRoot, job.packagePath, "build"));
+        // The runner's own extracted tests (the ones exercising the
+        // `selfContained` opt-out) are jobs of their own: `test-harness` and
+        // `test-runner-core` carry `@betterC`, and no host compiles them in.
+        auto cmd = dubTestCommand(
+            repoRoot, job.packageName, testBuildType(false),
+            [job.flag, "--require-toolchain"]);
+
+        recorder.begin();
+        auto lines = executeMonitoredLines(
+            cmd, 250.msecs, &onSample, ChildStdin.empty, Duration.zero,
+            withLdcDflags(null));
+        streamResultBox(header, lines,
+            () => resultVerdict(lines.result.status == 0),
+            (LogDelta d) => resultFooterRight(lines.result.usage, d));
+        recorder.end(testTaskId(job.packageName, job.flag == "--better-c" ? "betterc" : "wasm", true),
+            lines.result.status == 0);
+        monitor.sample();
+
+        processed = i + 1;
+        if (lines.result.status != 0)
+        {
+            failures++;
+            failedJobs ~= job.packageName ~ " " ~ job.flag;
+            if (failFast)
+            {
+                writeln();
+                break;
+            }
+        }
+        writeln();
+    }
+
+    // After a fail-fast break the untried jobs never ran, so report what was
+    // actually attempted rather than the full list.
+    displayTestRunSummary(monitor.finish(processed, jobs.length, failedJobs));
+    return failures > 0 ? failRun(text(failures, " special-mode run(s) failed")) : ranOk();
+}
+
+/// The `@slow` tests that the sources of each sub-package integrating the
+/// runner mark (all of them, or those of `packageNames`), in package and then
+/// file order. A slow test without a name, or two with one name in a package,
+/// is a `problem`: its CI job could not select it.
+private SlowTestJob[] collectSlowTests(string repoRoot, in string[] packageNames,
+    ref string[] problems)
+{
+    import std.file : dirEntries, SpanMode;
+    import std.path : extension, relativePath;
+
+    SlowTestJob[] jobs;
+    foreach (pkg; subPackageDirectories(repoRoot))
+    {
+        const name = pkg.baseName;
+        if (packageNames.length && !packageNames.canFind(name))
+            continue;
+        const root = buildPath(repoRoot, pkg);
+        const dubConfig = buildPath(root, "dub.sdl");
+        if (!dubConfig.exists || !integratesTestRunner(dubConfig.readText))
+            continue;
+
+        string[] files;
+        foreach (entry; dirEntries(root, SpanMode.depth))
+            if (entry.isFile && entry.name.extension == ".d")
+                files ~= entry.name;
+        files.sort();
+        foreach (file; files)
+            foreach (test; slowTestsInSource(file.readText))
+            {
+                const where = i"$(file.relativePath(repoRoot)):$(test.line)".text;
+                if (!test.name.length)
+                    problems ~= where ~ ": a @slow test needs a @(\"name\") for its CI job to select it";
+                else if (jobs.canFind(SlowTestJob(name, test.name)))
+                    problems ~= where ~ ": a second @slow test named " ~ test.name ~ " in :" ~ name;
+                else
+                    jobs ~= SlowTestJob(name, test.name);
+            }
+    }
+    return jobs;
+}
+
+/// `ci slow-tests list`: the `slow-tests` CI job's matrix, on stdout and in
+/// `$GITHUB_OUTPUT`.
+RunExpected!void runListSlowTestsMode()
+{
+    import std.stdio : File;
+
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+    return failRun("Could not detect repository root");
+
+    string[] problems;
+    const jobs = collectSlowTests(repoRoot, null, problems);
+    foreach (problem; problems)
+        error(i"$(problem)");
+    if (problems.length)
+        return failRun(text(problems.length, " problem(s) collecting the slow tests"));
+    if (jobs.length == 0)
+    {
+        // As for `ci test --special-modes all`: the job exists for these tests, so an
+        // empty list means the scan (or the attribute) regressed.
+        return failRun("No @slow test found — the slow-tests matrix would be empty");
+    }
+
+    const json = matrixJson(jobs);
+    info(i"$(jobs.length) slow test(s)");
+    stdout.writeln(json);
+    const output = environment.get("GITHUB_OUTPUT", "");
+    if (output.length)
+        File(output, "a").write("matrix=" ~ json ~ "\n");
+    return ranOk();
+}
+
+/// `ci test --slow`: run the `@slow` tests of each selected package, after
+/// checking that its test binary agrees with the source scan about which
+/// tests those are.
+private RunExpected!void runSlowTestsMode(in string[] packageNames, in string[] testNames, bool failFast)
+{
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+    return failRun("Could not detect repository root");
+
+    string[] problems;
+    auto all = collectSlowTests(repoRoot, packageNames, problems);
+    foreach (problem; problems)
+        error(i"$(problem)");
+    if (problems.length)
+        return failRun(text(problems.length, " problem(s) collecting the slow tests"));
+    foreach (name; testNames)
+        if (!all.canFind!(job => job.test == name))
+        return failRun(text(i"--tests: no @slow test is named $(name)"));
+    if (all.length == 0)
+    return failRun("No @slow test found in the selected packages");
+
+    string[] packages;
+    foreach (job; all)
+        if (!packages.canFind(job.packageName))
+            packages ~= job.packageName;
+
+    i"Running the slow tests of $(packages.length) package(s)".text
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
+        .writeln("\n");
+    flushStdout();
+
+    auto monitor = RunMonitor.start();
+    void onSample(in ResourceUsage) @safe
+    {
+        monitor.sample();
+    }
+
+    int failures = 0;
+    size_t processed = 0;
+    string[] failedPackages;
+    foreach (i, pkg; packages)
+    {
+        auto marked = all.filter!(job => job.packageName == pkg).map!(job => job.test).array;
+        const selected = testNames.length
+            ? marked.filter!(name => testNames.canFind(name)).array
+            : marked;
+        processed = i + 1;
+        if (selected.length == 0)
+            continue;
+        foreach (path; subPackageDirectories(repoRoot))
+            if (path.baseName == pkg)
+                mkdirRecurse(buildPath(repoRoot, path, "build"));
+
+        // The listing builds the test binary, so its output is dub's too; only
+        // the `@slow` lines are the runner's.
+        info(i"building :$(pkg) and listing its slow tests");
+        const listed = execute(
+            dubTestCommand(repoRoot, pkg, testBuildType(false), ["--list", "--only-slow", "--no-colors"]),
+            withLdcDflags(null));
+        auto binaryNames = slowTestsInListing(listed.output);
+        binaryNames.sort();
+        marked.sort();
+        if (listed.status != 0 || binaryNames != marked)
+        {
+            if (listed.status != 0)
+            {
+                stderr.write(listed.output);
+                error(i":$(pkg) did not build or list its tests");
+            }
+            else
+                error(i"the sources of :$(pkg) mark $(marked) @slow, but its test binary lists $(binaryNames): mark each test directly (`@slow` before `unittest`) and give it a @(\"name\")");
+            failures++;
+            failedPackages ~= pkg ~ " (listing)";
+            if (failFast)
+                break;
+            continue;
+        }
+
+        const runnerArgs = ["--only-slow", "-i", exactNamesPattern(selected)];
+        const header = styledText(
+            i"{dim [$(i + 1)/$(packages.length)]} {cyan $(pkg)} {dim › $(selected.length) slow test(s)}");
+        auto lines = executeMonitoredLines(
+            dubTestCommand(repoRoot, pkg, testBuildType(false), runnerArgs),
+            250.msecs, &onSample, ChildStdin.empty, Duration.zero, withLdcDflags(null));
+        streamResultBox(header, lines,
+            () => resultVerdict(lines.result.status == 0),
+            (LogDelta d) => resultFooterRight(lines.result.usage, d));
+        monitor.sample();
+        writeln();
+
+        if (lines.result.status != 0)
+        {
+            failures++;
+            failedPackages ~= pkg;
+            if (failFast)
+                break;
+        }
+    }
+
+    displayTestRunSummary(monitor.finish(processed, packages.length, failedPackages));
+    return failures > 0 ? failRun(text(failures, " slow test(s) failed")) : ranOk();
+}
+
+/**
+`--shard K/N`: replace `subPackages` by the packages shard `K` of
+`where.placement` runs, packed from the history (CIC14). The shard owns its
+selection, so `--from` is refused beside it.
+*/
+private bool narrowToShard(string repoRoot, in string[] requested,
+    in PlacementArgs where, ref string[] subPackages)
+{
+    if (where.placement.length == 0)
+    {
+        error(i"--shard needs --placement");
+        return false;
+    }
+    if (requested.length)
+    {
+        error(i"--shard chooses the packages itself; drop --from");
+        return false;
+    }
+    const kn = parseShard(where.shard);
+    if (kn.hasError)
+    {
+        error(i"$(kn.error)");
+        return false;
+    }
+    const chosen = chooseShard(repoRoot, subPackages, where.placement, kn.value[0], kn.value[1],
+        where.historyTip, where.historyRemote);
+    if (chosen.hasError)
+    {
+        error(i"$(chosen.error)");
+        return false;
+    }
+    foreach (d; chosen.value.degradations)
+        warning(i"$(d)");
+    const tip = chosen.value.historyTip;
+    const at = tip.length ? "refs/perf/data " ~ tip[0 .. 12] : "no history";
+    info(i"shard $(where.shard) of $(where.placement): $(chosen.value.packages.length) of $(subPackages.length) package(s), packed from $(chosen.value.records) record(s) at $(at)");
+    subPackages = chosen.value.packages.dup;
+    return true;
+}
+
+/// `ci placements list`: the placements' shards as a CI matrix, with the tip
+/// of `refs/perf/data` every shard reads.
+RunExpected!void runListPlacements(string provider, string githubOutput, string historyRemote)
+{
+    import std.file : append;
+    import std.path : buildPath;
+    import std.stdio : stdout;
+    import perf_history : canonicalRemote, historyCacheDir, historyTip, openHistory;
+
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+    return failRun("Could not detect repository root");
+    auto loaded = loadPlacements(repoRoot);
+    if (loaded.hasError)
+    return failRun(loaded.error);
+    string tip;
+    auto history = openHistory(historyCacheDir(historyRemote.length ? historyRemote : canonicalRemote),
+        historyRemote.length ? historyRemote : canonicalRemote,
+        buildPath(repoRoot, "nix", "perf-data-signers"));
+    if (history.hasError)
+        warning(i"$(history.error)");
+    else
+    {
+        foreach (d; history.value.degradations)
+            warning(i"$(d)");
+        tip = historyTip(history.value, null, long.max);
+    }
+    const matrix = placementMatrix(loaded.value, provider, tip);
+    stdout.writeln(matrix);
+    if (githubOutput.length)
+    {
+        // One matrix per mode as well: a job cannot filter a matrix it is given.
+        string lines = "matrix=" ~ matrix ~ "\ntip=" ~ tip ~ "\n";
+        foreach (m; ["test", "sanitize", "extracted"])
+            lines ~= "matrix-" ~ m ~ "=" ~ placementMatrix(loaded.value, provider, null, m) ~ "\n";
+        append(githubOutput, lines);
+    }
+    return ranOk();
+}

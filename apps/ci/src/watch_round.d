@@ -38,7 +38,7 @@ import sparkles.build_primitives.workspace.input_state : InputState;
 import sparkles.build_primitives.workspace.select : ClaimPlan, ReasonKind, Selection, SelectionReason;
 import sparkles.event_horizon.sched : Sched;
 
-import app : PackageCommand, packageBuildCommand, packageTestCommands;
+import commands.toolchain : PackageCommand, packageBuildCommand, packageTestCommands;
 
 /// What a round runs: `dub test` legs or `dub build`s.
 enum RoundAction : ubyte

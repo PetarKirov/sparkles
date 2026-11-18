@@ -667,21 +667,25 @@ them; both are specified by
 
 ## 7. Module layout
 
-| Module                       | Responsibility                                                                                                              |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `ci_main.d`                  | Executable entry point only.                                                                                                |
-| `app.d`                      | The composition root: commands wire planners to the executor and reporters.                                                 |
-| `cli.d`                      | Canonical subcommands, validation, and help.                                                                                |
-| `reporter_tty.d`             | The interactive reporter over `sparkles:ui`'s `TaskReporter`.                                                               |
-| `commands/test_.d`           | Build-only, ordinary, coverage-fallback, sanitizer, slow and special test planners.                                         |
-| `commands/pipeline.d`        | The union graph of every CI job.                                                                                            |
-| `commands/docs.d`            | Docs subcommand dispatch and shared file selection.                                                                         |
-| `commands/docs_examples.d`   | Markdown run/verify/update graph and reducers.                                                                              |
-| `commands/docs_standalone.d` | Standalone example planner and directives.                                                                                  |
-| `commands/docs_checks.d`     | Reference, URL, sidebar, glossary, credits, spec-evidence, blob, fence-audit and WebAssembly planners.                      |
-| `commands/stats.d`           | Statistics graph; pure stats remain in `ci_stats.d`.                                                                        |
-| `commands/maintenance.d`     | `commits`, `commit-scope`, `cache`, `host`, `checks`, `link-rot` and `slow-tests` planners.                                 |
-| Pure domain modules          | `coverage.d`, `dub_deps.d`, `example_manifest.d`, `blob_paths.d`, `docs_sidebar.d` and `fence_audit.d`, as reusable leaves. |
+| Module                   | Responsibility                                                                                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ci_main.d`              | Executable entry point only.                                                                                                                     |
+| `app.d`                  | The composition root: commands wire planners to the executor and reporters.                                                                      |
+| `cli.d`                  | Canonical subcommands, validation, and help.                                                                                                     |
+| `reporter_tty.d`         | The interactive reporter over `sparkles:ui`'s `TaskReporter`.                                                                                    |
+| `commands/test_.d`       | `test`, `slow-tests list` and `placements list`: build-only, ordinary, coverage-fallback, sanitizer, slow and special test planners.             |
+| `commands/pipeline.d`    | The union graph of every CI job.                                                                                                                 |
+| `commands/examples.d`    | `examples`: the Markdown run/verify/update graph and reducers, and the standalone example planner and directives.                                |
+| `commands/check.d`       | `check` and `fix`: commit-scope, reference, URL, sidebar, glossary, credits, spec-evidence, blob, SDL, recipe, pin-cache and WebAssembly checks. |
+| `commands/docs.d`        | `docs`: the fence audit and the staging of the docs' WebAssembly.                                                                                |
+| `commands/github.d`      | `github`: the check mirror and the link-rot issue.                                                                                               |
+| `commands/stats.d`       | `stats`: the statistics graph; pure stats remain in `ci_stats.d`.                                                                                |
+| `commands/perf.d`        | `perf`: recording run records and publishing them to `refs/perf/data`.                                                                           |
+| `commands/maintenance.d` | `commits` and `cache`: each commit's build, and seeding, costing and collecting the caches.                                                      |
+| `commands/files.d`       | The file selection every command shares (`--include-files`, `--exclude-files`).                                                                  |
+| `commands/output.d`      | The plain rendering every command shares: headers, result boxes and summaries.                                                                   |
+| `commands/toolchain.d`   | The dub and compiler command lines and environments the planners share.                                                                          |
+| Pure domain modules      | `coverage.d`, `dub_deps.d`, `example_manifest.d`, `blob_paths.d`, `docs_sidebar.d` and `fence_audit.d`, as reusable leaves.                      |
 
 The generic layers live in `sparkles:build-primitives` (see the [task DAG's
 module layout](../../build-primitives/task-dag/SPEC.md#_9-module-layout)).

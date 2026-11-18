@@ -20,13 +20,19 @@ import std.array : join;
 import sparkles.base.logger : initLogger, info, LogLevel;
 import sparkles.core_cli.args;
 
-import app : applyLogLevel, detectRepoRoot, logHostResources, runBuildEachCommitMode, runCheckAdHocSdl,
-    runCheckBlobPathsCommand, runCheckCommitScope, runCheckCredits, runCheckDocsSidebar, runCheckGlossary,
-    runCheckOpaqueRecipes, runCheckPinCache, runCheckSpecEvidence, runCheckVcsUrlsCommand, runCiStatsCommand,
-    runGcR2Command, runListPlacements, runListSlowTestsMode, runMarkdownExamplesCommand,
-    runMirrorChecksCommand, runPerfAppendCommand, runPerfImportCommand, runPerfPushCommand, runRecordTask,
-    runReferenceLinksCommand, runReportLinkRotCommand, runSeedDubCache, runStandaloneExamplesCommand,
-    runTestCommand, runAuditFencesCommand, runWritePinCosts, seedDubHome;
+import app : applyLogLevel, logHostResources;
+import commands.check : runCheckAdHocSdl, runCheckBlobPathsCommand, runCheckCommitScope, runCheckCredits,
+    runCheckDocsSidebar, runCheckGlossary, runCheckOpaqueRecipes, runCheckPinCache, runCheckSpecEvidence,
+    runCheckVcsUrlsCommand, runReferenceLinksCommand;
+import commands.docs : runAuditFencesCommand;
+import commands.examples : runMarkdownExamplesCommand, runStandaloneExamplesCommand;
+import commands.files : detectRepoRoot;
+import commands.github : runMirrorChecksCommand, runReportLinkRotCommand;
+import commands.maintenance : runBuildEachCommitMode, runGcR2Command, runSeedDubCache, runWritePinCosts,
+    seedDubHome;
+import commands.perf : runPerfAppendCommand, runPerfImportCommand, runPerfPushCommand, runRecordTask;
+import commands.stats : runCiStatsCommand;
+import commands.test_ : runListPlacements, runListSlowTestsMode, runTestCommand;
 import fence_audit : AuditScope;
 
 // === Shared option groups ===
