@@ -1550,12 +1550,17 @@ struct ActionDriver
         return true;
     }
 
-    // A compiler's path as a manifest names it: one in the run directory
-    // from `$RUN/`, one in the worktree relative to it (a shader compiler
-    // reads its configuration's roots by absolute path), any other as given,
-    // so a manifest is the same in every run and every worktree.
-    private string named(string path) const @safe pure
+    // A compiler's path as a manifest names it, normalized (a C file's
+    // `#include "../x.h"` reports the path it climbed, which BGK8 must see
+    // for where it leads): one in the run directory from `$RUN/`, one in the
+    // worktree relative to it (a shader compiler reads its configuration's
+    // roots by absolute path), any other as given, so a manifest is the same
+    // in every run and every worktree.
+    private string named(string reported) const @safe pure
     {
+        import std.path : buildNormalizedPath;
+
+        const path = buildNormalizedPath(reported);
         if (path.startsWith(layout.runDirectory ~ "/"))
             return "$RUN/" ~ path[layout.runDirectory.length + 1 .. $];
         if (path.startsWith(layout.root ~ "/"))
