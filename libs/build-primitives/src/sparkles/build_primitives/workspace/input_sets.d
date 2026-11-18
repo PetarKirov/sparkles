@@ -1827,7 +1827,7 @@ unittest
 @safe
 unittest
 {
-    enum run = `"$DUB run --temp-build -q --root=$PACKAGE_DIR/../../apps/shader-compile -- --package=$PACKAGE_DIR `;
+    enum run = `"$DUB run -q --root=$PACKAGE_DIR/../../apps/shader-compile -- --package=$PACKAGE_DIR `;
     const recipes = [
         recipe("libs/base", `name "base"`),
         recipe("libs/wired", `name "wired"`),
