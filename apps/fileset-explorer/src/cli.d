@@ -60,6 +60,10 @@ struct View
         "Draw the touch layout, as on a tablet, whatever the pointer."))
     bool touch;
 
+    @(Option("nerd-font", description: "In a terminal, draw hue's Nerd Font file icons; --no-nerd-font draws "
+        ~ "their Unicode marks, for a font without the glyphs."))
+    bool nerdFont = true;
+
     @Flatten("GUI Options")
     GuiOptions gui = explorerGui;
 
@@ -85,7 +89,7 @@ struct View
             write(renderFrame(*app, keys, Size(wh[0].to!int, wh[1].to!int), gui));
             return ranOk();
         }
-        return launch(root, query, gui, touch, native);
+        return launch(root, query, gui, touch, native, nerdFont);
     }
 }
 
