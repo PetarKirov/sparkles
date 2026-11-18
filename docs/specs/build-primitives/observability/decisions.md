@@ -517,6 +517,43 @@ keeps those few for a small package.
 **Revisit when** a defect is found that only a dropped `-t 1` leg would have
 caught, or coverage starts to gate.
 
+## OD23: CI cost and time to green are history, shown by a static site (accepted)
+
+**Question.** CI is short of runners. #744 spent 557 runner-minutes, and its
+jobs waited 610 minutes in all for runners. The goal is a pull request
+mergeable within 15 minutes of its last push, with no loss of coverage. The
+provider's API holds what each job ran on and for how long, but only until
+runs are deleted, and only one run at a time. Where should these figures be
+kept, and how should they be shown?
+
+**Alternatives.**
+
+1. **A page that calls the provider's API.** It needs no store, but it
+   needs a token, or the 60-request-per-hour anonymous limit, and it sees
+   only what the provider still holds.
+2. **A page of the docs site.** One more deployment is avoided, but the
+   docs build, with its 8 GiB VitePress step, would rerun at every landing.
+3. **Pull request records on `refs/perf/data`, and a static site built
+   from them** at every append, deployed as a Pages project of its own.
+
+**Choice.** Alternative 3, on the owner's acceptance of 2026-11-18:
+
+- **Records:** the appending job writes each landed pull request's record
+  (OBJ4), so the figures share the run records' signatures, privacy rules
+  and permanence. Everything the views show is derived when the site is built
+  (OBJ5), so a new view needs no new record.
+- **The site:** built at build time, not in the browser (OBW1, OBW3). The
+  data changes only when the ref does, a browser cannot read a git ref, and a
+  page that asks for nothing can hold no token.
+- **Deployment:** the Pages project `sparkles-perf`, after every append (OBW4).
+
+This amends the introduction, which left dashboards out of scope. Dashboards
+outside the repository, and alerting, still are.
+
+**Revisit when** the build graph's run and task families (O2, O3) land: they
+become views of the same site, and the regression gate (O6) may want a page
+of its own.
+
 ## Questions
 
 Every question was resolved by the owner on 2026-11-06; each entry records the

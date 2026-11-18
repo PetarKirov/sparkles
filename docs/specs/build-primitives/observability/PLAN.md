@@ -92,6 +92,24 @@ a local remote.
 
 Progress: delivered, with M3a's gate met (`apps/ci` PLAN M3a).
 
+## O2b: CI cost and time to green, with a static site
+
+The slice that
+[OD23](./decisions.md#od23-ci-cost-and-time-to-green-are-history-shown-by-a-static-site-accepted)
+names:
+
+- Pull request records (OBJ4, OBJ6), appended at each landing (OBH4), and
+  their privacy scan (OBP1–OBP3). The importer that seeds them from merged
+  pull requests (OBQ9).
+- The derived quantities of OBJ5, and `ci/runner-rates.json`.
+- `ci perf site` and its views (OBW1–OBW3, OBW5), deployed to the Pages
+  project `sparkles-perf` after each append and as a preview on pull requests
+  that change it (OBW4). The layout is chosen from mockups.
+
+Gate: oracle 18 passes. The deployed site shows every pull request merged
+since 2026-10-01, and the next landing's record appears on it with no manual
+step.
+
 ## O3: Compile and link families
 
 - The fork's time-trace summary mode (OBC8), with tests that fail without it,
@@ -167,6 +185,7 @@ Gate: oracles 2, 3 and 8 on macOS and Windows, and oracle 10's Nix scenario.
 | O0        | Specification and spikes            | in review   |
 | O1        | Vocabulary and action accounting    | not started |
 | O2a       | Test wall times for placements      | done        |
+| O2b       | CI cost and time to green           | in progress |
 | O2        | Run records and reports             | not started |
 | O3        | Compile and link families           | not started |
 | O4        | Test usage                          | not started |
