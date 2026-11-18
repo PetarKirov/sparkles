@@ -261,18 +261,21 @@
               path:
               fs.fileFilter (
                 # `.d`/`.c`/`.i` sources (`.c`/`.i` for ImportC shims) plus
-                # `.css`/`.svg` string-import view assets (e.g. sparkles:twoslash's
-                # `views/twoslash.css` and `views/icons/**/*.svg`, pulled in via `import()`)
-                # and `.frag` shaders (sparkles:ui's are generated and come from
-                # `ui-shaders`; this keeps any hand-written one a package
-                # string-imports), and the committed SPIR-V (`.spv`) a package
-                # string-imports (sparkles:vulkan-wsi's test pattern).
+                # `.css`/`.js`/`.svg` string-import view assets (e.g.
+                # sparkles:twoslash's `views/twoslash.css` and
+                # `views/icons/**/*.svg`, `ci`'s `views/perf_site.js`, pulled
+                # in via `import()`) and `.frag` shaders (sparkles:ui's are
+                # generated and come from `ui-shaders`; this keeps any
+                # hand-written one a package string-imports), and the committed
+                # SPIR-V (`.spv`) a package string-imports
+                # (sparkles:vulkan-wsi's test pattern).
                 file:
                 file.hasExt "d"
                 || file.hasExt "c"
                 || file.hasExt "i"
                 || file.hasExt "h"
                 || file.hasExt "css"
+                || file.hasExt "js"
                 || file.hasExt "svg"
                 || file.hasExt "frag"
                 || file.hasExt "spv"

@@ -97,7 +97,7 @@ h1 {
   gap: 14px;
   font-size: 12px;
 }
-.legend span {
+.legend .key {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -403,4 +403,99 @@ i.bar {
   margin: 8px 0 0;
   max-width: 720px;
   line-height: 1.5;
+}
+
+/* interaction (site.js): legend toggles, slot and segment highlights, the tooltip */
+.legend .key {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 8px;
+  min-height: 28px;
+  cursor: pointer;
+}
+.legend .key:hover {
+  border-color: var(--spk-border-default-fg, #e9e9e7);
+}
+.legend .key[aria-pressed='false'] {
+  color: var(--spk-text-muted-fg, #5b5e66);
+  text-decoration: line-through;
+}
+.legend .key[aria-pressed='false'] i {
+  opacity: 0.25;
+}
+.off {
+  display: none !important;
+}
+.col.slot:hover,
+tr.slot:hover > td,
+tr.slot:hover > th {
+  background: color-mix(in srgb, var(--spk-page-fg, #17181c) 7%, transparent);
+}
+.seg.hot {
+  outline: 2px solid var(--spk-page-fg, #17181c);
+  outline-offset: -1px;
+  position: relative;
+  z-index: 1;
+}
+.pt.slot:hover i {
+  outline: 2px solid var(--spk-page-fg, #17181c);
+}
+.panel.filtered .col em {
+  display: none;
+}
+.seg.val {
+  display: none;
+}
+.pt.slot {
+  cursor: default;
+}
+.tip {
+  position: fixed;
+  z-index: 10;
+  pointer-events: none;
+  min-width: 180px;
+  max-width: 360px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--spk-border-strong-fg, #c9cbd2);
+  background: var(--spk-surface-overlay-bg, #ffffff);
+  color: var(--spk-page-fg, #17181c);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.tip[hidden] {
+  display: none;
+}
+.tip .x {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.tip .row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+.tip .row i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.tip .row .v {
+  font-family: ui-monospace, 'JetBrains Mono', monospace;
+  text-align: right;
+}
+.tip .row.hot {
+  font-weight: 700;
+}
+.tip .row.sum {
+  border-top: 1px solid var(--spk-border-default-fg, #e9e9e7);
+  padding-top: 3px;
+  margin-top: 2px;
 }
