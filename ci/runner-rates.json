@@ -1,0 +1,11 @@
+{
+  "perMinute": {
+    "macos-latest": null,
+    "ubuntu-24.04-arm": null,
+    "ubuntu-latest": null,
+    "windows-latest": null
+  },
+  "schema": "sparkles.ci.runner-rates",
+  "source": "Per-minute list prices of the provider's hosted runners, in USD; null leaves a runner type's charge unshown (observability OBJ6, OBW2).",
+  "version": 1
+}

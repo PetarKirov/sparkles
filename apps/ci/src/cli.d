@@ -30,7 +30,8 @@ import commands.files : detectRepoRoot;
 import commands.github : runMirrorChecksCommand, runReportLinkRotCommand;
 import commands.maintenance : runBuildEachCommitMode, runGcR2Command, runSeedDubCache, runWritePinCosts,
     seedDubHome;
-import commands.perf : runPerfAppendCommand, runPerfImportCommand, runPerfPushCommand, runRecordTask;
+import commands.perf : runPerfAppendCommand, runPerfImportCommand, runPerfImportPrsCommand, runPerfPushCommand,
+    runPerfSiteCommand, runRecordTask;
 import commands.stats : runCiStatsCommand;
 import commands.test_ : runListPlacements, runListSlowTestsMode, runTestCommand;
 import fence_audit : AuditScope;
@@ -979,6 +980,8 @@ struct PerfCommand
 
         @(Flatten) SigningOptions signing;
         @(Flatten) HistoryOptions history;
+        /// With `--repo`, the landing's pull request record is appended too (OBJ4).
+        @(Flatten) GithubOptions github;
 
         RunExpected!void run()
         {
@@ -986,6 +989,51 @@ struct PerfCommand
                 return failRun("ci perf append needs --records, --run-id, --run-date YYYY-MM-DD "
                     ~ "and --landed-commit", 2);
             return runPerfAppendCommand(this);
+        }
+    }
+
+    @(Command("import-prs",
+        shortDescription: "Build the pull request records of merged pull requests (OBQ9)",
+        description: "Writes them locally, for `ci perf push` to publish: seeds the history.",
+    ))
+    struct ImportPrs
+    {
+        @(Option(`since`, description: "The first merge date, YYYY-MM-DD, in UTC."))
+        string since;
+
+        @(Flatten) GithubOptions github;
+
+        RunExpected!void run()
+        {
+            if (!github.repo.length || since.length != 10)
+                return failRun("ci perf import-prs needs --repo owner/repo and --since YYYY-MM-DD", 2);
+            return runPerfImportPrsCommand(github, since);
+        }
+    }
+
+    @(Command("site",
+        shortDescription: "Build the dashboard from refs/perf/data (§17)",
+        description: "Static pages, built from the verified history only; two builds from one tip are "
+        ~ "byte-identical.",
+    ))
+    struct Site
+    {
+        @(Option(`o|out`, description: "The directory to write the site to."))
+        string out_;
+
+        @(Option(`history-tip`, description: "The history commit to build from (default: the ref's tip)."))
+        string historyTip;
+
+        @(Option(`rates`, description: "The runner rates file (default: ci/runner-rates.json)."))
+        string rates;
+
+        @(Flatten) HistoryOptions history;
+
+        RunExpected!void run()
+        {
+            if (!out_.length)
+                return failRun("ci perf site needs --out DIR", 2);
+            return runPerfSiteCommand(this);
         }
     }
 }

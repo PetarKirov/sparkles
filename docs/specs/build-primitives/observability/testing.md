@@ -513,21 +513,24 @@ in [decisions.md](./decisions.md).
 
 ## Evidence ledger
 
-Nothing is implemented. Every row is planned.
+A row is planned unless its status says otherwise.
 
-| Requirement | Status  | Evidence | Missing    |
-| ----------- | ------- | -------- | ---------- |
-| OBV1–OBV9   | planned | —        | everything |
-| OBA1–OBA9   | planned | —        | everything |
-| OBC1–OBC8   | planned | —        | everything |
-| OBL1–OBL3   | planned | —        | everything |
-| OBT1–OBT3   | planned | —        | everything |
-| OBR1–OBR7   | planned | —        | everything |
-| OBJ1–OBJ3   | planned | —        | everything |
-| OBO1–OBO4   | planned | —        | everything |
-| OBD1–OBD12  | planned | —        | everything |
-| OBH1–OBH10  | planned | —        | everything |
-| OBP1–OBP4   | planned | —        | everything |
-| OBG1–OBG10  | planned | —        | everything |
-| OBQ1–OBQ8   | planned | —        | everything |
-| OBU1–OBU5   | planned | —        | everything |
+| Requirement | Status  | Evidence                                                                                                                                                                                             | Missing                                                                                               |
+| ----------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| OBV1–OBV9   | planned | —                                                                                                                                                                                                    | everything                                                                                            |
+| OBA1–OBA9   | planned | —                                                                                                                                                                                                    | everything                                                                                            |
+| OBC1–OBC8   | planned | —                                                                                                                                                                                                    | everything                                                                                            |
+| OBL1–OBL3   | planned | —                                                                                                                                                                                                    | everything                                                                                            |
+| OBT1–OBT3   | planned | —                                                                                                                                                                                                    | everything                                                                                            |
+| OBR1–OBR7   | planned | —                                                                                                                                                                                                    | everything                                                                                            |
+| OBJ1–OBJ3   | planned | —                                                                                                                                                                                                    | everything                                                                                            |
+| OBJ4–OBJ6   | partial | `apps/ci/src/perf_pr.d` `fetchPrRecord`, `figuresOf`, `runnerType`, `appendLandedPr`; tests `perfPr.figuresOf.handComputed`, `perfPr.fetchPrRecord.savedPages`, `perfPr.encode.roundTripAndPrivacy`  | a landing that appends its record                                                                     |
+| OBO1–OBO4   | planned | —                                                                                                                                                                                                    | everything                                                                                            |
+| OBD1–OBD12  | planned | —                                                                                                                                                                                                    | everything                                                                                            |
+| OBH1–OBH10  | planned | —                                                                                                                                                                                                    | everything                                                                                            |
+| OBP1–OBP4   | planned | —                                                                                                                                                                                                    | everything                                                                                            |
+| OBG1–OBG10  | planned | —                                                                                                                                                                                                    | everything                                                                                            |
+| OBQ1–OBQ8   | planned | —                                                                                                                                                                                                    | everything                                                                                            |
+| OBQ9        | partial | `apps/ci/src/perf_pr.d` `importPrs`, `localPrAppends`                                                                                                                                                | the seeding push                                                                                      |
+| OBU1–OBU5   | planned | —                                                                                                                                                                                                    | everything                                                                                            |
+| OBW1–OBW5   | partial | `apps/ci/src/perf_site.d` `loadSite`, `buildSite`, `reachOf`; tests `perfSite.buildSite.deterministicAndSelfContained`, `perfSite.reachOf.ownershipAndDependents`; `.github/workflows/perf-site.yml` | the first production deploy; OBW5 holds by construction, the charts drawing the last 30 pull requests |
