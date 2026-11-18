@@ -215,6 +215,11 @@ Expected!(string, string) pushLocal(bool allowDirty, string signingKey, string r
         }
         appends ~= Append(runDir(run["start"].str, commit, r.runId), r);
     }
+    {
+        import perf_pr : localPrAppends;
+
+        appends ~= localPrAppends(report); // the records `ci perf import-prs` wrote (OBQ9)
+    }
     if (appends.length == 0)
         return ok(report ~ "nothing to push");
     const done = appendRecords(historyCacheDir(remote), remote, signersFile, appends, signingKey,

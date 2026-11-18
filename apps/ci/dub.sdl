@@ -8,6 +8,9 @@ targetType "executable"
 targetName "ci"
 targetPath "build"
 mainSourceFile "src/ci_main.d"
+# `ci perf site`'s stylesheet (perf_site.d), compiled in so the site needs no source tree.
+# Under src/: the Nix build's source set is the recipe's source directories.
+stringImportPaths "src/views"
 
 dflags "-preview=in" "-preview=dip1000"
 

@@ -235,6 +235,16 @@ Runs a commit with a missing or unlisted signature added are left out, and
 each such commit is reported in `ignored`.
 */
 HistoryRun[] trustedRuns(in History h, string tip, out string[] ignored) @trusted
+    => trustedDirs(h, tip, "runs", 5, ignored);
+
+/**
+The record directories under `root` that trusted commits of `tip` added,
+newest first: each the first `depth` components of an added path, so
+`runs/<yyyy>/<mm>/<dd>/<run>` (depth 5) or `prs/<yyyy>/<mm>/<number>` (depth
+4). Directories a commit with a missing or unlisted signature added are left
+out, and each such commit is reported in `ignored`.
+*/
+HistoryRun[] trustedDirs(in History h, string tip, string root, size_t depth, out string[] ignored) @trusted
 {
     const commits = historyCommits(h, tip);
     bool[string] trust;
@@ -242,7 +252,7 @@ HistoryRun[] trustedRuns(in History h, string tip, out string[] ignored) @truste
         trust[c.id] = c.trusted;
 
     const r = git(h.gitDir, ["log", "--format=commit %H", "--name-only", "--diff-filter=A", "--no-renames",
-        tip, "--", "runs"]);
+        tip, "--", root]);
     HistoryRun[] runs;
     bool[string] seen;
     string current;
@@ -256,9 +266,9 @@ HistoryRun[] trustedRuns(in History h, string tip, out string[] ignored) @truste
             continue;
         }
         const parts = line.strip.split("/");
-        if (parts.length < 6 || parts[0] != "runs")
+        if (parts.length <= depth || parts[0] != root)
             continue;
-        const dir = parts[0 .. 5].join("/");
+        const dir = parts[0 .. depth].join("/");
         if (dir in seen || !trust.get(current, false))
             continue;
         seen[dir] = true;
