@@ -160,6 +160,13 @@ struct RunConfig
     peer that answers nothing costs the timeout (a second).
     */
     bool probeTerminal = true;
+    /**
+    TUI: the terminal's font carries the Nerd Font glyphs, so icons in the
+    Private Use Area are painted rather than folded to their Unicode marks
+    (`GLY4`). A terminal cannot be asked, so this is the application's
+    configuration to give (design-system D29); off by default.
+    */
+    bool nerdFont;
     int targetFps = 60;         /// GPU pacing
     int idleTimeoutMs = -1;     /// TUI: wake `present` without input (< 0 = never)
     PointerUnit pointerUnit;    /// what pointer positions are measured in (`HST18`)

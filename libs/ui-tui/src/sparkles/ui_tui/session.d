@@ -69,6 +69,11 @@ struct TerminalRequest
     /// for a window (`RunConfig.keyRelease`): an application that does not
     /// read `KeyAction` would take every release for a second press.
     bool keyRelease;
+    /// The application's configuration says the terminal's font carries the
+    /// Nerd Font glyphs (`GLY4`, design-system D29): no terminal can be asked,
+    /// so the target declares `nerdFont` only on this say-so, and Private Use
+    /// Area icons are then painted rather than folded to their marks.
+    bool nerdFont;
 }
 
 /**
@@ -174,6 +179,7 @@ struct TerminalSession
             }
             s.typedAhead = s.term.takeTypedAhead();
         }
+        caps.nerdFont = r.nerdFont;
         s.target = sessionCapabilities(caps);
         return s;
     }
@@ -301,6 +307,22 @@ TargetCapabilities sessionCapabilities(in TermCaps t) @safe pure nothrow @nogc
     c.input.maxPointers = t.mouseSgr ? 1 : 0;
     c.input.hover = t.anyMotion;
     return c;
+}
+
+/// GLY4, D29: the Nerd Font is the application's say-so. Declared, a folder
+/// icon is painted as itself; undeclared, it folds to its Unicode mark.
+@("ui_tui.session.nerdFontIsConfigured")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.ui.glyphs : projectGlyph;
+
+    TermCaps t;
+    t.unicode = true;
+    assert(!sessionCapabilities(t).nerdFont, "no terminal can be asked");
+    assert(projectGlyph('\uF115', sessionCapabilities(t)) == '\u21D7');
+    t.nerdFont = true;
+    assert(sessionCapabilities(t).nerdFont);
+    assert(projectGlyph('\uF115', sessionCapabilities(t)) == '\uF115');
 }
 
 @("ui_tui.session.sessionCapabilities")
