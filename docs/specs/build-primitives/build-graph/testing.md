@@ -246,7 +246,11 @@ and exit status, and a hit on that failure must replay them (BGN6).
 - eviction never removes an entry whose lease holder is alive, and reclaims the
   lease of a dead one;
 - two worktrees alternating between two manifests of one declared key both
-  keep hitting.
+  keep hitting;
+- the races were reached: at least one of step 1's verifications began with a
+  publication in flight (a staging entry written and not yet renamed), and at
+  least one of step 3's collection rounds began with one and one with a live
+  lease. A run that never reached a race shows nothing about it, so it fails.
 
 ### Oracle 8: layout lint
 

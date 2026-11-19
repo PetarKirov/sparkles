@@ -2412,11 +2412,14 @@ Verdict[] oracle7()
         foreach (i; 0 .. 4)
             children ~= startChild("versions", cache, ["--delay"] ~ (i % 2 ? ["--at=" ~ other] : null));
         string corrupt;
-        size_t reads;
+        size_t reads, midPublication;
         bool running = true;
         while (running)
         {
             string lines;
+            // A `sometimes` property: a pass says nothing of the race unless
+            // some verification began with a publication in flight.
+            midPublication += storeDir(cache, "staging").length > 0;
             if (storeOp(cache, "verify", lines) != 0)
                 corrupt ~= lines;
             ++reads;
@@ -2435,10 +2438,13 @@ Verdict[] oracle7()
             why ~= " the two worktrees are on one file system;";
         if (deviceOf(buildPath(cache, "runs")) != deviceOf(buildPath(cache, "build")))
             why ~= " the run directories and the store are on different file systems;";
+        if (!midPublication)
+            why ~= text(" none of the ", reads, " verifications began with a publication in flight;");
         vs ~= Verdict("step 1", corrupt.length ? "a reader saw a partial entry: " ~ corrupt : why,
             text("4 builders from two worktrees on different file systems agreed on ", reports[0].resultKeys.length,
-                " result keys; ", reads, " verifications while they ran found no partial entry, and every "
-                ~ "publication was a rename within the store's file system"));
+                " result keys; ", reads, " verifications while they ran, ", midPublication, " of them begun with a "
+                ~ "publication in flight, found no partial entry, and every publication was a rename within the "
+                ~ "store's file system"));
     }
 
     // The fixture every later step builds, with its dependencies published
@@ -2522,10 +2528,14 @@ Verdict[] oracle7()
         Child[] children;
         foreach (i; 0 .. 3)
             children ~= startChild("versions", busy, ["--delay"]);
-        size_t sweeps;
+        size_t sweeps, midPublication, leased;
         while (children.any!(ch => !std.process.tryWait(ch.pid).terminated))
         {
             string lines;
+            // `sometimes` properties: some round must meet a publication in
+            // flight, and some a live lease, or the pass shows nothing.
+            midPublication += storeDir(busy, "staging").length > 0;
+            leased += storeDir(busy, "leases").any!(k => storeDir(busy, "leases/" ~ k).length > 0);
             cast(void) storeOp(busy, "gc", lines);
             cast(void) storeOp(busy, "evict=0", lines);
             ++sweeps;
@@ -2537,8 +2547,13 @@ Verdict[] oracle7()
             if (r.exitCode != 0)
                 why ~= text(" builder ", i, " failed:", tailOf(r.log ~ r.raw));
         }
+        if (!midPublication)
+            why ~= text(" none of the ", sweeps, " rounds began with a publication in flight;");
+        if (!leased)
+            why ~= text(" none of the ", sweeps, " rounds began with a live lease;");
         vs ~= Verdict("step 3, collection while building", why,
-            text("3 builders succeeded while ", sweeps, " rounds of garbage collection and eviction to nothing ran"));
+            text("3 builders succeeded while ", sweeps, " rounds of garbage collection and eviction to nothing ran, ",
+                midPublication, " of them begun with a publication in flight and ", leased, " with a live lease"));
     }
 
     // Step 4: the losing producer (BGS3).
