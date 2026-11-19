@@ -101,6 +101,27 @@ const menu = b.add(Widget(kind: WidgetKind.popup, slot: Slot.surface,
 const button = b.add(Widget(kind: WidgetKind.row, children: [label, menu]));
 ```
 
+### Overlays in a dock
+
+An overlay can hang past the pane it was written in and over the next one.
+`DockContainer` finds a pane by its rect, so a click on that part of the
+overlay would go to the wrong pane. After each frame, the host reports where
+each pane's overlays painted:
+
+```d
+c.paintedTopLayers([TopLayer(pane: notes, rect: menuRectInContainerCells)]);
+```
+
+`handle` then sends a pointer event or a wheel over one of those rects to the
+pane that owns it, in that pane's coordinates. This step comes after capture
+and before dividers, tabs, scrollbars and the positional query. A drag that
+started somewhere else keeps its owner. A divider under an overlay can't be
+grabbed through it.
+
+The dock's drop preview, `dockHint`, is an `adorn` overlay that covers
+`dockHintRect`. Make it a child of the node whose rect is the container's
+area, and the toolkit places it over the panes.
+
 ## Arrows (`sparkles.ui.overlay.arrow`)
 
 A box draws its arrow from `Decoration.arrow`, `arrowOffset` (the cell along
