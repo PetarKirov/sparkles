@@ -1268,10 +1268,11 @@ string[] gitTrackedPaths(string dir) @safe
 @("fileset.query.FXL5.gitTracked")
 @system unittest
 {
-    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.file : mkdirRecurse, tempDir, write;
     import std.path : buildPath;
     import std.process : thisProcessID;
     import std.conv : text;
+    import sparkles.build_primitives.fileset.testing : removeScratchTree;
     import sparkles.build_primitives.git_env : runGit;
     import sparkles.test_runner.skip : skipTest;
 
@@ -1281,7 +1282,7 @@ string[] gitTrackedPaths(string dir) @safe
         return skipTest("git is not installed");
 
     const dir = buildPath(tempDir, text("fxl5-", thisProcessID));
-    scope (exit) rmdirRecurse(dir);
+    scope (exit) removeScratchTree(dir);
     mkdirRecurse(buildPath(dir, "repo", "sub"));
     mkdirRecurse(buildPath(dir, "plain"));
     write(buildPath(dir, "repo", "a.d"), "a");
