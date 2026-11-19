@@ -161,7 +161,7 @@ private TokenKind kindOfLabel(const(char)[] name)
     const lines = highlightCode("fileset", "src/*.{d,di} | \"a b\"\\*");
     Slot[string] slotOf;
     foreach (s; lines[0])
-        slotOf[s.text] = s.slot;
+        slotOf[s.text.idup] = s.slot;
     assert(slotOf.get("src/", Slot.code) == Slot.success, text(lines));
     assert(slotOf.get("*", Slot.code) == Slot.accentSecondary, text(lines));
     assert(slotOf.get("\"a b\"", Slot.code) == Slot.success, text(lines));
