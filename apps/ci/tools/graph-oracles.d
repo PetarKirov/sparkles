@@ -2584,7 +2584,7 @@ string[] verdictLines(string output)
     import std.string : strip;
 
     enum ansi = ctRegex!`\x1b\[[0-9;]*m`;
-    enum time = ctRegex!` in [0-9.]+(ms|µs|ns|s|m [0-9.]+s)$`;
+    enum time = ctRegex!` in [0-9.]+(ms|µs|ns|s|m|m [0-9.]+s)$`;
     string[] lines;
     foreach (raw; output.lineSplitter)
     {
@@ -2594,7 +2594,8 @@ string[] verdictLines(string output)
         if (line.startsWith("Summary: "))
             lines ~= line.replaceAll(time, "");
         // druntime's own runner, in a package that does not use this one.
-        else if (line.endsWith(" modules passed unittests") || line.endsWith(" unittests failed"))
+        else if (line.endsWith(" modules passed unittests") || line.endsWith(" unittests failed")
+            || line == "All unit tests have been run successfully.")
             lines ~= line.strip;
         else if (line.length > 2 && line[0] == ' ' && line[1] >= 0x80)
             lines ~= line.strip;
