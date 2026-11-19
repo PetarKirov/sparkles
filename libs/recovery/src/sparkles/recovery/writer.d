@@ -241,13 +241,14 @@ version (unittest)
         }
     }
 
-    private void drain(W)(W writer, MonoTime clock, scope bool delegate() @safe nothrow until) @safe
+    // Polls with `poll` until `until` holds, or three seconds pass.
+    private void drain(scope void delegate() @safe nothrow poll, scope bool delegate() @safe nothrow until) @safe
     {
         import core.thread : Thread;
         const deadline = MonoTime.currTime + 3.seconds;
         while (!until() && MonoTime.currTime < deadline)
         {
-            writer.poll(clock);
+            poll();
             (() @trusted => Thread.yield())();
         }
     }
@@ -277,12 +278,12 @@ version (unittest)
     writer.poll(start + 250.msecs);
     assert(writer.busy);
     writer.request(new TextSnapshot("firstlater", 2), start + 251.msecs);
-    drain(writer, start + 300.msecs, () => writer.durableRevision >= 1);
+    drain(() => writer.poll(start + 300.msecs), () => writer.durableRevision >= 1);
     assert(writer.durableRevision == 1 && writer.pending && writer.currentRevision == 2);
     assert(!writer.overdue(start + 1.seconds));
     assert(readGeneration(writer.directoryPath, writer.durableGeneration).value == "first");
     writer.flush(start + 301.msecs);
-    drain(writer, start + 350.msecs, () => !writer.pending);
+    drain(() => writer.poll(start + 350.msecs), () => !writer.pending);
     assert(!writer.pending && writer.durableRevision == 2 && !writer.error.length);
     assert(readGeneration(writer.directoryPath, writer.durableGeneration).value == "firstlater");
 }
@@ -315,7 +316,7 @@ version (unittest)
     assert(writer.currentRevision == 31 && writer.submittedRevision == 26,
         "Input every 10 ms must still submit the captured state at 250 ms.");
     writer.flush(start + 501.msecs);
-    drain(writer, start + 501.msecs, () => !writer.pending);
+    drain(() => writer.poll(start + 501.msecs), () => !writer.pending);
     assert(!writer.pending && writer.durableRevision == 31 && !writer.error.length);
 }
 
@@ -347,7 +348,7 @@ version (unittest)
     const start = MonoTime.currTime;
     writer.request(new Refusing, start);
     writer.flush(start);
-    drain(writer, start, () => !writer.busy);
+    drain(() => writer.poll(start), () => !writer.busy);
     assert(writer.error == "cannot encode" && writer.pending && writer.durableRevision == 0);
     assert(writer.nextPoll(start) == 1.seconds, "the retry waits a second");
 }
