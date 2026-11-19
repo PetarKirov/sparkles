@@ -113,7 +113,9 @@ private string shell(string cmd, string dir) @system
 
 private string[] lines(string output) @safe
 {
-    auto ls = output.splitter('\n').filter!(l => l.length > 0).map!(l => l.idup).array;
+    // A tool on Windows ends its lines with CRLF.
+    auto ls = output.splitter('\n').map!(l => l.length && l[$ - 1] == '\r' ? l[0 .. $ - 1] : l)
+        .filter!(l => l.length > 0).map!(l => l.idup).array;
     sort(ls);
     return ls;
 }
