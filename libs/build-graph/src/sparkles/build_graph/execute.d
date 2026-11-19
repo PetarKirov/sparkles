@@ -65,6 +65,8 @@ struct RunLayout
     /// it up, and nothing executes or publishes. A hit is adopted, so its
     /// consumers' keys follow; a miss is classified and stops its consumers.
     bool explain;
+    /// BGS6: the fraction of hits a lookup rehashes; one rehashes every hit.
+    double hashSample = 1.0 / 64;
 
     /// The output directory of action `id`: its `$OUT`.
     string outOf(TaskId id) const @safe pure nothrow => runDirectory ~ "/out/" ~ idPath(id);
@@ -615,7 +617,10 @@ struct ActionDriver
                     stored = (() @trusted => Store!(Dir!(BlockingVfs, Rights.all)).open(build.value,
                         leaseHolder(), store))();
                     if (stored)
+                    {
+                        store.hashSample = layout.hashSample;
                         clocked = store.probeClock(clockNs, clockDevice);
+                    }
                 }
             }
             auto root = openRoot!(Rights.readOnly)(vfs, "/", ambientAuthority(),
@@ -1989,15 +1994,30 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
     string record;
     assert(readAll(build.value, "v1/records/b-key", record) && record.canFind("output "));
 
-    // A flipped byte, same size: only verification sees it (BGS6).
+    // A flipped byte, same size: a lookup that rehashes no hit misses it, and
+    // verification sees it (BGS6).
     auto published = build.value.walk("v1/results/a-key/out");
     char[100] flipped = 'a';
     flipped[50] = 'z';
     assert(!published.value.writeFileAtomic("f", flipped[]).hasError);
+    store.hashSample = 0;
     assert(store.find("a-key") !is null);
     store.releaseLeases();
     assert(store.verify() == ["a-key"]);
     assert(store.find("a-key") is null);
+
+    // With the sample at one, the lookup rehashes every hit and finds it.
+    publishOne("d", 'd');
+    store.releaseLeases();
+    auto dOut = build.value.walk("v1/results/d-key/out");
+    flipped[] = 'd';
+    flipped[7] = 'x';
+    assert(!dOut.value.writeFileAtomic("f", flipped[]).hasError);
+    assert(store.find("d-key") !is null);
+    store.releaseLeases();
+    store.hashSample = 1;
+    assert(store.find("d-key") is null);
+    store.releaseLeases();
 
     // Removal by task, then garbage collection.
     publishOne("c", 'c');

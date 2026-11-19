@@ -293,6 +293,10 @@ struct Store(D)
     /// Why a publication failed, or what it found; null when nothing.
     string note;
 
+    /// BGS6: the fraction of hits whose every recorded digest a lookup
+    /// rehashes, chosen at random; one rehashes every hit.
+    double hashSample = 1.0 / 64;
+
     private ubyte[32] secret_;
 
     /**
@@ -301,6 +305,15 @@ struct Store(D)
     changed without letting it be guessed and checked.
     */
     ref const(ubyte[32]) secret() const return @safe pure nothrow @nogc => secret_;
+
+    // Whether this hit is among the sampled `fraction`, from the system's
+    // random source.
+    private static bool sampled(double fraction) @trusted
+    {
+        uint r;
+        arc4random_buf(&r, r.sizeof);
+        return r < fraction * uint.max;
+    }
 
     // Reads the store's secret, making it from the system's random source
     // on first use. Two processes that make it at once both read the one
@@ -433,6 +446,18 @@ struct Store(D)
             auto st = statPath(out_.value, o.path);
             if (st.hasError || st.value.kind != EntryKind.regular || st.value.size != o.size)
                 return discard(resultKey, "output " ~ o.path ~ " is missing or changed size");
+        }
+        // BGS6: a sample of hits is rehashed.
+        if (hashSample > 0 && (hashSample >= 1 || sampled(hashSample)))
+        {
+            import sparkles.base.hash.blake3 : blake3;
+
+            foreach (ref o; r.outputs)
+            {
+                ubyte[] bytes;
+                if (!readBytes(out_.value, o.path, bytes) || bytes.length != o.size || blake3(bytes) != o.digest)
+                    return discard(resultKey, "output " ~ o.path ~ " does not match its digest");
+            }
         }
         return r;
     }

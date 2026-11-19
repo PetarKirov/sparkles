@@ -567,6 +567,7 @@ struct RunOptions
     bool echo;              /// the reporter's lines also go to standard output
     bool failFast;          /// cancel the rest at the first failure
     bool noLayoutLint;      /// plan without BGV4's lint (oracle 8's revert check)
+    double hashSample = 1.0 / 64; /// BGS6: the fraction of hits a lookup rehashes
     /// Changes the tools found on `PATH` before the toolchain is identified
     /// (oracle 9's substitutions).
     void delegate(ref Tools) adjustTools;
@@ -693,6 +694,7 @@ GraphRun runGraph(string root, string only, RunOptions o)
     auto layout = RunLayout(root, o.into, o.cache, g.toolchain.identity, o.check);
     layout.checkTasks = o.checkTasks.dup;
     layout.replaceTasks = o.replaceTasks.dup;
+    layout.hashSample = o.hashSample;
     g.into = o.into;
     auto nodes = executionNodes(g.plan.graph, layout, declared);
     if (o.adjustExecution !is null)
