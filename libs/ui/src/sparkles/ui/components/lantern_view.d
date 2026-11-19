@@ -286,7 +286,7 @@ uint viewLantern(B)(ref Builder b, ref LabelArena arena,
         ));
     }
 
-    // The rows go in an explicit `column`, because a `popup` is a STACK — it
+    // The rows go in an explicit `column`, because a `panel` is a STACK — it
     // gives every child the same origin. Handing it the rows directly painted
     // the whole panel onto one line, which is what
     // `columnsDoNotOverlap` now catches.
@@ -295,7 +295,7 @@ uint viewLantern(B)(ref Builder b, ref LabelArena arena,
         children: rows[].dup,
     ));
     return b.add(Widget(
-        kind: WidgetKind.popup,
+        kind: WidgetKind.panel, // in the host's flow: it floats over nothing
         children: [stack],
         slot: Slot.surface,
         paintBackground: true,

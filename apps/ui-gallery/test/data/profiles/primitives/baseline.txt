@@ -15,7 +15,7 @@
    Table             | | glyph            *                                                  | #
    Scrolling         | | line * solid     an underlined run                                  | #
    State             | | line * wavy      a squiggled run                                    | #
-   Split             | | scrollbar        ||                                                 | |
+   Split             | | scrollbar        ||                                                 | #
    Dock              | |                  ||                                                 | |
    Terminal          | |                  ##                                                 | |
                      | |                  ##                                                 | |

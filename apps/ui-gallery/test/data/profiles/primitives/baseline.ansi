@@ -15,7 +15,7 @@
 [0m [0m  Table[0m             [0m|[0m [0m|[0m [0mglyph[0m            [0m*[0m                                                  [0m|[0m [0m#[0m
 [0m [0m  Scrolling[0m         [0m|[0m [0m|[0m [0mline * solid[0m     [0;4man underlined run[0m                                  [0m|[0m [0m#[0m
 [0m [0m  State[0m             [0m|[0m [0m|[0m [0mline * wavy[0m      [0;4ma squiggled run[0m                                    [0m|[0m [0m#[0m
-[0m [0m  Split[0m             [0m|[0m [0m|[0m [0mscrollbar[0m        [0m||[0m                                                 [0m|[0m [0m|[0m
+[0m [0m  Split[0m             [0m|[0m [0m|[0m [0mscrollbar[0m        [0m||[0m                                                 [0m|[0m [0m#[0m
 [0m [0m  Dock[0m              [0m|[0m [0m|[0m                  [0m||[0m                                                 [0m|[0m [0m|[0m
 [0m [0m  Terminal[0m          [0m|[0m [0m|[0m                  [0m##[0m                                                 [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m                  [0m##[0m                                                 [0m|[0m [0m|[0m

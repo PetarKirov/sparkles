@@ -20,6 +20,7 @@ module sparkles.ui.overlay.anchor;
 
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : childClipOf, Frame, unclipped;
+import sparkles.ui.overlay.arena : floats;
 import sparkles.ui.state : KeyTarget, selectionRects;
 import sparkles.ui.widget : Visibility, WidgetTree;
 
@@ -188,7 +189,7 @@ ResolvedAnchor resolveKey(in WidgetTree tree, in Frame[] frames, size_t key) @sa
         }
         const childClip = childClipOf(*node, rect, clip);
         foreach (ci; node.children)
-            if (walk(ci, childClip))
+            if (walk(ci, floats(tree, ci) ? unclipped() : childClip))
                 return true;
         return false;
     }

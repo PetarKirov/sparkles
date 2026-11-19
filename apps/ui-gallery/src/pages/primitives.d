@@ -18,6 +18,7 @@ import sparkles.ui.wrap : TextWrap;
 
 import kit;
 import sparkles.ui.image : ImageFit;
+import sparkles.ui.overlay : OverlaySpec, Side;
 import state : GalleryState, swatchSize;
 
 @safe:
@@ -120,7 +121,9 @@ uint view(ref Builder b, in GalleryState s)
             borderSlot: Slot.border,
         ),
     )));
-    overlays ~= specimen(b, "popup", b.add(Widget(
+    // A popup is an overlay: authored as a child of what it hangs off, out
+    // of that node's flow, placed beside it and painted over everything.
+    const floating = b.add(Widget(
         kind: WidgetKind.popup,
         children: [b.add(Widget(
             kind: WidgetKind.column,
@@ -136,6 +139,11 @@ uint view(ref Builder b, in GalleryState s)
             borderRadius: 4,
             shadow: true,
         ),
+        overlay: OverlaySpec(side: Side.right, gap: 2),
+    ));
+    overlays ~= specimen(b, "popup", b.add(Widget(
+        kind: WidgetKind.row,
+        children: [label(b, "its anchor", Slot.code), floating],
     )));
 
     uint[] body_;

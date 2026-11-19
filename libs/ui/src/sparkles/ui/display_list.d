@@ -12,6 +12,8 @@ module sparkles.ui.display_list;
 import sparkles.ui.canvas : DrawOp, OpKind, RuleEdge;
 import sparkles.ui.cmd_buffer : CmdBuffer, GcCmdBuffer;
 import sparkles.ui.geometry : Point, Rect;
+import sparkles.ui.overlay.arena : eachOverlay, floats;
+import sparkles.ui.overlay.arrow : facingEdge;
 import sparkles.ui.layout : CellMeasure, childClipOf, clipsX, cullClipOf, clipsY, Frame,
     measureWidth, unclipped, spanStyle;
 import sparkles.ui.style : Palette, resolveVisual, ScrollbarGlyphs, Slot, StateSet, TextStyle, Visual;
@@ -65,6 +67,12 @@ if (__traits(compiles, (ref Sink s) {
 }))
 {
     emit(tree, tree.root, frames, pal, pageFg, pageBg, unclipped(), false, ops, tm);
+    // The overlays, after the flow and over it, in band order (`LYR1`): each
+    // outside every ancestor's clip, which is what lets a dropdown hang past
+    // the pane it was authored in. No canvas learns anything new (`LYR8`).
+    eachOverlay!((uint idx, uint parent, bool closing) {
+        emit(tree, idx, frames, pal, pageFg, pageBg, unclipped(), false, ops, tm, true);
+    })(tree, frames);
 }
 
 /+
@@ -157,8 +165,12 @@ axis (a viewport, or a bordered box — `LAY15`), or one whose host does
 +/
 private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
     in Palette pal, in RgbColor pageFg, in RgbColor pageBg, in Rect clip,
-    bool overflowX, ref Sink ops, ref TM tm)
+    bool overflowX, ref Sink ops, ref TM tm, bool asOverlay = false)
 {
+    // An overlay paints in its own pass, after the flow; met in the flow, it
+    // is passed over.
+    if (!asOverlay && floats(tree, idx))
+        return;
     ref const node = tree.nodes[idx];
     const rect = frames[idx].rect;
 
@@ -216,6 +228,14 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
     // `.twoslash-hover` dotted underline). Mask `hasBg` so the op means exactly
     // "fill this bg", then emit the decorated box first (children paint over it).
     vis.hasBg = node.paintBackground && vis.hasBg;
+    // An overlay's arrow is where its placement put it: on the edge facing
+    // the anchor, at the cell the solve chose, or nowhere (`PLC10`).
+    if (asOverlay && vis.arrow)
+    {
+        vis.arrow = frames[idx].overlayArrow >= 0;
+        vis.arrowEdge = facingEdge(frames[idx].overlaySide);
+        vis.arrowOffset = frames[idx].overlayArrow;
+    }
     if (vis.hasBg || vis.border.any || vis.shadow.any || vis.arrow)
         ops.fillRect(rect, node.slot, vis);
 
