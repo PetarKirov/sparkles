@@ -15,15 +15,16 @@ import std.algorithm.searching : canFind, endsWith, startsWith;
 import std.algorithm.sorting : sort;
 import std.array : array, join, replace;
 import std.conv : text;
-import std.file : exists, mkdirRecurse, rmdirRecurse, write;
-import std.path : buildPath;
+import std.file : exists, mkdirRecurse, write;
+import std.path : baseName, buildPath;
 import std.process : Config, environment, execute;
 
 import sparkles.build_primitives.fileset.emit : emit, EmitOptions, Emitted, NixGlobs, Target;
 import sparkles.build_primitives.fileset.emit.nix : NixParts;
 import sparkles.build_primitives.fileset.pattern : CasePolicy;
 import sparkles.build_primitives.fileset.query : compileQuery, globText, parseQuery, Query;
-import sparkles.build_primitives.fileset.testing : machineResolve, materialize, openFixture, scratchTree;
+import sparkles.build_primitives.fileset.testing : machineResolve, materialize, openFixture, removeScratchTree,
+    scratchTree;
 import sparkles.build_primitives.fileset.value : Filesets;
 import sparkles.build_primitives.git_env : gitChildEnvironment, runGit;
 import sparkles.test_runner.skip : skipTest;
@@ -117,6 +118,27 @@ private string[] lines(string output) @safe
     return ls;
 }
 
+private string realPathOf(string path) @safe
+{
+    version (Posix)
+    {
+        import core.stdc.stdlib : free;
+        import core.sys.posix.stdlib : realpath;
+        import std.conv : to;
+        import std.string : toStringz;
+
+        return (() @trusted {
+            auto p = realpath(path.toStringz, null);
+            if (p is null)
+                return path;
+            scope (exit) free(p);
+            return p.to!string;
+        })();
+    }
+    else
+        return path;
+}
+
 private bool onPath(string tool) @system
 {
     return execute(["sh", "-c", "command -v " ~ tool]).status == 0;
@@ -146,7 +168,7 @@ private size_t[2] check(Target t, string[] delegate(string code, string query, s
         }
         ++accepted;
         const dir = scratchTree("emit-" ~ text(t));
-        scope (exit) rmdirRecurse(dir);
+        scope (exit) removeScratchTree(dir);
         materialize(tree, dir);
         auto got = oracle(e.code, query, dir);
         sort(got);
@@ -167,7 +189,7 @@ private size_t[2] check(Target t, string[] delegate(string code, string query, s
         write(rules, code);
         const dest = dir ~ ".dest";
         mkdirRecurse(dest);
-        scope (exit) rmdirRecurse(dest);
+        scope (exit) removeScratchTree(dest);
         const out_ = shell("rsync -r --dry-run --prune-empty-dirs --out-format=%n --filter='merge " ~ rules
             ~ "' ./ " ~ dest ~ "/", dir);
         return lines(out_).filter!(l => !l.endsWith("/")).array;
@@ -210,7 +232,7 @@ private size_t[2] check(Target t, string[] delegate(string code, string query, s
     if (!onPath("tar"))
         return skipTest("tar is not on PATH");
     const n = check(Target.tar, (code, query, dir) {
-        const archive = dir ~ ".tar";
+        const archive = "../" ~ baseName(dir) ~ ".tar";
         const cmd = code.splitter('\n').filter!(l => l.startsWith("tar ")).front
             .replace("-cf archive.tar", "-cf " ~ archive);
         shell(cmd, dir);
@@ -232,16 +254,19 @@ private size_t[2] check(Target t, string[] delegate(string code, string query, s
         // naming the tree's files by absolute path.
         const pkg = dir ~ ".pkg";
         mkdirRecurse(pkg);
-        scope (exit) rmdirRecurse(pkg);
+        scope (exit) removeScratchTree(pkg);
+        const dirSlash = dir.replace("\\", "/");
         write(buildPath(pkg, "dub.sdl"), "name \"fx\"\ntargetType \"library\"\n"
-            ~ code.replace("sourceFiles \"", "sourceFiles \"" ~ dir ~ "/").replace("\" \"", "\" \"" ~ dir ~ "/"));
+            ~ code.replace("sourceFiles \"", "sourceFiles \"" ~ dirSlash ~ "/")
+                .replace("\" \"", "\" \"" ~ dirSlash ~ "/"));
         if (!code.canFind("sourceFiles \""))
             return string[].init; // no files: dub refuses a library without any
         const r = execute(["dub", "describe", "--root", pkg, "--data=source-files", "--skip-registry=all",
             "--data-list"]);
         assert(r.status == 0, r.output);
-        const prefix = dir ~ "/";
-        return lines(r.output).filter!(l => l.startsWith(prefix)).map!(l => l[prefix.length .. $]).array;
+        const prefix = dirSlash ~ "/";
+        return lines(r.output).map!(l => l.replace("\\", "/"))
+            .filter!(l => l.startsWith(prefix)).map!(l => l[prefix.length .. $]).array;
     });
     assert(n[0] >= 15 && n[1] >= 1, text(n)); // refused: a member dub hands the linker
 }
@@ -269,12 +294,12 @@ private size_t[2] check(Target t, string[] delegate(string code, string query, s
             ++accepted;
             named += !query.canFind("fileFilter") && p.fileset.canFind("fs.fileFilter");
             const dir = scratchTree("emit-nix");
-            scope (exit) rmdirRecurse(dir);
+            scope (exit) removeScratchTree(dir);
             materialize(oracleTree, dir);
             write(buildPath(dir, "oracle.nix"), p.render(
                 "map (p: lib.removePrefix (toString root + \"/\") (toString p)) (fs.toList %s)"));
             const r = execute(["nix", "eval", "--impure", "--json", "--expr",
-                "import \"" ~ buildPath(dir, "oracle.nix") ~ "\" { lib = import \"" ~ nixpkgs ~ "/lib\"; }"]);
+                "import \"" ~ buildPath(realPathOf(dir), "oracle.nix") ~ "\" { lib = import \"" ~ nixpkgs ~ "/lib\"; }"]);
             {
                 import std.file : readText;
 
@@ -319,7 +344,7 @@ private size_t[2] check(Target t, string[] delegate(string code, string query, s
         }
         ++accepted;
         const dir = scratchTree("emit-cargo");
-        scope (exit) rmdirRecurse(dir);
+        scope (exit) removeScratchTree(dir);
         materialize(crate, dir);
         const toml = e.code.replace("[package]\n",
             "[package]\nname = \"fx\"\nversion = \"0.0.0\"\nedition = \"2021\"\nlicense = \"MIT\"\n"
@@ -329,7 +354,8 @@ private size_t[2] check(Target t, string[] delegate(string code, string query, s
             Config.stderrPassThrough,
             size_t.max, dir);
         assert(r.status == 0, text(query, ":\n", r.output));
-        auto got = lines(r.output).filter!(l => l != "Cargo.toml.orig" && l != "Cargo.lock").array;
+        auto got = lines(r.output).filter!(l => l != "Cargo.toml.orig" && l != "Cargo.lock")
+            .map!(l => l.replace("\\", "/")).array;
         assert(got == want, text("cargo `", query, "`:\n  cargo lists ", got, "\n  the fileset holds ", want,
             "\n--- code ---\n", e.code));
     }
@@ -351,18 +377,17 @@ private size_t[2] check(Target t, string[] delegate(string code, string query, s
             continue;
         ++accepted;
         const dir = scratchTree("emit-bazel");
-        scope (exit) rmdirRecurse(dir);
+        scope (exit) removeScratchTree(dir);
         materialize(oracleTree, dir);
         const globCall = e.code.splitter('\n').filter!(l => !l.startsWith("#")).join("\n");
         write(buildPath(dir, "BUILD.bazel"), "filegroup(name = \"x\", srcs = " ~ globCall ~ ")\n");
-        write(buildPath(dir, "WORKSPACE"), "");
-        write(buildPath(dir, ".bazelrc"), "common --noenable_bzlmod\n");
+        write(buildPath(dir, "MODULE.bazel"), "");
         const r = execute(["bazel", "--batch", "query", "labels(srcs, //:x)", "--output=label"], null,
             Config.none, size_t.max, dir);
         assert(r.status == 0, text(query, ":\n", r.output));
         // The oracle's own files are not the tree's.
         auto got = lines(r.output).filter!(l => l.startsWith("//:")).map!(l => l[3 .. $])
-            .filter!(l => l != "BUILD.bazel" && l != "WORKSPACE" && l != ".bazelrc").array;
+            .filter!(l => l != "BUILD.bazel" && l != "MODULE.bazel").array;
         auto want = membersOf(oracleTree, query);
         sort(got);
         assert(got == want, text("bazel `", query, "`:\n  bazel lists ", got, "\n  the fileset holds ", want));

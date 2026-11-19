@@ -1631,7 +1631,7 @@ and its SWHID is `swh:1:dir:` and the id `git write-tree` checks.
     if (!haveNix())
         return skipTest("nix-store is not installed");
 
-    foreach (t; oracleTrees(60))
+    foreach (t; diskOracleTrees(60))
     {
         const ours = idOf!(GitTreeScheme!SHA1)(t.literal);
         const theirs = onDisk(t.literal, "git-sri", dir => nixGitHash(dir));
