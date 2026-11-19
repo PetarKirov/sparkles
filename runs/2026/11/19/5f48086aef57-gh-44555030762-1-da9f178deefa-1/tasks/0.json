@@ -1,0 +1,1 @@
+{"tasks":[{"id":"test:test-utils:sanitize:parallel","series":"1972ab65253214e9b019f09f15128e1248ff60fa06655ec0864ce8ef0f8629a1","outcome":"passed","start":1466406382300,"end":1470221114000,"metrics":{"task.wall":3814731700}}]}
