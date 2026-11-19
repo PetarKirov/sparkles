@@ -37,6 +37,7 @@ surface less its viewport insets (a safe area, the soft keyboard).
 | `minSize`                  | The resize floor, `popupMinWidth` × `popupMinHeight` by default                   |
 | `keepLastSide`, `lastSide` | The side the last accepted placement used, so an overlay does not swap needlessly |
 | `arrow`                    | Report an arrow cell                                                              |
+| `arrowClearance`           | Cells the arrow needs between anchor and overlay, added to `gap` with `arrow`     |
 | `anchorClip`               | The anchor's clip, read only for the anchor-hidden verdict                        |
 
 The adjustments run flip, then slide, then resize. A slide stops at the
@@ -55,6 +56,22 @@ edge.
 | `anchorLocal`           | The anchor in the overlay's own cells                                     |
 | `overhang`              | How far the asked-for placement overhung each side                        |
 | `anchorHidden`          | The anchor is wholly outside `anchorClip`                                 |
+
+## Arrows (`sparkles.ui.overlay.arrow`)
+
+A box draws its arrow from `Decoration.arrow`, `arrowOffset` (the cell along
+the edge, from its start) and `arrowEdge` (the edge it pokes out of). Every
+canvas — the cell grid, the terminal grid, raylib, Vulkan — and the HTML
+emitter take the cell from one function, so they agree on it.
+
+| Symbol                             | Meaning                                                                              |
+| ---------------------------------- | ------------------------------------------------------------------------------------ |
+| `arrowCell(edge, offset, w, h)`    | The `ArrowCell`: the edge, the cell along it clamped off both corners, and `visible` |
+| `facingEdge(side)`                 | The overlay edge facing an anchor it was placed on `side` of                         |
+| `arrowNotch(edge)`, `arrowNotchAt` | The box-drawing notch a cell target draws, and the cell it goes in                   |
+
+An edge shorter than three cells draws no arrow: clamped, it would land on a
+corner.
 
 To size content to the side it lands on, ask once with the content's bound,
 lay out within `room`, then ask again with the measured size and

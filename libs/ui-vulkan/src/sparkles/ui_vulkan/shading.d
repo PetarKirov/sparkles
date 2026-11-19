@@ -17,7 +17,7 @@ $(UL
     $(LI `roundedBox`: a box with a corner radius, filled, and a ring of the
     border's thickness outside it, both from a signed distance (`UVK11`).)
     $(LI `arrow`: the popup arrow's triangle, filled, with its two slanted
-    edges stroked one pixel wide.)
+    edges stroked one pixel wide, pointing the way `shape.y` says.)
     $(LI `coverageGlyph`, `colourGlyph`: a glyph from an atlas page.)
     $(LI `image`: a picture, filtered, times the foreground alpha (`UVK24`).)
     $(LI `shadow`: a box's drop shadow — the box grown by a spread and
@@ -315,24 +315,65 @@ float blurredBoxCoverage(vec2 p, vec4 box, float r, float sigma)
     return sum / (2.5066283f * sigma);
 }
 
-/// The signed distance from `p` to the arrow's triangle bounded by `box`:
-/// apex at the middle of its top, base along its bottom. Exact inside; an
-/// underestimate outside, near a corner.
-float arrowDistance(vec2 p, vec4 box)
+/// The apex of the arrow's triangle bounded by `box`, pointing `dir` (the
+/// record's `shape.y`: 0 up, 1 down, 2 left, 3 right — `PLC10`): the middle of
+/// that side of the box.
+vec2 arrowApex(vec4 box, float dir)
 {
-    const apex = v2(box.x + box.z * 0.5f, box.y);
-    const left = v2(box.x, box.y + box.w);
-    const right = v2(box.x + box.z, box.y + box.w);
-    const centre = v2(apex.x, box.y + box.w * 0.6f);
-    return max(max(edgeDistance(p, left, right, centre), edgeDistance(p, left, apex, centre)),
-        edgeDistance(p, apex, right, centre));
+    if (dir > 2.5f)
+        return v2(box.x + box.z, box.y + box.w * 0.5f);
+    if (dir > 1.5f)
+        return v2(box.x, box.y + box.w * 0.5f);
+    if (dir > 0.5f)
+        return v2(box.x + box.z * 0.5f, box.y + box.w);
+    return v2(box.x + box.z * 0.5f, box.y);
+}
+
+/// The two ends of the arrow's base: the corners of the side opposite the
+/// apex — left then right for an arrow pointing up or down, top then bottom
+/// for one pointing sideways.
+vec2 arrowBaseA(vec4 box, float dir)
+{
+    if (dir > 2.5f)
+        return v2(box.x, box.y);
+    if (dir > 1.5f)
+        return v2(box.x + box.z, box.y);
+    if (dir > 0.5f)
+        return v2(box.x, box.y);
+    return v2(box.x, box.y + box.w);
+}
+
+/// ditto
+vec2 arrowBaseB(vec4 box, float dir)
+{
+    if (dir > 2.5f)
+        return v2(box.x, box.y + box.w);
+    if (dir > 1.5f)
+        return v2(box.x + box.z, box.y + box.w);
+    if (dir > 0.5f)
+        return v2(box.x + box.z, box.y);
+    return v2(box.x + box.z, box.y + box.w);
+}
+
+/// The signed distance from `p` to the arrow's triangle bounded by `box`,
+/// pointing `dir`: apex at the middle of that side, base along the opposite
+/// one. Exact inside; an underestimate outside, near a corner.
+float arrowDistance(vec2 p, vec4 box, float dir)
+{
+    const apex = arrowApex(box, dir);
+    const a = arrowBaseA(box, dir);
+    const b = arrowBaseB(box, dir);
+    const centre = v2(apex.x + ((a.x + b.x) * 0.5f - apex.x) * 0.6f,
+        apex.y + ((a.y + b.y) * 0.5f - apex.y) * 0.6f);
+    return max(max(edgeDistance(p, a, b, centre), edgeDistance(p, a, apex, centre)),
+        edgeDistance(p, apex, b, centre));
 }
 
 /// The fraction of the pixel centred at `p` inside the arrow's triangle, as
 /// $(LREF roundedBoxCoverage) finds it for a box.
-float arrowCoverage(vec2 p, vec4 box)
+float arrowCoverage(vec2 p, vec4 box, float dir)
 {
-    const d = arrowDistance(p, box);
+    const d = arrowDistance(p, box, dir);
     if (abs(d) >= 1.0f)
         return coverageOf(d);
     const pitch = 1.0f / subSamples;
@@ -341,7 +382,7 @@ float arrowCoverage(vec2 p, vec4 box)
         foreach (i; 0 .. subSamples)
         {
             const s = v2(p.x - 0.5f + (i + 0.5f) * pitch, p.y - 0.5f + (j + 0.5f) * pitch);
-            sum += coverageOf(arrowDistance(s, box) * subSamples);
+            sum += coverageOf(arrowDistance(s, box, dir) * subSamples);
         }
     return sum / (subSamples * subSamples);
 }
@@ -464,12 +505,12 @@ vec4 shade(vec2 p, vec4 box, vec4 fill, vec4 edge, vec4 shape, vec4 coverageTexe
     }
     if (kind < 2.5f)
     {
-        const apex = v2(box.x + box.z * 0.5f, box.y);
-        const left = v2(box.x, box.y + box.w);
-        const right = v2(box.x + box.z, box.y + box.w);
-        const stroke = max(strokeCoverage(p, left, apex), strokeCoverage(p, apex, right));
+        const apex = arrowApex(box, shape.y);
+        const a = arrowBaseA(box, shape.y);
+        const b = arrowBaseB(box, shape.y);
+        const stroke = max(strokeCoverage(p, a, apex), strokeCoverage(p, apex, b));
         return over(premultiplied(edge, stroke, srgb),
-            premultiplied(fill, arrowCoverage(p, box), srgb));
+            premultiplied(fill, arrowCoverage(p, box, shape.y), srgb));
     }
     if (kind < 3.5f)
         return glyphColour(fill, edge, coverageTexel.x, shape.y, shape.z, srgb);

@@ -23,6 +23,7 @@ module sparkles.ui.pixel_geometry;
 
 import sparkles.ui.canvas : FillAxis, RuleEdge, Scrollbar;
 import sparkles.ui.geometry : Insets, Rect;
+import sparkles.ui.overlay.place : Side;
 import sparkles.ui.state : scrollbarThumb;
 import sparkles.ui.style : BorderStyle, Shadow;
 
@@ -634,8 +635,8 @@ unittest
     assert(shadowRect(box, Shadow(blur: -4)) == box);
 }
 
-/// The popup arrow's triangle, in device pixels: its apex and its base's left
-/// and right ends.
+/// The popup arrow's triangle, in device pixels: its apex and its base's two
+/// ends — left then right on a horizontal edge, top then bottom on a vertical one.
 struct ArrowTriangle
 {
     float[2] apex;  ///
@@ -644,15 +645,30 @@ struct ArrowTriangle
 }
 
 /**
-The arrow off a popup's top edge: a triangle whose base, one pixel into the
-box so it merges with the surface, centres on the middle of cell column
-`arrowOffset`, a third of a cell tall (at least 4 pixels) and twice that wide.
+The arrow out of edge `edge` of `box` (device pixels): a triangle whose base,
+one pixel into the box so it merges with the surface, centres on the middle of
+cell `along` of that edge, a third of a cell tall (at least 4 pixels) and twice
+that wide (`PLC10`). `along` is already clamped — `sparkles.ui.overlay.arrow.arrowCell`
+— so a cell target and a pixel target put it in the same cell.
 */
-ArrowTriangle arrowTriangle(int boxX, int boxY, int arrowOffset, int cellW, int cellH) @safe pure nothrow @nogc
+ArrowTriangle arrowTriangle(in Rect box, Side edge, int along, int cellW, int cellH) @safe pure nothrow @nogc
 {
     const size = cellH / 3 < 4 ? 4.0f : cast(float)(cellH / 3);
-    const cx = boxX + arrowOffset * cellW + cellW * 0.5f;
-    return ArrowTriangle([cx, boxY - size], [cx - size, boxY + 1.0f], [cx + size, boxY + 1.0f]);
+    final switch (edge)
+    {
+        case Side.top:
+        case Side.bottom:
+            const cx = box.x + along * cellW + cellW * 0.5f;
+            const y = edge == Side.top ? cast(float) box.y : cast(float)(box.y + box.height);
+            const s = edge == Side.top ? -1.0f : 1.0f;
+            return ArrowTriangle([cx, y + s * size], [cx - size, y - s], [cx + size, y - s]);
+        case Side.left:
+        case Side.right:
+            const cy = box.y + along * cellH + cellH * 0.5f;
+            const x = edge == Side.left ? cast(float) box.x : cast(float)(box.x + box.width);
+            const s = edge == Side.left ? -1.0f : 1.0f;
+            return ArrowTriangle([x + s * size, cy], [x - s, cy - size], [x - s, cy + size]);
+    }
 }
 
 ///
@@ -660,9 +676,16 @@ ArrowTriangle arrowTriangle(int boxX, int boxY, int arrowOffset, int cellW, int 
 @safe pure nothrow @nogc
 unittest
 {
-    const a = arrowTriangle(100, 50, 2, 10, 21);
+    const box = Rect(100, 50, 80, 63);
+    const a = arrowTriangle(box, Side.top, 2, 10, 21);
     assert(a.apex == [125.0f, 43.0f] && a.left == [118.0f, 51.0f] && a.right == [132.0f, 51.0f]);
-    assert(arrowTriangle(0, 10, 0, 8, 9).apex == [4.0f, 6.0f], "at least 4 px");
+    assert(arrowTriangle(Rect(0, 10, 9, 9), Side.top, 0, 8, 9).apex == [4.0f, 6.0f], "at least 4 px");
+    const b = arrowTriangle(box, Side.bottom, 2, 10, 21);
+    assert(b.apex == [125.0f, 120.0f] && b.left == [118.0f, 112.0f], "points down, base one pixel in");
+    const l = arrowTriangle(box, Side.left, 1, 10, 21);
+    assert(l.apex == [93.0f, 81.5f] && l.left == [101.0f, 74.5f] && l.right == [101.0f, 88.5f]);
+    const r = arrowTriangle(box, Side.right, 1, 10, 21);
+    assert(r.apex == [187.0f, 81.5f] && r.left == [179.0f, 74.5f]);
 }
 
 // ---------------------------------------------------------------------------

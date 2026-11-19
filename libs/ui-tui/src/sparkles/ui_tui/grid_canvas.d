@@ -41,6 +41,7 @@ import sparkles.ui.image : defaultCellPixels, fitRect, ImageData, ImageFit, Imag
 import sparkles.ui.image_raster : ImageRung, imageRungOf, paintImageRaster;
 import sparkles.ui.interp.immediate : fillSpanCells, paintFillSpanCells, paintImagePlaceholder;
 import sparkles.ui.style : BorderStyle, Visual;
+import sparkles.ui.overlay.arrow : arrowCell, arrowNotch, arrowNotchAt;
 import sparkles.base.term_caps : BlockTier;
 import sparkles.ui.tokens : boxGlyphs, projectBorder, TargetCapabilities;
 
@@ -787,7 +788,14 @@ struct GridCanvas
         setc(x0, y1, g.bottomLeft);
         setc(x1, y1, g.bottomRight);
         if (v.arrow)
-            setc(x0 + 1 + v.arrowOffset, y0, '┴');
+        {
+            const a = arrowCell(v.arrowEdge, v.arrowOffset, r.width, r.height);
+            if (a.visible)
+            {
+                const at = arrowNotchAt(a, x0, y0, x1, y1);
+                setc(at[0], at[1], arrowNotch(a.edge));
+            }
+        }
     }
 
     /**
@@ -1199,11 +1207,11 @@ static assert(isCanvas!GridCanvas);
     auto canvas = GridCanvas(&g, RgbColor(0, 0, 0));
     canvas.fillRect(Rect(0, 0, 4, 3),
         Visual(bg: RgbColor(0xf8, 0xf8, 0xf8), hasBg: true, borderRadius: 4, arrow: true,
-            arrowOffset: 1, border: typeof(Visual.border)(width: Insets.all(1),
+            arrowOffset: 2, border: typeof(Visual.border)(width: Insets.all(1),
                 style: BorderStyle.solid, color: RgbColor(0x88, 0x88, 0x88))));
     assert(g[0, 0].grapheme == "╭" && g[3, 0].grapheme == "╮");
     assert(g[0, 2].grapheme == "╰" && g[3, 2].grapheme == "╯");
-    assert(g[2, 0].grapheme == "┴"); // arrow notch at x0 + 1 + arrowOffset(1)
+    assert(g[2, 0].grapheme == "┴"); // arrow notch at x0 + arrowOffset(2)
 
     // A bottom-only dotted border → a dotted cell underline (no glyphs disturbed).
     Grid u;

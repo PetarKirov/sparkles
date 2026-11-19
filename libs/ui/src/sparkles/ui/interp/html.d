@@ -20,6 +20,7 @@ module sparkles.ui.interp.html;
 
 import sparkles.ui.canvas : FillAxis;
 import sparkles.ui.geometry : Insets;
+import sparkles.ui.overlay.place : Side;
 import sparkles.ui.style :
     BorderStyle, FontRole, Palette, resolveVisual, Slot, Visual;
 import sparkles.ui.widget : Alignment, Visibility, Widget, WidgetKind, WidgetTree;
@@ -333,7 +334,7 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
             put(w, "\">");
             // A popup arrow renders as a rotated bordered square, as in the CSS.
             if (vis.arrow)
-                emitArrow(w, vis, node.decoration.arrowOffset);
+                emitArrow(w, vis, node.decoration.arrowEdge, node.decoration.arrowOffset);
             // A scroll offset translates the children inside the clipped box
             // (`lh` = one text row, the cell-grid row analog).
             const scrolled = node.childOffset.x != 0 || node.childOffset.y != 0;
@@ -354,13 +355,34 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
     }
 }
 
-/// The `.twoslash-popup-arrow` analog: a small square with top+right borders,
-/// rotated -45°, in the surface color, poking up out of the box's top edge.
-private void emitArrow(Writer)(ref Writer w, in Visual vis, int arrowOffset)
+/**
+The `.twoslash-popup-arrow` analog: a small square with top+right borders,
+rotated so that corner pokes out of edge `edge` (`PLC10`), in the surface
+color. The browser has the box's size, so only the start corner is kept
+clear here; a cell target clamps both ends through `arrowCell`.
+*/
+private void emitArrow(Writer)(ref Writer w, in Visual vis, Side edge, int arrowOffset)
 {
-    put(w, "<div style=\"position:absolute;top:-4px;left:");
-    num(w, arrowOffset + 1);
-    put(w, "ch;width:6px;height:6px;transform:rotate(-45deg);background:");
+    const along = arrowOffset < 1 ? 1 : arrowOffset;
+    put(w, "<div style=\"position:absolute;");
+    final switch (edge)
+    {
+        case Side.top: put(w, "top:-4px;left:"); break;
+        case Side.bottom: put(w, "bottom:-4px;left:"); break;
+        case Side.left: put(w, "left:-4px;top:"); break;
+        case Side.right: put(w, "right:-4px;top:"); break;
+    }
+    num(w, along);
+    put(w, edge == Side.top || edge == Side.bottom ? "ch" : "lh");
+    put(w, ";width:6px;height:6px;transform:rotate(");
+    final switch (edge)
+    {
+        case Side.top: put(w, "-45"); break;
+        case Side.bottom: put(w, "135"); break;
+        case Side.left: put(w, "-135"); break;
+        case Side.right: put(w, "45"); break;
+    }
+    put(w, "deg);background:");
     rgba(w, vis.bg, vis.bgAlpha);
     if (vis.border.any)
     {
@@ -627,7 +649,7 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
     const popup = b.add(Widget(kind: WidgetKind.popup, slot: Slot.surface,
         padding: Insets.all(1), paintBackground: true, children: [docs],
         decoration: Decoration(borderWidth: Insets.all(1), borderStyle: BorderStyle.solid,
-            borderRadius: 4, shadow: true, arrow: true, arrowOffset: 1)));
+            borderRadius: 4, shadow: true, arrow: true, arrowOffset: 2)));
     auto tree = b.finish(popup);
 
     SharedBuffer!(char, 2048) w;
@@ -639,7 +661,7 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
     assert(s.canFind("border-radius:4px"));
     assert(s.canFind("box-shadow:0px 1px 4px"));
     assert(s.canFind("border-top:1px solid"));
-    assert(s.canFind("transform:rotate(-45deg)")); // the arrow
+    assert(s.canFind("top:-4px;left:2ch") && s.canFind("transform:rotate(-45deg)")); // the arrow
     // The surface background is opaque #f8f8f8.
     assert(s.canFind("background:rgb(248,248,248)"));
     // Docs run: sans face at 0.8em, muted color, HTML-escaped `<T>`.

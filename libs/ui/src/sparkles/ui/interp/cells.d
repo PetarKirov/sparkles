@@ -23,6 +23,7 @@ import sparkles.ui.style : BorderStyle, BoxBorder;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.ui.geometry : Insets, Point, Rect, Size;
 import sparkles.ui.tokens : BoxGlyphs, boxGlyphs, projectBorder, TargetCapabilities;
+import sparkles.ui.overlay.arrow : arrowCell, arrowNotch, arrowNotchAt;
 import sparkles.ui.style : Visual;
 
 import sparkles.base.term_color :
@@ -420,7 +421,14 @@ struct CellGrid
                 setc(x0, y1, corners[2]);
                 setc(x1, y1, corners[3]);
                 if (v.arrow)
-                    setc(x0 + 1 + v.arrowOffset, y0, '┴');
+                {
+                    const a = arrowCell(v.arrowEdge, v.arrowOffset, r.width, r.height);
+                    if (a.visible)
+                    {
+                        const at = arrowNotchAt(a, x0, y0, x1, y1);
+                        setc(at[0], at[1], arrowNotch(a.edge));
+                    }
+                }
             }
         }
     }
