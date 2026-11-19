@@ -57,6 +57,50 @@ edge.
 | `overhang`              | How far the asked-for placement overhung each side                        |
 | `anchorHidden`          | The anchor is wholly outside `anchorClip`                                 |
 
+## The overlay layer (`sparkles.ui.overlay.arena`)
+
+A `WidgetKind.popup` node that is not the tree's root is an overlay. It is
+written as a child of the node it hangs off, and `Widget.overlay` (an
+`OverlaySpec`) says where it goes and what it paints over. Layout takes it out
+of its parent's flow and places it against the parent's rect, inside the
+root's rect. The display list paints it after the flow and outside every
+ancestor's clip, and the hit and key targets list it last, so it wins the
+cells it covers.
+
+| `OverlaySpec` field      | Meaning                                                                      |
+| ------------------------ | ---------------------------------------------------------------------------- |
+| `band`                   | `OverlayBand`: `adorn`, `popup` (the default), `hint` or `notify`            |
+| `side`, `alignment`      | As in `PlaceRequest`                                                         |
+| `gap`, `shift`, `adjust` | ditto                                                                        |
+| `flipRule`               | ditto                                                                        |
+| `cover`                  | Take the anchor's rect itself — an adornment, such as the dock's drop hint   |
+| `hasAnchor`, `anchor`    | Anchor to a rect in the parent's own cells instead of to the whole parent    |
+| `closing`                | Animating out: it still paints, and neither it nor anything in it takes hits |
+
+Bands paint in that order; within a band, overlays paint in tree order. An
+overlay nested in another takes the higher of the two bands, so it never paints
+below its parent. An overlay is open for a frame when its node is in that
+frame's tree and visible, and its anchor has not scrolled out of view
+(`Frame.overlayHidden`). A view closes an overlay by no longer building it.
+
+| Symbol                            | Meaning                                                                      |
+| --------------------------------- | ---------------------------------------------------------------------------- |
+| `overlayArena(tree, frames, g)`   | The frame's `OverlayArena`: its open overlays in paint order, generation `g` |
+| `OverlayArena.at(p)`              | The topmost overlay under `p` that takes hits — the routing rung             |
+| `OverlayArena.idOf(key)`          | This frame's `OverlayId` for the overlay keyed `key`                         |
+| `OverlayArena.isOpen(id)`         | Whether `id` is from this frame: a handle kept from an earlier one is not    |
+| `OverlayArena.isWithin(a, c)`     | Whether `c` is `a` or nested in it                                           |
+| `OverlayArena.topmost(band)`      | The last-painted overlay in `band`                                           |
+| `eachOverlay!visit(tree, frames)` | The paint order every walk shares                                            |
+| `maxOverlays`                     | 16: the arena's capacity; past it, `overflowed` is set                       |
+
+```d
+const menu = b.add(Widget(kind: WidgetKind.popup, slot: Slot.surface,
+    paintBackground: true, overlay: OverlaySpec(side: Side.bottom, gap: 0),
+    children: [items]));
+const button = b.add(Widget(kind: WidgetKind.row, children: [label, menu]));
+```
+
 ## Arrows (`sparkles.ui.overlay.arrow`)
 
 A box draws its arrow from `Decoration.arrow`, `arrowOffset` (the cell along

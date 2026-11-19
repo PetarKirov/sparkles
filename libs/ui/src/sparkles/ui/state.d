@@ -39,6 +39,7 @@ import sparkles.ui.wrap : eachRunCluster, spanPaintAdvance;
 import sparkles.input : cellPointer, InputCapabilities, mousePointer,
     PointerAction, PointerEvent, touchPointer;
 import sparkles.ui.geometry : Point, Rect;
+import sparkles.ui.overlay.arena : eachOverlay, floats;
 import sparkles.ui.layout : childClipOf, clipsX, clipsY, cullClipOf, Frame,
     unclipped;
 import sparkles.ui.widget : TextSpan, Visibility, WidgetKind, WidgetTree;
@@ -163,11 +164,19 @@ HoverTarget[] hoverTargets(in WidgetTree tree, in Frame[] frames) pure nothrow
         const childClip = shifts ? cullClipOf(node, rect, clip)
             : childClipOf(node, rect, clip);
         foreach (ci; node.children)
-            walk(ci, childClip, sx - fx, sy - fy, sc);
+            if (!floats(tree, ci))
+                walk(ci, childClip, sx - fx, sy - fy, sc);
     }
 
-    walk(tree.root, unclipped(), 0, 0, Scissor(-float.infinity,
-        -float.infinity, float.infinity, float.infinity));
+    enum noScissor = Scissor(-float.infinity, -float.infinity, float.infinity, float.infinity);
+    walk(tree.root, unclipped(), 0, 0, noScissor);
+    // The overlays come last, in paint order, so the topmost wins (`LYR1`);
+    // each is clipped by nothing it escaped, and one closing takes no hits
+    // (`LYR10`).
+    eachOverlay!((uint idx, uint parent, bool closing) {
+        if (!closing)
+            walk(idx, unclipped(), 0, 0, noScissor);
+    })(tree, frames);
     return targets;
 }
 
@@ -248,10 +257,16 @@ KeyTarget[] keyTargets(in WidgetTree tree, in Frame[] frames) pure nothrow
         // out of a viewport can no more be clicked than painted.
         const childClip = childClipOf(node, rect, clip);
         foreach (ci; node.children)
-            walk(ci, childClip);
+            if (!floats(tree, ci))
+                walk(ci, childClip);
     }
 
     walk(tree.root, unclipped());
+    // In the order the display list paints them, as `hoverTargets` (`LYR1`).
+    eachOverlay!((uint idx, uint parent, bool closing) {
+        if (!closing)
+            walk(idx, unclipped());
+    })(tree, frames);
     return targets;
 }
 
@@ -616,8 +631,9 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames, ref DocRowStore sto
                     if (box_.y + box_.height < clipBottom)
                         clipBottom = box_.y + box_.height;
                 }
-                foreach (ci; node.children)
-                    walk(ci);
+                foreach (ci; node.children) // an overlay is no row of the document
+                    if (!floats(tree, ci))
+                        walk(ci);
                 clipTop = keepTop;
                 clipBottom = keepBottom;
                 break;
@@ -734,7 +750,7 @@ long sourceOffsetAt(in WidgetTree tree, in Frame[] frames, Point p,
         }
         const childClip = childClipOf(node, frames[idx].rect, clip);
         foreach (ci; node.children)
-            walk(ci, childClip);
+            walk(ci, floats(tree, ci) ? unclipped() : childClip);
     }
 
     walk(tree.root, unclipped());
@@ -814,7 +830,7 @@ Rect[] selectionRects(in WidgetTree tree, in Frame[] frames,
         }
         const childClip = childClipOf(node, frames[idx].rect, clip);
         foreach (ci; node.children)
-            walk(ci, childClip);
+            walk(ci, floats(tree, ci) ? unclipped() : childClip);
     }
 
     walk(tree.root, unclipped());
@@ -990,7 +1006,7 @@ in (frames.length == tree.nodes.length,
         }
         const childClip = childClipOf(node, rect, clip);
         foreach (ci; node.children)
-            walk(ci, childClip);
+            walk(ci, floats(tree, ci) ? unclipped() : childClip);
     }
 
     walk(tree.root, unclipped());

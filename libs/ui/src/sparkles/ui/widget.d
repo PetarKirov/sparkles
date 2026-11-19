@@ -23,6 +23,7 @@ import sparkles.ui.style : Decoration, Slot, StateSet, TextStyle;
 import sparkles.ui.wrap : TextWrap;
 import sparkles.ui.effect : EffectId;
 import sparkles.ui.image : ImageFit, ImageHandle;
+import sparkles.ui.overlay.arena : OverlaySpec;
 
 @safe:
 
@@ -59,7 +60,11 @@ enum WidgetKind : ubyte
     column, /// vertical container (children top→bottom, `gap` between)
     stack,  /// overlay container (children share the origin; z = order)
     panel,  /// a `box` container with padding + a slot background/border
-    popup,  /// a `panel` that floats (shadow, detached from flow)
+    /// An overlay (`POP6`): a `panel` that layout takes out of its parent's
+    /// flow and places against the parent's rect, painted and hit above
+    /// everything in its band (`Widget.overlay`; `sparkles.ui.overlay.arena`).
+    /// As a tree's root it is just a surface: there is nothing to float out of.
+    popup,
 }
 
 /// One styled span of a $(D WidgetKind.rich) run (`WGT6`) — defined in
@@ -164,6 +169,10 @@ struct Widget
     EffectId effect;
 
     Decoration decoration;   /// box chrome (border/radius/shadow/arrow) — slot-referencing
+    /// A `popup`'s placement, band and state (`POP3`): where it goes against
+    /// the node it is a child of, and what it paints over. Read only on a
+    /// `popup` that is not the root.
+    OverlaySpec overlay;
     TextStyle textStyle;     /// text chrome (font role/size, bold/italic/underline)
 
     uint[] children;         /// child node indices (empty for leaves)

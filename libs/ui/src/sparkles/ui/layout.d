@@ -34,6 +34,8 @@ import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.base.text.width : codepointWidth;
 import sparkles.ui.geometry : Constraints, Insets, Point, Rect, Size, SizeSpec;
 import sparkles.ui.image : cellPixelsOf, imageCells;
+import sparkles.ui.overlay.arena : floats;
+import sparkles.ui.overlay.place : PlaceRequest, Side, solvePlacement = place;
 import sparkles.ui.style : BorderStyle, TextStyle;
 import sparkles.ui.widget : Alignment, Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextSpan, TextWrap, wrapLines, wrapSpans, sharedWrapSpans, spanLineWidth,
@@ -63,6 +65,17 @@ struct Frame
     /// Committed visible projection after frame fitting. Painting and hits
     /// share these spans; `spanLines` retains logical selection/source metadata.
     const(TextSpan[])[] paintSpanLines;
+
+    /// For an overlay (`sparkles.ui.overlay.arena`): the side of its anchor the
+    /// placement resolved to, and the arrow's cell along the edge facing the
+    /// anchor (`PLC10`), or `-1` when it has none or no room for one.
+    Side overlaySide;
+    /// ditto
+    int overlayArrow = -1;
+    /// For an overlay: its anchor is wholly clipped — scrolled out of a
+    /// viewport — so it is not open this frame: not painted, not hit, not in
+    /// the arena. Whether it is also dismissed is the view's policy.
+    bool overlayHidden;
 }
 
 /// Default cell-profile measurement. Backend cell-to-pixel metrics do not
@@ -389,12 +402,15 @@ if (isTextMeasure!TM)
     refit(store.frames, n);
     auto natW = store.natW, alloW = store.alloW, natH = store.natH;
     auto frames = store.frames;
+    int surfaceW; // the root's width: the widest an overlay may be (set below)
 
     // -- shared helpers ------------------------------------------------------
 
     // A `collapsed` child is removed from flow (LAY11): zero extent, no gap.
+    // So is an overlay (`LYR7`): it is sized and placed on its own, after the
+    // flow, and an open dropdown neither grows nor moves the box it hangs off.
     bool isCollapsed(uint ci)
-        => tree.nodes[ci].visibility == Visibility.collapsed;
+        => tree.nodes[ci].visibility == Visibility.collapsed || floats(tree, ci);
 
     // The offset aligning a child within `slack` leftover cells (LAY8).
     static int alignOffset(Alignment a, int slack)
@@ -738,6 +754,15 @@ if (isTextMeasure!TM)
                 allocWidth(ci, cw);
             }
         }
+        // An overlay's width is its own: the anchor's when it covers it, else
+        // its natural width, as wide as the surface allows (`PLC9`).
+        foreach (ci; node.children)
+            if (floats(tree, ci))
+            {
+                const spec = tree.nodes[ci].overlay;
+                allocWidth(ci, spec.cover ? (spec.hasAnchor ? spec.anchor.width : allocated)
+                    : resolveAgainst(tree.nodes[ci].width, natW[ci], surfaceW));
+            }
     }
 
     // -- pass 3: height for allocated width, bottom-up -------------------------
@@ -965,13 +990,71 @@ if (isTextMeasure!TM)
     foreach (i; 0 .. n)
         natW[i] = naturalWidth(cast(uint) i);
 
-    allocWidth(tree.root, resolveRoot(tree.rootNode.width, natW[tree.root], c.maxW));
+    surfaceW = resolveRoot(tree.rootNode.width, natW[tree.root], c.maxW);
+    allocWidth(tree.root, surfaceW);
 
     foreach (i; 0 .. n)
         natH[i] = naturalHeight(cast(uint) i);
 
     place(tree.root, Point(0, 0),
         resolveRoot(tree.rootNode.height, natH[tree.root], c.maxH));
+
+    // -- overlays: placed against their anchors, after the flow ----------------
+    // Tree order, so an overlay nested in another is placed once the one it
+    // hangs off has its rect. The boundary is the surface — the root's frame.
+
+    void float_(uint parent, uint ci, in Rect clip)
+    {
+        const spec = tree.nodes[ci].overlay;
+        const pr = frames[parent].rect;
+        const anchor = spec.hasAnchor
+            ? Rect(pr.x + spec.anchor.x, pr.y + spec.anchor.y, spec.anchor.width, spec.anchor.height)
+            : pr;
+        const boundary = frames[tree.root].rect;
+        Rect at;
+        if (spec.cover)
+        {
+            at = anchor;
+            frames[ci].overlaySide = spec.side;
+            frames[ci].overlayHidden = anchor.intersection(clip).empty && !anchor.empty;
+        }
+        else
+        {
+            const h = resolveAgainst(tree.nodes[ci].height, natH[ci], boundary.height);
+            const g = solvePlacement(PlaceRequest(anchor: anchor, content: Size(alloW[ci], h),
+                side: spec.side, alignment: spec.alignment, gap: spec.gap, shift: spec.shift,
+                adjust: spec.adjust, flipRule: spec.flipRule,
+                arrow: tree.nodes[ci].decoration.arrow, anchorClip: clip), boundary);
+            at = g.rect;
+            frames[ci].overlayHidden = g.anchorHidden;
+            frames[ci].overlaySide = g.side;
+            if (g.hasArrow)
+                frames[ci].overlayArrow = g.arrow;
+        }
+        // A resize narrows the box; its content keeps the width it was laid
+        // out at and its clip, if any, cuts it.
+        if (at.width < alloW[ci])
+            alloW[ci] = at.width;
+        place(ci, at.origin, at.height);
+    }
+
+    // `clip` is the clip the node's children paint under — the one an
+    // overlay's anchor is seen through, and what says it scrolled away.
+    void floatAll(uint idx, in Rect clip)
+    {
+        const childClip = childClipOf(tree.nodes[idx], frames[idx].rect, clip);
+        foreach (ci; tree.nodes[idx].children)
+        {
+            if (floats(tree, ci))
+            {
+                float_(idx, ci, childClip);
+                floatAll(ci, unclipped());
+            }
+            else
+                floatAll(ci, childClip);
+        }
+    }
+    floatAll(tree.root, unclipped());
     // Commit once, outside the no-allocation paint/hit paths. A viewport keeps
     // the complete logical width for scrolling; uncontained rows fit the frame
     // through the same base projection used by string/widget table fields.
@@ -986,7 +1069,8 @@ if (isTextMeasure!TM)
                 node.textStyle, !(overflowX || node.scrollsX));
         }
         foreach (child; node.children)
-            commitPaint(child, overflowX || node.scrollsX || clipsX(node));
+            commitPaint(child, !floats(tree, child)
+                && (overflowX || node.scrollsX || clipsX(node)));
     }
     commitPaint(tree.root, false);
 
