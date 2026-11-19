@@ -37,8 +37,9 @@ import std.file : exists, mkdirRecurse, readText, rmdirRecurse, tempDir, write;
 import std.path : absolutePath, buildNormalizedPath, buildPath, dirName;
 import std.process : thisProcessID;
 static import std.process;
+static import std.algorithm;
 import std.stdio : stderr, writeln;
-import std.string : lineSplitter;
+import std.string : indexOf, lineSplitter;
 static import core.time;
 static import std.stdio;
 import std.sumtype : match;
@@ -73,7 +74,8 @@ int main(string[] args)
     size_t ran;
     foreach (ref o; oracles)
     {
-        if (only.length && !only.canFind(o.id))
+        // An `-all` oracle runs for hours: only when named.
+        if (only.length ? !only.canFind(o.id) : std.algorithm.endsWith(o.id, "-all"))
             continue;
         foreach (v; o.check())
         {
@@ -103,6 +105,8 @@ struct Oracle
 }
 
 immutable Oracle[] oracles = [
+    Oracle("2", &oracle2),
+    Oracle("2-all", &oracle2All),
     Oracle("5", &oracle5),
     Oracle("7", &oracle7),
     Oracle("8", &oracle8),
@@ -243,6 +247,19 @@ DubPlatformValues platformValues(string[] v...)
     DubPlatformValues p;
     p.values = v.dup;
     return p;
+}
+
+/// The recipe `text`, decoded through the `dub.sdl` schema.
+DubManifest decodeRecipe(string text)
+{
+    import sparkles.build_primitives.dub_manifest : decodeDubManifestLenient;
+    import sparkles.wired.sdl : parseSdlDocument, sdlDubRecipe;
+
+    auto parsed = parseSdlDocument!sdlDubRecipe(text);
+    assert(parsed.hasValue, parsed.error.toString);
+    auto decoded = decodeDubManifestLenient(parsed.document);
+    assert(decoded.hasValue, decoded.error.toString);
+    return cast() decoded.value;
 }
 
 /// The root recipe `text` with the fixture `name` among its sub-packages,
@@ -2457,6 +2474,151 @@ Verdict[] oracle7()
             : a1.stats.resultKeys.get(compile, "a") == b1.stats.resultKeys.get(compile, "a") ? "the two worktrees' compiles share a manifest"
             : rebuilt.length ? text("the second round rebuilt ", rebuilt) : null,
             "two worktrees whose compile has one declared key and two manifests both kept hitting, alternating");
+    }
+    return vs;
+}
+
+// === Oracle 2: build equivalence ===
+
+/// The verdict lines of a test runner's report in `output` (` ✓ <module>
+/// <name>`, and the summary's counts without its time), without colours,
+/// sorted.
+string[] verdictLines(string output)
+{
+    import std.regex : ctRegex, replaceAll;
+    import std.string : strip;
+
+    enum ansi = ctRegex!`\x1b\[[0-9;]*m`;
+    enum time = ctRegex!` in [0-9.]+[a-zµ]+s$`;
+    string[] lines;
+    foreach (raw; output.lineSplitter)
+    {
+        auto line = raw.idup.replaceAll(ansi, "");
+        if (line.startsWith("[test:"))
+            line = line.canFind("] ") ? line[line.indexOf("] ") + 2 .. $] : line;
+        if (line.startsWith("Summary: "))
+            lines ~= line.replaceAll(time, "");
+        else if (line.length > 2 && line[0] == ' ' && line[1] >= 0x80)
+            lines ~= line.strip;
+    }
+    return lines.sort.release;
+}
+
+/// What differs between the graph's run of `pkg`'s tests and `dub test`'s;
+/// null when they agree. `tests` counts the verdicts compared.
+string equivalence(string pkg, out size_t tests)
+{
+    import std.process : execute;
+
+    auto g = run(pkg, freshCache("o2"));
+    if (g.error.length)
+        return "the graph could not plan it: " ~ g.error;
+    const d = execute(["dub", "test", "-q", "--skip-registry=all", ":" ~ pkg, "--", "--no-colors"], null,
+        std.process.Config.none, size_t.max, root);
+    const graphLines = verdictLines(g.log), dubLines = verdictLines(d.output);
+    tests = dubLines.length;
+    if (!dubLines.length)
+        return "dub test reported no verdict:" ~ tailOf(d.output);
+    if ((g.exitCode == 0) != (d.status == 0))
+        return text("the graph exited ", g.exitCode, " and dub test ", d.status, ":", tailOf(g.log), tailOf(d.output));
+    if (graphLines != dubLines)
+    {
+        string why = "the verdicts differ:";
+        foreach (l; graphLines)
+            if (!dubLines.canFind(l))
+                why ~= "\n    graph only: " ~ l;
+        foreach (l; dubLines)
+            if (!graphLines.canFind(l))
+                why ~= "\n    dub only:   " ~ l;
+        return why;
+    }
+    return null;
+}
+
+Verdict[] oracle2()
+{
+    import sparkles.build_primitives.dub_manifest : DubConfiguration;
+
+    Verdict[] vs;
+    void compare(string scenario, string pkg)
+    {
+        size_t n;
+        const why = equivalence(pkg, n);
+        vs ~= Verdict(scenario, why, text(n, " verdict lines and the exit status agree"));
+    }
+
+    // A test that inspects a dependency's version identifier.
+    auto lv = Fixture.add("o2v", [
+        "dub.sdl": recipeOf("o2v", null, null, ["ZzOracle2Dependency"]),
+        "src/sparkles/zz_o2v/v.d": "module sparkles.zz_o2v.v;\n\nint v() { return 1; }\n",
+    ]);
+    auto tv = Fixture.add("o2w", [
+        "dub.sdl": recipeOf("o2w", ["zz-oracle-o2v"]),
+        "src/sparkles/zz_o2w/w.d": "module sparkles.zz_o2w.w;\n\nimport sparkles.zz_o2v.v;\n\n"
+            ~ "@(\"o2.dependencyVersion\") unittest\n{\n    version (ZzOracle2Dependency) assert(v() == 1);\n"
+            ~ "    else assert(0, \"the dependency's version identifier is not set\");\n}\n",
+    ]);
+    compare("a dependency's version identifier", tv.name);
+
+    // A test that reads a string import.
+    auto si = Fixture.add("o2s", [
+        "dub.sdl": recipeOf("o2s", null, null, null, (ref DubManifest m) {
+            m.stringImportPaths = [platformValues("views")];
+        }),
+        "views/greeting.txt": "hello\n",
+        "src/sparkles/zz_o2s/s.d": "module sparkles.zz_o2s.s;\n\n"
+            ~ "@(\"o2.stringImport\") unittest\n{\n    assert(import(\"greeting.txt\") == \"hello\\n\");\n}\n",
+    ]);
+    compare("a string import", si.name);
+
+    // A test whose dependency is a sourceLibrary.
+    auto sl = Fixture.add("o2l", [
+        "dub.sdl": recipeOf("o2l", null, null, null, (ref DubManifest m) {
+            m.configurations[0].targetType = "sourceLibrary";
+        }),
+        "src/sparkles/zz_o2l/l.d": "module sparkles.zz_o2l.l;\n\nint fromSource() { return 3; }\n",
+    ]);
+    auto ts = Fixture.add("o2m", [
+        "dub.sdl": recipeOf("o2m", ["zz-oracle-o2l"]),
+        "src/sparkles/zz_o2m/m.d": "module sparkles.zz_o2m.m;\n\nimport sparkles.zz_o2l.l;\n\n"
+            ~ "@(\"o2.sourceLibrary\") unittest\n{\n    assert(fromSource() == 3);\n}\n",
+    ]);
+    compare("a sourceLibrary dependency", ts.name);
+
+    // An application whose mainSourceFile is left out of its test root: a
+    // test in it fails when it is compiled in.
+    auto app = Fixture.add("o2a", [
+        "dub.sdl": recipeOf("o2a", null, null, null, (ref DubManifest m) {
+            m.configurations[0].targetType = "executable";
+            m.mainSourceFile = "src/sparkles/zz_o2a/app.d";
+        }),
+        "src/sparkles/zz_o2a/app.d": "module sparkles.zz_o2a.app;\n\nimport sparkles.zz_o2a.lib;\n\n"
+            ~ "void main() { cast(void) twice(1); }\n\n"
+            ~ "@(\"o2.mainCompiledIn\") unittest\n{\n    assert(0, \"the main source file is in the test root\");\n}\n",
+        "src/sparkles/zz_o2a/lib.d": "module sparkles.zz_o2a.lib;\n\nint twice(int x) => 2 * x;\n\n"
+            ~ "@(\"o2.application\") unittest\n{\n    assert(twice(2) == 4);\n}\n",
+    ]);
+    compare("an application's mainSourceFile", app.name);
+    return vs;
+}
+
+/// Oracle 2 over every package of the root recipe (`--only=2-all`): hours.
+Verdict[] oracle2All()
+{
+    Verdict[] vs;
+    foreach (ref s; decodeRecipe(readText(buildPath(root, "dub.sdl"))).subPackages)
+    {
+        const recipe = buildPath(root, s.path, "dub.sdl");
+        if (s.isInline || !exists(recipe))
+            continue;
+        const name = decodeRecipe(readText(recipe)).name;
+        if (!name.length || name.startsWith(fixturePrefix))
+            continue;
+        size_t n;
+        const why = equivalence(name, n);
+        writeln(why.length ? "FAIL " : "pass ", name, why.length ? ": " ~ why : "");
+        std.stdio.stdout.flush();
+        vs ~= Verdict(name, why, text(n, " verdict lines and the exit status agree"));
     }
     return vs;
 }
