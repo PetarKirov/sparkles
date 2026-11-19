@@ -2584,7 +2584,7 @@ string[] verdictLines(string output)
     import std.string : strip;
 
     enum ansi = ctRegex!`\x1b\[[0-9;]*m`;
-    enum time = ctRegex!` in [0-9.]+[a-zµ]+s$`;
+    enum time = ctRegex!` in [0-9.]+(ms|µs|ns|s|m [0-9.]+s)$`;
     string[] lines;
     foreach (raw; output.lineSplitter)
     {
