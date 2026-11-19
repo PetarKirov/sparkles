@@ -54,7 +54,7 @@ configuration "android" {
     platforms "android"
     targetType "dynamicLibrary"
     targetName "filesetexplorer"
-    excludedSourceFiles "src/app.d" "src/render.d" "src/*_test.d"
+    excludedSourceFiles "src/app.d" "src/cli.d" "src/render.d" "src/*_test.d"
     subConfiguration "sparkles:ui-app" "gui-vulkan"
     dependency "sparkles:ui-vulkan" path="../.."
 }
