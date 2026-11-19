@@ -238,12 +238,14 @@ version (unittest)
 
     private struct LocalHost {}
 
-    private PasteOutcome feed(R)(ref R router, ref FakeHooks hooks, scope const(char)[] text, uint request)
+    // Feeds `text` to `receive` as one paste's chunks; the last outcome.
+    private PasteOutcome feed(scope PasteOutcome delegate(in PasteEvent) @safe pure nothrow receive,
+        scope const(char)[] text, uint request) @safe pure nothrow
     {
         import sparkles.input : Event, match, pasteChunks;
         PasteOutcome last;
         pasteChunks(text, (in Event event) {
-            event.match!((in PasteEvent chunk) { last = router.receive(chunk, hooks); }, (in _) {});
+            event.match!((in PasteEvent chunk) { last = receive(chunk); }, (in _) {});
         }, request);
         return last;
     }
@@ -259,10 +261,10 @@ version (unittest)
     const a = router.route(host, FakeOwner(0, 1), hooks);
     const b = router.route(host, FakeOwner(1, 1), hooks);
     assert(a && b && a.request != b.request && router.pendingCount == 2);
-    assert(feed(router, hooks, "to b", b.request) == PasteOutcome.delivered);
-    assert(feed(router, hooks, "to a", a.request) == PasteOutcome.delivered);
+    assert(feed((in PasteEvent c) => router.receive(c, hooks), "to b", b.request) == PasteOutcome.delivered);
+    assert(feed((in PasteEvent c) => router.receive(c, hooks), "to a", a.request) == PasteOutcome.delivered);
     assert(hooks.received[0] == "to a" && hooks.received[1] == "to b");
-    assert(feed(router, hooks, "again", a.request) == PasteOutcome.dropped, "a reply counts once");
+    assert(feed((in PasteEvent c) => router.receive(c, hooks), "again", a.request) == PasteOutcome.dropped, "a reply counts once");
     assert(hooks.received[0] == "to a" && router.pendingCount == 0);
 }
 
@@ -275,7 +277,7 @@ version (unittest)
     LocalHost host;
     const ticket = router.route(host, FakeOwner(2, 1), hooks);
     hooks.epochs[2] = 2; // the requester closed; its slot was reused
-    assert(feed(router, hooks, "late", ticket.request) == PasteOutcome.cancelled);
+    assert(feed((in PasteEvent c) => router.receive(c, hooks), "late", ticket.request) == PasteOutcome.cancelled);
     assert(!hooks.received[2].length && !router.isPending(ticket.request));
     assert(router.route(host, FakeOwner(2, 1), hooks).refusal == ClipboardRefusal.invalidOwner);
 }
@@ -291,7 +293,7 @@ version (unittest)
     auto long_ = new char[pasteChunkBytes * 2 + 3];
     long_[] = 'x';
     const whole = router.route(host, FakeOwner(0, 1), hooks);
-    assert(feed(router, hooks, long_, whole.request) == PasteOutcome.delivered);
+    assert(feed((in PasteEvent c) => router.receive(c, hooks), long_, whole.request) == PasteOutcome.delivered);
     assert(hooks.received[0] == long_);
 
     const first = router.route(host, FakeOwner(1, 1), hooks);
@@ -302,7 +304,7 @@ version (unittest)
     }, first.request);
     part.last = false;
     assert(router.receive(part, hooks) == PasteOutcome.collecting);
-    assert(feed(router, hooks, "whole", second.request) == PasteOutcome.delivered);
+    assert(feed((in PasteEvent c) => router.receive(c, hooks), "whole", second.request) == PasteOutcome.delivered);
     assert(hooks.received[3] == "whole" && !router.isPending(first.request));
     part.last = true;
     assert(router.receive(part, hooks) == PasteOutcome.dropped && !hooks.received[1].length);
@@ -315,7 +317,7 @@ version (unittest)
     ClipboardRouter!FakeOwner router;
     FakeHooks hooks;
     hooks.focus = 3;
-    assert(feed(router, hooks, "typed", 0) == PasteOutcome.delivered);
+    assert(feed((in PasteEvent c) => router.receive(c, hooks), "typed", 0) == PasteOutcome.delivered);
     assert(hooks.received[3] == "typed");
 
     static struct Deaf
