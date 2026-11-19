@@ -2254,6 +2254,10 @@
             "link": "/libs/ui/reference/hit-ids"
           },
           {
+            "text": "Overlay anchors and placement",
+            "link": "/libs/ui/reference/overlay-placement"
+          },
+          {
             "text": "Backends",
             "link": "/specs/ui/backends"
           },
