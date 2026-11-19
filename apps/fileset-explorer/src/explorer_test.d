@@ -123,13 +123,14 @@ private ExplorerApp* make(string query)
     assert(lines[$ - 2].canFind("Tab"), lines[$ - 2]);
 }
 
-/// FXU21: in a window, Ctrl+V asks the host for the clipboard, and its answer
-/// lands in the query at the caret.
+/// FXU21: in a window, the paste chord (Ctrl+V, Command+V on macOS) asks the
+/// host for the clipboard, and its answer lands in the query at the caret.
 @("fileset_explorer.FXU21.pasteReadsTheClipboard")
 @system unittest
 {
     import std.range.primitives : put;
-    import sparkles.input : Mods, PasteEvent;
+    import sparkles.input : PasteEvent;
+    import sparkles.ui.editor.keys : windowCommandMods;
     import sparkles.ui_app.backend : Backend;
 
     auto app = make("src/*.d");
@@ -139,7 +140,7 @@ private ExplorerApp* make(string query)
         h.capabilities.clipboardRead = true;
     };
 
-    auto asked = runAppRecorded(*app, RunConfig.init, [charEvent('v', Mods(ctrl: true))], gui);
+    auto asked = runAppRecorded(*app, RunConfig.init, [charEvent('v', windowCommandMods)], gui);
     assert(asked.clipboardReads.length == 1, text(asked.clipboardReads));
     assert(app.query.text == "src/*.d", "nothing is pasted before the answer");
 
