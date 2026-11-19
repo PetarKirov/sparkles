@@ -211,22 +211,29 @@ Progress, by the gate's items:
   (`--trace-compiles`), and its mutation scenarios pass. The test-only
   driver `apps/ci/tools/graph-oracles.d` runs the oracles on fixture
   packages and prints a verdict per step. Oracles 2 (its falsifying
-  scenarios), 4, 5, 7, 8's revert check, 9, 10, 13, 16–19, 21's edit
-  sequences and revert check, and 24 pass, but for the steps this host
-  cannot stage: oracle 4's two clock steps (a file system whose clock is set
-  apart), oracle 5 step 5 (`ci docs verify` still builds its examples with
-  dub) and oracle 16 step 6 (a virtual machine's power cut). The oracles
-  found, and these commits fix: manifests never pruned, a generator's tool
-  planned for its reader's platform, a compile without the prefix map
-  sharing a key across worktrees, the test runner in every build action's
-  key, materialized producers not counted as executed, and no sampled rehash
-  of hits (BGS6).
+  scenarios, and every package's test root against `dub test`), 4, 5, 7, 8's
+  revert check, 9, 10, 11 steps 1–2, 13, 16–19, 21 (its edit sequences, its
+  revert check, and the replay of the last 50 commits of `main` for
+  `versions` and `build-graph`) and 24 pass, on this repository's
+  development hosts, but for the steps no host here can stage: oracle 4's
+  two clock steps (a file system whose clock is set apart), oracle 5 step 5
+  (`ci docs verify` still builds its examples with dub) and oracle 16 step 6
+  (a power cut between a rename and the next write). Oracle 7 requires its
+  races to have been reached, and they are: on one run, 50 of 2,636
+  verifications began with a publication in flight. The oracles found, and
+  these commits fix: manifests never pruned, a generator's tool planned for
+  its reader's platform, a compile without the prefix map sharing a key
+  across worktrees, the test runner in every build action's key,
+  materialized producers not counted as executed, no sampled rehash of hits
+  (BGS6), and `dmd-lsp`'s tests calling dub, which a test may now declare
+  (D62).
 
-Next: oracle 2 over every package (`--only=2-all`), oracle 21's commit replay
-(`--only=21-replay`: the last 50 commits of `main`, for `versions` and
-`build-graph`), D39's list over the whole test selection, the LDC fork's tests
-in the pinned toolchain, and the steps above that need a virtual machine or a
-clock set apart, which a NixOS VM test can stage.
+Next: D39's list over the whole test selection, and the LDC fork's tests in
+the pinned toolchain. The three steps above are gaps until a NixOS VM test
+stages them, a follow-up of its own: oracle 4's clock steps against an NFS
+server whose clock is set apart, and oracle 16 step 6 by replaying a
+`dm-log-writes` log of a build's writes to every flush point. Oracle 5 step 5
+waits for `ci docs verify` to build through the graph.
 
 Follow-up, after the gate: **`ci commits build-each` through the graph.** At
 each commit of the range it plans the packages it builds, their application
