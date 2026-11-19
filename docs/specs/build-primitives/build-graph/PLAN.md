@@ -208,13 +208,25 @@ Progress, by the gate's items:
 - **Gate checks so far:** a second run in another worktree compiles nothing;
   an edit to one `sparkles:base` module recompiles exactly the compiles whose
   manifests list it; oracle 3 passes for `build-primitives` and `ui-app`
-  (`--trace-compiles`); two concurrent producers of one graph both succeed,
-  the loser adopting the winner's entries (oracle 7 step 1, one file system).
+  (`--trace-compiles`), and its mutation scenarios pass. The test-only
+  driver `apps/ci/tools/graph-oracles.d` runs the oracles on fixture
+  packages and prints a verdict per step. Oracles 2 (its falsifying
+  scenarios), 4, 5, 7, 8's revert check, 9, 10, 13, 16–19, 21's edit
+  sequences and revert check, and 24 pass, but for the steps this host
+  cannot stage: oracle 4's two clock steps (a file system whose clock is set
+  apart), oracle 5 step 5 (`ci docs verify` still builds its examples with
+  dub) and oracle 16 step 6 (a virtual machine's power cut). The oracles
+  found, and these commits fix: manifests never pruned, a generator's tool
+  planned for its reader's platform, a compile without the prefix map
+  sharing a key across worktrees, the test runner in every build action's
+  key, materialized producers not counted as executed, and no sampled rehash
+  of hits (BGS6).
 
-Next: `ci cache store explain` (BGS8), `pkg-config`'s absent candidates
-(BGK9), the store on the VFS (BGF4) with digest caching from its `Stat`
-(BGF6), host toolchains (BGT3), D39's list over the whole test selection, and
-the remaining oracles (2, 4, 5, 7, 9, 10, 16–19, 21).
+Next: oracle 2 over every package (`--only=2-all`), oracle 21's commit replay
+(`--only=21-replay`: the last 50 commits of `main`, for `versions` and
+`build-graph`), D39's list over the whole test selection, the LDC fork's tests
+in the pinned toolchain, and the steps above that need a virtual machine or a
+clock set apart, which a NixOS VM test can stage.
 
 Follow-up, after the gate: **`ci commits build-each` through the graph.** At
 each commit of the range it plans the packages it builds, their application
