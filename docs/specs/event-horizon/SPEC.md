@@ -2091,7 +2091,24 @@ IoResult!SupervisedProcessResult supervise(ref Sched s,
     in SupervisedProcessConfig cfg = SupervisedProcessConfig(),
     scope const(ubyte)[] stdinBytes = null,
     scope ProcessEventSink onEvent = null);
+
+alias StdinFeed = Channel!(immutable(ubyte)[], 16);
+
+IoResult!SupervisedProcessResult superviseFed(ref Sched s,
+    scope const(char[])[] argv,
+    in SupervisedProcessConfig cfg,
+    StdinFeed* feed,
+    scope ProcessEventSink onEvent = null);
 ```
+
+`superviseFed` is `supervise` with a conversation on standard input: the
+child's stdin is a pipe fed from `feed` for as long as the run lasts. The
+client puts each chunk when it decides it, from the event sink with
+`tryPut` or from another fiber of the same scheduler with `put`; the stdin
+worker writes the chunks in order and closes the pipe when the feed is closed
+and drained, when a write fails, or when the run stops. A test runner's
+commands, answered by the frames its workers print, are the case it serves
+(test-runner process-model TRP6).
 
 `supervise` is a structured operation: it does not return while a child, pipe
 operation, process wait, timer, sample, or blocking-pool job owned by the run is
