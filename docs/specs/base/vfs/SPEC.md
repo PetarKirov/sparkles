@@ -352,7 +352,7 @@ optional argument of [`VFO5`](#vfo5-sharing-of-created-entries); passing
 | `stat(mask)`                                 | `stat`                                                  | a `Stat` of the directory the handle holds                                                                |
 | `readlinkAt(name, buffer)`                   | `stat`                                                  | the target bytes, as a slice of `buffer`                                                                  |
 | `symlinkAt(name, target)`                    | `create`                                                | nothing; see [`VFO10`](#vfo10-symbolic-link-targets)                                                      |
-| `symlinkTo(name, target, path)`               | `create`; `lookup` on `target`                          | nothing; an absolute link, see [`VFO10`](#vfo10-symbolic-link-targets) |
+| `symlinkTo(name, target, path)`              | `create`; `lookup` on `target`                          | nothing; an absolute link, see [`VFO10`](#vfo10-symbolic-link-targets)                                    |
 | `unlinkAt(name)`                             | `remove`                                                | nothing; `isADirectory` for a directory                                                                   |
 | `rmdirAt(name)`                              | `remove`                                                | nothing; `notEmpty` if it has entries                                                                     |
 | `renameAt(name, dst, dstName)`               | `rename` on both                                        | nothing; replaces a non-directory target                                                                  |
