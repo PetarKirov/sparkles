@@ -27,6 +27,7 @@ import std.traits : EnumMembers;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 import sparkles.wired.policy : CaseStyle, WireCase, WireName;
 import sparkles.ui.geometry : Insets;
+import sparkles.ui.overlay.place : Side;
 
 @safe:
 
@@ -540,8 +541,11 @@ struct Visual
     BoxBorder border;     /// resolved box border (default: none)
     int borderRadius;     /// corner radius in CSS px (0 = square corners)
     Shadow shadow;        /// resolved drop shadow (default: none)
-    bool arrow;           /// draw a popup arrow/tail off this box's top edge?
-    int arrowOffset;      /// arrow horizontal offset from the left, in cells
+    bool arrow;           /// draw a popup arrow/tail off this box?
+    /// the cell along `arrowEdge` the arrow sits at, from the edge's start
+    /// (`PLC10`; canvases clamp it with `sparkles.ui.overlay.arrow.arrowCell`)
+    int arrowOffset;
+    Side arrowEdge = Side.top; /// the edge the arrow pokes out of: the one facing the anchor
     int drawHeight;       /// drawn box height in CSS px, centred; 0 = the whole rect
     int drawWidth;        /// drawn box width in CSS px, centred; 0 = the whole rect
     int drawInset;        /// CSS px the drawn box is inset by on every side
@@ -581,7 +585,10 @@ struct Decoration
     int borderRadius;               /// corner radius in px
     bool shadow;                    /// draw the palette's popup drop shadow?
     bool arrow;                     /// draw a popup arrow/tail (backends place it)
-    int arrowOffset;                /// arrow horizontal offset from the left, in cells
+    /// The arrow's cell along `arrowEdge`, from the edge's start; canvases
+    /// keep it off the corners. An overlay's arrow is set from its placement.
+    int arrowOffset;
+    Side arrowEdge = Side.top;      /// the edge the arrow pokes out of
     /// The height the box is drawn at, in CSS px, centred in its rect; 0 fills
     /// the rect. A control keeps a 48 dp touch target and draws a 32 dp chip
     /// (design-system `TOK11`); a cell target draws the whole rect.
@@ -1092,6 +1099,7 @@ Visual resolveVisual(in Palette pal, Slot slot, in Decoration deco, in TextStyle
 
     v.arrow = deco.arrow;
     v.arrowOffset = deco.arrowOffset;
+    v.arrowEdge = deco.arrowEdge;
     v.drawHeight = deco.drawHeight;
     v.drawWidth = deco.drawWidth;
     v.drawInset = deco.drawInset;

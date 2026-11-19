@@ -158,6 +158,31 @@ unittest
     }
 }
 
+@("ui_vulkan.shading.arrowPointsEachWay")
+@safe pure nothrow @nogc
+unittest
+{
+    // `PLC10`: `shape.y` turns the same triangle to each edge. Each direction
+    // is the upward one seen through a mirror or a transpose, so it is held
+    // to the same tolerance against the same reference.
+    enum size = 14.0;
+    enum w = 2 * size, h = size + 1;
+    const down = v4(20.5f, 10, w, h);
+    auto e = compare((px, py) => inArrow(px, 2 * 10 + h - py, 20.5, 10, w, h),
+        (x, y) => shadedAlpha(down, v4(QuadKind.arrow, 1, 0, 1), x, y), 0, 0, 64, 40);
+    assert(e.worst <= 16.0 / 255 && e.mean <= 2.0 / 255, "down");
+
+    const left = v4(10, 20.5f, h, w);
+    e = compare((px, py) => inArrow(20.5 + (py - 20.5), 10 + (px - 10), 20.5, 10, w, h),
+        (x, y) => shadedAlpha(left, v4(QuadKind.arrow, 2, 0, 1), x, y), 0, 0, 40, 64);
+    assert(e.worst <= 16.0 / 255 && e.mean <= 2.0 / 255, "left");
+
+    const right = v4(10, 20.5f, h, w);
+    e = compare((px, py) => inArrow(20.5 + (py - 20.5), 10 + (10 + h - px), 20.5, 10, w, h),
+        (x, y) => shadedAlpha(right, v4(QuadKind.arrow, 3, 0, 1), x, y), 0, 0, 40, 64);
+    assert(e.worst <= 16.0 / 255 && e.mean <= 2.0 / 255, "right");
+}
+
 @("ui_vulkan.shading.premultipliesAndDecodesForSrgb")
 @safe pure nothrow @nogc
 unittest

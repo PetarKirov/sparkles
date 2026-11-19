@@ -42,8 +42,25 @@ import sparkles.ui.pixel_geometry : arrowTriangle, borderRects, centredSpan, Cli
     cornerRadiusPx, densityPx, fillSpanRect, lineRects, roundedBorderPx, ruleRect, ScissorBox,
     scissorBoxOfStack, scrollbarMinExtentPx, scrollbarRail, shadowRect, shiftPx;
 import sparkles.ui.style : FontRole, Visual;
+import sparkles.ui.overlay.arrow : arrowCell, ArrowCell;
+import sparkles.ui.overlay.place : Side;
 import sparkles.ui_vulkan.shading : Instance, QuadKind;
 import sparkles.ui_vulkan.text_rendering : TextRendering;
+
+import std.algorithm.comparison : max, min;
+
+/// Which way an arrow on box edge `edge` points, as the arrow record's
+/// `shape.y` carries it to the shading: 0 up, 1 down, 2 left, 3 right.
+private float arrowDirection(Side edge) @safe pure nothrow @nogc
+{
+    final switch (edge)
+    {
+        case Side.top: return 0;
+        case Side.bottom: return 1;
+        case Side.left: return 2;
+        case Side.right: return 3;
+    }
+}
 
 /// Why an operation was drawn differently from its specification (`UVK16`).
 enum Degradation : ubyte
@@ -504,11 +521,17 @@ if (isImageSource!Images)
                     (Rect e) { solid(e, edge); });
         }
 
-        if (v.arrow)
+        // The arrow, on the edge facing the anchor, in the cell every target
+        // agrees on (`PLC10`); the quad bounds the triangle and `shape.y` says
+        // which way it points.
+        const ac = v.arrow ? arrowCell(v.arrowEdge, v.arrowOffset, r.width, r.height) : ArrowCell.init;
+        if (ac.visible)
         {
-            const t = arrowTriangle(x, y, v.arrowOffset, m_.cellW, m_.cellH);
-            emit(record(v4(t.left[0], t.apex[1], t.right[0] - t.left[0], t.left[1] - t.apex[1]),
-                fill, edge, v4(QuadKind.arrow, 0, 0, 1)));
+            const t = arrowTriangle(box, ac.edge, ac.along, m_.cellW, m_.cellH);
+            const x0 = min(t.apex[0], t.left[0], t.right[0]), x1 = max(t.apex[0], t.left[0], t.right[0]);
+            const y0 = min(t.apex[1], t.left[1], t.right[1]), y1 = max(t.apex[1], t.left[1], t.right[1]);
+            emit(record(v4(x0, y0, x1 - x0, y1 - y0), fill, edge,
+                v4(QuadKind.arrow, arrowDirection(ac.edge), 0, 1)));
         }
     }
 

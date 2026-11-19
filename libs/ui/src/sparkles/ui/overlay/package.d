@@ -6,4 +6,5 @@ the feature modules.
 module sparkles.ui.overlay;
 
 public import sparkles.ui.overlay.anchor;
+public import sparkles.ui.overlay.arrow;
 public import sparkles.ui.overlay.place;

@@ -55,6 +55,7 @@ import sparkles.ui.effect : EffectId;
 import sparkles.ui.image : ImageFit, ImageHandle;
 import sparkles.ui.state : scrollbarThumb;
 import sparkles.base.term_style : UnderlineStyle;
+import sparkles.ui.overlay.place : Side;
 import sparkles.ui.style : BoxBorder, FontRole, Shadow, Slot, TypeStep, Visual;
 
 /// How a $(LREF Line)'s stroke is drawn.
@@ -161,8 +162,9 @@ struct BoxChrome
     BoxBorder border;   /// resolved box border
     int borderRadius;   /// corner radius in px (0 = square)
     Shadow shadow;      /// resolved drop shadow
-    bool arrow;         /// draw a popup arrow/tail off the top edge?
-    int arrowOffset;    /// arrow offset from the left, in cells
+    bool arrow;         /// draw a popup arrow/tail?
+    int arrowOffset;    /// the arrow's cell along `arrowEdge`
+    Side arrowEdge = Side.top; /// the edge the arrow pokes out of
     int drawHeight;     /// drawn height in CSS px, centred; 0 = the whole rect
     int drawWidth;      /// drawn width in CSS px, centred; 0 = the whole rect
     int drawInset;      /// CSS px the drawn box is inset by on every side
@@ -698,7 +700,7 @@ Ink inkOf(in Visual v) @safe pure nothrow @nogc
 /// The box half of `v`.
 BoxChrome boxChromeOf(in Visual v) @safe pure nothrow @nogc
     => BoxChrome(border: v.border, borderRadius: v.borderRadius,
-        shadow: v.shadow, arrow: v.arrow, arrowOffset: v.arrowOffset,
+        shadow: v.shadow, arrow: v.arrow, arrowOffset: v.arrowOffset, arrowEdge: v.arrowEdge,
         drawHeight: v.drawHeight, drawWidth: v.drawWidth, drawInset: v.drawInset,
         insideGlyphFrame: v.insideGlyphFrame, cellsOnly: v.cellsOnly, pixelsOnly: v.pixelsOnly);
 
@@ -739,6 +741,7 @@ Visual visualOf(in FillRect f) @safe pure nothrow @nogc
         v.shadow = f.chrome.shadow;
         v.arrow = f.chrome.arrow;
         v.arrowOffset = f.chrome.arrowOffset;
+        v.arrowEdge = f.chrome.arrowEdge;
         v.drawHeight = f.chrome.drawHeight;
         v.drawWidth = f.chrome.drawWidth;
         v.drawInset = f.chrome.drawInset;

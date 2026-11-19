@@ -63,7 +63,7 @@ private size_t hitOf(size_t nodeIndex) pure nothrow @nogc => nodeIndex + 1;
 /// A popup/surface decoration: a hairline border (`Slot.border`), the `4px`
 /// corner radius, and a drop shadow — the shared chrome behind the hover popup,
 /// the `^?` query line, and the completion list (all one surface rule in the CSS).
-private Decoration surfaceDeco(bool arrow, int arrowOffset = 1) pure nothrow @nogc
+private Decoration surfaceDeco(bool arrow, int arrowOffset = 2) pure nothrow @nogc
     => Decoration(
         borderWidth: Insets.all(M.borderWeight),
         borderStyle: BorderStyle.solid,

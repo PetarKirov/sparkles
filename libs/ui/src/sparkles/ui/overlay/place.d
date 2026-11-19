@@ -35,6 +35,7 @@ frame pass, between `layout()` and the display list (`PLC12`).
 module sparkles.ui.overlay.place;
 
 import sparkles.ui.geometry : Insets, Point, Rect, Size;
+import sparkles.ui.overlay.arrow : arrowCell, facingEdge;
 
 /// The side of the anchor an overlay sits on.
 enum Side : ubyte
@@ -110,6 +111,10 @@ struct PlaceRequest
     bool keepLastSide;
     Side lastSide;                       /// ditto
     bool arrow;                          /// whether to report an arrow cell
+    /// The cells an arrow needs between the anchor and the overlay, added to
+    /// `gap` when `arrow` is set (`PLC10`'s input half): 0 on a cell target,
+    /// whose notch sits in the border, 1 where the arrow pokes out of the box.
+    int arrowClearance;
     /// The clip the anchor sits under: only the anchor-hidden verdict reads
     /// it, never the boundary (`PLC3`).
     Rect anchorClip = Rect(int.min / 2, int.min / 2, int.max, int.max);
@@ -155,6 +160,10 @@ private int aligned(int start, int extent, int length, Align a) @safe pure nothr
     }
 }
 
+/// The cells between the anchor and the overlay: the gap, and the arrow's clearance when it has one.
+private int gapOf(in PlaceRequest r) @safe pure nothrow @nogc
+    => r.gap + (r.arrow ? r.arrowClearance : 0);
+
 /// The overlay at `side`, before any adjustment.
 private Rect positioned(in PlaceRequest r, Side side, in Size size) @safe pure nothrow @nogc
 {
@@ -162,11 +171,11 @@ private Rect positioned(in PlaceRequest r, Side side, in Size size) @safe pure n
     if (vertical(side))
     {
         const x = aligned(a.x, a.width, size.width, r.alignment) + r.shift;
-        const y = side == Side.bottom ? a.bottom + r.gap : a.y - r.gap - size.height;
+        const y = side == Side.bottom ? a.bottom + gapOf(r) : a.y - gapOf(r) - size.height;
         return Rect(x, y, size.width, size.height);
     }
     const y = aligned(a.y, a.height, size.height, r.alignment) + r.shift;
-    const x = side == Side.right ? a.right + r.gap : a.x - r.gap - size.width;
+    const x = side == Side.right ? a.right + gapOf(r) : a.x - gapOf(r) - size.width;
     return Rect(x, y, size.width, size.height);
 }
 
@@ -194,10 +203,10 @@ private int roomAcross(in PlaceRequest r, Side side, in Rect b) @safe pure nothr
     int room;
     final switch (side)
     {
-        case Side.bottom: room = b.bottom - (a.bottom + r.gap); break;
-        case Side.top: room = (a.y - r.gap) - b.y; break;
-        case Side.right: room = b.right - (a.right + r.gap); break;
-        case Side.left: room = (a.x - r.gap) - b.x; break;
+        case Side.bottom: room = b.bottom - (a.bottom + gapOf(r)); break;
+        case Side.top: room = (a.y - gapOf(r)) - b.y; break;
+        case Side.right: room = b.right - (a.right + gapOf(r)); break;
+        case Side.left: room = (a.x - gapOf(r)) - b.x; break;
     }
     return room > 0 ? room : 0;
 }
@@ -291,20 +300,16 @@ OverlayGeometry place(in PlaceRequest r, in Rect boundary) @safe pure nothrow @n
         : Size(roomAcross(r, side, boundary), boundary.height > 0 ? boundary.height : 0);
     g.anchorLocal = Rect(r.anchor.x - rect.x, r.anchor.y - rect.y, r.anchor.width, r.anchor.height);
 
-    // The arrow: at the anchor's centre on the edge axis, kept off the corners.
+    // The arrow: at the anchor's centre on the edge axis, kept off the
+    // corners by the one clamp every canvas applies too (`PLC10`).
     if (r.arrow)
     {
-        const extent = vert ? rect.width : rect.height;
-        if (extent >= 3)
-        {
-            const centre = vert ? r.anchor.x + r.anchor.width / 2 - rect.x
-                : r.anchor.y + r.anchor.height / 2 - rect.y;
-            const lo = 1, hi = extent - 2;
-            assert(lo <= hi, "an arrow interval never inverts (ANC4)");
-            g.hasArrow = true;
-            g.arrow = centre < lo ? lo : centre > hi ? hi : centre;
-            g.arrowCentred = g.arrow == centre;
-        }
+        const centre = vert ? r.anchor.x + r.anchor.width / 2 - rect.x
+            : r.anchor.y + r.anchor.height / 2 - rect.y;
+        const a = arrowCell(facingEdge(side), centre, rect.width, rect.height);
+        g.hasArrow = a.visible;
+        g.arrow = a.visible ? a.along : 0;
+        g.arrowCentred = a.visible && a.along == centre;
     }
     return g;
 }
@@ -399,6 +404,14 @@ OverlayGeometry place(in PlaceRequest r, in Rect boundary) @safe pure nothrow @n
     assert(slid.rect.x == 71 && slid.arrow == 7 && !slid.arrowCentred, "clamped one short of the corner");
     const narrow = place(PlaceRequest(anchor: Rect(1, 1, 1, 1), content: Size(2, 1), arrow: true), Rect(0, 0, 9, 9));
     assert(!narrow.hasArrow, "two cells have no room for an arrow between corners");
+    // `PLC10`'s input half: the clearance moves the overlay off the anchor and
+    // shrinks the room, and only when an arrow is asked for.
+    const cleared = place(PlaceRequest(anchor: Rect(4, 2, 1, 1), content: Size(9, 3), gap: 1,
+        arrow: true, arrowClearance: 1), Rect(0, 0, 80, 24));
+    assert(cleared.rect.y == 5 && cleared.room.height == 19);
+    const noArrow = place(PlaceRequest(anchor: Rect(4, 2, 1, 1), content: Size(9, 3), gap: 1,
+        arrowClearance: 1), Rect(0, 0, 80, 24));
+    assert(noArrow.rect.y == 4, "no arrow, no clearance");
 }
 
 /// The anchor-hidden verdict reads the anchor's clip, not the boundary (`PLC3`).

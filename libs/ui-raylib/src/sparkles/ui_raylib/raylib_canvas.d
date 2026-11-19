@@ -41,6 +41,7 @@ public import sparkles.ui.style : uiStepOf;
 import sparkles.ui.degradation : projectColor;
 import sparkles.ui.glyphs : admits, projectGlyph;
 import sparkles.ui.style : BorderStyle, FontRole, Shadow, Visual;
+import sparkles.ui.overlay.arrow : arrowCell;
 import sparkles.ui.style : UiTextStyle = TextStyle, TypeStep;
 import sparkles.ui.tokens : TargetCapabilities;
 
@@ -444,7 +445,7 @@ struct RaylibCanvas
         if (v.border.any)
             drawBorder(box, v);
         if (v.arrow)
-            drawArrow(x, y, v);
+            drawArrow(box, r, v);
     }
 
     // One pixel rectangle of the shared geometry, exactly as it names it.
@@ -727,17 +728,30 @@ struct RaylibCanvas
         borderRects(box, b.width, b.style, cellW, cellH, (Rect r) { fillExact(r, c); });
     }
 
-    /// Draws the popup arrow/tail: a small upward triangle off the box's top edge
-    /// at `arrowOffset` cells, filled with the surface color and outlined in the
-    /// border color (approximating the CSS 6×6 rotated-square notch).
-    private void drawArrow(int boxX, int boxY, in Visual v) @system
+    /// Draws the popup arrow/tail: a small triangle out of the edge facing the
+    /// anchor, in the cell every target agrees on (`PLC10`), filled with the
+    /// surface color and outlined in the border color (approximating the CSS
+    /// 6×6 rotated-square notch). `box` is in pixels, `cells` the cell rect.
+    private void drawArrow(in Rect box, in Rect cells, in Visual v) @system
     {
-        const t = arrowTriangle(boxX, boxY, v.arrowOffset, cellW, cellH);
+        const a = arrowCell(v.arrowEdge, v.arrowOffset, cells.width, cells.height);
+        if (!a.visible)
+            return;
+        const t = arrowTriangle(box, a.edge, a.along, cellW, cellH);
         const apex = Vector2(t.apex[0], t.apex[1]);
-        const left = Vector2(t.left[0], t.left[1]);
-        const right = Vector2(t.right[0], t.right[1]);
-        // Screen space is y-down, so apex→left→right is the counter-clockwise
-        // winding raylib needs (apex→right→left is culled as a back face).
+        auto left = Vector2(t.left[0], t.left[1]);
+        auto right = Vector2(t.right[0], t.right[1]);
+        // raylib culls a clockwise triangle as a back face. In y-down screen
+        // space apex→left→right winds the right way for an arrow pointing up;
+        // the other three directions are mirror images, so swap the base ends
+        // whenever the cross product says the winding turned over.
+        const cross = (left.x - apex.x) * (right.y - apex.y) - (left.y - apex.y) * (right.x - apex.x);
+        if (cross > 0)
+        {
+            const t2 = left;
+            left = right;
+            right = t2;
+        }
         if (v.hasBg)
             DrawTriangle(apex, left, right, rlBg(v));
         if (v.border.any)
