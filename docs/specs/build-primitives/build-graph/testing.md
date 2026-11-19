@@ -324,7 +324,9 @@ timestamps, owners and groups, and no archive may be thin.
 
 1. Put a `dub` on the test binary's `PATH` that records any call and fails.
    No test binary may call it, and the compile-time-probe and extracted modes
-   must still find their import paths and flags.
+   must still find their import paths and flags. A test whose package
+   declares `dub` (D62) must run the real one instead; a declared tool other
+   than `dub` must fail planning.
 2. A test that declares no runtime inputs must run on every request.
 3. With the Nix backend (E4), a sandboxed test's output must record the
    kernel release, CPU model and features, and system type it ran on. Reusing

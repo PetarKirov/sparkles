@@ -1,0 +1,8 @@
+{
+  "tools": [
+    {
+      "name": "dub",
+      "reason": "fileset.emit.oracle.dub checks the members dub's `sourceFiles` select against the fileset's (FXE10), which is what it tests"
+    }
+  ]
+}
