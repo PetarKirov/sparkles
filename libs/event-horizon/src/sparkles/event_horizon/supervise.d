@@ -158,6 +158,30 @@ IoResult!SupervisedProcessResult supervise(ref Sched s,
     scope ProcessEventSink onEvent = null)
     => superviseImpl(s, argv, cfg, stdinBytes, onEvent, null);
 
+/**
+The chunks a supervised child's standard input receives while it runs: a
+client that talks to its child (a test runner's commands) puts each chunk as
+it decides it, from its event callback with `tryPut` or from another fiber of
+the same scheduler with `put`. Closing the feed closes the child's standard
+input once the chunks put before are written.
+*/
+alias StdinFeed = Channel!(immutable(ubyte)[], 16);
+
+/**
+`supervise`, with the child's standard input a pipe fed from
+`feed` for as long as the run lasts: every chunk taken from it is written in
+order, and the pipe is closed when the feed is closed and drained, when a
+write fails (the child closed its end), or when the run ends. `feed` must
+outlive the call.
+*/
+IoResult!SupervisedProcessResult superviseFed(ref Sched s,
+    scope const(char[])[] argv,
+    in SupervisedProcessConfig cfg,
+    StdinFeed* feed,
+    scope ProcessEventSink onEvent = null)
+in (feed !is null, "a fed run takes a feed")
+    => superviseImpl(s, argv, cfg, null, onEvent, null, null, 0, null, feed);
+
 // ── vocabulary ──────────────────────────────────────────────────────────────
 
 private enum TreeState : ubyte
@@ -366,6 +390,7 @@ private struct Run
     LineFramer stdoutFramer, stderrFramer;
     Duration sampleInterval;
     SharedBuffer!(ubyte, 256) stdinCopy;
+    StdinFeed* stdinFeed; // the chunks to write after `stdinCopy`, when fed
 
     /// A worker's blocking relay publication (never application code).
     bool publish(ref Sched s, RelayMessage msg)
@@ -605,7 +630,8 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
     scope RelayTestHook beforeHandle,
     int* signalAttempts = null,
     int testObserverErrno = 0,
-    scope RelayHandledTestHook afterHandle = null) @trusted
+    scope RelayHandledTestHook afterHandle = null,
+    StdinFeed* stdinFeed = null) @trusted
 {
     import core.atomic : atomicOp;
 
@@ -680,6 +706,8 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
         ? cfg.process.stderrSpec : StdioSpec(StdioMode.pipe);
     if (stdinBytes !is null && spawnCfg.stdinSpec.mode == StdioMode.inherit)
         spawnCfg.stdinSpec = StdioSpec(StdioMode.pipe);
+    if (stdinFeed !is null)
+        spawnCfg.stdinSpec = StdioSpec(StdioMode.pipe);
 
     auto spawned = spawnProcess(argv, spawnCfg);
     if (spawned.hasError)
@@ -732,6 +760,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
 
     if (stdinBytes !is null)
         run.stdinCopy ~= stdinBytes;
+    run.stdinFeed = stdinFeed;
     run.sampleInterval = cfg.sampleInterval;
 
     // The shield: an isProtected node on THIS frame; workers spawn beneath
@@ -1934,19 +1963,35 @@ private final class StdinWorker
 
     void run()
     {
+        scope (exit)
+            child.stdinW.close(); // exactly-once invalidation of the view
+        if (!writeAll(rp.stdinCopy[]) || rp.stdinFeed is null)
+            return;
+        // A fed run: each chunk as the client puts it, until the feed is
+        // closed and drained, or the stop's interrupt cancels the take.
+        while (!rp.stopStdin)
+        {
+            auto chunk = rp.stdinFeed.take(*s);
+            if (chunk.hasError || !writeAll(chunk.value))
+                return;
+        }
+    }
+
+    // Writes `bytes` whole; false when the stop came first or a write failed.
+    private bool writeAll(scope const(ubyte)[] bytes)
+    {
         size_t offset;
-        while (offset < rp.stdinCopy.length && !rp.stopStdin)
+        while (offset < bytes.length && !rp.stopStdin)
         {
             SharedBuffer!(ubyte, 512) piece;
-            const n = (rp.stdinCopy.length - offset) < 512
-                ? rp.stdinCopy.length - offset : 512;
-            piece ~= rp.stdinCopy[offset .. offset + n];
+            const n = (bytes.length - offset) < 512 ? bytes.length - offset : 512;
+            piece ~= bytes[offset .. offset + n];
             auto sent = write(child.stdinW, move(piece));
             if (sent.res.hasError || sent.res.value == 0)
-                break;
+                return false;
             offset += sent.res.value;
         }
-        child.stdinW.close(); // exactly-once invalidation of the view
+        return offset == bytes.length;
     }
 }
 
@@ -2365,6 +2410,58 @@ private bool reapRightConsumed(int pid) @trusted
 
     int raw;
     return waitpid(pid, &raw, WNOHANG) < 0 && errno == ECHILD;
+}
+
+/// A fed run: the child's standard input takes each chunk as the client puts
+/// it, here in answer to the child's own output, and ends when the feed closes.
+@("supervise.stdinFeed.conversation")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        StdinFeed feed;
+        string[] seen;
+        assert(feed.tryPut(cast(immutable(ubyte)[]) "first\n"));
+        void onEvent(in ProcessEvent ev)
+        {
+            if (ev.kind != ProcessEventKind.line)
+                return;
+            seen ~= (cast(const(char)[]) ev.line.bytes).idup;
+            // The answer to the child's first line, then the end of input.
+            if (seen.length == 1)
+            {
+                assert(feed.tryPut(cast(immutable(ubyte)[]) "second\n"));
+                feed.close();
+            }
+        }
+        auto got = (() @trusted => superviseFed(s,
+            ["sh", "-c", `while read -r l; do echo "got $l"; done; echo eof`],
+            SupervisedProcessConfig(), &feed, &onEvent))();
+        assert(got.hasValue, got.hasError ? got.error.context : "");
+        assert(seen == ["got first", "got second", "eof"]);
+        assert(got.value.end == ProcessEnd.exited && got.value.status.ok);
+    });
+    assert(!r.hasError);
+}
+
+/// A fed run whose child never reads still ends: the stop closes its input.
+@("supervise.stdinFeed.childExitsFirst")
+@safe
+unittest
+{
+    Sched s;
+    schedOrSkip(s);
+
+    auto r = s.run(() {
+        StdinFeed feed;
+        auto got = (() @trusted => superviseFed(s, ["true"], SupervisedProcessConfig(), &feed))();
+        assert(got.hasValue, got.hasError ? got.error.context : "");
+        assert(got.value.end == ProcessEnd.exited && got.value.status.ok);
+    });
+    assert(!r.hasError);
 }
 
 @("supervise.naturalExitLinesCollectAndUsage")
