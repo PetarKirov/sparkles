@@ -2593,6 +2593,9 @@ string[] verdictLines(string output)
             line = line.canFind("] ") ? line[line.indexOf("] ") + 2 .. $] : line;
         if (line.startsWith("Summary: "))
             lines ~= line.replaceAll(time, "");
+        // druntime's own runner, in a package that does not use this one.
+        else if (line.endsWith(" modules passed unittests") || line.endsWith(" unittests failed"))
+            lines ~= line.strip;
         else if (line.length > 2 && line[0] == ' ' && line[1] >= 0x80)
             lines ~= line.strip;
     }
@@ -2605,11 +2608,24 @@ string equivalence(string pkg, out size_t tests)
 {
     import std.process : execute;
 
-    auto g = run(pkg, freshCache("o2"));
+    RunOptions o;
+    o.jobs = std.process.environment.get("ORACLE2_JOBS", "0").to!uint;
+    const cache = freshCache("o2");
+    auto g = run(pkg, cache, o);
+    scope (exit)
+        if (exists(cache))
+            rmdirRecurse(cache);
     if (g.error.length)
         return "the graph could not plan it: " ~ g.error;
     const d = execute(["dub", "test", "-q", "--skip-registry=all", ":" ~ pkg, "--", "--no-colors"], null,
         std.process.Config.none, size_t.max, root);
+    // Each side's whole output, kept for a difference to be read later.
+    if (const logs = std.process.environment.get("ORACLE2_LOGS", null))
+    {
+        mkdirRecurse(logs);
+        write(buildPath(logs, pkg ~ ".graph.log"), g.log);
+        write(buildPath(logs, pkg ~ ".dub.log"), d.output);
+    }
     const graphLines = verdictLines(g.log), dubLines = verdictLines(d.output);
     tests = dubLines.length;
     if (!dubLines.length)
@@ -2701,12 +2717,18 @@ Verdict[] oracle2()
 Verdict[] oracle2All()
 {
     Verdict[] vs;
+    import std.string : split;
+
+    // ORACLE2_PACKAGES names the packages to compare; every package otherwise.
+    const chosen = std.process.environment.get("ORACLE2_PACKAGES", "").split;
     foreach (ref s; decodeRecipe(readText(buildPath(root, "dub.sdl"))).subPackages)
     {
         const recipe = buildPath(root, s.path, "dub.sdl");
         if (s.isInline || !exists(recipe))
             continue;
         const name = decodeRecipe(readText(recipe)).name;
+        if (chosen.length && !chosen.canFind(name))
+            continue;
         if (!name.length || name.startsWith(fixturePrefix))
             continue;
         size_t n;
