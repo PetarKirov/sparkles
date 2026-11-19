@@ -1,0 +1,8 @@
+{
+  "tools": [
+    {
+      "name": "dub",
+      "reason": "dmd_lsp.project and dmd_lsp.device read a package's configuration through `dub describe`, which is what they test"
+    }
+  ]
+}

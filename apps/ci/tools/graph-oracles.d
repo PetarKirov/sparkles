@@ -409,10 +409,37 @@ Verdict[] oracle11()
     if (first.exitCode != 0 || second.exitCode != 0)
         return [Verdict("step 2", text("the runs exited ", first.exitCode, " and ", second.exitCode))];
     const compile = taskOf(first, f.task("compile"));
-    return [Verdict("step 2",
+    Verdict[] vs = [Verdict("step 2",
         !executed(first, test) || !executed(second, test) ? "the test did not run on the second request"
         : executed(second, compile) ? "the second request recompiled" : null,
         "the test ran on both requests, its compile reused on the second")];
+
+    // Step 1 with D62: a test that declares `dub` runs the real one; one that
+    // does not meets the trap, which records its call.
+    enum callsDub = "import std.process : execute;\n\n"
+        ~ "@(\"o11.dub\") unittest\n{\n    const r = execute([\"dub\", \"--version\"]);\n    assert(r.status == 0, r.output);\n}\n";
+    enum declaration = "{\n  \"tools\": [{ \"name\": \"dub\", \"reason\": \"oracle 11\" }]\n}\n";
+    auto declared = Fixture.add("o11d", [
+        "dub.sdl": recipeOf("o11d"),
+        "test-programs.json": declaration,
+        "src/sparkles/zz_o11d/d.d": "module sparkles.zz_o11d.d;\n\n" ~ callsDub,
+    ]);
+    auto undeclared = Fixture.add("o11u", [
+        "dub.sdl": recipeOf("o11u"),
+        "src/sparkles/zz_o11u/u.d": "module sparkles.zz_o11u.u;\n\n" ~ callsDub,
+    ]);
+    auto withDub = run(declared.name, freshCache("o11"));
+    auto trapped = run(undeclared.name, freshCache("o11"));
+    vs ~= Verdict("step 1, a declared dub (D62)", withDub.exitCode != 0 ? "the declaring test did not run dub:" ~ tailOf(withDub.log)
+        : withDub.dubCalls.length ? "the declaring test met the trap: " ~ withDub.dubCalls
+        : trapped.exitCode == 0 ? "a test that declares no dub ran it"
+        : !trapped.dubCalls.canFind("--version") ? "the trap did not record the undeclared call: " ~ trapped.dubCalls : null,
+        "a test that declares dub ran the real one; one that does not met the trap, which recorded its call");
+    declared.put("test-programs.json", "{\n  \"tools\": [{ \"name\": \"make\", \"reason\": \"oracle 11\" }]\n}\n");
+    auto refused = run(declared.name, freshCache("o11"));
+    vs ~= Verdict("step 1, another tool", !refused.error.canFind("D62") ? "a declared tool other than dub was accepted: " ~ refused.error : null,
+        "a declared tool other than dub fails planning, naming D62");
+    return vs;
 }
 
 // === Oracle 13: hidden edges at execution time ===

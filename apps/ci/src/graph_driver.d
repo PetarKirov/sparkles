@@ -56,6 +56,8 @@ struct Planned
     size_t requests, targets;
     string[] packageDirectories;
     string[] roots;
+    /// D62: per package, the tools its tests declare they run (only `dub`).
+    string[][string] testTools;
 }
 
 LayoutCheck layoutLint() @safe
@@ -160,13 +162,17 @@ Planned planRepository(string root, bool markers = false, string only = null, To
     // D61: the programs each test runs, declared beside its package's recipe,
     // planned as requests of their own whose tests do not run.
     TestProgram[] programs;
+    string[][string] testTools;
     {
         import std.json : JSONException, JSONType, parseJSON;
 
-        string[] testDirectories;
+        string[] testDirectories, testPackages;
         foreach (ref pkg; graph.value.packages)
             if (!only.length || pkg.shortName == only)
+            {
                 testDirectories ~= pkg.path.length ? root ~ "/" ~ pkg.path : root;
+                testPackages ~= pkg.shortName;
+            }
         foreach (ti, dir; testDirectories)
         {
             const file = dir ~ "/test-programs.json";
@@ -175,7 +181,16 @@ Planned planRepository(string root, bool markers = false, string only = null, To
                 continue;
             try
             {
-                foreach (entry; parseJSON(json)["programs"].array)
+                // D62: a test whose subject is dub declares it, with its reason.
+                if (auto declaredTools = "tools" in parseJSON(json))
+                    foreach (entry; declaredTools.array)
+                    {
+                        if (entry["name"].str != "dub" || !("reason" in entry) || !entry["reason"].str.length)
+                            return Planned(text(file, ": a test may declare only `dub`, with a reason (D62)"));
+                        testTools[testPackages[ti]] ~= "dub";
+                    }
+                const parsed = parseJSON(json);
+                foreach (entry; "programs" in parsed ? parsed["programs"].array : null)
                 {
                     const at = buildNormalizedPath(dir, entry["directory"].str);
                     string sub;
@@ -248,6 +263,7 @@ Planned planRepository(string root, bool markers = false, string only = null, To
         return Planned(text(g.error));
     p.graph = g.value;
     p.text = render(p.graph, root);
+    p.testTools = testTools;
     return p;
 }
 
@@ -697,6 +713,23 @@ GraphRun runGraph(string root, string only, RunOptions o)
     layout.hashSample = o.hashSample;
     g.into = o.into;
     auto nodes = executionNodes(g.plan.graph, layout, declared);
+    // D62: a test that declares `dub` runs with the real one first on its
+    // `PATH`; every other test meets the trap.
+    foreach (ref n; nodes)
+        if (n.id.text.startsWith("test:"))
+            foreach (pkg, granted; g.plan.testTools)
+                if (granted.canFind("dub") && n.id.text.startsWith("test:sparkles." ~ pkg ~ ":"))
+                {
+                    auto action = n.action;
+                    action.match!(
+                        (ref ProcessAction pa) {
+                            foreach (ref e; pa.envDelta)
+                                if (e.name == "PATH")
+                                    e.value = environment.get("PATH", "");
+                        },
+                        (ref _) {});
+                    (() @trusted { n.action = action; })();
+                }
     if (o.adjustExecution !is null)
         foreach (ref n; nodes)
         {

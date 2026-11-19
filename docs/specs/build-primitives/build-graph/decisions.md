@@ -17,7 +17,8 @@ access through the capability VFS, was accepted on 2026-11-07, and D56,
 planning's source scans on DMD's lexer and parser, and D57, pruning's scan
 scope, and D58, the layout lint's gate, on 2026-11-16; and D59, what
 planning's trace holds, and D60, a single-file generator's `git`, on
-2026-11-17; and D61, the programs a test builds, on 2026-11-18. Records
+2026-11-17; and D61, the programs a test builds, on 2026-11-18; and D62, a
+test whose subject is dub, on 2026-11-19. Records
 marked **proposed** await the owner's decision.
 
 ## D1: Own the build instead of isolating dub (accepted)
@@ -1776,3 +1777,38 @@ names what the test runs; a test that starts running another program and
 does not declare it still runs dub, which the dub trap reports (oracle 11).
 
 **Revisit when** dub gains a way to declare a test's build-time tools.
+
+## D62: A test whose subject is dub declares it (accepted)
+
+**Question.** Two of `dmd-lsp`'s tests read a package's configuration through
+`dub describe`, because that is what the language server does, and what they
+test: `dmd_lsp.project.dubProjectFor.cachesPerRecipe` and
+`dmd_lsp.device.deviceConfigFor.describesTheDeviceConfiguration`. A test
+binary never runs dub (BGX1), so in the graph they meet the trap `dub`
+(oracle 11) and fail, while under `dub test` they pass: oracle 2's one real
+disagreement over the repository's packages. Skip them in the graph, accept
+the disagreement, or let such a test run dub?
+
+**Alternatives.**
+
+- **Skip them when the dub they find is unusable:** BGX1 stays as written,
+  but the graph never runs them, and oracle 2 carries an exception.
+- **Accept the disagreement until `ci test` moves to the graph (task-DAG
+  M7b):** records it and fixes nothing.
+- **Declare it:** a test whose subject is dub says so, and runs the real one.
+
+**Choice.** Decided by the owner on 2026-11-19 (BGX1, BGX2): declare it. A
+package's `test-programs.json` (D61) may hold a `tools` list beside its
+`programs`; its one admissible entry is `dub`, with a non-empty `reason`, and
+any other tool fails planning. That package's test action finds the real dub
+first on its `PATH`; every other test still meets the trap, which records
+its calls, so a test that starts running dub without declaring it is still
+reported. The runner itself is passed `--no-dub` as before.
+
+**Trade-offs.** A declaring test depends on dub, its registry settings and
+its cache, none of which the graph keys; it is not reused in E3 (BGX2), and
+E4's sandbox must make dub and its home a declared input before it can run
+there.
+
+**Revisit when** E4 confines tests: dub's home becomes a runtime input, or
+these tests move to `sparkles:build-primitives`' in-process resolver.

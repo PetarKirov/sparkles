@@ -1017,7 +1017,11 @@ argument vector, environment and working directory.
   **must not** fall back to it. The import paths, string import paths, dflags
   and versions that its compile-time and extracted modes need are passed to it
   as arguments, from the variant's resolved settings, together with a working
-  directory for its probe files inside the task's directory.
+  directory for its probe files inside the task's directory. The one
+  exception is a test whose subject is dub: its package declares `dub` in
+  `test-programs.json`, with a reason, and that test alone finds dub on its
+  `PATH`
+  ([D62](./decisions.md#d62-a-test-whose-subject-is-dub-declares-it-accepted)).
 
 **BGX2: Runtime inputs.** A test action's declared runtime inputs **must**
 include:
@@ -1029,6 +1033,7 @@ include:
   `test-programs.json`: each is linked by its own actions, and the test
   receives its path in the environment variable the file names
   ([D61](./decisions.md#d61-a-test-that-runs-a-program-it-builds-gets-it-from-the-graph-accepted));
+- `dub`, when its package declares it (D62);
 - the flake inputs it reads.
 
 **BGX3: Result reuse.** A test action's result **must not** be reused unless one
