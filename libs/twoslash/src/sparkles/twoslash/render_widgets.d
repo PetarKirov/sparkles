@@ -458,22 +458,6 @@ int effectivePopupWidth(in Palette pal, int available) @safe pure nothrow @nogc
     return room < pal.overlayMaxWidth ? room : pal.overlayMaxWidth;
 }
 
-/**
-Where to start drawing a popup of `width` anchored at `anchor`, so it stays
-inside `extent`.
-
-It $(I shifts) rather than shrinks: a popup narrowed to fit under a token near
-the right edge would wrap its signature into a column two words wide, which
-reads worse than the same popup slid left. Clamped at 0 so a popup wider than
-the pane still starts on screen.
-*/
-int clampOrigin(int anchor, int width, int extent) @safe pure nothrow @nogc
-{
-    const over = anchor + width - extent;
-    const shifted = over > 0 ? anchor - over : anchor;
-    return shifted < 0 ? 0 : shifted;
-}
-
 @("render_widgets.effectivePopupWidth.ceilingRoomAndFloor")
 @safe pure nothrow @nogc unittest
 {
@@ -482,14 +466,6 @@ int clampOrigin(int anchor, int width, int extent) @safe pure nothrow @nogc
     assert(effectivePopupWidth(pal, 500) == pal.overlayMaxWidth, "the ceiling holds");
     assert(effectivePopupWidth(pal, 40) == 40, "room narrower than the ceiling wins");
     assert(effectivePopupWidth(pal, 3) == pal.overlayMinWidth, "never below the floor");
-}
-
-@("render_widgets.clampOrigin.shiftsRatherThanOverhangs")
-@safe pure nothrow @nogc unittest
-{
-    assert(clampOrigin(10, 20, 100) == 10, "it fits — leave it at the anchor");
-    assert(clampOrigin(90, 20, 100) == 80, "overhang shifts left, exactly flush");
-    assert(clampOrigin(5, 200, 100) == 0, "wider than the pane still starts on screen");
 }
 
 /**
