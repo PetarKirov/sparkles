@@ -514,7 +514,9 @@ whatever `include` says; so it accepts a union of globs, without `fileFilter`
 by name, and refuses one that leaves out such a file the root has.
 
 **`FXE9` — Bazel.** The `bazel` target emits
-`glob(include = […], exclude = […], exclude_directories = 1)`. It accepts the
+`glob(include = […], exclude = […], exclude_directories = 1, allow_empty = True)`,
+the last since a fileset may select nothing and Bazel refuses an empty glob
+by default. It accepts the
 form of `FXE4`, braces expanded, and a `fileFilter` by name (a Bazel pattern
 matches whole file paths); it refuses `?` and character classes, which Bazel's
 glob lacks. It holds for a root that is one Bazel package (no `BUILD` file

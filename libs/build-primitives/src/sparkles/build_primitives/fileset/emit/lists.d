@@ -410,7 +410,7 @@ Emitted emitBazel(const Query q, in EmitOptions o) @safe pure
 
     return Emitted(true, header("#", q) ~ "# The root must be one Bazel package: no BUILD file beneath it.\n"
         ~ "glob(\n    include = " ~ list(inc) ~ ",\n    exclude = " ~ list(exc)
-        ~ ",\n    exclude_directories = 1,\n)\n");
+        ~ ",\n    exclude_directories = 1,\n    allow_empty = True,\n)\n");
 }
 
 private bool hasQuestion(string glob) @safe pure nothrow @nogc
