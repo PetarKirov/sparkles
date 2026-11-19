@@ -21,9 +21,9 @@ Routing returns a value rather than dispatching, and that is the point:
 the container decides policy (re-aim on press, click-to-focus, capture
 freezing, wheel-under-pointer, coordinate translation) while the host
 keeps its own pane types with no interface to implement and no callback
-web to register. `DCK13`'s precedence — capture, then dividers, then the
-positional query — lives in one readable function, testable with
-scripted events and no window.
+web to register. `DCK13`'s precedence — capture, then the top layers, then
+dividers, tabs and bars, then the positional query — lives in one readable
+function, testable with scripted events and no window.
 
 Tabbed groups (`DCK4`) and drag-to-redock (`DCK5`) extend the same arena
 in `C-2b`/`C-2c`; the node kind is already a sum over roles so they add a
@@ -37,6 +37,7 @@ import sparkles.base.term_control : PointerShape;
 import sparkles.input.capability : InputCapabilities;
 import sparkles.input.events : Event, match, PointerAction, PointerButton,
     PointerEvent, WheelEvent;
+import sparkles.ui.overlay.arena : maxOverlays;
 import sparkles.ui.components.scroll_view : AutoScroll, scrollLayout, ScrollArea,
     ScrollAreaAxis, ScrollLayout, ScrollView;
 import sparkles.ui.geometry : Point, Rect;
@@ -970,6 +971,23 @@ enum RouteKind : ubyte
     container, /// the container consumed it (a divider drag)
 }
 
+/**
+One overlay a pane painted last frame, as its host reports it to the
+container (`LYR5`): where it lies, in the container's cells, and which pane it
+belongs to. An overlay strays: a dropdown hangs past its pane's edge and over
+its neighbour, and a container resolving the pane by rect alone would hand
+the click to the neighbour. The container tests these first.
+*/
+struct TopLayer
+{
+    PaneId pane;  /// the pane whose tree the overlay was authored in
+    Rect rect;    /// where it painted, in the container's cells
+}
+
+/// The most top layers a container routes against — the overlay arena's
+/// capacity (`POP7`).
+enum size_t maxTopLayers = maxOverlays;
+
 /// One routing decision — a value, so routing is testable without panes.
 struct Route
 {
@@ -1075,6 +1093,8 @@ struct DockContainer
     private Point lastPointer;
     private bool havePointer;
     private PaneId pendingScrollPane;
+    private TopLayer[maxTopLayers] topLayerStore;
+    private uint topLayerCount;
 
     // Capture ids (STM11): panes and dividers must not collide, and `0`
     // means "free" to the machine, so both spaces start above it. A hit id
@@ -1440,6 +1460,34 @@ struct DockContainer
         return uint.max;
     }
 
+    /**
+    Tells the container which overlays the panes painted (`LYR5`), front to
+    back being the order given: the last painted frame's, which is what the
+    next event routes against (`DCK13`). Past `maxTopLayers` the rest are
+    ignored, as the arena ignores them. Replaces the previous frame's.
+    */
+    void paintedTopLayers(scope const TopLayer[] layers) pure nothrow @nogc
+    {
+        topLayerCount = cast(uint)(layers.length < maxTopLayers ? layers.length : maxTopLayers);
+        topLayerStore[0 .. topLayerCount] = layers[0 .. topLayerCount];
+    }
+
+    /// The top layers routed against, in paint order.
+    const(TopLayer)[] topLayers() const return pure nothrow @nogc
+        => topLayerStore[0 .. topLayerCount];
+
+    /// The pane whose overlay covers `p`, topmost first, or `false`.
+    bool topLayerAt(in Point p, out PaneId pane) const pure nothrow @nogc
+    {
+        foreach_reverse (ref t; topLayerStore[0 .. topLayerCount])
+            if (t.rect.contains(p))
+            {
+                pane = t.pane;
+                return true;
+            }
+        return false;
+    }
+
     /// The drag-to-redock in flight, for the host's hint overlay (`DCK5`).
     /// `active` is false when there is nothing to draw.
     DockDrag dragHint() const scope pure nothrow @nogc => redock;
@@ -1461,8 +1509,10 @@ struct DockContainer
     */
     void hovered(in Point p) pure nothrow @nogc
     {
+        // A divider under an overlay is covered: no resize cursor through it.
+        PaneId over;
         if (capture.isFree)
-            hoverDivider = dividerAt(p);
+            hoverDivider = topLayerAt(p, over) ? uint.max : dividerAt(p);
     }
 
     /**
@@ -1674,9 +1724,10 @@ struct DockContainer
 
     /**
     Routes one event (`DCK13`): a live capture first (a drag belongs to
-    whoever took the press, wherever the pointer strays), then dividers,
-    then the positional query; keys go to the focused pane, and a wheel
-    goes to the pane under the pointer regardless of focus (`DCK7`).
+    whoever took the press, wherever the pointer strays), then the top
+    layers (`LYR5`), then dividers, then the positional query; keys go to the
+    focused pane, and a wheel goes to the pane under the pointer — or the
+    overlay over it — regardless of focus (`DCK7`).
     */
     Route handle(in Event e)
     {
@@ -1689,7 +1740,7 @@ struct DockContainer
                 // the focused one takes it — a wheel is never dropped.
                 PaneId pane;
                 const wp = pointToCells(w.pos);
-                if (!paneAtIncludingScroll(wp, pane))
+                if (!topLayerAt(wp, pane) && !paneAtIncludingScroll(wp, pane))
                 {
                     if (!paneFrames.length)
                         return;
@@ -1742,6 +1793,29 @@ struct DockContainer
             drag = drag.draggedTo(axisOf(d.axis, cell.pos), d.lo, d.hi);
             resizeAcross(d, drag.size);
             return Route(RouteKind.container, 0, Event(cell), relayout: true);
+        }
+
+        // 1b. The top layers (LYR5): an overlay covers whatever it lies over,
+        //     dividers and the neighbouring pane included, so a pointer over
+        //     one belongs to the pane that authored it. Below capture (LYR6):
+        //     a drag that began elsewhere keeps its owner, overlay or not.
+        if (capture.isFree)
+        {
+            PaneId owner;
+            if (topLayerAt(cell.pos, owner))
+            {
+                pointerPane = owner;
+                havePointerPane = true;
+                if (cell.action == PointerAction.press
+                    && cell.button == PointerButton.left)
+                {
+                    capture = capture.capturedBy(paneCapBase + owner);
+                    focused = owner;
+                }
+                PointerEvent q = cell;
+                q.pos = toLocal(cell.pos, owner);
+                return Route(RouteKind.pane, owner, Event(q));
+            }
         }
 
         // 2. A press on a divider starts a resize and takes the capture.
@@ -2096,6 +2170,66 @@ version (unittest)
     assert(r.kind == RouteKind.pane && r.pane == doc && c.focused == doc);
     r.event.match!((in PointerEvent p) { assert(p.pos == Point(7, 3)); },
         (_) { assert(false); });
+}
+
+/// The top-layers rung (`LYR5`, `DCK13`): a dropdown the sidebar painted past its
+/// edge, over the divider and into the document, takes the press that lands
+/// on it — routed to the sidebar, in the sidebar's coordinates — and so do
+/// the wheel and the hover over it. Off it, the document is as before.
+@("ui.dock.topLayerTakesWhatItCovers")
+@safe unittest
+{
+    auto c = twoPane();
+    // The sidebar is columns 0–31, the divider 32; the overlay spans 28–41.
+    c.paintedTopLayers([TopLayer(tree, Rect(28, 5, 14, 4))]);
+
+    auto r = c.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(38, 6))));
+    assert(r.kind == RouteKind.pane && r.pane == tree, "over the document, still the sidebar's");
+    assert(c.focused == tree && !c.resizing);
+    r.event.match!((in PointerEvent p) { assert(p.pos == Point(38, 6)); },
+        (_) { assert(false); });
+    r = c.handle(Event(PointerEvent(action: PointerAction.release,
+        button: PointerButton.left, pos: Point(38, 6))));
+    assert(r.kind == RouteKind.pane && r.pane == tree);
+
+    // Over the divider: the overlay covers it, so no resize starts.
+    r = c.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(32, 6))));
+    assert(r.kind == RouteKind.pane && r.pane == tree && !c.resizing);
+    c.handle(Event(PointerEvent(action: PointerAction.release,
+        button: PointerButton.left, pos: Point(32, 6))));
+    assert(c.shape() != PointerShape.ewResize, "no resize cursor through it");
+
+    const w = c.handle(Event(WheelEvent(dy: 1, pos: Point(40, 7))));
+    assert(w.kind == RouteKind.pane && w.pane == tree, "the wheel over it too");
+
+    r = c.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(60, 6))));
+    assert(r.kind == RouteKind.pane && r.pane == doc, "off it, the pane under the pointer");
+}
+
+/// Capture still wins (`LYR6`): a drag that began in the document keeps its
+/// owner when it crosses an overlay, and a frame with no overlays forgets them.
+@("ui.dock.captureOutranksTopLayers")
+@safe unittest
+{
+    auto c = twoPane();
+    c.paintedTopLayers([TopLayer(tree, Rect(28, 5, 14, 4))]);
+    c.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(70, 6))));
+    auto r = c.handle(Event(PointerEvent(action: PointerAction.drag,
+        button: PointerButton.left, pos: Point(38, 6))));
+    assert(r.kind == RouteKind.pane && r.pane == doc, "the drag stays the document's");
+    r = c.handle(Event(PointerEvent(action: PointerAction.release,
+        button: PointerButton.left, pos: Point(38, 6))));
+    assert(r.kind == RouteKind.pane && r.pane == doc);
+
+    c.paintedTopLayers(null);
+    assert(c.topLayers.length == 0);
+    r = c.handle(Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(38, 6))));
+    assert(r.pane == doc, "closed, it routes nothing");
 }
 
 @("ui.dock.wheelGoesUnderThePointer")

@@ -129,28 +129,22 @@ private uint viewWith(ref Builder b, in DockContainer c, in GalleryState s)
     // id on each pane instead would make `rectOf` answer with whichever pane
     // happens to come first — right only while that pane sits at the origin,
     // which a re-dock is free to change.
-    const arrangement = b.add(Widget(
-        kind: WidgetKind.column,
-        children: [renderNode(b, c, c.layout.root)],
-        width: SizeSpec.grow(),
-        height: SizeSpec.fixed(dockRows),
-        hitId: s.hitOf(dockAreaKey),
-    ));
-
+    //
     // The drop preview goes OVER the arrangement, which is the only place it
     // means anything: a reader dragging a tab is looking at the panes, not at
     // a readout further down the page — on a short terminal that readout is
     // below the fold entirely, so the drag looked inert while working fine.
+    // It is an overlay on the adorn band, a child of the node at the
+    // container's origin: the toolkit places it where the container said.
     const drag = s.dock.dragHint();
-    const shown = drag.active && drag.willDock
-        ? b.add(Widget(
-            kind: WidgetKind.stack,
-            children: [arrangement, hintOver(b, drag)],
-            width: SizeSpec.grow(),
-            height: SizeSpec.fixed(dockRows),
-        ))
-        : arrangement;
-    body_ ~= section(b, "the arrangement", [shown]);
+    const arrangement = b.add(Widget(
+        kind: WidgetKind.column,
+        children: [renderNode(b, c, c.layout.root), dockHint(b, drag)],
+        width: SizeSpec.grow(),
+        height: SizeSpec.fixed(dockRows),
+        hitId: s.hitOf(dockAreaKey),
+    ));
+    body_ ~= section(b, "the arrangement", [arrangement]);
     body_ ~= spacer(b);
 
     body_ ~= section(b, "the container", [
@@ -201,32 +195,6 @@ private uint viewWith(ref Builder b, in DockContainer c, in GalleryState s)
         ~ "nothing to offer a target without a pointer.", w);
 
     return column(b, body_);
-}
-
-/**
-Places the container's own hint rect over the arrangement.
-
-`stack` children share an origin, and the toolkit has no absolute placement
-yet — that is the [popup spec](../../../../docs/specs/ui/popup.md)'s `adorn`
-band — so the offset is two spacers. The rect is $(B not) recomputed here:
-`dockHintRect` is the container's, from the same `DockDrag` the release will
-act on, which is the property worth having. A preview a host derives
-independently is a preview that can promise a region the drop will not fill.
-*/
-private uint hintOver(ref Builder b, in DockDrag drag)
-{
-    const r = dockHintRect(drag.targetRect, drag.zone);
-    uint[] row;
-    if (r.x > 0)
-        row ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(r.x)));
-    row ~= dockHint(b, drag);
-    const band = b.add(Widget(kind: WidgetKind.row, children: row));
-
-    uint[] col;
-    if (r.y > 0)
-        col ~= b.add(Widget(kind: WidgetKind.box, height: SizeSpec.fixed(r.y)));
-    col ~= band;
-    return b.add(Widget(kind: WidgetKind.column, children: col));
 }
 
 /// Renders one node of the arrangement by walking it — a split becomes a row
@@ -617,7 +585,7 @@ bool handlePointer(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
             maxH: s.surface.height));
         size_t hintNode = size_t.max;
         foreach (i, ref node; midTree.nodes)
-            if (node.kind == WidgetKind.box && node.slot == Slot.chromeFocused
+            if (node.kind == WidgetKind.popup && node.slot == Slot.chromeFocused
                 && node.paintBackground)
                 hintNode = i;
         assert(hintNode != size_t.max, "the hint is painted over the panes");
