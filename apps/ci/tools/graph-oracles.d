@@ -121,6 +121,8 @@ immutable Oracle[] oracles = [
     Oracle("17", &oracle17),
     Oracle("18", &oracle18),
     Oracle("19", &oracle19),
+    Oracle("21", &oracle21),
+    Oracle("21-replay", &oracle21Replay),
     Oracle("24", &oracle24),
 ];
 
@@ -620,6 +622,77 @@ Verdict[] oracle16()
             : stored(g, compile) ? "the compile without its object published a result" : null,
             "a compile that exited zero without its object failed and published nothing");
     }
+
+    // Step 5: publication fails three ways; each run's outcome must equal a
+    // run whose publication succeeded, and each failure must be reported.
+    {
+        import core.sys.posix.unistd : getgid, getuid;
+        import std.file : setAttributes;
+        import sparkles.build_graph.store : beforePublication;
+
+        auto p = Fixture.add("o16p", [
+            "dub.sdl": recipeOf("o16p"),
+            "src/sparkles/zz_o16p/p.d": "module sparkles.zz_o16p.p;\n\nunittest\n{\n    assert(1 + 1 == 2);\n}\n",
+        ]);
+        string why(int exitCode, const string[] executedTasks, string log, int normalExit, const string[] normalTasks,
+            string failure)
+        {
+            return exitCode != normalExit ? text("the run exited ", exitCode, ", a run that published ", normalExit)
+                : executedTasks.dup.sort.release != normalTasks.dup.sort.release ? text("it ran ", executedTasks,
+                    ", a run that published ", normalTasks)
+                : !log.canFind(failure) ? "the failure was not reported:" ~ tailOf(log) : null;
+        }
+
+        // A full file system: a builder whose cache is a small tmpfs of its
+        // own (in a user namespace), filled at its last publication.
+        {
+            const compile = p.task("compile");
+            string[] tmpfs(string cache) => [tool("unshare"), "-rm", sh(), "-c",
+                "mount -t tmpfs -o size=512m tmpfs \"$0\" && exec " ~ tool("unshare") ~ " --user --map-user="
+                ~ text(getuid()) ~ " --map-group=" ~ text(getgid()) ~ " \"$@\"", cache];
+            const c1 = freshCache("o16"), c2 = freshCache("o16");
+            auto normal = startChild(p.name, c1, ["--task=" ~ compile], tmpfs(c1)).wait();
+            auto full = startChild(p.name, c2, ["--task=" ~ compile, "--fill-after=" ~ compile],
+                tmpfs(c2)).wait();
+            const task = normal.resultKeys.byKey.filter!(t => t.startsWith(compile)).array;
+            vs ~= Verdict("step 5, a full file system", normal.exitCode != 0 ? "the builder failed on its tmpfs:" ~ tailOf(normal.log ~ normal.raw)
+                : !task.length ? "the compile published nothing on the tmpfs"
+                : (task[0] in full.resultKeys) !is null ? "the compile published on a full file system"
+                : why(full.exitCode, full.executed, full.log, normal.exitCode, normal.executed, "cannot "),
+                "with the store's file system full once the compile ended, the run succeeded as one that "
+                ~ "published, and reported the failed publication");
+        }
+
+        // A read-only results/.
+        {
+            const normalCache = freshCache("o16"), cache = freshCache("o16");
+            auto normal = run(p.name, normalCache);
+            const results = buildPath(cache, "build", "v1", "results");
+            mkdirRecurse(results);
+            setAttributes(results, octal!555);
+            auto ro = run(p.name, cache);
+            setAttributes(results, octal!755);
+            vs ~= Verdict("step 5, a read-only results/", ro.stats.resultKeys.byKey.any!(t => storeDir(cache, "results")
+                    .canFind(ro.stats.resultKeys[t])) ? "a result was published into a read-only results/"
+                : why(ro.exitCode, ro.stats.executedTasks, ro.log, normal.exitCode, normal.stats.executedTasks, "cannot publish"),
+                "with results/ read-only, the run succeeded as one that published, and reported each failed publication");
+        }
+
+        // A rename that fails: a file planted where the entry would go.
+        {
+            const normalCache = freshCache("o16"), cache = freshCache("o16");
+            auto normal = run(p.name, normalCache);
+            renameBlockCache = cache;
+            beforePublication = &blockRename;
+            auto blocked = run(p.name, cache);
+            beforePublication = null;
+            vs ~= Verdict("step 5, a rename that fails",
+                why(blocked.exitCode, blocked.stats.executedTasks, blocked.log, normal.exitCode, normal.stats.executedTasks,
+                    "cannot publish the entry"),
+                "with every publishing rename failing, the run succeeded as one that published, and reported each");
+        }
+    }
+    vs ~= Verdict("step 6", "not run: needs a virtual machine whose power is cut between a rename and the next write", null);
     return vs;
 }
 
@@ -2135,6 +2208,14 @@ int childBuild(string[] args)
     o.jobs = 2;
     if (const t = option(args, "task"))
         o.tasks = [t];
+    // Oracle 16: the file system is full once the task's process ends,
+    // before its publication writes anything.
+    if (const prefix = option(args, "fill-after"))
+        o.adjustExecution = (string task, ref ProcessAction pa) {
+            if (task.startsWith(prefix))
+                pa.argv = [sh(), "-c", "\"$0\" \"$@\"; s=$?; " ~ tool("dd") ~ " if=/dev/zero of=" ~ cache
+                    ~ "/filler bs=64k 2>/dev/null; exit $s"] ~ pa.argv;
+        };
     if (const prefix = option(args, "counter"))
         o.adjustExecution = (string task, ref ProcessAction pa) {
             if (!task.startsWith(prefix))
@@ -2157,6 +2238,17 @@ int childBuild(string[] args)
     foreach (line; g.log.lineSplitter)
         writeln("log ", line);
     return 0;
+}
+
+__gshared string renameBlockCache;
+
+// Oracle 16: plants a file where the entry `key` would be published, so the
+// publishing rename fails.
+void blockRename(string key) @trusted
+{
+    try
+        write(buildPath(renameBlockCache, "build", "v1", "results", key), "in the way");
+    catch (Exception) {}
 }
 
 /// A builder's report, parsed.
@@ -2205,7 +2297,7 @@ struct Child
     }
 }
 
-Child startChild(string pkg, string cache, string[] extra = null)
+Child startChild(string pkg, string cache, string[] extra = null, string[] wrap = null)
 {
     import std.file : thisExePath;
     import std.stdio : File;
@@ -2213,7 +2305,7 @@ Child startChild(string pkg, string cache, string[] extra = null)
     static size_t n;
     const output = buildPath(scratch, text("child-", ++n, ".out"));
     auto f = File(output, "w");
-    auto pid = std.process.spawnProcess([thisExePath, "--child=" ~ pkg, "--cache=" ~ cache] ~ extra,
+    auto pid = std.process.spawnProcess(wrap ~ [thisExePath, "--child=" ~ pkg, "--cache=" ~ cache] ~ extra,
         std.stdio.stdin, f, f, null, std.process.Config.none, root);
     return Child(pid, output);
 }
@@ -2972,5 +3064,264 @@ Verdict[] oracle3()
     expect("the module a failed __traits(compiles) probe looked for is created", t, {
         t.put("b/opt.d", "module opt;\n");
     }, true);
+    return vs;
+}
+
+// === Oracle 21: incremental equals clean ===
+
+/// How the incremental run `inc` (on the store beneath `incCache`) differs
+/// from the cold run `cold` (beneath `coldCache`): exit status, test
+/// verdicts, compiler diagnostics, result keys and every output's bytes.
+/// Null when they agree.
+string differsFromCold(ref const GraphRun inc, string incCache, ref const GraphRun cold, string coldCache)
+{
+    if (inc.error.length || cold.error.length)
+        return inc.error != cold.error ? "one could not plan: " ~ inc.error ~ " / " ~ cold.error : null;
+    if (inc.exitCode != cold.exitCode)
+        return text("the incremental run exited ", inc.exitCode, ", the cold one ", cold.exitCode);
+    if (verdictLines(inc.log) != verdictLines(cold.log))
+        return "the test verdicts differ";
+    if (errorLines(inc.log).sort.release != errorLines(cold.log).sort.release)
+        return "the compiler diagnostics differ";
+    string why;
+    foreach (task, key; cold.stats.resultKeys)
+    {
+        const mine = inc.stats.resultKeys.get(task, null);
+        if (mine != key)
+            why ~= " " ~ task ~ (mine.length ? "'s result key differs;" : " has no incremental result;");
+        else if (outputsOf(incCache, key) != outputsOf(coldCache, key))
+            why ~= " " ~ task ~ "'s outputs differ;";
+    }
+    foreach (task, _; inc.stats.resultKeys)
+        if (task !in cold.stats.resultKeys)
+            why ~= " " ~ task ~ " has no cold result;";
+    return why;
+}
+
+/// The step-2 precision check of the incremental run `inc` against every
+/// result key the store held before it (`known`): an action that executed
+/// had a key the store did not hold, and one whose key it held was reused.
+string imprecision(ref const GraphRun inc, const bool[string] known)
+{
+    string why;
+    foreach (task, key; inc.stats.resultKeys)
+    {
+        if (task.startsWith("test:"))
+            continue;
+        const ran = inc.stats.executedTasks.canFind(task);
+        if (ran && (key in known) !is null)
+            why ~= " " ~ task ~ " executed under a key the store held;";
+    }
+    return why;
+}
+
+/// Oracle 21's step 3 over the fixture `pkg` and its dependency `lib`: the
+/// edit sequence `seed` draws, each step built incrementally and cold.
+string editSequence(uint seed, ref Fixture pkg, ref Fixture lib, size_t steps, out string[] applied)
+{
+    import std.algorithm : countUntil;
+    import std.random : Random, uniform;
+
+    auto rng = Random(seed);
+    const cache = freshCache("o21");
+    bool[string] known;
+    string[string] files; // what each edited file held before its last edit, for a revert
+    string other;
+    scope (exit)
+        if (other.length)
+            removeWorktree(other);
+    static immutable kinds = ["edit a module", "create at an absent candidate", "create a .di", "create a package.d",
+        "edit a string import", "delete a file", "revert an edit", "switch worktree"];
+    foreach (i; 0 .. steps + 1)
+    {
+        string at = root;
+        if (i > 0)
+        {
+            const kind = kinds[uniform(0, kinds.length, rng)];
+            applied ~= kind;
+            const n = uniform(0, 1000, rng);
+            final switch (kinds.countUntil(kind))
+            {
+                case 0:
+                    files["src/sparkles/zz_o21l/l.d"] = readText(buildPath(lib.dir, "src/sparkles/zz_o21l/l.d"));
+                    lib.put("src/sparkles/zz_o21l/l.d", text("module sparkles.zz_o21l.l;\n\nint value() { return ", n,
+                        "; }\n"));
+                    break;
+                case 1:
+                    pkg.put("a/m.d", text("module m;\n\nenum mValue = ", n, ";\n"));
+                    break;
+                case 2:
+                    pkg.put("b/m.di", text("module m;\n\nenum mValue = ", n, ";\n"));
+                    break;
+                case 3:
+                    pkg.put("a/q/package.d", text("module q;\n\nenum qValue = ", n, ";\n"));
+                    break;
+                case 4:
+                    pkg.put("views/data.txt", text(n, "\n"));
+                    break;
+                case 5:
+                    foreach (victim; ["a/m.d", "b/m.di", "a/q/package.d"])
+                        if (exists(buildPath(pkg.dir, victim)))
+                        {
+                            std.file.remove(buildPath(pkg.dir, victim));
+                            break;
+                        }
+                    break;
+                case 6:
+                    foreach (path, before; files)
+                        lib.put(path, before);
+                    files = null;
+                    break;
+                case 7:
+                    if (!other.length)
+                    {
+                        other = secondWorktree();
+                        copyFixture(lib, other);
+                        copyFixture(pkg, other);
+                    }
+                    break;
+            }
+            // A switch builds the second worktree as it was copied; every other
+            // step builds this one.
+            if (kind == "switch worktree")
+                at = other;
+        }
+        auto inc = run(pkg.name, cache, RunOptions.init, at);
+        const coldCache = freshCache("o21");
+        auto cold = run(pkg.name, coldCache, RunOptions.init, at);
+        const step = text("seed ", seed, ", step ", i, applied.length ? " (" ~ applied[$ - 1] ~ ")" : "", ": ");
+        const differs = differsFromCold(inc, cache, cold, coldCache);
+        rmdirRecurse(coldCache);
+        if (differs.length)
+            return step ~ differs;
+        if (const why = imprecision(inc, known))
+            return step ~ why;
+        foreach (_, key; inc.stats.resultKeys)
+            known[key] = true;
+    }
+    return null;
+}
+
+Verdict[] oracle21()
+{
+    import sparkles.build_graph.execute : dropAbsentCandidates;
+
+    Verdict[] vs;
+    auto lib = Fixture.add("o21l", [
+        "dub.sdl": recipeOf("o21l"),
+        "src/sparkles/zz_o21l/l.d": "module sparkles.zz_o21l.l;\n\nint value() { return 0; }\n",
+    ]);
+    enum testModule = "module sparkles.zz_o21t.t;\n\nimport m : mValue;\nimport q : qValue;\nimport sparkles.zz_o21l.l;\n\n"
+        ~ "unittest\n{\n    assert(value() >= 0 && mValue >= 0 && qValue >= 0);\n    assert(import(\"data.txt\").length);\n}\n";
+    auto t = Fixture.add("o21t", [
+        "dub.sdl": recipeOf("o21t", ["zz-oracle-o21l"], null, null, (ref DubManifest m) {
+            m.importPaths = [platformValues("src", "a", "b")];
+            m.stringImportPaths = [platformValues("views")];
+        }),
+        "views/data.txt": "0\n",
+        "a/.keep": "",
+        "b/m.d": "module m;\n\nenum mValue = 0;\n",
+        "b/q.d": "module q;\n\nenum qValue = 0;\n",
+        "src/sparkles/zz_o21t/t.d": testModule,
+    ]);
+    // The fixture as it starts, restored before each sequence.
+    void reset()
+    {
+        foreach (extra; ["a/m.d", "b/m.di", "a/q/package.d"])
+            if (exists(buildPath(t.dir, extra)))
+                std.file.remove(buildPath(t.dir, extra));
+        if (exists(buildPath(t.dir, "a/q")))
+            rmdirRecurse(buildPath(t.dir, "a/q"));
+        t.put("views/data.txt", "0\n");
+        lib.put("src/sparkles/zz_o21l/l.d", "module sparkles.zz_o21l.l;\n\nint value() { return 0; }\n");
+    }
+    foreach (seed; [1u, 2u, 3u])
+    {
+        reset();
+        string[] applied;
+        const why = editSequence(seed, t, lib, 8, applied);
+        vs ~= Verdict(text("step 3, seed ", seed), why.length ? why ~ text(" after ", applied) : null,
+            text("8 edits (", applied.join(", "), ") each built incrementally as a cold build did, executing only "
+                ~ "the actions whose keys the store did not hold"));
+    }
+
+    // The revert check: without absent candidates, a file created at one
+    // goes unseen, and the incremental build differs from the cold one.
+    {
+        reset();
+        dropAbsentCandidates = true;
+        scope (exit)
+            dropAbsentCandidates = false;
+        const cache = freshCache("o21");
+        auto first = run(t.name, cache);
+        t.put("a/m.d", "module m;\n\nenum mValue = 7;\n");
+        auto inc = run(t.name, cache);
+        const coldCache = freshCache("o21");
+        auto cold = run(t.name, coldCache);
+        const compile = taskOf(first, t.task("compile"));
+        vs ~= Verdict("revert check", first.exitCode ? "the fixture failed:" ~ tailOf(first.log)
+            : inc.stats.resultKeys.get(compile, "a") != first.stats.resultKeys.get(compile, "b")
+                ? "without absent candidates, the created file still changed the compile's key"
+            : !differsFromCold(inc, cache, cold, coldCache).length ? "the oracle did not tell the incremental build from the cold one" : null,
+            "without absent candidates, a file created at one left the compile's key unchanged, as a cold build "
+            ~ "did not: the oracle sees the difference");
+        reset();
+    }
+    vs ~= Verdict("steps 1-2", "run separately: --only=21-replay replays commits of main", null);
+    return vs;
+}
+
+/// Oracle 21's steps 1 and 2 (`--only=21-replay`, hours): the last N commits
+/// of `origin/main` (`ORACLE21_COMMITS`, 50 by default), each built
+/// incrementally on the store the one before left and cold, for the packages
+/// `ORACLE21_PACKAGES` names (`versions build-graph` by default).
+Verdict[] oracle21Replay()
+{
+    import std.string : split, strip;
+    import sparkles.build_primitives.git_env : runGit;
+
+    Verdict[] vs;
+    const n = std.process.environment.get("ORACLE21_COMMITS", "50").to!size_t;
+    const packages = std.process.environment.get("ORACLE21_PACKAGES", "versions build-graph").split;
+    const listed = runGit(["rev-list", "--first-parent", "-n", text(n), "origin/main"], root);
+    assert(listed.status == 0, listed.output);
+    auto commits = listed.output.strip.split("\n");
+    {
+        import std.algorithm.mutation : reverse;
+
+        reverse(commits);
+    }
+    const tree = secondWorktree();
+    scope (exit)
+        removeWorktree(tree);
+    const cache = freshCache("o21r");
+    bool[string] known;
+    foreach (k, commit; commits)
+    {
+        const co = runGit(["checkout", "--quiet", "--detach", commit], tree);
+        if (co.status != 0)
+        {
+            vs ~= Verdict(commit[0 .. 12], "cannot check it out: " ~ co.output, null);
+            continue;
+        }
+        string why;
+        foreach (pkg; packages)
+        {
+            auto inc = run(pkg, cache, RunOptions.init, tree);
+            const coldCache = freshCache("o21r");
+            auto cold = run(pkg, coldCache, RunOptions.init, tree);
+            if (const d = differsFromCold(inc, cache, cold, coldCache))
+                why ~= " " ~ pkg ~ ":" ~ d;
+            else if (k > 0)
+                if (const p = imprecision(inc, known))
+                    why ~= " " ~ pkg ~ ":" ~ p;
+            foreach (_, key; inc.stats.resultKeys)
+                known[key] = true;
+            rmdirRecurse(coldCache);
+        }
+        writeln(why.length ? "FAIL " : "pass ", commit[0 .. 12], why);
+        std.stdio.stdout.flush();
+        vs ~= Verdict(commit[0 .. 12], why, text(packages, " built incrementally as cold, precisely"));
+    }
     return vs;
 }

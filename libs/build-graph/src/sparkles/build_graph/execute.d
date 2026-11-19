@@ -329,6 +329,12 @@ private struct Recorded
     string preimage;
 }
 
+/**
+Oracle 21's revert check: manifests record no absent candidate, so a file
+created at one goes unseen. False in every real run.
+*/
+__gshared bool dropAbsentCandidates;
+
 /// What a run did with each kind of action: reused it from the store, or
 /// executed it.
 struct RunStats
@@ -1575,8 +1581,9 @@ struct ActionDriver
             }
             m.files ~= e;
         }
-        foreach (path; makeRulePrerequisites(absentText))
-            m.absent ~= named(path);
+        if (!dropAbsentCandidates)
+            foreach (path; makeRulePrerequisites(absentText))
+                m.absent ~= named(path);
         return true;
     }
 
