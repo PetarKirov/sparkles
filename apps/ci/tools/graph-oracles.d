@@ -23,7 +23,11 @@ scratch store of its own, and prints a verdict per step:
 
     dub run --single apps/ci/tools/graph-oracles.d -- [--only=<oracle>]... [<root>]
 
-`--only=16` runs one oracle's steps; without it every oracle runs. Needs
+`--only=16` runs one oracle's steps; without it every oracle runs but the
+hours-long ones (`2-all`, `21-replay`), which run only when named. The
+scratch stores live beneath `ORACLE_SCRATCH` (the temporary directory by
+default), which oracle 4 needs on the worktree's file system; oracle 7's
+second worktree goes beneath the temporary directory, on another. Needs
 the dev shell: its toolchain, `SPARKLES_DUB_SOURCES` and `strace`. A check
 that is interrupted can leave a fixture behind; the next run removes it.
 */
@@ -64,7 +68,7 @@ int main(string[] args)
     const only = args.filter!(a => a.startsWith("--only=")).map!(a => a["--only=".length .. $]).array;
     const positional = args[1 .. $].filter!(a => !a.startsWith("--")).array;
     root = buildNormalizedPath(absolutePath(positional.length ? positional[0] : "."));
-    scratch = buildPath(tempDir, text("graph-oracles-", thisProcessID));
+    scratch = buildPath(std.process.environment.get("ORACLE_SCRATCH", tempDir), text("graph-oracles-", thisProcessID));
     mkdirRecurse(scratch);
     scope (exit)
         if (exists(scratch))
@@ -75,8 +79,8 @@ int main(string[] args)
     size_t ran;
     foreach (ref o; oracles)
     {
-        // An `-all` oracle runs for hours: only when named.
-        if (only.length ? !only.canFind(o.id) : std.algorithm.endsWith(o.id, "-all"))
+        // An `-all` or `-replay` oracle runs for hours: only when named.
+        if (only.length ? !only.canFind(o.id) : std.algorithm.endsWith(o.id, "-all", "-replay") != 0)
             continue;
         foreach (v; o.check())
         {
@@ -724,11 +728,11 @@ Verdict[] oracle16()
 }
 
 /// A git worktree of the repository at `HEAD`, beneath `scratch`.
-string secondWorktree()
+string secondWorktree(string under = scratch)
 {
     import sparkles.build_primitives.git_env : runGit;
 
-    const dir = buildPath(scratch, text("worktree-", thisProcessID));
+    const dir = buildPath(under, text("worktree-", thisProcessID));
     const r = runGit(["worktree", "add", "--detach", "--quiet", dir, "HEAD"], root);
     assert(r.status == 0, r.output);
     return dir;
@@ -1493,6 +1497,8 @@ Verdict[] oracle24()
             symlink(target, planted);
         }
         const traceFile = buildPath(scratch, "o24.trace");
+        // The `ci` the worktree builds, brought up to date first.
+        const built = execute(["dub", "build", "-q", "--root=" ~ root, ":ci"]);
         const ci = buildPath(root, "apps", "ci", "build", "ci");
         // explain reads the store beneath $XDG_CACHE_HOME/sparkles: point it here.
         const xdg = buildPath(scratch, "o24-xdg");
@@ -1502,7 +1508,8 @@ Verdict[] oracle24()
         const r = execute(["strace", "-f", "-qq", "-e", "trace=%file", "-o", traceFile, ci, "cache", "store",
             "explain", compile], ["XDG_CACHE_HOME": xdg]);
         const trace = exists(traceFile) ? readText(traceFile) : "";
-        vs ~= Verdict("step 5", !planted.length ? "no object to plant a link at"
+        vs ~= Verdict("step 5", built.status ? "cannot build `ci`:\n" ~ built.output
+            : !planted.length ? "no object to plant a link at"
             : !r.output.canFind("miss") ? "the lookup through a planted link did not miss:\n" ~ r.output
             : !exists(buildPath(cache, "build", "v1", "trash")) || storeHas(cache, key) ? "the entry was not moved to trash/"
             : trace.canFind(target) ? "the lookup touched the link's target " ~ target : null,
@@ -2393,9 +2400,11 @@ Verdict[] oracle7()
 
     // Step 1: N builders of one package, at random delays before each
     // publication, from two worktrees on different file systems, while a
-    // reader verifies the store over and over.
+    // reader verifies the store over and over. The second worktree goes
+    // beneath the system's temporary directory, since `ORACLE_SCRATCH` may put
+    // the scratch directory beside the first (oracle 4).
     {
-        const other = secondWorktree();
+        const other = secondWorktree(tempDir);
         scope (exit)
             removeWorktree(other);
         const cache = freshCache("o7");
@@ -2791,6 +2800,20 @@ Verdict[] oracle4()
     ]);
     const module_ = buildPath(lib.dir, "src/sparkles/zz_o4l/d.d");
     const relativeModule = module_[root.length + 1 .. $];
+    {
+        // BGK5 caches a digest only on the store's file system.
+        static ulong deviceOf(string path)
+        {
+            import core.sys.posix.sys.stat : stat, stat_t;
+            import std.string : toStringz;
+
+            stat_t st;
+            return (() @trusted => stat(path.toStringz, &st))() == 0 ? st.st_dev : ulong.max;
+        }
+        if (deviceOf(scratch) != deviceOf(root))
+            return [Verdict("steps 1-5", text("not run: the scratch stores (", scratch, ") are on another file system "
+                ~ "than the worktree, where BGK5 caches no digest; set ORACLE_SCRATCH to a directory beside it"), null)];
+    }
     void dated(SysTime when) { setTimes(module_, when, when); }
     // The module rewritten to `content`, its modification time kept.
     void rewriteKeepingTime(string content)
