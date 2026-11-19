@@ -45,7 +45,9 @@
         // lib.optionalAttrs pinned {
           inherit src;
           sourceRoot = "${src.name}/libs/test-runner-impl";
-          dubLock = "${src}/nix/dub-lock.json";
+          # The pinned tree's own lock, read at evaluation (the fetch is
+          # fixed-output, so this import builds nothing).
+          dubLock = lib.importJSON "${src}/nix/dub-lock.json";
         }
       );
     };

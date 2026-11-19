@@ -158,11 +158,9 @@ runner pinned; `-i`, `-e`, `-v`, `-t` and `-l` behave as in the CLI
 reference; the §11 scenarios of process-model.md pass; and no recipe names
 `test-runner-impl` or a path inside the attributes, shim, harness or runner.
 
-Status: slices 1–6 are implemented. The pin names
-no revision yet, so the
-runner builds from the flake's own source. Open: pinning a revision of
-`main` once P1 lands there, the Windows leg's first run, and turning the
-§11 scenarios run by hand into tests.
+Status: slices 1–6 are implemented, and the pin names `e1cd1e500`, a
+revision of `main`. Open: the Windows leg's first run, and turning the §11
+scenarios run by hand into tests.
 
 ## W1 — `@wasm` on WASI
 
