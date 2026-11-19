@@ -61,12 +61,15 @@ Gate: prerequisite package tests pass on Linux, macOS and Windows. The probes
 leave no process behind and use no `sparkles.core_cli.process_utils` execution
 path.
 
-Status: Linux and macOS are met.
+Status: met.
 
 - **Process matrix:** the macOS matrix runs the supervision suite on both
   hosts.
 - **Channels:** `CrossChannel` is the executor's production event channel.
-- **Pending:** Windows supervision is the remaining part of the gate.
+- **Windows:** Event Horizon M19 item 5 delivered supervision on Windows, and
+  the `windows-latest` leg runs the prerequisite packages' suites, the
+  supervision cases among them: on #745's run 44573104254, `event-horizon`
+  passed 179 tests (2 skipped), `wired` 338 and `build-primitives` 286.
 
 ## M3a: Placements before the build graph
 
@@ -148,7 +151,9 @@ and needs none of the prerequisites above.
   `commands/` module (SPEC §7), with the file selection, rendering and
   toolchain command lines the groups share in modules of their own.
 
-Progress: the command tree landed in #743; the `commands/` split follows it.
+Progress: delivered. The command tree landed in #743 and the `commands/`
+split in #744; `cli.removedFlags.unknown` rejects SPEC §2's removed flags, and
+no workflow, hook, script or document uses one.
 
 Gate:
 
@@ -280,9 +285,9 @@ workflow or user-facing document uses a removed flag.
 | Milestone | Deliverable                       | State       |
 | --------- | --------------------------------- | ----------- |
 | M0        | Specifications                    | in review   |
-| M3        | Prerequisite gate                 | partial     |
+| M3        | Prerequisite gate                 | done        |
 | M3a       | Placements before the build graph | done        |
-| M7a       | Canonical command line            | in progress |
+| M7a       | Canonical command line            | done        |
 | M7b       | `ci test` on the build graph      | not started |
 | M8        | Coverage and special modes        | not started |
 | M9        | Examples                          | not started |
