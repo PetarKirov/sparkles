@@ -38,6 +38,7 @@ import std.path : absolutePath, buildNormalizedPath, buildPath, dirName;
 import std.process : thisProcessID;
 static import std.process;
 static import std.algorithm;
+static import std.file;
 import std.stdio : stderr, writeln;
 import std.string : indexOf, lineSplitter;
 static import core.time;
@@ -107,6 +108,8 @@ struct Oracle
 immutable Oracle[] oracles = [
     Oracle("2", &oracle2),
     Oracle("2-all", &oracle2All),
+    Oracle("3", &oracle3),
+    Oracle("4", &oracle4),
     Oracle("5", &oracle5),
     Oracle("7", &oracle7),
     Oracle("8", &oracle8),
@@ -2620,5 +2623,354 @@ Verdict[] oracle2All()
         std.stdio.stdout.flush();
         vs ~= Verdict(name, why, text(n, " verdict lines and the exit status agree"));
     }
+    return vs;
+}
+
+// === Oracle 4: digest audit ===
+
+Verdict[] oracle4()
+{
+    import core.time : days, hours;
+    import sparkles.build_graph.store : hexOf;
+    import std.datetime.systime : Clock, SysTime;
+    import std.file : getTimes, setTimes;
+    import sparkles.base.hash.blake3 : blake3;
+
+    Verdict[] vs;
+    enum libModule = "module sparkles.zz_o4l.d;\n\n// Read by the test's compile.\nint dep() { return 4; }\n";
+    auto lib = Fixture.add("o4l", [
+        "dub.sdl": recipeOf("o4l"),
+        "src/sparkles/zz_o4l/d.d": libModule,
+    ]);
+    auto app = Fixture.add("o4t", [
+        "dub.sdl": recipeOf("o4t", ["zz-oracle-o4l"]),
+        "src/sparkles/zz_o4t/t.d": "module sparkles.zz_o4t.t;\n\nimport sparkles.zz_o4l.d;\n\n"
+            ~ "unittest\n{\n    assert(dep() == 4);\n}\n",
+    ]);
+    const module_ = buildPath(lib.dir, "src/sparkles/zz_o4l/d.d");
+    const relativeModule = module_[root.length + 1 .. $];
+    void dated(SysTime when) { setTimes(module_, when, when); }
+    // The module rewritten to `content`, its modification time kept.
+    void rewriteKeepingTime(string content)
+    {
+        SysTime accessed, modified;
+        getTimes(module_, accessed, modified);
+        write(module_, content);
+        setTimes(module_, accessed, modified);
+    }
+    const sameSize = libModule.replace("Read by the test's", "Read by the tests'");
+    assert(sameSize.length == libModule.length);
+    scope (exit)
+        if (exists(module_))
+            write(module_, libModule);
+
+    // Step 1: a rewrite that keeps the size and modification time, an hour
+    // after the digest was recorded and within its granularity.
+    foreach (age; ["an hour old", "just written"])
+    {
+        write(module_, libModule);
+        if (age == "an hour old")
+            dated(Clock.currTime - 1.hours);
+        const cache = freshCache("o4");
+        auto first = run(app.name, cache);
+        rewriteKeepingTime(sameSize);
+        auto second = run(app.name, cache);
+        const compile = taskOf(first, lib.task("compile"));
+        vs ~= Verdict("step 1, " ~ age, first.exitCode ? "the fixture failed:" ~ tailOf(first.log)
+            : !executed(second, compile) ? "the rewritten module was not rehashed: its compile hit" : null,
+            "a same-size rewrite with its modification time restored was rehashed, and its compile reran");
+    }
+
+    // Step 2: a digest cache hit, audited by rehashing every record.
+    {
+        write(module_, libModule);
+        dated(Clock.currTime - 1.hours);
+        const cache = freshCache("o4");
+        auto first = run(app.name, cache);
+        auto second = run(app.name, cache);
+        const records = storeDir(cache, "digests");
+        string wrong;
+        size_t audited;
+        foreach (name; records)
+        {
+            string path, digest;
+            foreach (line; readText(buildPath(cache, "build", "v1", "digests", name)).lineSplitter)
+            {
+                if (line.startsWith("path "))
+                    path = line[5 .. $].idup;
+                if (line.startsWith("digest "))
+                    digest = line[7 .. $].idup;
+            }
+            const file = buildPath(root, path);
+            if (!exists(file))
+                continue;
+            ++audited;
+            if (hexOf(blake3(cast(const(ubyte)[]) std.file.read(file))) != digest)
+                wrong ~= " " ~ path;
+        }
+        vs ~= Verdict("step 2", second.exitCode ? "the second run failed:" ~ tailOf(second.log)
+            : second.stats.executedTasks.any!(t => !t.startsWith("test:")) ? text("the second run rebuilt ", second.stats.executedTasks)
+            : !records.canFind!(r => readText(buildPath(cache, "build", "v1", "digests", r)).canFind("path " ~ relativeModule ~ "\n"))
+                ? "no digest record names the fixture's module"
+            : wrong.length ? "records that disagree with a rehash:" ~ wrong : null,
+            text("a second run hit through the digest cache, and rehashing its ", audited,
+                " records matched every one"));
+    }
+
+    // Step 3: a store entry corrupted three ways.
+    {
+        write(module_, libModule);
+        const cache = freshCache("o4");
+        auto first = run(app.name, cache);
+        const compile = taskOf(first, lib.task("compile"));
+        const key = first.stats.resultKeys.get(compile, null);
+        string object;
+        foreach (name, bytes; outputsOf(cache, key))
+            object = buildPath(cache, "build", "v1", "results", key, "out", name);
+        string corrupt(string how)
+        {
+            import std.file : remove;
+
+            auto bytes = cast(ubyte[]) std.file.read(object);
+            if (how == "truncated")
+                write(object, bytes[0 .. $ / 2]);
+            else if (how == "deleted")
+                remove(object);
+            else
+            {
+                bytes[$ / 2] ^= 0xff;
+                write(object, bytes);
+            }
+            return how;
+        }
+        foreach (how; ["truncated", "deleted"])
+        {
+            corrupt(how);
+            auto r = run(app.name, cache);
+            vs ~= Verdict("step 3, " ~ how, !executed(r, compile) ? "the lookup served the " ~ how ~ " output"
+                : !storeDir(cache, "results").canFind(key) ? "the rebuilt result was not published again" : null,
+                "the next lookup found the " ~ how ~ " output, removed the entry, and the compile rebuilt it");
+        }
+        corrupt("flipped");
+        RunOptions none, every;
+        none.hashSample = 0;
+        every.hashSample = 1;
+        auto unsampled = run(app.name, cache, none);
+        auto sampled = run(app.name, cache, every);
+        corrupt("flipped");
+        string lines;
+        const verified = storeOp(cache, "verify", lines);
+        vs ~= Verdict("step 3, flipped", executed(unsampled, compile) ? "a lookup that rehashes no hit saw the flipped byte"
+            : !executed(sampled, compile) ? "a lookup with the hash sample at one served the flipped output"
+            : verified == 0 || !lines.canFind(key) ? "verification did not find the flipped output: " ~ lines : null,
+            "a flipped byte of the same size passed a lookup that rehashes none, and was found, removed and rebuilt "
+            ~ "by one that rehashes every hit, and by `ci cache store verify`");
+    }
+
+    // Step 4: a modification time in the future is rehashed on every read and
+    // reported. A file system whose clock is set apart is not available here.
+    {
+        write(module_, libModule);
+        dated(Clock.currTime + 1.days);
+        const cache = freshCache("o4");
+        auto first = run(app.name, cache);
+        auto second = run(app.name, cache);
+        vs ~= Verdict("step 4, the future", !first.stats.futureTimes.canFind(relativeModule)
+            || !second.stats.futureTimes.canFind(relativeModule) ? text("not reported in both runs: ",
+                first.stats.futureTimes, " ", second.stats.futureTimes)
+            : !storeDir(cache, "digests").all!(r => !readText(buildPath(cache, "build", "v1", "digests", r))
+                .canFind("path " ~ relativeModule ~ "\n")) ? "its digest was cached" : null,
+            "a module dated a day ahead was reported in both runs, and its digest never cached");
+        write(module_, libModule);
+    }
+    vs ~= Verdict("step 4, a clock set apart",
+        "not run: needs a file system whose clock is set apart from the host's (a network or offset FUSE mount)", null);
+
+    // Step 5: edits while the compiler runs (BGK7). The test's compile is
+    // wrapped to run `edit` after the compiler, before the action ends.
+    const testCompile = app.task("compile");
+    RunOptions editing(string edit, string[] replace = null)
+    {
+        RunOptions o;
+        o.replaceTasks = replace;
+        o.adjustExecution = (string task, ref ProcessAction pa) {
+            if (!task.startsWith(testCompile))
+                return;
+            string digests;
+            foreach (arg; pa.argv)
+                if (arg.startsWith("--makedeps-digests="))
+                    digests = arg["--makedeps-digests=".length .. $];
+            pa.argv = [sh(), "-c", "\"$0\" \"$@\"; s=$?; DIGESTS='" ~ digests ~ "'; " ~ edit ~ "; exit $s"] ~ pa.argv;
+        };
+        return o;
+    }
+    const edited = libModule.replace("int dep()", "// edited\nint dep()");
+    const editFile = buildPath(scratch, "o4-edited.d");
+    write(editFile, edited);
+    const rewrite = tool("cp") ~ " " ~ editFile ~ " " ~ module_;
+    {
+        write(module_, libModule);
+        const cache = freshCache("o4");
+        auto first = run(app.name, cache);
+        const compile = taskOf(first, testCompile);
+        const manifestsBefore = storeDir(cache, "manifests");
+        auto during = run(app.name, cache, editing(rewrite, [compile]));
+        const manifestsAfter = storeDir(cache, "manifests");
+        const editedDigest = hexOf(blake3(cast(const(ubyte)[]) edited));
+        const cachedEdit = storeDir(cache, "digests").any!(r => readText(buildPath(cache, "build", "v1", "digests", r))
+            .canFind("digest " ~ editedDigest));
+        auto next = run(app.name, cache);
+        write(module_, libModule);
+        auto reverted = run(app.name, cache);
+        vs ~= Verdict("step 5, a predicted file changes",
+            !during.log.canFind("unstable input: " ~ relativeModule) ? "no unstable input was reported:" ~ tailOf(during.log)
+            : during.exitCode != 0 ? "the run did not use the outputs:" ~ tailOf(during.log)
+            : (compile in during.stats.resultKeys) !is null ? "the unstable compile was published"
+            : manifestsAfter != manifestsBefore ? "a manifest was recorded"
+            : cachedEdit ? "the edited module's digest was cached"
+            : !executed(next, compile) ? "the next run did not compile again"
+            : reverted.stats.resultKeys.get(compile, null) != first.stats.resultKeys.get(compile, "") ? "after the revert, the compile was not served the first run's result"
+            : null,
+            "the run reported the unstable input and used the outputs, leaving no result, manifest or digest; the "
+            ~ "next run compiled again, and after the revert the first run's result was served");
+    }
+    {
+        write(module_, libModule);
+        const cache = freshCache("o4");
+        auto first = run(app.name, cache);
+        const compile = taskOf(first, testCompile);
+        const link = buildPath(scratch, "o4-hardlink.d");
+        if (exists(link))
+            std.file.remove(link);
+        auto during = run(app.name, cache, editing(tool("ln") ~ " " ~ module_ ~ " " ~ link, [compile]));
+        vs ~= Verdict("step 5, only the change time changes", during.log.canFind("unstable input")
+            ? "a hard link alone was reported unstable" : (compile !in during.stats.resultKeys) ? "the result was not published" : null,
+            "a hard link added to a predicted module during the compile was rehashed, and the result published");
+    }
+    {
+        write(module_, libModule);
+        const cache = freshCache("o4");
+        auto during = run(app.name, cache, editing(rewrite));
+        write(module_, libModule);
+        vs ~= Verdict("step 5, a newly read file changes", !during.log.canFind("unstable input: " ~ relativeModule)
+            ? "a module no manifest listed, edited after the compiler read it, did not conflict" : null,
+            "a module no earlier manifest listed, rewritten after the compiler read it, conflicted");
+    }
+    vs ~= Verdict("step 5, the clock", "not run: needs a file system whose clock runs behind the host's", null);
+    {
+        write(module_, libModule);
+        const cache = freshCache("o4");
+        // The compiler reports a digest of zeros for the module: every stat
+        // proxy is unchanged.
+        auto during = run(app.name, cache, editing(tool("sed") ~ " -i 's/^[0-9a-f]\\{64\\}\\(  .*zz_o4l\\/d\\.d\\)$/"
+            ~ "0000000000000000000000000000000000000000000000000000000000000000\\1/' \"$DIGESTS\""));
+        vs ~= Verdict("step 5, compiler digests", !during.log.canFind("unstable input: " ~ relativeModule)
+            ? "a compiler digest other than the file's did not conflict:" ~ tailOf(during.log) : null,
+            "a compiler that reported another digest for a module conflicted, with every stat proxy unchanged");
+    }
+    {
+        // The module rewritten, alternately, during every run.
+        const cache = freshCache("o4");
+        const original = buildPath(scratch, "o4-original.d");
+        write(original, libModule);
+        string why;
+        foreach (i; 0 .. 3)
+        {
+            write(module_, i % 2 ? edited : libModule);
+            auto r = run(app.name, cache, editing(tool("cp") ~ " " ~ (i % 2 ? original : editFile) ~ " " ~ module_));
+            const compiles = r.stats.executedTasks.count!(t => t.startsWith(testCompile));
+            if (compiles != 1)
+                why ~= text(" run ", i, " ran the compile ", compiles, " times;");
+        }
+        write(module_, libModule);
+        vs ~= Verdict("step 5, no loop", why, "with the module rewritten during every run, each ran the compile once; "
+            ~ "a watch-mode run is not in E3");
+    }
+    return vs;
+}
+
+// === Oracle 3: manifest completeness, its mutation scenarios ===
+
+Verdict[] oracle3()
+{
+    Verdict[] vs;
+    // Runs `pkg`'s test root, applies `mutate`, and runs it again: whether
+    // the compile of `pkg` kept its result key, or why it could not tell.
+    string changedWhere;
+    string keyKept(ref Fixture pkg, void delegate() mutate, out bool kept)
+    {
+        const cache = freshCache("o3");
+        auto before = run(pkg.name, cache);
+        if (before.exitCode != 0)
+            return "the fixture failed:" ~ tailOf(before.log);
+        mutate();
+        auto after = run(pkg.name, cache);
+        if (after.exitCode != 0)
+            return "the mutated fixture failed:" ~ tailOf(after.log);
+        const compile = taskOf(before, pkg.task("compile"));
+        kept = before.stats.resultKeys.get(compile, "a") == after.stats.resultKeys.get(compile, "b");
+        changedWhere = before.stats.declaredKeys.get(compile, "a") != after.stats.declaredKeys.get(compile, "b")
+            ? "its declared key" : "its manifest";
+        return null;
+    }
+    void expect(string scenario, ref Fixture pkg, void delegate() mutate, bool changes)
+    {
+        bool kept;
+        const why = keyKept(pkg, mutate, kept);
+        vs ~= Verdict(scenario, why.length ? why
+            : kept == changes ? (changes ? "the compile kept its result key" : "the compile's result key changed, through " ~ changedWhere) : null,
+            changes ? "the compile's result key changed" : "the compile kept its result key");
+    }
+
+    // A dependency with a module the test reads and one it does not.
+    auto lib = Fixture.add("o3l", [
+        "dub.sdl": recipeOf("o3l"),
+        "src/sparkles/zz_o3l/read.d": "module sparkles.zz_o3l.read;\n\nint readValue() { return 1; }\n",
+        "src/sparkles/zz_o3l/unread.d": "module sparkles.zz_o3l.unread;\n\nint unreadValue() { return 2; }\n",
+    ]);
+    // The test: a string import, a module `m` that `-Ia -Ib` resolve to
+    // `b/m.d`, a module `q` resolved to `b/q.d`, and a failed probe of a
+    // module `opt`. ImportC sources are in a package of their own: a compile
+    // with them keys on every file under its include roots, the D ones
+    // included (BGK2, BGK6), so an unread module there changes its key.
+    auto t = Fixture.add("o3t", [
+        "dub.sdl": recipeOf("o3t", ["zz-oracle-o3l"], null, null, (ref DubManifest m) {
+            m.importPaths = [platformValues("src", "a", "b")];
+            m.stringImportPaths = [platformValues("views")];
+        }),
+        "views/data.txt": "one\n",
+        "a/.keep": "",
+        "b/m.d": "module m;\n\nenum mValue = 1;\n",
+        "b/q.d": "module q;\n\nenum qValue = 1;\n",
+        "src/sparkles/zz_o3t/t.d": "module sparkles.zz_o3t.t;\n\nimport m : mValue;\nimport q : qValue;\n"
+            ~ "import sparkles.zz_o3l.read;\n\n"
+            ~ "enum optional = __traits(compiles, { import opt; });\n\n"
+            ~ "unittest\n{\n    assert(readValue() == 1 && mValue == 1 && qValue == 1);\n"
+            ~ "    assert(import(\"data.txt\").length);\n    static if (optional) {}\n}\n",
+    ]);
+    expect("a file in the manifest is edited", t, {
+        lib.put("src/sparkles/zz_o3l/read.d", "module sparkles.zz_o3l.read;\n\nint readValue() { return 1; } // edited\n");
+    }, true);
+    expect("a dependency's file the compile did not read is edited", t, {
+        lib.put("src/sparkles/zz_o3l/unread.d", "module sparkles.zz_o3l.unread;\n\nint unreadValue() { return 3; }\n");
+    }, false);
+    expect("a string import is edited", t, { t.put("views/data.txt", "two\n"); }, true);
+    auto c = Fixture.add("o3c", [
+        "dub.sdl": recipeOf("o3c", null, ["c"]),
+        "c/top.h": "#include \"middle.h\"\n",
+        "c/middle.h": "#include \"deep.h\"\n",
+        "c/deep.h": "#define ZZ_DEEP 1\n",
+        // ImportC turns the macro into a constant: nothing to link.
+        "src/sparkles/zz_o3c/headers.c": "#include \"top.h\"\n",
+        "src/sparkles/zz_o3c/t.d": "module sparkles.zz_o3c.t;\n\nimport sparkles.zz_o3c.headers;\n\n"
+            ~ "unittest\n{\n    assert(ZZ_DEEP == 1);\n}\n",
+    ]);
+    expect("an ImportC header two includes deep is edited", c, { c.put("c/deep.h", "#define ZZ_DEEP 1 /* edited */\n"); }, true);
+    expect("a/m.d is created where -Ia -Ib resolved m to b/m.d", t, { t.put("a/m.d", "module m;\n\nenum mValue = 1;\n"); }, true);
+    expect("a .di is created beside a .d", t, { t.put("b/q.di", "module q;\n\nenum qValue = 1;\n"); }, true);
+    expect("a package.d is created in an earlier root", t, { t.put("a/q/package.d", "module q;\n\nenum qValue = 1;\n"); }, true);
+    expect("the module a failed __traits(compiles) probe looked for is created", t, {
+        t.put("b/opt.d", "module opt;\n");
+    }, true);
     return vs;
 }
