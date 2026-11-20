@@ -552,9 +552,10 @@ This is not hypothetical: `README.md`'s `readme_prompts` example picks
 `PromptPolicy.interactive` vs `takeDefault` exactly that way, and inheriting a
 terminal made it render a select prompt and then die on the EOF behind it.
 
-The fix is in `apps/ci`, not here: `executeLogged` spawns every example and
-`dub test` with `ChildStdin.empty`, so children always see a non-terminal,
-already-EOF stdin. That makes the behaviour identical on both providers _and_
+The fix is in `apps/ci`, not here: every example runs with `/dev/null` as its
+standard input (`example:run`), and every test worker's standard input is the
+runner's command pipe, so children always see a non-terminal, already-EOF
+stdin. That makes the behaviour identical on both providers _and_
 on a developer's terminal, where `ci examples verify` would otherwise stall on the
 same prompt. If you add a step that runs a program which might prompt, either
 route it through `ci` or redirect `</dev/null` yourself.
