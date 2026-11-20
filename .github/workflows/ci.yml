@@ -624,7 +624,7 @@ jobs:
             x86_64-linux-asan-dub-
 
       - name: Run tests under ASan
-        run: ci test --sanitize address --fail-fast --placement "$PLACEMENT" --shard "$SHARD" --history-tip "$TIP"
+        run: ci test --sanitize address --fail-fast --interlaced --placement "$PLACEMENT" --shard "$SHARD" --history-tip "$TIP"
         env:
           DC: ldc2
           PLACEMENT: ${{ matrix.placement }}
