@@ -874,6 +874,33 @@ struct CommitsCommand
     }
 }
 
+/// The directory holding the build graph's store: `$XDG_CACHE_HOME/sparkles`.
+string storeDirectory() @safe
+{
+    import std.path : buildPath;
+    import std.process : environment;
+
+    return buildPath(environment.get("XDG_CACHE_HOME", buildPath(environment.get("HOME", "/"), ".cache")), "sparkles");
+}
+
+/// Standard output as a writer of the store's lines.
+auto stdoutWriter() @trusted
+{
+    import std.stdio : stdout;
+
+    return stdout.lockingTextWriter;
+}
+
+/// One of `storeOperation`'s operations on the store, as a command's outcome.
+RunExpected!void storeCommand(string operation)
+{
+    import sparkles.build_graph.execute : storeOperation;
+
+    auto writer = stdoutWriter();
+    const status = storeOperation(storeDirectory(), operation, writer);
+    return status == 0 ? ranOk() : failRun("ci cache: " ~ operation ~ " failed", status);
+}
+
 @(Command("cache", shortDescription: "Dependency, toolchain and binary caches"))
 struct CacheCommand
 {
@@ -886,58 +913,152 @@ struct CacheCommand
         RunExpected!void run() => runSeedDubCache();
     }
 
-    @(Command("store",
-        shortDescription: "Inspect or repair the build graph's store (build graph BGS7)",
-        description: "Runs one operation on the store beneath $XDG_CACHE_HOME/sparkles: size, list, "
-        ~ "gc, verify, evict (to the default bound, or evict=<bytes>), or remove-key=, remove-task=, "
-        ~ "remove-package= or remove-toolchain= a value. `explain <task>` plans the repository's test "
-        ~ "selection and prints, executing nothing, whether the task and each action it needs would "
-        ~ "hit, and why each miss would miss; `replace <task>` executes the task with its lookup "
-        ~ "bypassed and publishes its result in the published one's place. Exits 1 when verification finds a corrupt result or a "
-        ~ "lease holds a removal back, and 2 for an unknown operation or task.",
-    ))
-    struct Store
-    {
-        @(Argument("operation", description: "The operation: size, list, gc, verify, evict[=<bytes>], "
-            ~ "or remove-key=, remove-task=, remove-package= or remove-toolchain=<value>."))
-        string operation;
+    // The build graph's store (build graph §6) beneath $XDG_CACHE_HOME/sparkles.
 
-        @(Argument("task", optional: true, description: "With explain or replace: the task, by id or by a prefix "
-            ~ "only one id has."))
+    @(Command("stats", shortDescription: "The build graph's store: its results and their bytes"))
+    struct Stats
+    {
+        RunExpected!void run() => storeCommand("size");
+    }
+
+    @(Command("list", shortDescription: "Each stored result: key, bytes, recency and task"))
+    struct List
+    {
+        RunExpected!void run() => storeCommand("list");
+    }
+
+    @(Command("gc",
+        shortDescription: "Collect the store's abandoned staging, leases and older layouts, then evict",
+        description: "Collects what crashed builders left (staging entries, dead leases) and the "
+        ~ "directories of older store layouts, then evicts the least recently used results down "
+        ~ "to --bound bytes (default 20 GiB) (BGS5, BGS10).",
+    ))
+    struct Gc
+    {
+        @(Option(`bound`, description: "Evict down to this many result bytes (default 20 GiB)."))
+        string bound;
+
+        RunExpected!void run()
+        {
+            auto collected = storeCommand("gc");
+            if (collected.hasError)
+                return collected;
+            return storeCommand(bound.length ? "evict=" ~ bound : "evict");
+        }
+    }
+
+    @(Command("verify",
+        shortDescription: "Check stored results, or re-execute a sample of a run's (CIC13)",
+        description: "Rehashes every stored result's outputs against its record, removing a corrupt "
+        ~ "one (BGS6). With --rerun, re-executes a sample of the last `ci test` run's cacheable "
+        ~ "actions with their lookups bypassed, into a private store, and fails naming each whose "
+        ~ "outputs differ from its stored result, which it removes (BGS9, CIC13).",
+    ))
+    struct Verify
+    {
+        @(Option(`rerun`, description: "Re-execute a sample of the last run's actions and compare (BGS9)."))
+        bool rerun;
+
+        @(Option(`determinism-sample`,
+            description: "With --rerun: how many compiles, and how many other actions, to check (default 4)."))
+        string determinismSample;
+
+        @(Option(`task`, description: "With --rerun: check these tasks instead of the sample."))
+        string[] tasks;
+
+        RunExpected!void run()
+        {
+            import graph_driver : rerunCheck;
+
+            if (!rerun)
+                return determinismSample.length || tasks.length
+                    ? failRun("--determinism-sample and --task need --rerun", 2) : storeCommand("verify");
+            const n = determinismSample.length ? parseCapacity(determinismSample) : 4;
+            if (!n)
+                return failRun("--determinism-sample takes a positive count", 2);
+            auto writer = stdoutWriter();
+            const status = rerunCheck(detectRepoRoot(), storeDirectory(), n, tasks, writer);
+            return status == 0 ? ranOk() : failRun("ci cache verify --rerun found a difference", status);
+        }
+    }
+
+    @(Command("remove",
+        shortDescription: "Remove stored results by key, task, package or toolchain (BGS7)",
+    ))
+    struct Remove
+    {
+        @(Option(`key`, description: "Results with these result keys."))
+        string[] keys;
+        @(Option(`task`, description: "The results of these tasks."))
+        string[] tasks;
+        @(Option(`package`, description: "The results of these packages' actions."))
+        string[] packages;
+        @(Option(`toolchain`, description: "The results built by this toolchain identity."))
+        string toolchain;
+
+        RunExpected!void run()
+        {
+            string[] ops;
+            foreach (k; keys)
+                ops ~= "remove-key=" ~ k;
+            foreach (t; tasks)
+                ops ~= "remove-task=" ~ t;
+            foreach (p; packages)
+                ops ~= "remove-package=" ~ p;
+            if (toolchain.length)
+                ops ~= "remove-toolchain=" ~ toolchain;
+            if (!ops.length)
+                return failRun("ci cache remove needs --key, --task, --package or --toolchain", 2);
+            foreach (op; ops)
+            {
+                auto removed = storeCommand(op);
+                if (removed.hasError)
+                    return removed;
+            }
+            return ranOk();
+        }
+    }
+
+    @(Command("replace",
+        shortDescription: "Execute tasks with their lookups bypassed, replacing their results (BGS7)",
+    ))
+    struct Replace
+    {
+        @(Argument("tasks", description: "Each task by id, or by a prefix only one id has."))
+        string[] tasks;
+
+        RunExpected!void run()
+        {
+            import graph_driver : replaceTask;
+
+            if (!tasks.length)
+                return failRun("ci cache replace needs a task", 2);
+            auto writer = stdoutWriter();
+            foreach (task; tasks)
+            {
+                const status = replaceTask(detectRepoRoot(), storeDirectory(), task, writer);
+                if (status != 0)
+                    return failRun("ci cache replace " ~ task ~ " failed", status);
+            }
+            return ranOk();
+        }
+    }
+
+    @(Command("explain",
+        shortDescription: "Whether a task and each action it needs would hit the store, and why not (BGS8)",
+    ))
+    struct Explain
+    {
+        @(Argument("task", description: "The task, by id or by a prefix only one id has."))
         string task;
 
         RunExpected!void run()
         {
-            import std.path : buildPath;
-            import std.process : environment;
-            import std.stdio : stdout;
-            import sparkles.build_graph.execute : storeOperation;
+            import graph_driver : explainTask;
 
-            const home = environment.get("HOME", "/");
-            const xdg = environment.get("XDG_CACHE_HOME", buildPath(home, ".cache"));
-            auto writer = stdout.lockingTextWriter;
-            if (operation == "explain")
-            {
-                import graph_driver : explainTask;
-
-                if (!task.length)
-                    return failRun("ci cache store explain needs a task", 2);
-                const status = explainTask(detectRepoRoot(), buildPath(xdg, "sparkles"), task, writer);
-                return status == 0 ? ranOk() : failRun("ci cache store explain " ~ task ~ " failed", status);
-            }
-            if (operation == "replace")
-            {
-                import graph_driver : replaceTask;
-
-                if (!task.length)
-                    return failRun("ci cache store replace needs a task", 2);
-                const status = replaceTask(detectRepoRoot(), buildPath(xdg, "sparkles"), task, writer);
-                return status == 0 ? ranOk() : failRun("ci cache store replace " ~ task ~ " failed", status);
-            }
-            if (task.length)
-                return failRun("ci cache store " ~ operation ~ " takes no task", 2);
-            const status = storeOperation(buildPath(xdg, "sparkles"), operation, writer);
-            return status == 0 ? ranOk() : failRun("ci cache store " ~ operation ~ " failed", status);
+            auto writer = stdoutWriter();
+            const status = explainTask(detectRepoRoot(), storeDirectory(), task, writer);
+            return status == 0 ? ranOk() : failRun("ci cache explain " ~ task ~ " failed", status);
         }
     }
 

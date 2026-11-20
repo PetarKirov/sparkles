@@ -4,7 +4,7 @@ the test selection, or one package's test root, and runs it on the
 task-DAG executor against the shared store, with the toolchain from `PATH`
 named by absolute path (§8).
 
-`ci` drives it (`ci cache store explain`, `ci commits build-each`), and so
+`ci` drives it (`ci cache explain`, `ci commits build-each`), and so
 does the test-only planner, `apps/ci/tools/plan-graph.d`, whose `--check`
 and `--run=` verify E2's and E3's gates through it.
 
@@ -1067,7 +1067,7 @@ string[] configDirectories(string config)
 string[] cRuntimeFiles(string cc)
 {
     import std.process : Config, execute;
-    import std.string : strip;
+    import std.string : lineSplitter, strip;
 
     string[] found;
     foreach (name; ["crt1.o", "crti.o", "crtn.o", "Scrt1.o", "libc.so", "libc.a", "libgcc.a"])
@@ -1235,8 +1235,8 @@ string identityListing(const string[] files, const string[] trees, scope string[
 
 
 /**
-BGS7's operations on the store beneath `cache`, the test-only driver's
-`ci cache store`: `size`, `list`, `gc`, `verify`, `evict[=<results bytes>]`,
+BGS7's operations on the store beneath `cache`, behind `ci cache stats`,
+`list`, `gc`, `verify` and `remove`: `size`, `list`, `gc`, `verify`, `evict[=<results bytes>]`,
 and `remove-key=`, `remove-task=`, `remove-package=` or
 `remove-toolchain=` a value.
 */
@@ -1479,7 +1479,7 @@ EnvEntry[] declaredEnvironment(string trap)
 }
 
 /**
-`ci cache store explain <task>` (BGS8): plans the repository's test
+`ci cache explain <task>` (BGS8): plans the repository's test
 selection with the tools a run would name, and looks `task` up, with each
 action it needs, as a run beneath `cache` would, executing nothing and
 publishing nothing. `task` is an id, or a prefix only one id has.
@@ -1626,7 +1626,7 @@ ActionGraph needing(ref ActionGraph g, const string[] targets)
 }
 
 /**
-`ci cache store replace <task>` (BGS7): plans the repository's test selection
+`ci cache replace <task>` (BGS7): plans the repository's test selection
 with the tools a run would name, and executes `task` (an id, or a prefix only
 one id has) with its lookup bypassed, after looking up or building what it
 needs; its result replaces the published one, which moves to `trash/`. A live
@@ -1634,6 +1634,118 @@ lease another process holds keeps the published result, and is reported.
 Returns 0, 1 when the task failed or a lease held the replacement back, or 2
 when the task is unknown or ambiguous.
 */
+/**
+What `ci test` records of its last run beneath the cache (`runs/last-ci-test.json`)
+for `ci cache verify --rerun`: the selection it planned and each action's
+result key.
+*/
+struct LastRun
+{
+    string[] packages;  ///
+    TestLeg[] legs;     ///
+    bool coverage;      ///
+    bool buildOnly;     ///
+    string[string] resultKeys; ///
+}
+
+/// Writes `run` as the cache's last run.
+void recordLastRun(string cache, const LastRun run)
+{
+    import std.file : mkdirRecurse, write;
+    import std.json : JSONValue;
+
+    JSONValue[] legs;
+    foreach (l; run.legs)
+        legs ~= JSONValue(["threads": JSONValue(l.threads), "skipSlow": JSONValue(l.skipSlow),
+            "name": JSONValue(l.name)]);
+    JSONValue keys = JSONValue.emptyObject;
+    foreach (t, k; run.resultKeys)
+        keys[t] = k;
+    auto j = JSONValue(["packages": JSONValue(run.packages), "legs": JSONValue(legs),
+        "coverage": JSONValue(run.coverage), "buildOnly": JSONValue(run.buildOnly), "resultKeys": keys]);
+    mkdirRecurse(buildPath(cache, "runs"));
+    write(buildPath(cache, "runs", "last-ci-test.json"), j.toString);
+}
+
+/// The cache's last run; null `why` when there is one.
+LastRun lastRun(string cache, out string why)
+{
+    import std.file : exists, readText;
+    import std.json : JSONException, JSONType, parseJSON;
+
+    LastRun run;
+    const file = buildPath(cache, "runs", "last-ci-test.json");
+    if (!exists(file))
+    {
+        why = "no `ci test` run is recorded beneath " ~ cache;
+        return run;
+    }
+    try
+    {
+        const j = parseJSON(readText(file));
+        foreach (p; j["packages"].array)
+            run.packages ~= p.str;
+        foreach (l; j["legs"].array)
+            run.legs ~= TestLeg(cast(uint) l["threads"].integer, l["skipSlow"].type == JSONType.true_,
+                l["name"].str);
+        run.coverage = j["coverage"].type == JSONType.true_;
+        run.buildOnly = j["buildOnly"].type == JSONType.true_;
+        foreach (t, k; j["resultKeys"].object)
+            run.resultKeys[t] = k.str;
+    }
+    catch (JSONException e)
+        why = file ~ ": " ~ e.msg;
+    return run;
+}
+
+/**
+`ci cache verify --rerun` (BGS9, CIC13): re-plans the last `ci test` run's
+selection and re-executes `tasks`, or else CIC13's sample of `n` compiles
+and `n` other actions by `HEAD`, each with its lookup bypassed into a private
+store; a result whose outputs differ is removed, and fails the check.
+*/
+int rerunCheck(W)(string root, string cache, size_t n, const string[] tasks, ref W writer)
+{
+    import sparkles.build_graph.execute : determinismSample;
+    import sparkles.build_primitives.git_env : runGitStdout;
+    import std.datetime.systime : Clock;
+    import std.process : thisProcessID;
+    import std.string : lineSplitter, strip;
+
+    void say(string line) { writer.put(line); writer.put("\n"); }
+
+    string why;
+    const run = lastRun(cache, why);
+    if (why.length)
+    {
+        say("verify --rerun: " ~ why);
+        return 2;
+    }
+    const head = runGitStdout(["rev-parse", "HEAD"], root);
+    auto sample = tasks.length ? tasks.dup : determinismSample(run.resultKeys, head.output.strip, n);
+    if (!sample.length)
+    {
+        say("verify --rerun: the last run has no cacheable action to check");
+        return 0;
+    }
+    auto g = runGraph(root, null, RunOptions(into: buildPath(cache, "runs",
+        text("check-", Clock.currTime.toUnixTime, "-", thisProcessID)), cache: cache, check: true,
+        checkTasks: sample, packages: run.packages.dup, legs: run.legs.dup, coverage: run.coverage,
+        buildOnly: true));
+    if (g.error.length)
+    {
+        say("verify --rerun: " ~ g.error);
+        return 2;
+    }
+    foreach (line; g.log.lineSplitter)
+        if (line.canFind("nondeterministic"))
+            say(line.idup);
+    const differing = g.stats.misses.get("nondeterministic", 0);
+    say(text("verify --rerun: ", sample.length, " action(s) re-executed, ", differing, " differed",
+        differing ? "; their results are removed" : ""));
+    return differing || g.exitCode != 0 ? 1 : 0;
+}
+
 int replaceTask(W)(string root, string cache, string task, ref W writer)
 {
     import std.datetime.systime : Clock;

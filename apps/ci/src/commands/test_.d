@@ -696,6 +696,12 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
     }
     if (coverage)
         mergeCoverage(repoRoot, g.into, failedPackages, subPackages);
+    // What `ci cache verify --rerun` checks (CIC13).
+    {
+        import graph_driver : LastRun, recordLastRun;
+
+        recordLastRun(cache, LastRun(names.dup, legs, coverage, buildOnly, g.stats.resultKeys.dup));
+    }
     if (g.exitCode != 0)
         return failRun(failedPackages.length ? text(failedPackages.length, " test package(s) failed: ",
             failedPackages.join(", ")) : text("the build graph's run failed (exit ", g.exitCode, ")"));
