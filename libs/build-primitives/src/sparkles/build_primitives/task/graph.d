@@ -1040,7 +1040,8 @@ an impossible edge as [SPEC TDM6] does:
 
 $(OL
     $(LI $(B unneeded) — every impossible edge is an `onFailure` edge from a
-        success, degradation, or skip: `Blocked(conditionUnmet)`;)
+        success, degradation, or skip, or comes from an unneeded node:
+        `Blocked(conditionUnmet)`;)
     $(LI $(B blocked by a failure) — an impossible prerequisite failed or
         descends from a failure: `Blocked`, naming the lowest-index such
         prerequisite, even beside a cancelled one (TDC2 item 4);)
@@ -1070,8 +1071,11 @@ Readiness readiness(const ref TaskGraph graph, TaskIndex task, scope const(Outco
         if (resolveEdge(edge.condition, outcome) == EdgeState.satisfied)
             continue;
         const kind = kindOf(outcome);
+        // An unneeded fallback's dependents are unneeded with it: the rest
+        // of a plain retry behind its first node (ci task-DAG CIC7).
         allUnneeded &= edge.condition == EdgeCondition.onFailure && (kind == OutcomeKind.succeeded
-            || kind == OutcomeKind.degraded || kind == OutcomeKind.skipped);
+            || kind == OutcomeKind.degraded || kind == OutcomeKind.skipped)
+            || isUnneeded(outcome);
         anyCancelled |= kind == OutcomeKind.cancelled;
         if (!firstImpossible.valid)
             firstImpossible = edge.prerequisite;
@@ -1119,6 +1123,14 @@ in (outcomes.length == graph.nodes.length)
         }
     }
     return decided;
+}
+
+// Whether `outcome` is an unneeded fallback's: `Blocked(conditionUnmet)`.
+private bool isUnneeded(const TaskOutcome outcome) @safe pure nothrow @nogc
+{
+    import std.sumtype : match;
+
+    return outcome.match!((const Blocked b) => b.reason == BlockReason.conditionUnmet, _ => false);
 }
 
 // Whether a prerequisite's outcome is a failure or a block rooted in one
@@ -1285,11 +1297,31 @@ unittest
     const g = builder.build().value;
     auto outcomes = new OutcomeSlot[3];
     outcomes[g.indexOf(id("ok")).value] = TaskOutcome(Succeeded());
-    outcomes[g.indexOf(id("b")).value] = TaskOutcome(Blocked(BlockReason.conditionUnmet,
+    outcomes[g.indexOf(id("b")).value] = TaskOutcome(Blocked(BlockReason.prerequisiteBlocked,
         g.indexOf(id("ok")), g.indexOf(id("ok")), false));
     const r = readiness(g, g.indexOf(id("x")), outcomes);
     assert(r.kind == ReadinessKind.blocked);
     assert(r.blocked.reason == BlockReason.prerequisiteBlocked && r.blocked.cause == g.indexOf(id("b")));
+}
+
+@("build_primitives.task.graph.readiness.unneededFallbackChain")
+@safe pure nothrow
+unittest
+{
+    // A plain retry behind a coverage link that succeeded (ci task-DAG
+    // CIC7): its compile is unneeded, and its link and test with it.
+    TaskGraphBuilder builder;
+    foreach (name; ["covLink", "plain", "link", "test"])
+        builder.add(node(name));
+    builder.add(edge("covLink", "plain", EdgeCondition.onFailure));
+    builder.add(edge("plain", "link"));
+    builder.add(edge("link", "test"));
+    const g = builder.build().value;
+    auto outcomes = new OutcomeSlot[4];
+    outcomes[g.indexOf(id("covLink")).value] = TaskOutcome(Succeeded());
+    assert(propagateBlocked(g, outcomes) == 3);
+    foreach (name; ["plain", "link", "test"])
+        assert(isUnneeded(outcomes[g.indexOf(id(name)).value].get), name);
 }
 
 @("build_primitives.task.graph.readiness.tdm6RuleOrder")

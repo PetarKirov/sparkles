@@ -262,8 +262,9 @@ When one of its edge conditions is impossible, the first of these rules that
 applies decides it:
 
 1. **Unneeded:** if every impossible edge is an `onFailure` edge whose
-   prerequisite ended `Succeeded`, `Degraded` or `Skipped`, the node is
-   `Blocked(conditionUnmet)`. That outcome never fails the command, and
+   prerequisite ended `Succeeded`, `Degraded` or `Skipped`, or comes from a
+   node that is itself unneeded, the node is `Blocked(conditionUnmet)`: a
+   fallback's later nodes are unneeded with its first. That outcome never fails the command, and
    summaries count it apart from other blocks: a fallback that was not needed.
 2. **Blocked by a failure:** if any impossible prerequisite failed or is a
    block that descends from a failure, the node is `Blocked` and names the
