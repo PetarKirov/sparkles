@@ -102,6 +102,9 @@ struct Action
     /// `pkgConfigSearch` writes it: each file used and each candidate absent
     /// before it, which its declared key covers when the action runs.
     string[] searchInputs;
+    /// What it holds alone while it runs: a package's test legs share one
+    /// key, as they run the same tests, whose fixtures may name fixed paths.
+    string[] exclusiveKeys;
 }
 
 /// The actions and their edges.
@@ -510,6 +513,9 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
                     TaskAction(ProcessAction(argv: testArgv, envDelta: tools.runtimeEnvironment.dup,
                         sandbox: SandboxPolicy.taskDirectory)),
                     coverage ? [DeclaredOutput(".", true)] : null, leg.threads);
+                // The legs run the same tests, one after another, as dub's
+                // runs of them did.
+                t.exclusiveKeys = ["test:" ~ v.package_];
                 testOf[ri] ~= add(t);
                 edge(linkId, testOf[ri][$ - 1]);
             }
@@ -573,7 +579,7 @@ TaskNode[] taskNodes(ref const ActionGraph g) @safe
             kind: a.kind == ActionKind.test ? TaskKind.test : TaskKind.build,
             label: a.id.text,
             order: PresentationKey(1, a.id.text, a.kind, 0),
-            resources: ResourceClaim(jobsWeight: a.weight),
+            resources: ResourceClaim(jobsWeight: a.weight, exclusiveKeys: a.exclusiveKeys.dup),
             action: copyOf(a.action),
             failurePolicy: a.provisional ? FailurePolicy.provisional : FailurePolicy.authoritative,
             outputPolicy: OutputPolicy.replay);
@@ -1263,4 +1269,6 @@ version (unittest)
         assert(a.weight == (serial ? 1 : 8));
     }
     assert(legs[0].id.text.endsWith(":serial") != legs[1].id.text.endsWith(":serial"));
+    // They run the same tests, so never at once.
+    assert(legs[0].exclusiveKeys.length == 1 && legs[0].exclusiveKeys == legs[1].exclusiveKeys);
 }
