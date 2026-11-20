@@ -6,9 +6,10 @@
     dependency "sparkles:build-graph" path="../../.."
     dependency "sparkles:unittest-layout" path="../../.."
     dependency "sparkles:d-source" path="../../.."
+    dependency "sparkles:test-runner-core" path="../../.."
     // The driver the oracles run the graph through, and ci's statement of
     // the workspace inputs it plans against.
-    dflags "-I=$PACKAGE_DIR/../src" "-i=repository_inputs" "-i=graph_driver" platform="ldc"
+    dflags "-I=$PACKAGE_DIR/../src" "-i=repository_inputs" "-i=graph_driver" "-i=test_leg" platform="ldc"
 
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"

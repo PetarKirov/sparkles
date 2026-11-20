@@ -37,7 +37,10 @@ import sparkles.build_primitives.resolve.libraries : PkgConfigDriver, RecordingP
 import sparkles.build_primitives.resolve.platform : BuildPlatform;
 import sparkles.build_primitives.resolve.registry : nixRegistrySources, readDubLocks;
 import sparkles.build_primitives.resolve.tree : ResolveTree, memoryTree, rootedTree, systemTree;
-import sparkles.build_primitives.task.action : EnvEntry, InProcessAction, InertAction, ProcessAction;
+import sparkles.build_primitives.task.action : EnvEntry, InProcessAction, InertAction, ProcessAction, TaskAction;
+import sparkles.build_primitives.task.executor : TaskContext;
+import sparkles.build_primitives.task.process : InProcessHandler;
+import sparkles.event_horizon.sched : Sched;
 import sparkles.build_primitives.workspace.discovery : ReadKind, ReadSet, readWorkspaceAt;
 import sparkles.build_primitives.workspace.package_graph : RecipeRole, buildPackageGraph;
 import sparkles.unittest_layout.lint : checkLayout;
@@ -518,6 +521,8 @@ and its outcome; the exit status is the run's.
 */
 /// Oracle 3: whether a run traces its compiles (`--trace-compiles`).
 __gshared bool traceCompiles;
+/// `plan-graph --run --runner-core`: tests through the runner core (CIC11).
+__gshared bool runnerCore;
 /// BGK6 by hand: compiles run as with a compiler without the fork's
 /// dependency output (`--no-dependency-output`).
 __gshared bool noDependencyOutput;
@@ -584,6 +589,9 @@ struct RunOptions
     bool failFast;          /// cancel the rest at the first failure
     bool noLayoutLint;      /// plan without BGV4's lint (oracle 8's revert check)
     double hashSample = 1.0 / 64; /// BGS6: the fraction of hits a lookup rehashes
+    /// Tests run through the runner core, as `test:leg` actions (CIC11),
+    /// instead of as their binaries' own processes.
+    bool runnerCore;
     /// Changes the tools found on `PATH` before the toolchain is identified
     /// (oracle 9's substitutions).
     void delegate(ref Tools) adjustTools;
@@ -737,6 +745,25 @@ GraphRun runGraph(string root, string only, RunOptions o)
                         (ref _) {});
                     (() @trusted { n.action = action; })();
                 }
+    // CIC11: each test leg through the runner core, in this process.
+    InProcessHandler[string] handlers;
+    if (o.runnerCore)
+    {
+        import test_leg : legAction, legHandler, runTestLeg;
+
+        if (o.confine == Confinement.tests)
+            return GraphRun("the runner core's tests cannot run confined yet");
+        handlers[legHandler] = (ref TaskContext!Sched ctx, const ref InProcessAction a) => runTestLeg(ctx, a);
+        foreach (ref n; nodes)
+            if (n.id.text.startsWith("test:"))
+            {
+                auto action = n.action;
+                auto leg = action.match!(
+                    (ref ProcessAction pa) => TaskAction(legAction(pa)),
+                    (ref _) => action);
+                (() @trusted { n.action = leg; })();
+            }
+    }
     if (o.adjustExecution !is null)
         foreach (ref n; nodes)
         {
@@ -762,7 +789,7 @@ GraphRun runGraph(string root, string only, RunOptions o)
     auto log = appender!string;
     auto w = Tee(&log, o.echo);
     const r = runActions(nodes, g.plan.graph, layout, w, o.jobs ? o.jobs : cast(uint) totalCPUs, &g.stats,
-        o.failFast);
+        o.failFast, handlers);
     g.exitCode = r.exitCode;
     g.log = log.data;
     // BGS5: eviction after the run, off its publish path.
@@ -807,7 +834,7 @@ int runPackage(string root, string only, string into, string cache, bool checkDe
         return reportOracle3(p, root, into);
     }
     auto g = runGraph(root, only, RunOptions(into: into, cache: cache, check: checkDeterminism, confine: confine,
-        traceCompiles: traceCompiles, jobs: runJobs, echo: true));
+        traceCompiles: traceCompiles, jobs: runJobs, echo: true, runnerCore: runnerCore));
     if (g.error.length)
     {
         stderr.writeln("plan-graph: ", g.error);
