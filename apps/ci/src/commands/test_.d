@@ -635,69 +635,47 @@ private RunExpected!void runExtractedTestsMode(bool failFast, in string[] reques
         return failRun("No sub-package uses @betterC or @wasm — nothing to run");
     }
 
-    i"Running $(jobs.length) extracted-test mode(s)".text
-        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
-        .writeln("\n");
-    flushStdout();
+    // M8: each package's modes are one leg of its test binary on the build
+    // graph, run by the runner core's driver.
+    import core.time : MonoTime;
+    import graph_driver : runGraph, RunOptions;
+    import sparkles.build_graph.actions : TestLeg;
+    import std.datetime.systime : Clock;
+    import std.process : thisProcessID;
 
-    auto monitor = RunMonitor.start();
-    void onSample(in ResourceUsage) @safe
+    string[] packages;
+    string[][string] arguments;
+    foreach (job; jobs)
     {
-        monitor.sample();
+        if (!packages.canFind(job.packageName))
+            packages ~= job.packageName;
+        arguments["sparkles:" ~ job.packageName] ~= job.flag;
     }
-
+    foreach (pkg, ref args; arguments)
+        args ~= "--require-toolchain";
+    info(i"$(jobs.length) extracted-test mode(s) in $(packages.length) package(s)");
     auto recorder = RunRecorder.open(repoRoot, "test --special-modes",
         recordedOptions(requested, false), where.placement, where.shard);
     scope (exit)
         if (const degradation = recorder.finish())
             warning(i"$(degradation)");
-
-    int failures = 0;
-    size_t processed = 0;
-    string[] failedJobs;
-    foreach (i, job; jobs)
-    {
-        const progress = i"[$(i + 1)/$(jobs.length)]".text;
-        const header = styledText(
-            i"{dim $(progress)} {cyan $(job.packageName)} {dim › dub test :$(job.packageName) -- $(job.flag)}");
-
-        mkdirRecurse(buildPath(repoRoot, job.packagePath, "build"));
-        // The runner's own extracted tests (the ones exercising the
-        // `selfContained` opt-out) are jobs of their own: `test-harness` and
-        // `test-runner-core` carry `@betterC`, and no host compiles them in.
-        auto cmd = dubTestCommand(
-            repoRoot, job.packageName, testBuildType(false),
-            [job.flag, "--require-toolchain"]);
-
-        recorder.begin();
-        auto lines = executeMonitoredLines(
-            cmd, 250.msecs, &onSample, ChildStdin.empty, Duration.zero,
-            withLdcDflags(null));
-        streamResultBox(header, lines,
-            () => resultVerdict(lines.result.status == 0),
-            (LogDelta d) => resultFooterRight(lines.result.usage, d));
-        recorder.end(testTaskId(job.packageName, job.flag == "--better-c" ? "betterc" : "wasm", true),
-            lines.result.status == 0);
-        monitor.sample();
-
-        processed = i + 1;
-        if (lines.result.status != 0)
+    const xdg = environment.get("XDG_CACHE_HOME", buildPath(environment.get("HOME", "/"), ".cache"));
+    const cache = buildPath(xdg, "sparkles");
+    auto g = runGraph(repoRoot, null, RunOptions(into: buildPath(cache, "runs",
+        text("ci-test-special-", Clock.currTime.toUnixTime, "-", thisProcessID)), cache: cache, runnerCore: true,
+        packages: packages, legs: [TestLeg(1, false, "special")], testArguments: arguments,
+        failFast: failFast, echo: true));
+    if (g.error.length)
+        return failRun(g.error);
+    foreach (task, wall; g.stats.wallTimes)
+        if (task.startsWith("test:"))
         {
-            failures++;
-            failedJobs ~= job.packageName ~ " " ~ job.flag;
-            if (failFast)
-            {
-                writeln();
-                break;
-            }
+            const parts = task.split(":");
+            const pkg = parts.length > 1 ? parts[1].replace("sparkles.", "") : task;
+            const began = g.stats.startedAt.get(task, MonoTime.init);
+            recorder.add(testTaskId(pkg, "special", true), g.stats.succeeded.get(task, false), began, began + wall);
         }
-        writeln();
-    }
-
-    // After a fail-fast break the untried jobs never ran, so report what was
-    // actually attempted rather than the full list.
-    displayTestRunSummary(monitor.finish(processed, jobs.length, failedJobs));
-    return failures > 0 ? failRun(text(failures, " special-mode run(s) failed")) : ranOk();
+    return g.exitCode != 0 ? failRun("the extracted-test modes failed") : ranOk();
 }
 
 /// The `@slow` tests that the sources of each sub-package integrating the
