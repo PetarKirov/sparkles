@@ -315,7 +315,7 @@ version (Posix):
 
 import sparkles.build_primitives.task.executor : RunResult, TaskContext;
 import sparkles.build_primitives.task.model : TaskOutcome;
-import sparkles.build_primitives.task.process : ProcessDriver, ProcessDriverOptions;
+import sparkles.build_primitives.task.process : InProcessHandler, ProcessDriver, ProcessDriverOptions;
 import sparkles.event_horizon.sched : Sched;
 import sparkles.build_graph.store : Manifest, ManifestEntry, OutputRecord, ResultRecord, Store,
     preimageDifferences, differences,
@@ -1847,10 +1847,11 @@ struct ActionDriver
 Runs `nodes` (from $(LREF executionNodes)) with their edges on a scheduler
 of their own, reporting each task's lines to `writer` through the plain
 reporter, at most `capacity` weight at a time, cancelling the rest at
-the first failure with `failFast`.
+the first failure with `failFast`. `handlers` runs the client's own
+in-process actions beside the generators', each under its name.
 */
 RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout, ref W writer,
-    uint capacity, RunStats* stats = null, bool failFast = false)
+    uint capacity, RunStats* stats = null, bool failFast = false, InProcessHandler[string] handlers = null)
 {
     import sparkles.build_primitives.task.executor : ExecutorOptions, runGraph;
     import sparkles.build_primitives.task.graph : TaskGraphBuilder;
@@ -1883,6 +1884,9 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
         (ref TaskContext!Sched ctx, const ref InProcessAction a) => driver.generateFile(ctx, a));
     driver.processes.register("generate:failing-tools",
         (ref TaskContext!Sched ctx, const ref InProcessAction a) => driver.generateFailingTools(ctx, a));
+    // The client's own in-process actions: ci's test actions (CIC11).
+    foreach (name, handler; handlers)
+        driver.processes.register(name, handler);
     auto reporter = PlainReporter!W(&writer, &graph, PlainOptions(timings: false));
     auto sink = new EventChannel;
     MonotonicClock clock;
