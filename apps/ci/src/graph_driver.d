@@ -96,6 +96,8 @@ struct Planned
     string[] roots;
     /// D62: per package, the tools its tests declare they run (only `dub`).
     string[][string] testTools;
+    /// Each planned single-file package's link task, by its file (CIC8).
+    string[string] singleFileLinks;
 }
 
 LayoutCheck layoutLint() @safe
@@ -149,12 +151,15 @@ void marker(string name) @trusted
 }
 
 Planned planRepository(string root, bool markers = false, string only = null, Tools tools = Tools.init,
-    string toolchain = "dev-shell", bool lint = true, const string[] packages = null, bool coverage = false)
+    string toolchain = "dev-shell", bool lint = true, const string[] packages = null, bool coverage = false,
+    const string[] singleFiles = null)
 {
     // The platform the tools' compiler builds for (D19).
     auto platform = platformOf(tools.compiler);
-    // The packages planned: `only`, else `packages`, else every one.
-    bool chosen(string name) => only.length ? name == only : !packages.length || packages.canFind(name);
+    // The packages planned: `only`, else `packages`, else every one, unless
+    // only single-file packages are asked for.
+    bool chosen(string name) => only.length ? name == only : packages.length ? packages.canFind(name)
+        : !singleFiles.length;
 
     const d = driverEnvironment();
     if (d.sources is null)
@@ -212,6 +217,19 @@ Planned planRepository(string root, bool markers = false, string only = null, To
         if (coverage)
             attempts ~= CoverageAttempt(mine[0], mine[1]);
         testRequests ~= mine;
+    }
+    // CIC8: single-file packages (examples), as applications built with
+    // dub's `debug` build type, their in-tree dependencies the worktree's.
+    foreach (file; singleFiles)
+    {
+        auto request = ResolveRequest(singleFile: file, buildType: "debug", platform: platform,
+            inTree: [read.value.rootName: root]);
+        foreach (n, s; registry.value)
+            request.registry[n] = s;
+        auto r = resolve(request, tree);
+        if (r.hasError)
+            return Planned(fault() ? fault() : text(file, ": ", r.error.message));
+        rs ~= r.value;
     }
     // D61: the programs each test runs, declared beside its package's recipe,
     // planned as requests of their own whose tests do not run.
@@ -317,6 +335,11 @@ Planned planRepository(string root, bool markers = false, string only = null, To
     if (g.hasError)
         return Planned(text(g.error));
     p.graph = g.value;
+    foreach (ref a; p.graph.actions)
+        if (a.kind == ActionKind.link && a.variant < p.plan.variants.length)
+            foreach (file; singleFiles)
+                if (p.plan.variants[a.variant].settings.sourceFiles.canFind(file))
+                    p.singleFileLinks[file] = a.id.text;
     p.text = render(p.graph, root);
     p.testTools = testTools;
     return p;
@@ -665,6 +688,10 @@ struct RunOptions
     EnvEntry[] runtimeEnvironment; /// ditto
     /// Runner options a package's legs add, by its name (`sparkles:base`).
     string[][string] testArguments;
+    /// Single-file packages to plan as applications (CIC8): examples.
+    string[] singleFiles;
+    /// The client's own in-process actions, by name.
+    InProcessHandler[string] handlers;
     /// BGS8's explain: every action looked up, nothing executed or written;
     /// `GraphRun.stats.explained` holds the verdicts.
     bool explain;
@@ -723,7 +750,7 @@ GraphRun runGraph(string root, string only, RunOptions o)
     foreach (pkg, more; o.testArguments)
         tools.testArguments[pkg] = more.dup;
     g.plan = planRepository(root, false, only, tools, g.toolchain.identity, !o.noLayoutLint, o.packages,
-        o.coverage);
+        o.coverage, o.singleFiles);
     if (g.plan.error.length)
         return GraphRun(g.plan.error);
     if (g.plan.requests == 0)
@@ -842,8 +869,11 @@ GraphRun runGraph(string root, string only, RunOptions o)
                         (ref _) {});
                     (() @trusted { n.action = action; })();
                 }
-    // CIC11: each test leg through the runner core, in this process.
+    // CIC11: each test leg through the runner core, in this process; and the
+    // client's own actions.
     InProcessHandler[string] handlers;
+    foreach (name, handler; o.handlers)
+        handlers[name] = handler;
     if (o.runnerCore)
     {
         import test_leg : legAction, legHandler, runTestLeg;
