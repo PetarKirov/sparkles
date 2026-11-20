@@ -321,8 +321,13 @@ TaskOutcome runTestLeg(ref TaskContext!Sched ctx, const ref InProcessAction acti
             {
                 import std.algorithm.searching : all, count;
 
+                // Cancelled (fail-fast, a timeout) or broken: the workers'
+                // supervision tears their process trees down (TDE1, TDE2).
                 if (run.broken || ctx.cancelRequested)
-                    break;
+                {
+                    sc.cancel();
+                    return;
+                }
                 const live = run.workers.count!(w => !w.ended);
                 const busy = run.workers.count!(w => !w.ended && !w.waiting);
                 if (!run.queue.length && busy == 0)
@@ -360,8 +365,11 @@ TaskOutcome runTestLeg(ref TaskContext!Sched ctx, const ref InProcessAction acti
         sc.spawn(() { run.runWorker(first); });
         while (!first.ready && !first.ended && !run.broken && !ctx.cancelRequested)
             cast(void) sleep(*ctx.exec, 5.msecs);
-        if (!first.ready)
+        if (!first.ready || ctx.cancelRequested)
+        {
+            sc.cancel();
             return;
+        }
         auto selection = selectTests(run.listing, options);
         if (selection.error.length)
         {
@@ -386,6 +394,12 @@ TaskOutcome runTestLeg(ref TaskContext!Sched ctx, const ref InProcessAction acti
                 && phase.tests[0].traits.serialAffinity == ThreadAffinity.mainThread;
             runPhase(*ctx.exec, phase.tests, phase.threads, onMain, reuse);
             reuse = null;
+            // The listing worker is this scope's: cancelled with it.
+            if (ctx.cancelRequested || run.broken)
+            {
+                sc.cancel();
+                return;
+            }
         }
         // No phase took the listing worker: end it.
         if (reuse !is null && !reuse.ended)
