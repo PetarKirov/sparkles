@@ -749,7 +749,8 @@ struct GithubCommand
                 return failRun("ci github mirror-checks needs --sha");
             if (!github.repo.length)
                 return failRun("ci github mirror-checks needs --repo owner/repo");
-            return runMirrorChecksCommand(github, sha, skipCheck, dryRun: noWrite);
+            return runOneNode("github-mirror-checks", TaskKind.fetch,
+                () => runMirrorChecksCommand(github, sha, skipCheck, dryRun: noWrite));
         }
     }
 
@@ -776,7 +777,8 @@ struct GithubCommand
         {
             if (!github.repo.length)
                 return failRun("ci github link-rot-issue needs --repo owner/repo");
-            return runReportLinkRotCommand(github, report, rotten, runUrl);
+            return runOneNode("github-link-rot-issue", TaskKind.fetch,
+                () => runReportLinkRotCommand(github, report, rotten, runUrl));
         }
     }
 }
@@ -852,7 +854,8 @@ struct StatsCommand
                 cast(void) parseSplitInstant(split);
             catch (Exception e)
                 return failRun("--split: " ~ e.msg);
-        return runCiStatsCommand(this);
+        auto self = this;
+        return runOneNode("stats", TaskKind.fetch, () => runCiStatsCommand(self));
     }
 }
 
@@ -923,7 +926,7 @@ struct CacheCommand
     ))
     struct SeedDub
     {
-        RunExpected!void run() => runSeedDubCache();
+        RunExpected!void run() => runOneNode("cache-seed-dub", TaskKind.rewrite, () => runSeedDubCache());
     }
 
     // The build graph's store (build graph §6) beneath $XDG_CACHE_HOME/sparkles.
@@ -1087,7 +1090,8 @@ struct CacheCommand
 
         @(Flatten) HistoryOptions history;
 
-        RunExpected!void run() => runWritePinCosts(file, history.historyRemote);
+        RunExpected!void run() => runOneNode("cache-pin-costs", TaskKind.rewrite,
+            () => runWritePinCosts(file, history.historyRemote));
     }
 
     @(Command("gc-r2",
@@ -1111,7 +1115,8 @@ struct CacheCommand
         {
             if (keepCommits <= 0 || graceDays < 0)
                 return failRun("--keep-commits must be positive and --grace-days not negative");
-            return runGcR2Command(keepCommits, graceDays, dryRun: noDelete);
+            return runOneNode("cache-gc-r2", TaskKind.fetch,
+                () => runGcR2Command(keepCommits, graceDays, dryRun: noDelete));
         }
     }
 }
@@ -1126,7 +1131,7 @@ struct HostCommand
         {
             import linux_host : runLinuxHostProbe;
 
-            return runLinuxHostProbe();
+            return runOneNode("host-probe", TaskKind.scan, () => runLinuxHostProbe());
         }
     }
 }
@@ -1140,7 +1145,7 @@ struct SlowTestsCommand
     ))
     struct List
     {
-        RunExpected!void run() => runListSlowTestsMode();
+        RunExpected!void run() => runOneNode("slow-tests-list", TaskKind.scan, () => runListSlowTestsMode());
     }
 }
 
