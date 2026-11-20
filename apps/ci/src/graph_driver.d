@@ -47,7 +47,42 @@ import sparkles.unittest_layout.lint : checkLayout;
 
 enum host = ["linux", "posix"];
 
-BuildPlatform platform() @safe => BuildPlatform(host.dup, ["x86_64"], "ldc", "ldc2", 2113, "1.43.0");
+/**
+The platform `compiler` builds for: LDC's or DMD's (build-graph D19), with
+the frontend and compiler versions its `--version` reports. Memoized per
+compiler.
+*/
+BuildPlatform platformOf(string compiler) @safe
+{
+    import std.path : baseName;
+    import std.process : execute;
+    import std.regex : matchFirst, regex;
+
+    static BuildPlatform[string] memo;
+    if (auto known = compiler in memo)
+        return *known;
+    const dmd = compiler.baseName.startsWith("dmd");
+    const output = execute([compiler, "--version"]).output;
+    // `DMD64 D Compiler v2.112.1`; LDC: `(1.43.0)` and `based on DMD v2.113.0`.
+    const frontend = output.matchFirst(regex(`v2\.(\d+)`));
+    const own = dmd ? output.matchFirst(regex(`v(\d+\.\d+\.\d+)`)) : output.matchFirst(regex(`\((\d+\.\d+\.\d+)`));
+    auto p = BuildPlatform(host.dup, ["x86_64"], dmd ? "dmd" : "ldc", dmd ? "dmd" : "ldc2",
+        frontend ? 2000 + frontend[1].to!int : 2113, own ? own[1].idup : (dmd ? "2.112.1" : "1.43.0"));
+    memo[compiler] = p;
+    return p;
+}
+
+/// The platform of the compiler `$DC` names, LDC's by default.
+BuildPlatform platform() @safe => platformOf(compilerName);
+
+/// The compiler a run builds with: `$DC` (`ldc2` or `dmd`), LDC by default.
+string compilerName() @safe
+{
+    import std.path : baseName;
+
+    const dc = environment.get("DC", "ldc2");
+    return dc.baseName.startsWith("dmd") ? "dmd" : "ldc2";
+}
 
 struct Planned
 {
@@ -116,6 +151,8 @@ void marker(string name) @trusted
 Planned planRepository(string root, bool markers = false, string only = null, Tools tools = Tools.init,
     string toolchain = "dev-shell", bool lint = true, const string[] packages = null, bool coverage = false)
 {
+    // The platform the tools' compiler builds for (D19).
+    auto platform = platformOf(tools.compiler);
     // The packages planned: `only`, else `packages`, else every one.
     bool chosen(string name) => only.length ? name == only : !packages.length || packages.canFind(name);
 
@@ -258,7 +295,7 @@ Planned planRepository(string root, bool markers = false, string only = null, To
     }
     // `lint` false only for oracle 8's revert check: without it a test can
     // misread a dependency's aggregate.
-    auto options = PlanOptions(ToolchainIdentity("ldc", toolchain), lint ? layoutLint() : null, registry.value.keys,
+    auto options = PlanOptions(ToolchainIdentity(platform.compiler, toolchain), lint ? layoutLint() : null, registry.value.keys,
         pkgConfig);
     options.host = platform;
     options.resolveTool = &resolveTool;
@@ -1379,12 +1416,12 @@ string pathTools(out Tools tools, out Toolchain toolchain)
 {
     import std.process : execute;
 
-    tools = Tools(compiler: onPath("ldc2"), archiver: onPath("ar"), cc: onPath("cc"), linker: onPath("ld.lld"),
+    tools = Tools(compiler: onPath(compilerName), archiver: onPath("ar"), cc: onPath("cc"), linker: onPath("ld.lld"),
         fail: onPath("false"), deviceCompiler: onPath("ldc2-vulkan"));
     foreach (name; ["spirv-val", "spirv-opt", "spirv-dis", "spirv-as", "spirv-cross", "glslangValidator"])
         tools.shaderTools ~= [name, onPath(name)];
     if (tools.compiler is null || tools.archiver is null || tools.cc is null || tools.linker is null)
-        return "ldc2, ar, cc and ld.lld must be on PATH";
+        return compilerName ~ ", ar, cc and ld.lld must be on PATH";
     // The fork's dependency output, which a compile's manifest comes from.
     const help = execute([tools.compiler, "--help-hidden"]);
     tools.dependencyOutput = help.output.canFind("makedeps-digests") && !noDependencyOutput;
