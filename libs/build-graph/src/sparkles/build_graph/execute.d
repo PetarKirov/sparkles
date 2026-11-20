@@ -30,6 +30,8 @@ dependency output gives (BGK2). Tests are not reused. Without a cache, every run
 */
 module sparkles.build_graph.execute;
 
+import core.time : Duration, MonoTime;
+
 import std.algorithm.searching : canFind, endsWith, startsWith;
 import std.array : join, replace;
 import std.conv : text;
@@ -354,6 +356,11 @@ struct RunStats
     /// The tasks that executed, in the order they finished; every other
     /// keyed task was reused.
     string[] executedTasks;
+    /// Per executed task: how long its action ran, and whether it succeeded
+    /// (the run records of observability OD21 time each test leg).
+    Duration[string] wallTimes;
+    bool[string] succeeded; /// ditto
+    MonoTime[string] startedAt; /// ditto: when it started
 
     void future(string path) @safe pure nothrow
     {
@@ -742,7 +749,11 @@ struct ActionDriver
             }
         if (!makeDirectories(id))
             return TaskOutcome(Failed(FailureReason.contract));
+        const began = MonoTime.currTime;
         auto outcome = process.run(ctx);
+        stats.wallTimes[id.text] = MonoTime.currTime - began;
+        stats.startedAt[id.text] = began;
+        stats.succeeded[id.text] = outcome.match!((ref Succeeded _) => true, (ref _) => false);
         stats.count(kind, false);
         stats.executedTasks ~= id.text;
         // BGA9: what an ending publishes. A success; a compile, archive or
@@ -1873,7 +1884,10 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
     auto graph = built.value;
 
     Sched s;
-    if (Sched.create(s, SchedOptions(stackSize: 256 * 1024), LoopConfig()).hasError)
+    // A test leg runs a worker per thread it claims, each supervised by about
+    // seven fibers (its drains, stdin, clock, sampler): room for a leg as
+    // wide as a large host, beside the tasks' own.
+    if (Sched.create(s, SchedOptions(stackSize: 256 * 1024, maxFibers: 1024), LoopConfig()).hasError)
         return RunResult(exitCode: 2);
     auto driver = new ActionDriver(layout, nodes, &g); // the generators' handlers hold its address
     if (driver.error.length)
