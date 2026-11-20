@@ -28,7 +28,7 @@ import std.typecons : Nullable;
 
 import sparkles.build_graph.actions : ActionGraph, ActionKind, CoverageAttempt, TestLeg, TestProgram, Tools,
     planActions, taskNodes;
-import sparkles.build_graph.execute : RunStats;
+import sparkles.build_graph.execute : RunReporting, RunStats;
 import sparkles.build_graph.variants : LayoutCheck, PlanError, PlanOptions, Role, ToolchainIdentity,
     VariantPlan, planVariants;
 import sparkles.build_primitives.task.model : PlanExpected, planErr, planOk;
@@ -655,6 +655,8 @@ struct RunOptions
     /// `ci test --build-only`: the test binaries and what they link, and no
     /// test.
     bool buildOnly;
+    /// The transcript's form, or a dry run (CIC1).
+    RunReporting reporting;
     /// Changes the tools found on `PATH` before the toolchain is identified
     /// (oracle 9's substitutions).
     void delegate(ref Tools) adjustTools;
@@ -711,7 +713,10 @@ GraphRun runGraph(string root, string only, RunOptions o)
         return GraphRun(g.plan.error);
     if (g.plan.requests == 0)
         return GraphRun("no package " ~ only);
-    mkdirRecurse(o.into);
+    // A dry run writes nothing (CIC1): no run directory, no dub trap.
+    const dry = o.reporting.dryRun;
+    if (!dry)
+        mkdirRecurse(o.into);
     // Oracle 3: every compile under `strace`, its trace beside its manifest.
     if (o.traceCompiles)
     {
@@ -796,7 +801,7 @@ GraphRun runGraph(string root, string only, RunOptions o)
     // declared whole (BGX1): the driver's own, with a `dub` first on `PATH`
     // that records each call and fails (oracle 11 step 1).
     const trap = buildPath(o.into, "dub-trap");
-    const declared = declaredEnvironment(trap);
+    const declared = dry ? null : declaredEnvironment(trap);
     auto layout = RunLayout(root, o.into, o.cache, g.toolchain.identity, o.check);
     layout.checkTasks = o.checkTasks.dup;
     layout.replaceTasks = o.replaceTasks.dup;
@@ -864,11 +869,11 @@ GraphRun runGraph(string root, string only, RunOptions o)
     auto log = appender!string;
     auto w = Tee(&log, o.echo);
     const r = runActions(nodes, g.plan.graph, layout, w, o.jobs ? o.jobs : cast(uint) totalCPUs, &g.stats,
-        o.failFast, handlers);
+        o.failFast, handlers, o.reporting);
     g.exitCode = r.exitCode;
     g.log = log.data;
     // BGS5: eviction after the run, off its publish path.
-    if (o.cache.length)
+    if (o.cache.length && !dry)
     {
         import sparkles.build_graph.execute : storeOperation;
 
