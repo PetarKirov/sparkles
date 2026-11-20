@@ -69,9 +69,11 @@ version (linux)
                 return 0; // unreachable when ASan is live
             }
 
+            // `allow_addr2line=1`: a runtime that cannot symbolize on its own (compiler-rt's, which this LDC
+            // can link) resolves the D frames with `addr2line`; GCC's ignores it.
             auto p = pipeProcess([thisExePath],
                 Redirect.stdout | Redirect.stderrToStdout,
-                [childEnvVar: "global"]);
+                [childEnvVar: "global", "ASAN_OPTIONS": "allow_addr2line=1"]);
             const output = p.stdout.byLineCopy.array.join("\n");
             const code = wait(p.pid);
 

@@ -281,10 +281,12 @@ x86_64-linux]` (E3).
 
 **Concern 5 — self-symbolizing reports, but no D demangling, and two opt-out channels.**
 GCC's runtime self-symbolizes to `file:line` with **no external tool** (its bundled
-`libbacktrace`), which is why every probe here asserts `asan-*.d` file locators appear in
-the report on a bare `PATH`. Real compiler-rt does not: it emits module+offset until
+`libbacktrace`). Real compiler-rt does not: it emits module+offset until
 `llvm-symbolizer` is on `PATH` (then `file:line:column`, and it demangles `_Dmain` → "D
-main") or `allow_addr2line=1` is set. **Neither runtime demangles D beyond `_Dmain`**, so
+main") or `allow_addr2line=1` is set. The pinned LDC fork can link compiler-rt's static
+runtime, and then a host without `llvm-symbolizer` sees bare offsets; so the probes that
+assert `asan-*.d` file locators run their children with `allow_addr2line=1`, which GCC's
+runtime ignores and compiler-rt's resolves through binutils' `addr2line`. **Neither runtime demangles D beyond `_Dmain`**, so
 reports and suppressions both work in **mangled** names — a `ddemangle` post-processing
 pass is wanted either way. `[hw-verified: x86_64-linux]`
 

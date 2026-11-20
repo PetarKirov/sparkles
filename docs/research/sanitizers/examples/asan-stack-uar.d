@@ -96,13 +96,15 @@ version (linux)
             }
 
             // Child A: defaults — the fake stack is on, the read traps.
+            // `allow_addr2line=1`: a runtime that cannot symbolize on its own (compiler-rt's, which this LDC
+            // can link) resolves the D frames with `addr2line`; GCC's ignores it.
             string outA;
-            const codeA = spawnChild([childEnvVar: "uar"], outA);
+            const codeA = spawnChild([childEnvVar: "uar", "ASAN_OPTIONS": "allow_addr2line=1"], outA);
             check(codeA == 1, "child A should die with exitcode=1", outA);
             check(outA.canFind("AddressSanitizer: stack-use-after-return"),
                 "child A report should name stack-use-after-return", outA);
             check(outA.canFind("asan-stack-uar.d"),
-                "child A report should be self-symbolized to file:line", outA);
+                "child A report should locate D frames to file:line", outA);
 
             // Child B: same binary, detection turned off at RUNTIME.
             string outB;

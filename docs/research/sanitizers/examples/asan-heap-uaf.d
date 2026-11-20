@@ -72,9 +72,11 @@ version (linux)
                 return 0; // unreachable when ASan is live
             }
 
+            // `allow_addr2line=1`: a runtime that cannot symbolize on its own (compiler-rt's, which this LDC
+            // can link) resolves the D frames with `addr2line`; GCC's ignores it.
             auto p = pipeProcess([thisExePath],
                 Redirect.stdout | Redirect.stderrToStdout,
-                [childEnvVar: "uaf"]);
+                [childEnvVar: "uaf", "ASAN_OPTIONS": "allow_addr2line=1"]);
             const output = p.stdout.byLineCopy.array.join("\n");
             const code = wait(p.pid);
 
@@ -96,7 +98,7 @@ version (linux)
                 && output.canFind("previously allocated by thread"),
                 "report should carry both the free and the alloc stacks");
             check(output.canFind("asan-heap-uaf.d"),
-                "GCC libasan should self-symbolize D frames to file:line "
+                "the report should locate D frames to file:line "
                 ~ "without llvm-symbolizer");
             check(!output.canFind("read after free:"),
                 "the faulty read must not complete (halt_on_error=1 default)");
