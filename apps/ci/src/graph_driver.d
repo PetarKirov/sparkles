@@ -1073,10 +1073,23 @@ string identityListing(const string[] files, const string[] trees, scope string[
     import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
     import std.process : thisProcessID;
 
-    const dir = buildPath(tempDir, text("toolchain-identity-test-", thisProcessID));
-    mkdirRecurse(buildPath(dir, "include", "sys"));
+    const made = buildPath(tempDir, text("toolchain-identity-test-", thisProcessID));
+    mkdirRecurse(buildPath(made, "include", "sys"));
     scope (exit)
-        rmdirRecurse(dir);
+        rmdirRecurse(made);
+    // The listing names a path resolved: macOS's temporary directory is
+    // beneath `/var`, a link to `/private/var`.
+    const dir = () @trusted {
+        import core.stdc.stdlib : free;
+        import core.sys.posix.stdlib : realpath;
+        import std.string : fromStringz, toStringz;
+
+        auto r = realpath(made.toStringz, null);
+        assert(r !is null, made);
+        scope (exit)
+            free(r);
+        return r.fromStringz.idup;
+    }();
     write(buildPath(dir, "cc"), "#!/bin/sh\n");
     write(buildPath(dir, "include", "sys", "types.h"), "typedef int t;\n");
     string[] queried;
