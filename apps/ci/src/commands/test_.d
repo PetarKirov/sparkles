@@ -622,7 +622,15 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
         coverage = coverage && p.coverage;
     }
     coverage = coverage && !buildOnly;
-    const parallelN = cast(uint) parallelTestThreads(hwParallelism());
+    // CIC1: the capacity in weighted units: `--jobs`, `$SPARKLES_CI_JOBS`,
+    // the host's processors.
+    const jobs = cmd.jobs.length ? parseCapacity(cmd.jobs)
+        : parseCapacity(environment.get("SPARKLES_CI_JOBS", "")) ? parseCapacity(environment.get("SPARKLES_CI_JOBS", ""))
+        : cast(uint) totalCPUs;
+    // A leg claims its `-t` (CIC11), so no wider than the capacity: on a
+    // container whose processors are the host's, it would never be admitted.
+    const hostN = cast(uint) parallelTestThreads(hwParallelism());
+    const parallelN = hostN < jobs ? hostN : jobs;
     TestLeg[] legs;
     if (serialLeg)
         legs ~= TestLeg(1, true, "serial");
@@ -643,11 +651,6 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
             if (const degradation = recorder.finish())
                 warning(i"$(degradation)");
 
-    // CIC1: the capacity in weighted units: `--jobs`, `$SPARKLES_CI_JOBS`,
-    // the host's processors.
-    const jobs = cmd.jobs.length ? parseCapacity(cmd.jobs)
-        : parseCapacity(environment.get("SPARKLES_CI_JOBS", "")) ? parseCapacity(environment.get("SPARKLES_CI_JOBS", ""))
-        : cast(uint) totalCPUs;
     const reporting = RunReporting(interlaced: cmd.interlaced, timings: true, dryRun: cmd.dryRun,
         ci: CiLog.detect(&systemEnvironment));
     // CIC12 under a dry run: the actions that would fail, from BGS8's
