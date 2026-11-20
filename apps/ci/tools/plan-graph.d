@@ -6,9 +6,10 @@
     dependency "sparkles:build-graph" path="../../.."
     dependency "sparkles:unittest-layout" path="../../.."
     dependency "sparkles:d-source" path="../../.."
+    dependency "sparkles:test-runner-core" path="../../.."
     // ci's statement of the workspace inputs, for the CIC5 check.
     // (single-file packages take no sourceFiles: `-i=` compiles the import)
-    dflags "-I=$PACKAGE_DIR/../src" "-i=repository_inputs" "-i=graph_driver" platform="ldc"
+    dflags "-I=$PACKAGE_DIR/../src" "-i=repository_inputs" "-i=graph_driver" "-i=test_leg" platform="ldc"
 
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"
@@ -144,6 +145,7 @@ int main(string[] args)
         const jobs = args.filter!(a => a.startsWith("--jobs=")).array;
         runJobs = jobs.length ? jobs[0]["--jobs=".length .. $].to!uint : 0;
         traceCompiles = args.canFind("--trace-compiles");
+        runnerCore = args.canFind("--runner-core");
         noDependencyOutput = args.canFind("--no-dependency-output");
         foreach (a; args.filter!(a => a.startsWith("--test-timeout=")))
         {
