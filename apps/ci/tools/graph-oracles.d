@@ -130,6 +130,7 @@ immutable Oracle[] oracles = [
     Oracle("21-replay", &oracle21Replay),
     Oracle("24", &oracle24),
     Oracle("cic11", &oracleCic11),
+    Oracle("m8", &oracleM8),
 ];
 
 // === Fixtures ===
@@ -1579,6 +1580,56 @@ Verdict[] oracleCic11()
                 " s, and none of its ", recorded, " nested processes outlived it"));
         foreach (pid; alive)
             kill(pid.to!int, 9);
+    }
+    return vs;
+}
+
+// === ci task-DAG M8's gate: coverage attempts ===
+
+/**
+CIC7: a package that fails only under coverage is degraded, and the run
+exits zero; one whose plain fallback fails too fails the run.
+*/
+Verdict[] oracleM8()
+{
+    import sparkles.build_graph.actions : TestLeg;
+
+    Verdict[] vs;
+    // A module that does not compile with `-cov`.
+    enum covOnly = "version (D_Coverage) static assert(false, \"planted: no coverage build\");\n";
+    foreach (step, failing; [false, true])
+    {
+        const name = failing ? "m8f" : "m8d";
+        auto f = Fixture.add(name, [
+            "dub.sdl": recipeOf(name),
+            "src/sparkles/zz_" ~ name ~ "/t.d": "module sparkles.zz_" ~ name ~ ".t;\n\n" ~ covOnly
+                ~ "unittest { assert(" ~ (failing ? "false" : "true") ~ "); }\n",
+        ]);
+        RunOptions o;
+        o.runnerCore = true;
+        o.coverage = true;
+        o.legs = [TestLeg(2, true, "parallel")];
+        auto g = run(f.name, freshCache("m8"), o);
+        size_t covTests, plainTests;
+        foreach (ref a; g.plan.graph.actions)
+            if (a.kind == ActionKind.test && g.stats.executedTasks.canFind(a.id.text))
+                a.action.match!(
+                    (ref const ProcessAction p) {
+                        if (p.argv.any!(x => x.startsWith("--DRT-covopt=")))
+                            ++covTests;
+                        else
+                            ++plainTests;
+                    },
+                    (ref const _) {});
+        vs ~= Verdict(failing ? "step 2" : "step 1",
+            g.error.length ? g.error
+            : covTests ? text(covTests, " coverage tests ran over a coverage build that cannot compile")
+            : plainTests != 1 ? text("the plain fallback's test ran ", plainTests, " times, not once")
+            : !failing && g.exitCode != 0 ? text("a package that fails only under coverage failed the run (exit ",
+                g.exitCode, ")")
+            : failing && g.exitCode == 0 ? "a failing plain fallback passed the run" : null,
+            failing ? "a coverage build that failed, then a failing plain test, failed the run"
+                : "a coverage build that failed fell back to the plain test, which passed, and the run exited zero");
     }
     return vs;
 }
