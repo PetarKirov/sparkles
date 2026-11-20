@@ -176,6 +176,11 @@ struct Tools
     /// Variables every program the graph builds and runs takes: each test's
     /// and each generator's, such as the sanitizer's runtime options.
     EnvEntry[] runtimeEnvironment;
+    /// Directories every link searches for libraries a recipe names by
+    /// `libs` without `pkg-config`: what `$LIBRARY_PATH` gives a C driver,
+    /// which a build action's empty environment (BGA4) does not. Each is a
+    /// `-L-L` of the link, so its library search keys on them (BGK9).
+    string[] libraryPath;
     /// Runner options a package's test legs take after the legs' own, by
     /// the package's name (`sparkles:base`): the slow tests a run selects.
     string[][string] testArguments;
@@ -805,6 +810,8 @@ string[] linkArgv(ref const Variant v, string root, const Tools tools, TaskId co
             argv ~= relative(f, root);
     foreach (f; s.linkerFiles)
         argv ~= relative(f, root);
+    foreach (dir; tools.libraryPath)
+        argv ~= "-L-L" ~ dir;
     foreach (lib; s.libs)
         argv ~= "-L-l" ~ lib;
     foreach (f; s.lflags)
