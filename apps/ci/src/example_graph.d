@@ -162,17 +162,34 @@ final class ExamplePlan
             const link = linkOf.get(j.file, null);
             // Executed or reused, the reporter says it succeeded.
             const built = link.length && g.log.lineSplitter.canFind(link ~ ": succeeded");
+            // The lines of every action the link needs, and how each ended:
+            // a dependency's failure, a cancellation or a timeout says why.
             string diagnostics;
             if (link.length)
             {
-                size_t variant = size_t.max;
-                foreach (ref a; g.plan.graph.actions)
-                    if (a.id.text == link)
-                        variant = a.variant;
+                bool[string] needed = [link: true];
+                for (bool grew = true; grew;)
+                {
+                    grew = false;
+                    foreach (ref e; g.plan.graph.edges)
+                        if (e.dependent.text in needed && e.prerequisite.text !in needed)
+                        {
+                            needed[e.prerequisite.text] = true;
+                            grew = true;
+                        }
+                }
                 foreach (line; g.log.lineSplitter)
-                    foreach (ref a; g.plan.graph.actions)
-                        if (a.variant == variant && line.startsWith("[" ~ a.id.text ~ " "))
-                            diagnostics ~= line[line.indexOf("] ") + 2 .. $] ~ "\n";
+                {
+                    const open = line.startsWith("[") ? line.indexOf(" ") : -1;
+                    if (open > 1 && line[1 .. open] in needed)
+                        diagnostics ~= line[line.indexOf("] ") + 2 .. $] ~ "\n";
+                    else
+                    {
+                        const colon = line.indexOf(": ");
+                        if (colon > 0 && line[0 .. colon] in needed && !line[colon .. $].startsWith(": succeeded"))
+                            diagnostics ~= line ~ "\n";
+                    }
+                }
             }
             const refused = g.plan.singleFileErrors.get(j.file, null);
             result[i] = ExampleOutcome(j.buildOnly && built, diagnostics.length ? diagnostics
