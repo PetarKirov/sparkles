@@ -237,6 +237,28 @@ Gate: ordinary tests pass with and without coverage. A fixture that fails only
 under coverage is degraded and exits zero, and a true fallback failure exits
 one. Parallel listings never share a destination.
 
+Progress: delivered on the build graph, beside M7b.
+
+- **Coverage:** each package's test is a `-cov` attempt with a plain fallback
+  (build graph CIC7 planning); a package whose coverage build failed but
+  whose fallback passed is reported uncovered (`Degraded(noCoverage)`), and
+  the listings merge (`coverage.mergeListings`) into a sibling directory
+  that replaces `build/coverage` by rename. Oracle `m8` checks the degraded
+  and the failing fallback.
+- **`--sanitize address`:** `-fsanitize=address` in every compile and link
+  and `ASAN_OPTIONS` in every test and generator (`Tools.extraFlags`,
+  `Tools.runtimeEnvironment`), one leg keeping the `@slow` tests.
+- **`--slow`:** each package's chosen `@slow` tests are one leg,
+  `--only-slow -i <names>` (`Tools.testArguments`).
+- **`--special-modes`:** each package's modes are one leg, which runs the
+  runner core's driver on a blocking pool.
+- **Packages beneath the runner** (`metadata`, `profiling-counters`,
+  `test-attributes`, `test-harness`, `test-runner`) speak no runner protocol:
+  their test actions stay processes, the exit status their verdict.
+
+The dub test loops are removed. Open: the gate's whole-repository runs with
+and without coverage.
+
 ## M9: Markdown and standalone examples
 
 - Markdown extraction and per-example single-file packages, shared by
@@ -319,7 +341,7 @@ workflow or user-facing document uses a removed flag.
 | M3a       | Placements before the build graph | done        |
 | M7a       | Canonical command line            | done        |
 | M7b       | `ci test` on the build graph      | in progress |
-| M8        | Coverage and special modes        | not started |
+| M8        | Coverage and special modes        | in progress |
 | M9        | Examples                          | not started |
 | M10       | Docs commands                     | not started |
 | M11       | Stats, commits, maintenance       | not started |
