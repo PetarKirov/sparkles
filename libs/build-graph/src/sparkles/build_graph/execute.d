@@ -69,6 +69,11 @@ struct RunLayout
     bool explain;
     /// BGS6: the fraction of hits a lookup rehashes; one rehashes every hit.
     double hashSample = 1.0 / 64;
+    /// ci task-DAG CIC12: the kinds (`compile`, `archive`, `link`,
+    /// `generate`) whose actions must reuse a stored result. One that would
+    /// execute fails before it starts, with its miss's explanation; the
+    /// determinism check's own executions are exempt.
+    string[] requireCached;
 
     /// The output directory of action `id`: its `$OUT`.
     string outOf(TaskId id) const @safe pure nothrow => runDirectory ~ "/out/" ~ idPath(id);
@@ -701,6 +706,7 @@ struct ActionDriver
         if (layout.explain)
             return explainOnly(ctx.node.id, a is null ? null : *a, declared, preimage);
         const(ResultRecord)* checked;
+        string missed = declared.length ? null : "it has no declared key";
         // BGS9: checked actions run with their own lookup bypassed.
         const checking = layout.check && (layout.checkTasks.length == 0 || layout.checkTasks.canFind(id.text));
         const replacing = layout.replaceTasks.canFind(id.text);
@@ -742,6 +748,16 @@ struct ActionDriver
             const miss = explainMiss(**a, declared, preimage);
             stats.miss(miss[0]);
             ctx.output(OutputStream.stderr, "miss (" ~ miss[0] ~ "): " ~ miss[1]);
+            missed = miss[0] ~ ": " ~ miss[1];
+        }
+        else if (replacing)
+            missed = "it is being replaced";
+        // CIC12: a required hit that would execute fails before it starts.
+        if (layout.requireCached.canFind(kind) && !checking)
+        {
+            ctx.output(OutputStream.stderr, "a stored result is required (--require-cached " ~ kind ~ "), "
+                ~ "and it would execute: " ~ missed);
+            return TaskOutcome(Failed(FailureReason.contract));
         }
         if (stored && a !is null)
             if (const why = materializeInputs(**a, (string m) => ctx.output(OutputStream.stderr, m)))
