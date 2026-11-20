@@ -817,6 +817,7 @@ Verdict[] oracle19()
         vs ~= Verdict("step 2",
             !key.length ? "the compile published no result to check"
             : !checked.log.canFind("nondeterministic: result " ~ key) ? "the check did not name the result " ~ key
+            : checked.exitCode == 0 ? "the check exited zero over a difference (CIC13)"
             : storeHas(cache, key) ? "the differing result is still published" : null,
             "the check failed, naming the result and its object, and removed it");
     }
