@@ -819,7 +819,10 @@ string[] linkArgv(ref const Variant v, string root, const Tools tools, TaskId co
         argv ~= "-L-l" ~ lib;
     foreach (f; s.lflags)
         argv ~= "-L" ~ f;
-    argv ~= "-L--threads=" ~ text(threads);
+    // lld's thread count: only a link that names lld takes it, and the C
+    // driver's own linker (macOS's `ld`) refuses it.
+    if (tools.linker.length)
+        argv ~= "-L--threads=" ~ text(threads);
     return argv;
 }
 
@@ -1012,15 +1015,21 @@ version (unittest)
     assert(compile.kind == ActionKind.compile && compile.id.text.startsWith("compile:r.t1:test-root:ldc:"),
         compile.id.text);
 
-    // A link carries its claimed thread count, and so does a test run.
-    foreach (ref act; a.actions)
-    {
-        const argv = act.action.match!((ref const ProcessAction p) => p.argv.dup, (_) => string[].init);
-        if (act.kind == ActionKind.link)
-            assert(argv.canFind("-L--threads=2"));
-        if (act.kind == ActionKind.test)
-            assert(argv[$ - 2 .. $] == ["-t", "2"]);
-    }
+    // A test run carries its claimed thread count, and so does a link that
+    // names lld; the C driver's own linker is given none.
+    import std.algorithm.searching : startsWith;
+
+    const withLld = graphWith([[":t1", "unittest"]], null, Tools(linker: "/lld/bin/ld.lld"));
+    foreach (lld, graph; [a, withLld])
+        foreach (ref act; graph.actions)
+        {
+            const argv = act.action.match!((ref const ProcessAction p) => p.argv.dup, (_) => string[].init);
+            if (act.kind == ActionKind.link)
+                assert(lld ? argv.canFind("-L--threads=2")
+                    : !argv.canFind!(f => f.startsWith("-L--threads")), text(argv));
+            if (act.kind == ActionKind.test)
+                assert(argv[$ - 2 .. $] == ["-t", "2"]);
+        }
 
     // The executor accepts the nodes: no cycle, no unknown endpoint.
     TaskGraphBuilder builder;
