@@ -213,8 +213,7 @@ private enum tablet = Size(140, 40);
     const t = app.view(h);
     size_t pills;
     foreach (ref n; t.nodes)
-        if (n.kind == WidgetKind.panel && n.hitId >= ExplorerApp.actionBase
-            && n.hitId <= ExplorerApp.actionBase + ExplorerApp.Action.insert + 8)
+        if (n.kind == WidgetKind.panel && app.hitIds.find(ExplorerApp.actionsHitKey).contains(n.hitId))
         {
             assert(n.height.value == app.rowCells, text(n.hitId, ": ", n.height));
             assert(n.decoration.drawHeight == 32);
@@ -414,4 +413,40 @@ private enum tablet = Size(140, 40);
     const frame = renderFrame(*app, "", tablet);
     assert(!frame.canFind("nix run github"), "the fence's lines moved across:\n" ~ frame);
     assert(app.helpTop == 0, "the page did not move");
+}
+
+/// INP27: every id a frame draws is one the registry issued to one of the
+/// explorer's keys, and the next frame draws the same ids.
+@("fileset_explorer.INP27.idsAreIssued")
+@system unittest
+{
+    import std.algorithm.searching : startsWith;
+    import sparkles.ui.hit_ids : HitKey;
+
+    foreach (layout; [ExplorerApp.Layout.touch, ExplorerApp.Layout.keyboard])
+    {
+        auto app = make("**");
+        app.layout = layout;
+        RecordingHost h;
+        h.size = tablet;
+        size_t[] idsOf()
+        {
+            const t = app.view(h);
+            size_t[] ids;
+            foreach (ref n; t.nodes)
+                if (n.hitId != 0)
+                {
+                    HitKey key;
+                    size_t index;
+                    assert(app.hitIds.ownerOf(n.hitId, key, index), text(layout, ": ", n.hitId, " was not issued"));
+                    assert(key.tag.startsWith("fileset-explorer."), text(layout, ": ", key.tag));
+                    ids ~= n.hitId;
+                }
+            return ids;
+        }
+
+        const first = idsOf();
+        assert(first.length >= 3, text(layout, ": ", first.length, " ids"));
+        assert(idsOf() == first, text(layout, ": the ids moved between frames"));
+    }
 }
