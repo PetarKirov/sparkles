@@ -11,8 +11,9 @@ import commands.output :
     streamResultBox, uiWidth;
 import commands.toolchain :
     compilerIsLdc, dubTestCommand, findWasiCompiler, mergeEnv, parallelTestThreads,
-    resolvedCompiler, sanitizeChildEnv, sanitizePlatformSupported, testBinaryRan, testBuildType,
-    withLdcDflags, withTestArgs;
+    resolvedCompiler, sanitizeAsanOptions, sanitizeChildEnv, sanitizeCompilerFlags, sanitizePlatformSupported,
+    testBinaryRan, testBuildType, withLdcDflags, withTestArgs;
+import sparkles.build_primitives.task.action : EnvEntry;
 import core.time : Duration, msecs;
 import coverage : collectCoverage, PackageCoverage;
 import dub_deps : subPackageDirectories;
@@ -63,235 +64,15 @@ RunExpected!void runTestCommand(in TestCommand cmd)
         // plain run's `build/coverage`.
         if (cmd.coverage)
             info(i"coverage is off under --sanitize (ASan and -cov instrumentation do not mix)");
-        return runDubTestsMode(cmd.failFast, false, cmd.from, where, sanitize: true);
+        if (!compilerIsLdc(environment.get("DC", "")))
+            return failRun("ci test --sanitize address requires LDC (set DC=ldc2)");
+        if (!sanitizePlatformSupported())
+            return failRun("ci test --sanitize address is Linux-only: nixpkgs LDC has no ASan runtime on Darwin");
+        return runTestsOnGraph(cmd.failFast, false, cmd.from, where, buildOnly: false, cmd, sanitize: true);
     }
     if (cmd.watch)
         return runWatchMode(WatchAction.test, cmd.failFast);
     return runTestsOnGraph(cmd.failFast, cmd.coverage, cmd.from, where, buildOnly: false, cmd);
-}
-
-/// One package's test outcome, and whether coverage came with it.
-private struct PackageRun
-{
-    int status;
-    string output;
-    bool coverageCollected;
-    ResourceUsage usage;
-}
-
-/**
-Live line stream of one package's `dub test`, retrying without coverage if
-that is what broke.
-
-`-cov` changes how a package links, and some cannot take it: under DMD the
-`sparkles:dmd-lsp` family fails to resolve `dmd.backend.*` in a coverage build
-while linking and passing perfectly without one. That is a build incompatibility,
-not a failing test, and `ci test`'s job is to report whether the tests pass — so a
-package that only fails *with* coverage is run again without it and reported on
-its own merits, with its absence from the table noted rather than hidden.
-
-Every attempt states its build type (see $(LREF testBuildType)). Copies share a
-class payload so a streaming box can pull the same child the footer later reads.
-*/
-private struct PackageTestStream
-{
-    this(
-        const(string)[] baseCmd,
-        const(string)[] runnerArgs,
-        CoverageRun cov,
-        const string[string] extraEnv,
-        Duration interval,
-        void delegate(in ResourceUsage sample) @safe onSample,
-    )
-    {
-        _s = new State(baseCmd, runnerArgs, cov, extraEnv, interval, onSample);
-    }
-
-    @property ref PackageRun result() return @safe pure nothrow @nogc
-    in (_s !is null)
-        => _s.result;
-
-    @property bool empty()
-        => _s is null || _s.empty;
-
-    @property string front()
-        => _s.front;
-
-    void popFront()
-    {
-        _s.popFront();
-    }
-
-private:
-    static final class State
-    {
-        this(
-            const(string)[] baseCmd,
-            const(string)[] runnerArgs,
-            CoverageRun cov,
-            const string[string] extraEnv,
-            Duration interval,
-            void delegate(in ResourceUsage sample) @safe onSample,
-        )
-        {
-            this.baseCmd = baseCmd;
-            this.runnerArgs = runnerArgs;
-            this.cov = cov;
-            this.extraEnv = extraEnv;
-            this.interval = interval;
-            this.onSample = onSample;
-        }
-
-        bool empty()
-        {
-            if (finished)
-                return true;
-            if (notePending)
-                return false;
-            startFirst();
-            if (!inner.empty)
-                return false;
-            auto attempt = inner.result;
-            // Retry only a build that broke. Once the binary ran, a nonzero
-            // status is the tests' verdict, and a run without coverage could
-            // only launder it — see `testBinaryRan`.
-            if (cov.enabled && attempt.status != 0 && !retried
-                && !testBinaryRan(attempt.output))
-            {
-                retried = true;
-                notePending = true;
-                note = styledText(i"{dim coverage build failed; retrying without -cov}");
-                inner = executeMonitoredLines(
-                    withTestArgs(baseCmd, testBuildType(false), runnerArgs),
-                    interval, onSample, ChildStdin.empty, Duration.zero,
-                    withLdcDflags(extraEnv));
-                return false;
-            }
-            finishWith(attempt);
-            return true;
-        }
-
-        string front()
-            => notePending ? note : inner.front;
-
-        void popFront()
-        {
-            if (notePending)
-            {
-                notePending = false;
-                return;
-            }
-            inner.popFront();
-        }
-
-        PackageRun result;
-
-    private:
-        void startFirst()
-        {
-            if (started)
-                return;
-            started = true;
-            if (cov.enabled)
-                inner = executeMonitoredLines(
-                    withTestArgs(baseCmd, testBuildType(true), cov.runtimeArgs ~ runnerArgs),
-                    interval, onSample, ChildStdin.empty, Duration.zero,
-                    withLdcDflags(mergeEnv(extraEnv, cov.env)));
-            else
-                inner = executeMonitoredLines(
-                    withTestArgs(baseCmd, testBuildType(false), runnerArgs),
-                    interval, onSample, ChildStdin.empty, Duration.zero,
-                    withLdcDflags(extraEnv));
-        }
-
-        /// The verdict is the last attempt's: the first one, or — after a
-        /// coverage build that never ran the binary — the plain run, the only
-        /// attempt that tested anything. Coverage came with it exactly when it
-        /// was asked for and not retried away.
-        void finishWith(MonitoredResult attempt)
-        {
-            if (finished)
-                return;
-            finished = true;
-            result = PackageRun(attempt.status, attempt.output,
-                cov.enabled && !retried, attempt.usage);
-        }
-
-        const(string)[] baseCmd;
-        const(string)[] runnerArgs;
-        CoverageRun cov;
-        const string[string] extraEnv;
-        Duration interval;
-        void delegate(in ResourceUsage sample) @safe onSample;
-        MonitoredLineRange inner;
-        string note;
-        bool started;
-        bool retried;
-        bool notePending;
-        bool finished;
-    }
-
-    State _s;
-}
-
-// The retry machine, driven end to end with `sh` standing in for dub. The
-// script sees dub's build type as `$1` (`sh -c script -b <type> -- …`), so it
-// can break the coverage attempt and pass the plain one, or fail the way a
-// test does — the difference `testBinaryRan` must see.
-version (Posix)
-@("ci.PackageTestStream.retriesOnlyABrokenBuild")
-@system unittest
-{
-    static PackageRun drive(string script, bool coverage, out string[] lines)
-    {
-        auto cov = CoverageRun(enabled: coverage, dir: "/tmp/cov");
-        auto stream = PackageTestStream(["sh", "-c", script], ["-t", "1"], cov,
-            null, 10.msecs, (in ResourceUsage) @safe {});
-        foreach (line; stream)
-            lines ~= line;
-        return stream.result;
-    }
-
-    static bool retried(const string[] lines)
-        => lines.canFind!(l => l.canFind("retrying without -cov"));
-
-    string[] lines;
-
-    // The coverage build breaks at link time and the plain run passes:
-    // retried, green, and honestly uncovered.
-    auto r = drive(`case "$1" in
-        unittest-cov) echo "Linking x-test-unittest"; echo "ld: error"; exit 1;;
-        *) echo "Running x-test-unittest $3"; exit 0;; esac`, true, lines);
-    assert(r.status == 0);
-    assert(!r.coverageCollected);
-    assert(retried(lines));
-    assert(r.output.canFind("Running x-test-unittest -t"));
-
-    // The coverage build runs and its tests fail: no retry, red, coverage kept.
-    // This is the case that used to launder into a pass.
-    lines = null;
-    r = drive(`echo "Running x-test-unittest"; echo "Error Program exited with code 1"; exit 1`,
-        true, lines);
-    assert(r.status == 1);
-    assert(r.coverageCollected);
-    assert(!retried(lines));
-
-    // Both attempts fail: the plain run's status, never a zero.
-    lines = null;
-    r = drive(`case "$1" in
-        unittest-cov) echo "ld: error"; exit 1;;
-        *) echo "Running x-test-unittest"; exit 3;; esac`, true, lines);
-    assert(r.status == 3);
-    assert(!r.coverageCollected);
-    assert(retried(lines));
-
-    // Coverage off: one attempt, an explicit `-b unittest`, nothing collected.
-    lines = null;
-    r = drive(`echo "bt=$1"; exit 0`, false, lines);
-    assert(r.status == 0);
-    assert(!r.coverageCollected);
-    assert(!retried(lines));
-    assert(r.output.canFind("bt=unittest\n"));
 }
 
 /**
@@ -322,43 +103,6 @@ private struct CoverageRun
         => enabled && dflags.length ? ["DFLAGS": dflags] : null;
 }
 
-/**
-Prepares `build/coverage` for a run, clearing whatever a previous one left.
-
-Clearing is not optional: `merge:1` accumulates, so a second `ci test` over a
-stale directory would report hit counts summed across both runs. Percentages
-would survive that, but the per-line counts a viewer shows would not.
-
-Params:
-    repoRoot = the repository root
-    wanted = whether the caller asked for coverage at all
-    subPackages = used only to pick a package to resolve the compiler against
-
-Returns: the descriptor; `enabled` is false when `wanted` is false.
-*/
-private CoverageRun prepareCoverage(string repoRoot, bool wanted, in string[] subPackages)
-{
-    import std.file : rmdirRecurse;
-
-    if (!wanted)
-        return CoverageRun.init;
-
-    CoverageRun run = {enabled: true, dir: buildPath(repoRoot, "build", "coverage")};
-    if (run.dir.exists)
-        run.dir.rmdirRecurse;
-    run.dir.mkdirRecurse;   // `dstpath` must exist; druntime will not create it
-
-    // LDC's `--cov-increment` picks how a counter is bumped, and `boolean`
-    // stores a 1 instead of counting — so every covered line reports `1` and a
-    // viewer's hit-count badge becomes noise. `atomic` is already LDC's
-    // default; passing it pins the contract against an inherited `$DFLAGS` or
-    // a future default, and it is the mode whose counts are true under the
-    // parallel test runner. DMD has no equivalent switch and rejects this one,
-    // hence the compiler check.
-    if (resolvedCompiler(repoRoot, subPackages) == "ldc")
-        run.dflags = "--cov-increment=atomic";
-    return run;
-}
 
 /**
 The sub-package paths a test run covers: those `--from` names, in request
@@ -423,151 +167,6 @@ private bool requestedSubPackages(string repoRoot, in string[] requested, out st
     return true;
 }
 
-private RunExpected!void runDubTestsMode(bool failFast, bool coverage, in string[] requested,
-    in PlacementArgs where, bool sanitize = false)
-{
-    if (sanitize)
-    {
-        if (!compilerIsLdc(environment.get("DC", "")))
-        return failRun("ci test --sanitize address requires LDC (set DC=ldc2)");
-        if (!sanitizePlatformSupported())
-        return failRun("ci test --sanitize address is Linux-only: nixpkgs LDC has no ASan runtime on Darwin");
-    }
-
-    info(i"resolving repository root");
-    const repoRoot = detectRepoRoot();
-    if (repoRoot is null)
-    return failRun("Could not detect repository root");
-    info(i"repository root: $(repoRoot)");
-
-    info(i"parsing dub.sdl sub-packages");
-    string[] subPackages;
-    if (!requestedSubPackages(repoRoot, requested, subPackages))
-        return failRun("could not resolve the requested sub-packages");
-    if (where.shard.length && !narrowToShard(repoRoot, requested, where, subPackages))
-        return failRun("could not narrow the sub-packages to shard " ~ where.shard);
-    // A placement chooses its legs and whether it collects coverage (OD22).
-    bool serialLeg = true, parallelLeg = true;
-    if (where.placement.length && !sanitize)
-    {
-        auto loaded = loadPlacements(repoRoot);
-        const p = loaded.hasError ? null : loaded.value.find(where.placement);
-        if (p is null)
-        return failRun(text(i"$(loaded.hasError ? loaded.error : "ci/placements.json has no placement " ~ where.placement)"));
-        serialLeg = p.serialLeg;
-        parallelLeg = p.parallelLeg;
-        if (coverage && !p.coverage)
-            info(i"$(where.placement) collects no coverage; testing without -cov");
-        coverage = coverage && p.coverage;
-    }
-    info(i"$(subPackages.length) sub-package(s) to test");
-    if (sanitize)
-        info(i"sanitize: ASan; one -t $(parallelTestThreads(hwParallelism())) leg on 4 MiB workers");
-
-    if (coverage)
-        info(i"preparing coverage (dub describe + listings dir)");
-    const cov = prepareCoverage(repoRoot, coverage, subPackages);
-    if (coverage)
-        info(i"coverage ready at $(cov.dir)");
-
-    i"Testing $(subPackages.length) sub-package(s)".text
-        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
-        .writeln("\n");
-    flushStdout();
-
-    auto monitor = RunMonitor.start();
-    void onSample(in ResourceUsage) @safe
-    {
-        monitor.sample();
-    }
-
-    int failures = 0;
-    size_t processed = 0;
-    string[] failedPackages, uncovered;
-
-    const parallelN = parallelTestThreads(hwParallelism());
-    static struct TestLeg
-    {
-        string label;
-        string[] runnerArgs; /// the test binary's, after `--`
-        bool serial; /// `-t 1`: the run record's `serial` leg
-    }
-    // Sanitize runs the parallel leg only: the watermark the `-t 1` leg
-    // exists to contrast with is off under ASan (see `stack_budget.d`), and
-    // the runner sizes ASan workers at 4 MiB so a body cannot reach a guard
-    // page. One leg also halves a job that rebuilds every package with ASan.
-    // The plain legs leave the `@slow` tests to `ci test --slow`, which CI runs
-    // as jobs of their own; under ASan they still run, in the one leg.
-    TestLeg[] legs;
-    if (sanitize)
-        legs = [TestLeg("sanitize -t " ~ parallelN.to!string, ["-t", parallelN.to!string], false)];
-    else
-    {
-        if (serialLeg)
-            legs ~= TestLeg("-t 1", ["-t", "1", "--skip-slow"], true);
-        if (parallelLeg)
-            legs ~= TestLeg("-t " ~ parallelN.to!string, ["-t", parallelN.to!string, "--skip-slow"], false);
-    }
-    const extraEnv = sanitize ? sanitizeChildEnv() : (string[string]).init;
-
-    // One task per package leg, in a run record (observability OD21): the
-    // placements pack their shards from the history of these wall times.
-    auto recorder = RunRecorder.open(repoRoot, sanitize ? "test --sanitize address" : "test",
-        recordedOptions(requested, coverage), where.placement, where.shard);
-    scope (exit)
-        if (const degradation = recorder.finish())
-            warning(i"$(degradation)");
-
-    packageLoop: foreach (i, pkg; subPackages)
-    {
-        const pkgName = pkg.baseName;
-        const progress = i"[$(i + 1)/$(subPackages.length)]".text;
-        mkdirRecurse(buildPath(repoRoot, pkg, "build"));
-
-        foreach (leg; legs)
-        {
-            const header = styledText(
-                i"{dim $(progress)} {cyan $(pkgName)} {dim › dub test :$(pkgName) -- $(leg.label)}");
-            // Honour `$DC` so the sub-package tests use the CI matrix's compiler
-            // (the dev shell provides both dmd and ldc). Example verification keeps
-            // `ci`'s own embedded compiler; only the test suite is compiler-matrixed.
-            auto testCmd = dubTestCommand(repoRoot, pkgName);
-            recorder.begin();
-            auto lines = PackageTestStream(testCmd, leg.runnerArgs, cov, extraEnv, 250.msecs, &onSample);
-            streamResultBox(header, lines,
-                () => resultVerdict(lines.result.status == 0),
-                (LogDelta d) => resultFooterRight(lines.result.usage, d));
-            recorder.end(testTaskId(pkgName, sanitize ? "sanitize" : "unittest", leg.serial),
-                lines.result.status == 0);
-            monitor.sample();
-
-            if (cov.enabled && !lines.result.coverageCollected && lines.result.status == 0
-                && !uncovered.canFind(pkgName))
-                uncovered ~= pkgName;
-
-            if (lines.result.status != 0)
-            {
-                failures++;
-                failedPackages ~= pkgName ~ " (" ~ leg.label ~ ")";
-                if (failFast)
-                {
-                    processed = i + 1;
-                    writeln();
-                    break packageLoop;
-                }
-                break;
-            }
-        }
-
-        processed = i + 1;
-        writeln();
-    }
-
-    displayTestRunSummary(monitor.finish(processed, subPackages.length, failedPackages));
-    reportCoverage(subPackages, cov, failedPackages, uncovered);
-    return failures > 0 ? failRun(text(failures, " test package(s) failed")) : ranOk();
-}
-
 /**
 `ci test` and `ci test --build-only` on the build graph (ci task-DAG M7b): the
 selected packages' test roots planned as actions, compiled and linked
@@ -577,7 +176,7 @@ against the shared store, and each test leg run through the runner core
 coverage test's listings are merged into `build/coverage`.
 */
 private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string[] requested,
-    in PlacementArgs where, bool buildOnly, in TestCommand cmd = TestCommand.init)
+    in PlacementArgs where, bool buildOnly, in TestCommand cmd = TestCommand.init, bool sanitize = false)
 {
     import cli : parseCapacity;
     import sparkles.build_graph.execute : RunReporting;
@@ -609,7 +208,7 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
         return failRun("could not narrow the sub-packages to shard " ~ where.shard);
     // A placement chooses its legs and whether it collects coverage (OD22).
     bool serialLeg = true, parallelLeg = true;
-    if (where.placement.length)
+    if (where.placement.length && !sanitize)
     {
         auto loaded = loadPlacements(repoRoot);
         const p = loaded.hasError ? null : loaded.value.find(where.placement);
@@ -632,10 +231,18 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
     const hostN = cast(uint) parallelTestThreads(hwParallelism());
     const parallelN = hostN < jobs ? hostN : jobs;
     TestLeg[] legs;
-    if (serialLeg)
-        legs ~= TestLeg(1, true, "serial");
-    if (parallelLeg)
-        legs ~= TestLeg(parallelN, true, "parallel");
+    // Sanitize runs one leg, which keeps the `@slow` tests: the `-t 1` leg
+    // contrasts with the stack watermark ASan turns off, and the runner sizes
+    // ASan workers at 4 MiB (M8).
+    if (sanitize)
+        legs = [TestLeg(parallelN, false, "sanitize")];
+    else
+    {
+        if (serialLeg)
+            legs ~= TestLeg(1, true, "serial");
+        if (parallelLeg)
+            legs ~= TestLeg(parallelN, true, "parallel");
+    }
 
     const names = subPackages.map!(p => p.baseName).array;
     const xdg = environment.get("XDG_CACHE_HOME", buildPath(environment.get("HOME", "/"), ".cache"));
@@ -644,8 +251,8 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
     info(i"$(names.length) package(s) to $(buildOnly ? "build" : "test") through the build graph; run directory $(into)");
 
     // A dry run records nothing either.
-    auto recorder = RunRecorder.open(repoRoot, "test", recordedOptions(requested, coverage), where.placement,
-        where.shard);
+    auto recorder = RunRecorder.open(repoRoot, sanitize ? "test --sanitize address" : "test",
+        recordedOptions(requested, coverage), where.placement, where.shard);
     scope (exit)
         if (!cmd.dryRun)
             if (const degradation = recorder.finish())
@@ -676,7 +283,9 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
     }
     auto g = runGraph(repoRoot, null, RunOptions(into: into, cache: cache, runnerCore: true, packages: names.dup,
         legs: legs, coverage: coverage, buildOnly: buildOnly, failFast: failFast, echo: true, jobs: jobs,
-        reporting: reporting, requireCached: cmd.requireCached.dup));
+        reporting: reporting, requireCached: cmd.requireCached.dup,
+        extraFlags: sanitize ? [sanitizeCompilerFlags] : null,
+        runtimeEnvironment: sanitize ? [EnvEntry("ASAN_OPTIONS", sanitizeAsanOptions)] : null));
     if (cmd.dryRun)
         return g.error.length ? failRun(g.error) : ranOk();
     if (g.error.length)
@@ -693,7 +302,7 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
         const serial = task.endsWith(":serial");
         const ok = g.stats.succeeded.get(task, false);
         const began = g.stats.startedAt.get(task, MonoTime.init);
-        recorder.add(testTaskId(pkg, "unittest", serial), ok, began, began + wall);
+        recorder.add(testTaskId(pkg, sanitize ? "sanitize" : "unittest", serial), ok, began, began + wall);
         if (!ok && !failedPackages.canFind(pkg))
             failedPackages ~= pkg;
     }

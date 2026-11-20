@@ -287,24 +287,24 @@ struct TestCommand
             return "--history-tip needs --shard";
         // §4: focused selection is the graph's, not the slow or special modes'.
         if ((since.length || dependencies || dependents) && (slow || specialModes != SpecialModes.off
-            || sanitize != Sanitizer.off || watch || placement.length))
-            return "--since, --dependencies and --dependents select the ordinary tests or "
+            || watch || placement.length))
+            return "--since, --dependencies and --dependents select the ordinary or sanitized tests or "
                 ~ "--build-only, without a placement";
         // CIC12: only the build graph's cacheable kinds.
         foreach (kind; requireCached)
             if (kind != "compile" && kind != "archive" && kind != "link" && kind != "generate")
                 return "--require-cached takes compile, archive, link or generate";
-        if (requireCached.length && (slow || specialModes != SpecialModes.off || sanitize != Sanitizer.off || watch))
-            return "--require-cached applies to the build graph's runs: the ordinary tests or --build-only";
+        if (requireCached.length && (slow || specialModes != SpecialModes.off || watch))
+            return "--require-cached applies to the build graph's runs: the ordinary or sanitized tests "
+                ~ "or --build-only";
         // CIC1: the common execution options.
         if (jobs.length && !parseCapacity(jobs))
             return "--jobs takes a positive capacity";
         if (dryRun && interlaced)
             return "--dry-run has no task output to interlace";
-        if ((dryRun || interlaced || jobs.length) && (slow || specialModes != SpecialModes.off
-            || sanitize != Sanitizer.off || watch))
-            return "--jobs, --interlaced and --dry-run run on the build graph: the ordinary tests "
-                ~ "or --build-only";
+        if ((dryRun || interlaced || jobs.length) && (slow || specialModes != SpecialModes.off || watch))
+            return "--jobs, --interlaced and --dry-run run on the build graph: the ordinary or sanitized "
+                ~ "tests or --build-only";
         return null;
     }
 }
