@@ -72,6 +72,26 @@ BuildPlatform platformOf(string compiler) @safe
     return p;
 }
 
+/// The processors online, as `std.parallelism.totalCPUs` counts them.
+uint logicalProcessors() @trusted nothrow @nogc
+{
+    version (Posix)
+    {
+        import core.sys.posix.unistd : _SC_NPROCESSORS_ONLN, sysconf;
+
+        const n = sysconf(_SC_NPROCESSORS_ONLN);
+        return n > 0 ? cast(uint) n : 1;
+    }
+    else
+    {
+        import core.sys.windows.winbase : GetSystemInfo, SYSTEM_INFO;
+
+        SYSTEM_INFO info;
+        GetSystemInfo(&info);
+        return info.dwNumberOfProcessors ? info.dwNumberOfProcessors : 1;
+    }
+}
+
 /// The platform of the compiler `$DC` names, LDC's by default.
 BuildPlatform platform() @safe => platformOf(compilerName);
 
@@ -729,7 +749,6 @@ GraphRun runGraph(string root, string only, RunOptions o)
 {
     import std.array : appender;
     import std.file : exists, mkdirRecurse, readText;
-    import std.parallelism : totalCPUs;
     import sparkles.build_graph.execute : RunLayout, executionNodes, runActions;
 
     GraphRun g;
@@ -937,7 +956,7 @@ GraphRun runGraph(string root, string only, RunOptions o)
     }
     auto log = appender!string;
     auto w = Tee(&log, o.echo);
-    const r = runActions(nodes, g.plan.graph, layout, w, o.jobs ? o.jobs : cast(uint) totalCPUs, &g.stats,
+    const r = runActions(nodes, g.plan.graph, layout, w, o.jobs ? o.jobs : logicalProcessors, &g.stats,
         o.failFast, handlers, o.reporting);
     g.exitCode = r.exitCode;
     g.log = log.data;
@@ -1556,7 +1575,6 @@ int explainTask(W)(string root, string cache, string task, ref W writer)
 {
     import std.datetime.systime : Clock;
     import std.file : exists, mkdirRecurse, rmdirRecurse;
-    import std.parallelism : totalCPUs;
     import std.process : thisProcessID;
     import sparkles.build_graph.execute : RunLayout, RunStats, executionNodes, runActions;
 
@@ -1624,7 +1642,7 @@ int explainTask(W)(string root, string cache, string task, ref W writer)
     }
     Discard quiet;
     RunStats stats;
-    cast(void) runActions(nodes, sub, layout, quiet, cast(uint) totalCPUs, &stats);
+    cast(void) runActions(nodes, sub, layout, quiet, logicalProcessors, &stats);
 
     string verdict;
     string[] misses;

@@ -182,7 +182,7 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
     import cli : parseCapacity;
     import sparkles.build_graph.execute : RunReporting;
     import sparkles.ci_provider : CiLog, systemEnvironment;
-    import std.parallelism : totalCPUs;
+    import graph_driver : logicalProcessors;
 
     import core.time : MonoTime;
     import graph_driver : runGraph, RunOptions;
@@ -226,7 +226,7 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
     // the host's processors.
     const jobs = cmd.jobs.length ? parseCapacity(cmd.jobs)
         : parseCapacity(environment.get("SPARKLES_CI_JOBS", "")) ? parseCapacity(environment.get("SPARKLES_CI_JOBS", ""))
-        : cast(uint) totalCPUs;
+        : logicalProcessors;
     // A leg claims its `-t` (CIC11), so no wider than the capacity: on a
     // container whose processors are the host's, it would never be admitted.
     const hostN = cast(uint) parallelTestThreads(hwParallelism());
