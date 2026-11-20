@@ -4894,8 +4894,10 @@ private PixelRect drawPopup(ref GuiSurface surface,
     RgbColor pageFg, RgbColor pageBg, int availCells,
     ExpandedRegions expanded, out KeyTarget[] keys) @system
 {
-    import sparkles.twoslash.render_widgets : clampOrigin, effectivePopupWidth,
+    import sparkles.twoslash.render_widgets : effectivePopupWidth,
         HoverViewOptions, signatureSpans;
+    import sparkles.ui.geometry : Rect, Size;
+    import sparkles.ui.overlay.place : Adjust, place, PlaceRequest;
 
     // Render JSDoc docs as markdown (bold/italic/code/links/lists/fences), via the
     // grammar registry — falls back to plain lines without it.
@@ -4923,13 +4925,18 @@ private PixelRect drawPopup(ref GuiSurface surface,
     auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
 
     // A popup anchored near the right edge slides left rather than being
-    // squeezed into a two-word column. `availCells` was measured from the
-    // anchor, so the window edge is `x + availCells` cells out.
+    // squeezed into a two-word column (`PLC4`). The solve runs in cells, here
+    // relative to the anchor's cell: the boundary is the whole cells left of
+    // it and `availCells` to its right, so the popup stops at the window edge.
     const box = frames[tree.root].rect;
-    const px = availCells > 0
-        ? cast(float) clampOrigin(cast(int) x, box.width * cellW,
-            cast(int) x + availCells * cellW)
-        : x;
+    float px = x;
+    if (availCells > 0)
+    {
+        const leftCells = cast(int)(x / cellW);
+        const g = place(PlaceRequest(anchor: Rect(0, 0, 1, 1), content: Size(box.width, box.height),
+            adjust: Adjust.slide), Rect(-leftCells, 0, leftCells + availCells, box.height + 1));
+        px = x + g.rect.x * cellW;
+    }
 
     auto canvas = surface.canvasAt(px, y);
     paint(canvas, ops);

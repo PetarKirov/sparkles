@@ -26,7 +26,7 @@ import sparkles.base.term_caps : TermSize;
 
 import sparkles.twoslash.overlay : planTwoslash, TwoslashPlan;
 import sparkles.twoslash.protocol : Node, NodeType, TwoslashReturn;
-import sparkles.twoslash.render_widgets : clampOrigin, effectivePopupWidth,
+import sparkles.twoslash.render_widgets : effectivePopupWidth,
     HoverViewOptions, signatureSpans, viewHoverPopup, viewTwoslashDocument;
 
 import sparkles.syntax : HighlightEvent, LabelSet,
@@ -38,6 +38,7 @@ import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.layout : Frame, layout;
+import sparkles.ui.overlay.place : Adjust, place, PlaceRequest;
 import sparkles.ui.state : selectionRects;
 import sparkles.ui.style : defaultTwoslashPalette, Palette,
     schemeForBackground, Slot;
@@ -237,7 +238,7 @@ private struct TwoslashTui
             const r = targetRects[selIdx];
             const ni = selectable[selIdx];
             // The room left at the anchor, capped by the theme's ceiling, and
-            // the same shift-don't-shrink rule the other backends use (`SIG1`).
+            // the same slide-don't-shrink rule the other backends use (`SIG1`, `PLC4`).
             const anchor = padCols + r.x;
             const avail = grid.cols - anchor;
             import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
@@ -263,9 +264,10 @@ private struct TwoslashTui
                 ? viewHoverPopup(tw, ni, cache.registry, opts)
                 : viewHoverPopup(tw, ni, opts);
             auto frames = layout(tree);
-            paintTree(grid, tree,
-                clampOrigin(anchor, frames[tree.root].rect.width, grid.cols),
-                r.y - scrollRow + 1);
+            // Directly below the anchor's row, slid inside the grid.
+            const at = place(PlaceRequest(anchor: Rect(anchor, r.y - scrollRow, 1, 1),
+                content: frames[tree.root].rect.size, adjust: Adjust.slide), Rect(0, 0, cast(int) grid.cols, cast(int) grid.rows));
+            paintTree(grid, tree, at.rect.x, at.rect.y);
         }
 
         drawStatus(grid);

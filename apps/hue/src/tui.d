@@ -1009,9 +1009,10 @@ struct PreviewTui
         import sparkles.twoslash.overlay : withoutQuickinfoPrefix;
         import sparkles.source_view.markdown : highlightedFenceRenderer,
             MdViewTheme;
-        import sparkles.twoslash.render_widgets : clampOrigin,
-            effectivePopupWidth, HoverViewOptions, signatureSpans;
+        import sparkles.twoslash.render_widgets : effectivePopupWidth,
+            HoverViewOptions, signatureSpans;
         import sparkles.ui.geometry : Rect;
+        import sparkles.ui.overlay.place : Adjust, place, PlaceRequest;
         import sparkles.ui.widget : TextSpan;
 
         const n = tw.nodes[hoverNodes[hoverSel]];
@@ -1050,14 +1051,17 @@ struct PreviewTui
         auto frames = layout(tree);
         auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
 
-        // Keep it inside the pane on both axes: shift left rather than shrink
+        // Keep it inside the pane on both axes: slide left rather than shrink
         // when it would overhang the right edge (a narrower popup would only
         // move the problem into the text), and clip so it can never spill
         // across the divider into the explorer — `paintGrid` clips in
         // canvas-local cells, so the rect is expressed relative to the origin.
+        // The popup sits one row below the anchor's row (`PLC4`: the slide
+        // stops at the pane's edge).
         const box = frames[tree.root].rect;
-        const ox = clampOrigin(rs[0].x, box.width, width);
-        const oy = cast(int)(rs[0].y - top + 2);
+        const at = place(PlaceRequest(anchor: Rect(rs[0].x, cast(int)(rs[0].y - top), rs[0].width, 1),
+            content: box.size, gap: 1, adjust: Adjust.slide), Rect(0, 0, width, height));
+        const ox = at.rect.x, oy = at.rect.y;
         paintGrid(g, pageBg, ops, originX + ox, oy,
             Rect(-ox, -oy, width, height));
     }
