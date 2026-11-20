@@ -222,8 +222,14 @@ Progress, by the gate's items:
   flags. A second `ci test` of `versions` passes under `--require-cached
 compile archive link`.
 
-Next: the whole repository's `ci test` in both forms, with `--jobs 1`, and a
-second worktree under `--require-cached`; a CI run with the check.
+- **The whole repository** (pc2-local, `dc4041727`): `ci test` (761 tasks
+  succeeded, 340 unneeded fallbacks), `ci test --build-only` (405),
+  `--build-only --jobs 1` (405) and `--jobs 1 --no-coverage` (575 tests) pass,
+  `ci cache verify --rerun` passes, and a second worktree builds all 405
+  tasks under `--require-cached compile archive link`, compiling nothing.
+
+Open: a CI run with the determinism check, which this branch's pull request
+gives.
 
 ## M8: Coverage, sanitizers, slow tests and special modes
 
@@ -256,8 +262,8 @@ Progress: delivered on the build graph, beside M7b.
   `test-attributes`, `test-harness`, `test-runner`) speak no runner protocol:
   their test actions stay processes, the exit status their verdict.
 
-The dub test loops are removed. Open: the gate's whole-repository runs with
-and without coverage.
+The dub test loops are removed. The whole repository passes with coverage and
+without it (M7b's runs), and oracle `m8` passes: the gate is met.
 
 ## M9: Markdown and standalone examples
 
@@ -373,7 +379,7 @@ from the placements, and the `ci stats` terminology.
 | M3a       | Placements before the build graph | done        |
 | M7a       | Canonical command line            | done        |
 | M7b       | `ci test` on the build graph      | in progress |
-| M8        | Coverage and special modes        | in progress |
+| M8        | Coverage and special modes        | done        |
 | M9        | Examples                          | in progress |
 | M10       | Docs commands                     | in progress |
 | M11       | Stats, commits, maintenance       | in progress |
