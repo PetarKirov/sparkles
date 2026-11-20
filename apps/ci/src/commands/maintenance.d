@@ -238,7 +238,6 @@ RunExpected!void runGcR2Command(int keepCommits, int graceDays, bool dryRun)
     import std.datetime.systime : Clock;
     import std.format : format;
     import std.datetime.timezone : UTC;
-    import std.parallelism : TaskPool;
     import std.process : execute;
     import std.stdio : writefln;
     import std.string : lineSplitter, strip;
@@ -267,23 +266,19 @@ RunExpected!void runGcR2Command(int keepCommits, int graceDays, bool dryRun)
     }
     const string[] keepTrees = log.output.lineSplitter.map!(l => l.strip.idup).filter!(l => l.length).array;
 
-    auto pool = new TaskPool(16);
-    scope (exit) pool.finish(blocking: true);
-
-    // `parallel` foreach, not `amap`: a local lambda given to a TaskPool member
-    // needs a dual context, which LDC does not support.
+    // Sixteen fetches at once, each blocking on its request, on threads of
+    // their own (ci task-DAG M11: blocking HTTP, until a native client).
     Expected!(string, string)[] getAll(string[] keys)
     {
         // Plain arrays: an `Expected` cannot be default-constructed.
         auto bodies = new string[keys.length], failures = new string[keys.length];
-        foreach (i, ref body_; pool.parallel(bodies, 1))
-        {
+        fanOut(keys.length, (size_t i) {
             auto got = getObject(bucket.value, keys[i]);
             if (got.hasError)
                 failures[i] = got.error;
             else
-                body_ = got.value;
-        }
+                bodies[i] = got.value;
+        });
         Expected!(string, string)[] results;
         foreach (i; 0 .. keys.length)
             results ~= failures[i].length ? err!string(failures[i]) : ok(bodies[i]);
@@ -354,12 +349,11 @@ RunExpected!void runGcR2Command(int keepCommits, int graceDays, bool dryRun)
     foreach (batch; [p.deleteNarinfos, p.deleteNars, p.deleteRoots])
     {
         auto messages = new string[batch.length];
-        foreach (i, ref message; pool.parallel(messages, 1))
-        {
+        fanOut(batch.length, (size_t i) {
             auto res = deleteObject(bucket.value, batch[i]);
             if (res.hasError)
-                message = res.error;
-        }
+                messages[i] = res.error;
+        });
         foreach (msg; messages)
             if (msg.length)
             {
@@ -391,4 +385,29 @@ RunExpected!void runWritePinCosts(string path, string historyRemote)
     write(path, json.value ~ "\n");
     info(i"wrote $(path)");
     return ranOk();
+}
+
+/// Runs `work(0 .. n)` on up to sixteen threads, each request blocking on
+/// its own (ci task-DAG M11: blocking HTTP, until a native client).
+private void fanOut(size_t n, scope void delegate(size_t) work)
+{
+    import core.atomic : atomicOp;
+    import core.thread : Thread;
+
+    shared size_t next;
+    void drain()
+    {
+        for (;;)
+        {
+            const i = atomicOp!"+="(next, 1) - 1;
+            if (i >= n)
+                return;
+            work(i);
+        }
+    }
+    Thread[] threads;
+    foreach (_; 0 .. n < 16 ? n : 16)
+        threads ~= new Thread(&drain).start();
+    foreach (t; threads)
+        t.join();
 }
