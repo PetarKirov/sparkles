@@ -17,8 +17,8 @@
    State             | | A widget names a semantic slot,                                     | |
    Split             | | never a concrete colour, and the                                    | |
    Dock              | | palette resolves it while the                                       | |
-   Terminal          | | display list is built.                                              | |
-                     | +---------------------------------------------------------------------+ |
+   Overlays          | | display list is built.                                              | |
+   Terminal          | +---------------------------------------------------------------------+ |
                      |                                                                         |
                      | +---------------------------------------------------------------------+ |
                      | | balanced - minimum squared slack over all but the last line         | |

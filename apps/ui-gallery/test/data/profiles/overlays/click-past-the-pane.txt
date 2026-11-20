@@ -1,0 +1,34 @@
+ sparkles:ui anchored, out of flow, on top                                              tokyo-night
+   Welcome           ▕ Overlays · anchored, out of flow, on top                                    █
+   Primitives        ▕                                                                             █
+   Layout            ▕                                                                             █
+   Tracks            ▕ A popup is written as a child of what it hangs off. Layout takes it out of  █
+   Text              ▕ its parent's flow and places it against the parent; the display list paints █
+   Themes            ▕ it after everything else, outside every clip it was written inside; and the █
+   Slots             ▕ hit list puts it last, so it wins the cells it covers.                      █
+   Decoration        ▕                                                                             █
+   Effects           ▕ ┌─────────────────────────────────────────────────────────────────────────┐ █
+   Grid              ▕ │ a menu wider than its pane                                              │ █
+   Components        ▕ │ files         │preview                                                  │ █
+   Tree              ▕ │ ▾ actions     │the neighbouring pane                                    │ █
+   Property tree     ▕ │ ╭───┴────────────────╮                                                  │ █
+   Table             ▕ │ │rename              │                                                  │ █
+   Scrolling         ▕ │ │duplicate           │                                                  │ █
+   State             ▕ │ │move to trash       │                                                  │ █
+   Split             ▕ │ ╰────────────────────╯                                                  │ █
+   Dock              ▕ │               │                                                         │ █
+ ▸ Overlays          ▕ └─────────────────────────────────────────────────────────────────────────┘ █
+   Terminal          ▕                                                                             █
+                     ▕ ┌─────────────────────────────────────────────────────────────────────────┐ █
+                     ▕ │ the last click                                                          │ █
+                     ▕ │ went to          the files pane                                         │ █
+                     ▕ │ item             duplicate                                              │ █
+                     ▕ └─────────────────────────────────────────────────────────────────────────┘ █
+                     ▕                                                                             ░
+                     ▕ ┌─────────────────────────────────────────────────────────────────────────┐ ░
+                     ▕ │ the bands, bottom to top                                                │ ░
+                     ▕ │ adorn            decoration over content: the dock's drop hint          │ ░
+                     ▕ │ popup            menus, dropdowns, dialogs; the dismissal stack         │ ░
+                     ▕ │ hint             tooltips and hover cards                               │ ░
+                     ▕
+ pages                                                                              ? keys   q quit

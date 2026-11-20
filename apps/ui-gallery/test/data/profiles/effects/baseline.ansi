@@ -17,8 +17,8 @@
 [0m [0m  State[0m             [0m|[0m [0m|[0m                                                                     [0m|[0m [0m|[0m
 [0m [0m  Split[0m             [0m|[0m [0m|[0m [0m [0mscanlines[0m                        [0m                                  [0m|[0m [0m|[0m
 [0m [0m  Dock[0m              [0m|[0m [0m|[0m [0m The quick brown fox              [0m                                  [0m|[0m [0m|[0m
-[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0m [0mjumps over the lazy dog[0m          [0m                                  [0m|[0m [0m|[0m
-[0m                     [0m|[0m [0m|[0m [0m [0m                        [0m         [0m                                  [0m|[0m [0m|[0m
+[0m [0m  Overlays[0m          [0m|[0m [0m|[0m [0m [0mjumps over the lazy dog[0m          [0m                                  [0m|[0m [0m|[0m
+[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0m [0m                        [0m         [0m                                  [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m                                                                     [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m [0m [0mphosphor[0m                         [0m                                  [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m [0m The quick brown fox              [0m                                  [0m|[0m [0m|[0m

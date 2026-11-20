@@ -17,8 +17,8 @@
 [0m [0m  State[0m             [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
 [0m [0m  Split[0m             [0m|[0m [0m|[0m [0;1mthe same data, everything open[0m                                      [0m|[0m [0m|[0m
 [0m [0m  Dock[0m              [0m|[0m [0m|[0m [0m+- v [0msrc/[0m                                                           [0m|[0m [0m|[0m
-[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0m|  +- v [0msparkles/[0m                                                   [0m|[0m [0m|[0m
-[0m                     [0m|[0m [0m|[0m [0m|  |  +- [0m* [0mwidget.d                                                 [0m|[0m [0m|[0m
+[0m [0m  Overlays[0m          [0m|[0m [0m|[0m [0m|  +- v [0msparkles/[0m                                                   [0m|[0m [0m|[0m
+[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0m|  |  +- [0m* [0mwidget.d                                                 [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m [0m|  |  +- [0m* [0mlayout.d                                                 [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m [0m|  |  +- [0m* [0mtheme.d                                                  [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m [0m|  +- [0m. [0mdub.sdl[0m                                                     [0m|[0m [0m|[0m

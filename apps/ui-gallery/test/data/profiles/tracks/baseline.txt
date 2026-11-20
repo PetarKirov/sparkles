@@ -17,8 +17,8 @@
    State             | +---------------------------------------------------------------------+
    Split             |
    Dock              | +---------------------------------------------------------------------+
-   Terminal          | | the tracks                                                          |
-                     | | auto 8   auto 14        auto 6                                      |
+   Overlays          | | the tracks                                                          |
+   Terminal          | | auto 8   auto 14        auto 6                                      |
                      | +---------------------------------------------------------------------+
                      |
                      | Press + and - to change the available width. Watch fixed stay put, fr

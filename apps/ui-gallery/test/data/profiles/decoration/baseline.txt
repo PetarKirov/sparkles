@@ -17,8 +17,8 @@
    State             | |                +-----------+                                        | |
    Split             | |                                                                     | |
    Dock              | | heavy (2px)    +-----------+                                        | |
-   Terminal          | |                | content   |                                        | |
-                     | |                +-----------+                                        | |
+   Overlays          | |                | content   |                                        | |
+   Terminal          | |                +-----------+                                        | |
                      | |                                                                     | |
                      | | dotted         +...........+                                        | |
                      | |                : content   :                                        | |

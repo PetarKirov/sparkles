@@ -46,6 +46,8 @@ import pages.tree_page : treeClaimHits = claimHits,
     treeOnCommand = handleCommand, treeView_ = view;
 import pages.layout_page : layoutOnCommand = handleCommand,
     layoutView = view;
+import pages.overlays_page : overlaysClaimHits = claimHits,
+    overlaysOnPointer = handlePointer, overlaysView = view;
 import pages.primitives : primitivesView = view;
 import pages.property_page : propertyClaimHits = claimHits,
     propertyOnActivate = handleActivate,
@@ -181,6 +183,8 @@ static immutable Page[] pages = [
     Page("Dock", "panes as a value", &dockView,
         GalleryScope.pageDock, &dockOnCommand, null, &dockOnPointer, 'f',
         &dockClaimHits),
+    Page("Overlays", "anchored, out of flow, on top", &overlaysView,
+        onPointer: &overlaysOnPointer, claimHits: &overlaysClaimHits),
     Page("Terminal", "a shell as a widget", &terminalView,
         GalleryScope.pageTerminal, &terminalOnCommand, &terminalOnActivate,
         &terminalOnPointer, claimHits: &terminalClaimHits),

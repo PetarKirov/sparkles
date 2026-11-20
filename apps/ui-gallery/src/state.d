@@ -24,7 +24,7 @@ import sparkles.ui.geometry : Size;
 import sparkles.ui.hit_ids : HitKey, HitRegistry;
 import sparkles.ui.lantern : LanternState;
 import sparkles.ui.components.scroll_view : ScrollbarAnim, ScrollView;
-import sparkles.ui.components.dock : DockContainer;
+import sparkles.ui.components.dock : DockContainer, PaneId;
 import sparkles.ui.components.tree_view : TreeViewState;
 import sparkles.ui.state : CaptureState, DisclosureState, FocusState,
     HoverState, PressState, ScrollAxis, ScrollbarState, Selection, SplitState,
@@ -427,6 +427,14 @@ struct GalleryState
     /// two documents. Its own, so dragging a tab here cannot disturb the
     /// shell's own panes.
     DockContainer dock;
+    /// The Overlays page's container: a narrow files pane beside a preview,
+    /// its own for the same reason (`POP8`).
+    DockContainer overlayDock;
+    /// ditto — the pane the container routed the last completed click to,
+    /// `0` for none, and the menu item that click landed on, if any.
+    PaneId overlayClickPane;
+    /// ditto — an index into the page's items, `size_t.max` for none
+    size_t overlayClickItem = size_t.max;
     size_t themeListTop;     /// first visible row of the theme browser
     size_t componentsTab;    /// the Components page's active tab
     size_t componentsAction = size_t.max; /// …and its last activated segment

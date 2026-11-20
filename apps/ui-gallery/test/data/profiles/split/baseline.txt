@@ -17,8 +17,8 @@
    State             |                                                                         #
  > Split             | +---------------------------------------------------------------------+ #
    Dock              | | the machine                                                         | #
-   Terminal          | | size             24                                                 | #
-                     | | dragging         no                                                 | #
+   Overlays          | | size             24                                                 | #
+   Terminal          | | dragging         no                                                 | #
                      | | bounds           10 ~ 60                                            | #
                      | | pointer shape    default_                                           | #
                      | +---------------------------------------------------------------------+ #

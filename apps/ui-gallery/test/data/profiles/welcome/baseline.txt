@@ -17,8 +17,8 @@
    State             | +---------------------------------------------------------------------+ #
    Split             | | input capabilities                                                  | #
    Dock              | | hover               yes                                             | #
-   Terminal          | | sub-cell pointer    no                                              | #
-                     | | key release         no                                              | #
+   Overlays          | | sub-cell pointer    no                                              | #
+   Terminal          | | key release         no                                              | #
                      | | multi-pointer       no                                              | #
                      | +---------------------------------------------------------------------+ #
                      |                                                                         #
