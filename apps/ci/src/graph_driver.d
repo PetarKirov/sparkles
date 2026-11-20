@@ -118,6 +118,9 @@ struct Planned
     string[][string] testTools;
     /// Each planned single-file package's link task, by its file (CIC8).
     string[string] singleFileLinks;
+    /// Why each single-file package that could not be resolved was left out:
+    /// its own failure, not the run's (§5.5).
+    string[string] singleFileErrors;
 }
 
 LayoutCheck layoutLint() @safe
@@ -260,7 +263,10 @@ Planned planRepository(string root, bool markers = false, string only = null, To
             request.registry[n] = s;
         auto r = resolve(request, tree);
         if (r.hasError)
-            return Planned(fault() ? fault() : text(file, ": ", r.error.message));
+        {
+            p.singleFileErrors[file] = fault() ? fault() : r.error.message;
+            continue;
+        }
         rs ~= r.value;
     }
     // D61: the programs each test runs, declared beside its package's recipe,
@@ -787,7 +793,9 @@ GraphRun runGraph(string root, string only, RunOptions o)
         o.coverage, o.singleFiles, o.applications);
     if (g.plan.error.length)
         return GraphRun(g.plan.error);
-    if (g.plan.requests == 0)
+    // Single files that all failed to plan leave nothing to run but are no
+    // error of the run's: each is its own (§5.5).
+    if (g.plan.requests == 0 && !o.singleFiles.length)
         return GraphRun("no package " ~ only);
     // A dry run writes nothing (CIC1): no run directory, no dub trap.
     const dry = o.reporting.dryRun || o.explain;
@@ -1551,6 +1559,14 @@ string pathTools(out Tools tools, out Toolchain toolchain)
     tools.config = toolchain.config;
     if (testTimeout != Duration.max)
         tools.testLimit = testTimeout;
+    // The library directories a C driver finds through `$LIBRARY_PATH`, and
+    // the `-L` ones Nix's compiler wrapper adds from `$NIX_LDFLAGS`.
+    foreach (dir; environment.get("LIBRARY_PATH", "").split(":"))
+        if (dir.length && !tools.libraryPath.canFind(dir))
+            tools.libraryPath ~= dir;
+    foreach (flag; environment.get("NIX_LDFLAGS", "").split(" "))
+        if (flag.startsWith("-L") && flag.length > 2 && !tools.libraryPath.canFind(flag[2 .. $]))
+            tools.libraryPath ~= flag[2 .. $];
     if (toolchain.root.length)
         tools.prefixMaps = [toolchain.root ~ "=/ldc"];
     return null;
