@@ -56,48 +56,59 @@ string extractedExamplePath(string root, string name, string code) @safe
 }
 
 /**
-Builds and runs `jobs` on the build graph beneath the store at `cache`,
-`jobs` weighted units at once (CIC1), each run limited to `timeout`;
-the outcomes in `jobs`' order. `error` is why the graph could not run.
+Examples as part of a build graph run: the single files to plan, the run
+actions to add once they are planned, and the handler that runs them. A
+client puts `files` in `RunOptions.singleFiles`, calls `contribute` from its
+`adjustPlan`, registers `handler` as `example:run`, and reads `outcomes`
+from the finished run.
 */
-ExampleOutcome[] runExamplesOnGraph(string root, string cache, const ExampleJob[] jobs, uint capacity,
-    Duration timeout, bool failFast, out string error)
+final class ExamplePlan
 {
-    import graph_driver : GraphRun, Planned, runGraph, RunOptions;
-    import sparkles.build_graph.actions : Action, ActionKind;
-    import sparkles.build_primitives.task.action : InProcessAction, ProcessAction, SandboxPolicy, TaskAction;
+    import graph_driver : GraphRun, Planned;
+    import sparkles.build_primitives.task.action : InProcessAction;
     import sparkles.build_primitives.task.executor : TaskContext;
-    import sparkles.build_primitives.task.model : EdgeCondition, EdgeReason, TaskEdge, TaskId, TaskOutcome, taskId;
+    import sparkles.build_primitives.task.model : TaskOutcome;
     import sparkles.event_horizon.sched : Sched;
-    import std.algorithm.iteration : uniq;
-    import std.algorithm.sorting : sort;
-    import std.array : array;
-    import std.datetime.systime : Clock;
-    import std.process : thisProcessID;
 
-    auto outcomes = new ExampleOutcome[jobs.length];
-    string[] files;
-    foreach (ref j; jobs)
-        if (!j.file.endsWith(".mjs"))
-            files ~= j.file;
-    files = files.sort.uniq.array;
+    const(ExampleJob)[] jobs; ///
+    Duration timeout;         ///
+    private string[] runTask;
+    private string[string] linkOf;
+    private string[size_t] outputOf; // by job, written by the run handler
 
-    // Each run's task, by job.
-    string[] runTask = new string[jobs.length];
-    string[string] linkOf;
-    string[size_t] outputOf; // by job, written by the run handler
-    TaskOutcome delegate(ref TaskContext!Sched, const ref InProcessAction) handler =
-        (ref TaskContext!Sched ctx, const ref InProcessAction a) => runExample(ctx, a, timeout, outputOf);
+    ///
+    this(const ExampleJob[] jobs, Duration timeout)
+    {
+        this.jobs = jobs;
+        this.timeout = timeout;
+        runTask = new string[jobs.length];
+    }
 
-    RunOptions o;
-    o.into = buildPath(cache, "runs", text("ci-examples-", Clock.currTime.toUnixTime, "-", thisProcessID));
-    o.cache = cache;
-    o.singleFiles = files;
-    o.failFast = failFast;
-    o.jobs = capacity;
-    o.echo = false;
-    o.handlers["example:run"] = handler;
-    o.adjustPlan = (ref Planned p) {
+    /// The single-file packages to plan, each once.
+    string[] files() const
+    {
+        import std.algorithm.iteration : uniq;
+        import std.algorithm.sorting : sort;
+        import std.array : array;
+
+        string[] result;
+        foreach (ref j; jobs)
+            if (!j.file.endsWith(".mjs"))
+                result ~= j.file;
+        return result.sort.uniq.array;
+    }
+
+    /// The handler `example:run` names.
+    TaskOutcome delegate(ref TaskContext!Sched, const ref InProcessAction) handler()
+        => (ref TaskContext!Sched ctx, const ref InProcessAction a) => runExample(ctx, a, timeout, outputOf);
+
+    /// Adds each example's run, after its link, to the planned graph.
+    void contribute(ref Planned p)
+    {
+        import sparkles.build_graph.actions : Action, ActionKind;
+        import sparkles.build_primitives.task.action : TaskAction;
+        import sparkles.build_primitives.task.model : EdgeCondition, EdgeReason, TaskEdge, taskId;
+
         foreach (i, ref j; jobs)
         {
             const id = taskId("example", text(i), j.file.baseName).value;
@@ -130,42 +141,71 @@ ExampleOutcome[] runExamplesOnGraph(string root, string cache, const ExampleJob[
                 EdgeReason.packageDependency);
             runTask[i] = id.text;
         }
-    };
+    }
 
+    /// What became of each example in run `g`, in `jobs`' order.
+    ExampleOutcome[] outcomes(ref const GraphRun g)
+    {
+        auto result = new ExampleOutcome[jobs.length];
+        foreach (i, ref j; jobs)
+        {
+            if (runTask[i].length && i in outputOf)
+            {
+                result[i] = ExampleOutcome(g.stats.succeeded.get(runTask[i], false), outputOf[i]);
+                continue;
+            }
+            // Not run: its build failed (or, build-only, it built). The
+            // build's diagnostics are the lines its own actions wrote.
+            const link = linkOf.get(j.file, null);
+            // Executed or reused, the reporter says it succeeded.
+            const built = link.length && g.log.lineSplitter.canFind(link ~ ": succeeded");
+            string diagnostics;
+            if (link.length)
+            {
+                size_t variant = size_t.max;
+                foreach (ref a; g.plan.graph.actions)
+                    if (a.id.text == link)
+                        variant = a.variant;
+                foreach (line; g.log.lineSplitter)
+                    foreach (ref a; g.plan.graph.actions)
+                        if (a.variant == variant && line.startsWith("[" ~ a.id.text ~ " "))
+                            diagnostics ~= line[line.indexOf("] ") + 2 .. $] ~ "\n";
+            }
+            result[i] = ExampleOutcome(j.buildOnly && built, diagnostics.length ? diagnostics
+                : link.length ? "" : "the example could not be planned");
+        }
+        return result;
+    }
+}
+
+/**
+Builds and runs `jobs` on the build graph beneath the store at `cache`,
+`capacity` weighted units at once (CIC1), each run limited to `timeout`;
+the outcomes in `jobs`' order. `error` is why the graph could not run.
+*/
+ExampleOutcome[] runExamplesOnGraph(string root, string cache, const ExampleJob[] jobs, uint capacity,
+    Duration timeout, bool failFast, out string error)
+{
+    import graph_driver : Planned, runGraph, RunOptions;
+    import std.datetime.systime : Clock;
+    import std.process : thisProcessID;
+
+    auto plan = new ExamplePlan(jobs, timeout);
+    RunOptions o;
+    o.into = buildPath(cache, "runs", text("ci-examples-", Clock.currTime.toUnixTime, "-", thisProcessID));
+    o.cache = cache;
+    o.singleFiles = plan.files;
+    o.failFast = failFast;
+    o.jobs = capacity;
+    o.handlers["example:run"] = plan.handler;
+    o.adjustPlan = (ref Planned p) { plan.contribute(p); };
     auto g = runGraph(root, null, o);
     if (g.error.length)
     {
         error = g.error;
-        return outcomes;
+        return new ExampleOutcome[jobs.length];
     }
-    foreach (i, ref j; jobs)
-    {
-        if (runTask[i].length && i in outputOf)
-        {
-            outcomes[i] = ExampleOutcome(g.stats.succeeded.get(runTask[i], false), outputOf[i]);
-            continue;
-        }
-        // Not run: its build failed (or, build-only, it built). The build's
-        // diagnostics are the lines its own actions wrote.
-        const link = linkOf.get(j.file, null);
-        // Executed or reused, the reporter says it succeeded.
-        const built = link.length && g.log.lineSplitter.canFind(link ~ ": succeeded");
-        string diagnostics;
-        if (link.length)
-        {
-            size_t variant = size_t.max;
-            foreach (ref a; g.plan.graph.actions)
-                if (a.id.text == link)
-                    variant = a.variant;
-            foreach (line; g.log.lineSplitter)
-                foreach (ref a; g.plan.graph.actions)
-                    if (a.variant == variant && line.startsWith("[" ~ a.id.text ~ " "))
-                        diagnostics ~= line[line.indexOf("] ") + 2 .. $] ~ "\n";
-        }
-        outcomes[i] = ExampleOutcome(j.buildOnly && built, diagnostics.length ? diagnostics
-            : link.length ? "" : "the example could not be planned");
-    }
-    return outcomes;
+    return plan.outcomes(g);
 }
 
 import std.array : split;
