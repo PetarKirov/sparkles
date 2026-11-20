@@ -674,6 +674,13 @@ GraphRun runGraph(string root, string only, RunOptions o)
                 "--write=" ~ buildPath(o.into, "dub-trap")];
             if (a.kind == ActionKind.test)
                 prefix ~= "--write=" ~ environment.get("TMPDIR", "/tmp");
+            // D39: a test that declares dub (D62) runs it, and dub writes
+            // beneath its home: a package's generated files and its cache.
+            if (a.kind == ActionKind.test)
+                foreach (pkg, granted; g.plan.testTools)
+                    if (granted.canFind("dub") && a.id.text.startsWith("test:sparkles." ~ pkg ~ ":"))
+                        prefix ~= "--write=" ~ environment.get("DUB_HOME",
+                            buildPath(environment.get("HOME", "/"), ".dub"));
             prefix ~= "--";
             a.action.match!(
                 (ref ProcessAction pa) { pa.argv = prefix ~ pa.argv; },
