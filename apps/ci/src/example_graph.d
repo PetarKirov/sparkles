@@ -171,7 +171,9 @@ final class ExamplePlan
                         if (a.variant == variant && line.startsWith("[" ~ a.id.text ~ " "))
                             diagnostics ~= line[line.indexOf("] ") + 2 .. $] ~ "\n";
             }
+            const refused = g.plan.singleFileErrors.get(j.file, null);
             result[i] = ExampleOutcome(j.buildOnly && built, diagnostics.length ? diagnostics
+                : refused.length ? "the example could not be planned: " ~ refused
                 : link.length ? "" : "the example could not be planned");
         }
         return result;
@@ -205,7 +207,37 @@ ExampleOutcome[] runExamplesOnGraph(string root, string cache, const ExampleJob[
         error = g.error;
         return new ExampleOutcome[jobs.length];
     }
-    return plan.outcomes(g);
+    auto outcomes = plan.outcomes(g);
+    // An example the build graph cannot plan (a dependency outside the locks,
+    // a path dependency a preparation step makes) builds and runs with dub,
+    // and the report says so.
+    foreach (i, ref j; jobs)
+        if (auto why = j.file in g.plan.singleFileErrors)
+        {
+            import sparkles.base.logger : info;
+
+            info(i"$(j.label): with dub, the build graph cannot plan it: $(*why)");
+            outcomes[i] = runWithDub(root, j, timeout);
+        }
+    return outcomes;
+}
+
+/// `dub run --single` (or `build`, for a build-only one) of `j`, with an
+/// empty standard input and `timeout`.
+private ExampleOutcome runWithDub(string root, const ExampleJob j, Duration timeout)
+{
+    import std.process : environment, execute;
+
+    string[] dub = ["dub", j.buildOnly ? "build" : "run", "--quiet", "--temp-build", "--root", root];
+    if (environment.get("SPARKLES_CI_OFFLINE", "") == "1")
+        dub ~= "--skip-registry=all";
+    dub ~= ["--single", j.file];
+    if (!j.buildOnly && j.runArgs.length)
+        dub ~= "--" ~ j.runArgs.dup;
+    const seconds = text(timeout.total!"seconds");
+    // Glue: `timeout` bounds it, and the shell gives it /dev/null as stdin.
+    const ran = execute(["timeout", seconds, "sh", "-c", `exec "$@" </dev/null`, "sh"] ~ dub);
+    return ExampleOutcome(ran.status == 0, ran.output);
 }
 
 import std.array : split;
