@@ -38,22 +38,29 @@ struct ExampleOutcome
 /**
 The content-addressed path an inline example's `code` is extracted to,
 beneath the worktree's `build/md-examples` (BGG4): an unchanged example keeps
-its path, so its compile is reused. `name` keeps the file's module name.
+its path, so its compile is reused. `name` keeps the file's module name. An
+in-tree dependency the example names by `version="*"`, as a reader copies it,
+becomes a path to the worktree, so dub, when an example falls back to it,
+builds against this tree, as the graph does.
 */
-string extractedExamplePath(string root, string name, string code) @safe
+string extractedExamplePath(string root, string name, string code)
 {
     import std.digest.sha : sha256Of, toHexString;
     import std.file : exists, mkdirRecurse, readText, write;
+    import std.array : appender;
 
     import std.ascii : LetterCase;
+    import dub_deps : writeInTreeDeps;
 
     const digest = sha256Of(code).toHexString!(LetterCase.lower)[0 .. 16].idup;
     const dir = buildPath(root, "build", "md-examples", digest);
     const file = buildPath(dir, name ~ ".d");
-    if (!exists(file) || readText(file) != code)
+    auto written = appender!string;
+    writeInTreeDeps(written, code, root, dir);
+    if (!exists(file) || readText(file) != written[])
     {
         mkdirRecurse(dir);
-        write(file, code);
+        write(file, written[]);
     }
     return file;
 }
