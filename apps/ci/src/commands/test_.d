@@ -493,6 +493,28 @@ private void reportCoverage(in string[] subPackages, in CoverageRun cov,
         warning(i"{yellow no coverage} for $(uncovered.length) package(s): $(uncovered.join(", ")) — they do not link under -cov, and were tested without it");
 }
 
+/**
+The runner flags of the extracted modes each of `subPackages` (repository-
+relative directories) uses, by package name, each with `--require-toolchain`:
+`ci pipeline`'s special-mode legs.
+*/
+string[][string] specialModeArguments(string repoRoot, in string[] subPackages)
+{
+    string[][string] flags;
+    foreach (pkg; subPackages)
+    {
+        const modes = extractedModesOf(repoRoot, pkg);
+        string[] mine;
+        if (modes.betterC)
+            mine ~= "--better-c";
+        if (modes.wasm)
+            mine ~= "--wasm";
+        if (mine.length)
+            flags[pkg.baseName] = mine ~ "--require-toolchain";
+    }
+    return flags;
+}
+
 /// Which of the test runner's extracted-test modes a sub-package opts into.
 struct ExtractedModes
 {

@@ -131,6 +131,7 @@ struct Ci
 {
     @(Flatten("Global options")) GlobalOptions global;
 
+    mixin addSubCommand!PipelineCommand;
     mixin addSubCommand!TestCommand;
     mixin addSubCommand!PlacementsCommand;
     mixin addSubCommand!ExamplesCommand;
@@ -145,6 +146,61 @@ struct Ci
     mixin addSubCommand!SlowTestsCommand;
     mixin addSubCommand!GcReportCommand;
     mixin addSubCommand!PerfCommand;
+}
+
+// === ci pipeline ===
+
+@(Command("pipeline",
+    shortDescription: "Every CI job's work, on the build graph's shared store (§1.3)",
+    description: "Runs the tests (the placement's legs and coverage), the extracted modes, the "
+    ~ "repository's checks and commit scopes as one build graph run, then the examples, the "
+    ~ "sanitized and slow tests and the determinism check, and reports each CI job: ran, or skipped "
+    ~ "and why. With --placement, only that placement's mode runs.",
+))
+struct PipelineCommand
+{
+    @(Option(`placement`, description: "Run only this placement of ci/placements.json: its mode, legs and coverage."))
+    string placement;
+
+    @(Option(`shard`, description: "With --placement: which of its shards this run is, as K/N."))
+    string shard;
+
+    @(Option(`history-tip`, description: "With --shard: the refs/perf/data commit to pack from."))
+    string historyTip;
+
+    @(Option(`from`, description: "Only these packages, by name."))
+    string[] from;
+
+    @(Option(`F|fail-fast`, description: "Stop at the first failure."))
+    bool failFast;
+
+    @(Option(`jobs`, description: "The weighted capacity running tasks may claim at once."))
+    string jobs;
+
+    @(Option(`interlaced`, description: "Stream each task's lines as they arrive."))
+    bool interlaced;
+
+    @(Option(`determinism-sample`,
+        description: "How many compiles, and how many other actions, the determinism check re-executes (default 4)."))
+    string determinismSample;
+
+    @(Flatten) HistoryOptions history;
+
+    RunExpected!void run()
+    {
+        import pipeline : PipelineRequest, runPipeline;
+
+        if (shard.length && !placement.length)
+            return failRun("--shard needs --placement", 2);
+        if (jobs.length && !parseCapacity(jobs))
+            return failRun("--jobs takes a positive capacity", 2);
+        if (determinismSample.length && !parseCapacity(determinismSample))
+            return failRun("--determinism-sample takes a positive count", 2);
+        return runPipeline(PipelineRequest(placement: placement, shard: shard, historyTip: historyTip,
+            historyRemote: history.historyRemote, from: from, failFast: failFast,
+            jobs: jobs.length ? parseCapacity(jobs) : 0, interlaced: interlaced,
+            determinismSample: determinismSample.length ? parseCapacity(determinismSample) : 4));
+    }
 }
 
 // === ci test ===
