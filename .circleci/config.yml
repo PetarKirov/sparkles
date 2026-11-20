@@ -355,7 +355,7 @@ jobs:
       - run:
           name: Run tests under ASan
           command: >-
-            ci/run-batch.sh 45m ci test --sanitize address --fail-fast --placement x86_64-linux-sanitize
+            ci/run-batch.sh 45m ci test --sanitize address --fail-fast --interlaced --placement x86_64-linux-sanitize
             --shard "$((CIRCLE_NODE_INDEX + 1))/$CIRCLE_NODE_TOTAL"
           no_output_timeout: 45m
       - save_asan_dub_cache
