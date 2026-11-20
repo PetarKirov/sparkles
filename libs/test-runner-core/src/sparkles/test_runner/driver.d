@@ -352,15 +352,19 @@ ExtractedTest[] extractTests(in Test[] tests)
     return extracted;
 }
 
-/// A fresh scratch directory for the generated program.
-private string makeWorkDir(string flavor)
+/// A fresh scratch directory for the generated program: beneath `own`, the
+/// run's `DriverOptions.probeDir`, when it names one, so clients that run
+/// several modes at once in one process keep them apart; else beneath
+/// `setProbeDir`'s.
+private string makeWorkDir(string flavor, string own = null)
 {
     import std.conv : text;
     import std.file : mkdirRecurse, tempDir;
     import std.path : buildPath;
     import std.process : thisProcessID;
 
-    const dir = probeRoot.length ? buildPath(probeRoot, flavor) : buildPath(tempDir,
+    const root = own.length ? own : probeRoot;
+    const dir = root.length ? buildPath(root, flavor) : buildPath(tempDir,
         text("sparkles-test-runner-", flavor, "-", thisProcessID));
     mkdirRecurse(dir);
     return dir;
@@ -639,7 +643,7 @@ CtfeOutcome runCtfeTests(
             moduleFiles ~= test.location.file;
     }
 
-    const workDir = makeWorkDir("ctfe");
+    const workDir = makeWorkDir("ctfe", options.probeDir);
     const sourceFile = buildPath(workDir, "ctfe_tests.d");
     write(sourceFile, generateCtfeProgram(targets));
 
@@ -712,7 +716,7 @@ DriverOutcome runBetterCTests(Test[] betterCTests, Test[] allTests, in DriverOpt
         return outcome;
     }
 
-    const workDir = makeWorkDir("betterc");
+    const workDir = makeWorkDir("betterc", options.probeDir);
     const sourceFile = buildPath(workDir, "betterc_tests.d");
     const binary = buildPath(workDir, "betterc_tests");
     write(sourceFile, generateBetterCProgram(extractTests(betterCTests)));
@@ -854,7 +858,7 @@ DriverOutcome runWasmTests(Test[] wasmTests, Test[] allTests, in DriverOptions o
         return outcome;
     }
 
-    const workDir = makeWorkDir("wasi");
+    const workDir = makeWorkDir("wasi", options.probeDir);
     // A compiler without the WASI runtime fails this, not the tests.
     const probeSource = buildPath(workDir, "probe.d");
     write(probeSource, "void main() {}\n");
@@ -928,7 +932,7 @@ DriverOutcome runWasmBareTests(Test[] wasmTests, Test[] allTests, in DriverOptio
         return outcome;
     }
 
-    const workDir = makeWorkDir("wasm");
+    const workDir = makeWorkDir("wasm", options.probeDir);
     const sourceFile = buildPath(workDir, "wasm_tests.d");
     const wasmFile = buildPath(workDir, "wasm_tests.wasm");
     const shimFile = buildPath(workDir, "wasm_tests.js");
