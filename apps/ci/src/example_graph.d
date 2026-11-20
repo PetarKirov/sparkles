@@ -23,6 +23,9 @@ struct ExampleJob
     string label;     /// how reports name it
     string[] runArgs; ///
     bool buildOnly;   /// `// ci: build-only`: built, never run
+    /// The build type a dub fallback builds it with: `checked` for a
+    /// Markdown page's imported file, as before the graph.
+    string dubBuildType = "debug";
 }
 
 /// What became of one example.
@@ -223,20 +226,30 @@ ExampleOutcome[] runExamplesOnGraph(string root, string cache, const ExampleJob[
 }
 
 /// `dub run --single` (or `build`, for a build-only one) of `j`, with an
-/// empty standard input and `timeout`.
+/// empty standard input and `timeout`. It builds first: compiler diagnostics
+/// are not the program's output, and a failed build reports them whole; the
+/// run then reuses what it built.
 private ExampleOutcome runWithDub(string root, const ExampleJob j, Duration timeout)
 {
     import std.process : environment, execute;
 
-    string[] dub = ["dub", j.buildOnly ? "build" : "run", "--quiet", "--temp-build", "--root", root];
-    if (environment.get("SPARKLES_CI_OFFLINE", "") == "1")
-        dub ~= "--skip-registry=all";
-    dub ~= ["--single", j.file];
-    if (!j.buildOnly && j.runArgs.length)
-        dub ~= "--" ~ j.runArgs.dup;
+    string[] dub(string verb)
+    {
+        string[] cmd = ["dub", verb, "--quiet", "--temp-build", "--build=" ~ j.dubBuildType, "--root", root];
+        if (environment.get("SPARKLES_CI_OFFLINE", "") == "1")
+            cmd ~= "--skip-registry=all";
+        return cmd ~ ["--single", j.file];
+    }
     const seconds = text(timeout.total!"seconds");
-    // Glue: `timeout` bounds it, and the shell gives it /dev/null as stdin.
-    const ran = execute(["timeout", seconds, "sh", "-c", `exec "$@" </dev/null`, "sh"] ~ dub);
+    // Glue: `timeout` bounds each step, and the shell gives it /dev/null as stdin.
+    auto bounded(string[] cmd) => execute(["timeout", seconds, "sh", "-c", `exec "$@" </dev/null`, "sh"] ~ cmd);
+    const built = bounded(dub("build"));
+    if (built.status != 0 || j.buildOnly)
+        return ExampleOutcome(built.status == 0, built.output);
+    auto run = dub("run");
+    if (j.runArgs.length)
+        run ~= "--" ~ j.runArgs.dup;
+    const ran = bounded(run);
     return ExampleOutcome(ran.status == 0, ran.output);
 }
 

@@ -311,7 +311,8 @@ private ExecutionResult[] executeExamplesOnGraph(Example[] examples, string repo
     ExampleJob[] jobs;
     foreach (ref e; examples)
         jobs ~= ExampleJob(e.sourcePath.length ? absolutePath(e.sourcePath)
-            : extractedExamplePath(repoRoot, e.name, e.code), e.name);
+            : extractedExamplePath(repoRoot, e.name, e.code), e.name,
+            dubBuildType: e.sourcePath.length ? "checked" : "debug");
     string why;
     // Weighted units (CIC1): a compile claims two.
     const outcomes = runExamplesOnGraph(repoRoot, graphStore(), jobs, 2 * exampleJobCount(), exampleTimeout(),
