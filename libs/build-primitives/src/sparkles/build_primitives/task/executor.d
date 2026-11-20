@@ -205,7 +205,16 @@ struct TaskExecutor(X, C, D, S)
                 resolve();
                 admit((TaskIndex t) { spawnTask(sc, t); });
                 if (running == 0)
-                    break;
+                {
+                    // Under cancellation `admit` cancels the ready tasks it
+                    // turns away, after `resolve` passed their dependents:
+                    // decide those before the run ends. Another pass cancels
+                    // nothing more; it can only start cleanup.
+                    resolve();
+                    admit((TaskIndex t) { spawnTask(sc, t); });
+                    if (running == 0)
+                        break;
+                }
                 // One completion parks; the rest of this turn's are drained
                 // without parking, so simultaneous failures are compared.
                 auto first = completions.take(*exec);
@@ -863,6 +872,21 @@ unittest
     assert(patient.outcomeOf(g, "e") == "succeeded");
     assert(patient.outcomeOf(g, "b") == "blocked");
     assert(countOf!((CancellationRequested _) => true)(patient.events) == 0);
+}
+
+@("build_primitives.task.executor.failFast.readyButUnadmittedDecidesItsDependents")
+@system
+unittest
+{
+    // Capacity 1: `a` runs, `l` is ready and waits for room. `a` fails, the
+    // run cancels `l` unadmitted with nothing left running, and `t`, which
+    // waits on `l`, is decided too, not left undecided.
+    const g = graphOf([tnode("a"), tnode("l"), tnode("t")], [tedge("l", "t")]);
+    auto run = runFake(g, ["a": Script(5.msecs, TaskOutcome(Failed(FailureReason.exitStatus, 2))),
+        "l": Script(5.msecs), "t": Script(5.msecs)], ExecutorOptions(capacity: 1, failFast: true));
+    assert(run.result.exitCode == 1);
+    assert(run.outcomeOf(g, "l") == "cancelled");
+    assert(run.outcomeOf(g, "t") == "cancelled");
 }
 
 @("build_primitives.task.executor.failFast.provisionalFailureFallsBackWithoutCancelling")
