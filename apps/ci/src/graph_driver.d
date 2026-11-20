@@ -26,7 +26,7 @@ import std.stdio : stderr, writeln;
 import std.sumtype : match;
 import std.typecons : Nullable;
 
-import sparkles.build_graph.actions : ActionGraph, ActionKind, CoverageAttempt, TestProgram, Tools,
+import sparkles.build_graph.actions : ActionGraph, ActionKind, CoverageAttempt, TestLeg, TestProgram, Tools,
     planActions, taskNodes;
 import sparkles.build_graph.execute : RunStats;
 import sparkles.build_graph.variants : LayoutCheck, PlanError, PlanOptions, Role, ToolchainIdentity,
@@ -114,8 +114,11 @@ void marker(string name) @trusted
 }
 
 Planned planRepository(string root, bool markers = false, string only = null, Tools tools = Tools.init,
-    string toolchain = "dev-shell", bool lint = true)
+    string toolchain = "dev-shell", bool lint = true, const string[] packages = null, bool coverage = false)
 {
+    // The packages planned: `only`, else `packages`, else every one.
+    bool chosen(string name) => only.length ? name == only : !packages.length || packages.canFind(name);
+
     const d = driverEnvironment();
     if (d.sources is null)
         return Planned("SPARKLES_DUB_SOURCES is not set; run in the dev shell");
@@ -149,18 +152,29 @@ Planned planRepository(string root, bool markers = false, string only = null, To
         return Planned(text(graph.error));
 
     Resolution[] rs;
+    size_t[][] testRequests; // per chosen package, its test requests' indices
+    CoverageAttempt[] attempts;
     foreach (ref pkg; graph.value.packages)
     {
-        if (only.length && pkg.shortName != only)
+        if (!chosen(pkg.shortName))
             continue;
-        auto request = ResolveRequest(directory: root, subPackage: pkg.shortName, buildType: "unittest",
-            platform: platform, testRoot: true);
-        foreach (n, s; registry.value)
-            request.registry[n] = s;
-        auto r = resolve(request, tree);
-        if (r.hasError)
-            return Planned(fault() ? fault() : text(pkg.shortName, ": ", r.error.message));
-        rs ~= r.value;
+        // CIC7: with coverage, a `-cov` test whose plain one is its fallback.
+        size_t[] mine;
+        foreach (buildType; coverage ? ["unittest-cov", "unittest"] : ["unittest"])
+        {
+            auto request = ResolveRequest(directory: root, subPackage: pkg.shortName, buildType: buildType,
+                platform: platform, testRoot: true);
+            foreach (n, s; registry.value)
+                request.registry[n] = s;
+            auto r = resolve(request, tree);
+            if (r.hasError)
+                return Planned(fault() ? fault() : text(pkg.shortName, ": ", r.error.message));
+            mine ~= rs.length;
+            rs ~= r.value;
+        }
+        if (coverage)
+            attempts ~= CoverageAttempt(mine[0], mine[1]);
+        testRequests ~= mine;
     }
     // D61: the programs each test runs, declared beside its package's recipe,
     // planned as requests of their own whose tests do not run.
@@ -171,7 +185,7 @@ Planned planRepository(string root, bool markers = false, string only = null, To
 
         string[] testDirectories, testPackages;
         foreach (ref pkg; graph.value.packages)
-            if (!only.length || pkg.shortName == only)
+            if (chosen(pkg.shortName))
             {
                 testDirectories ~= pkg.path.length ? root ~ "/" ~ pkg.path : root;
                 testPackages ~= pkg.shortName;
@@ -210,7 +224,8 @@ Planned planRepository(string root, bool markers = false, string only = null, To
                     if (r.hasError)
                         return Planned(fault() ? fault() : text(file, ": ", r.error.message));
                     rs ~= r.value;
-                    programs ~= TestProgram(test: ti, program: rs.length - 1, variable: entry["variable"].str);
+                    foreach (test; testRequests[ti])
+                        programs ~= TestProgram(test: test, program: rs.length - 1, variable: entry["variable"].str);
                 }
             }
             catch (JSONException e)
@@ -261,7 +276,7 @@ Planned planRepository(string root, bool markers = false, string only = null, To
             if (!p.packageDirectories.canFind(t.directory))
                 p.packageDirectories ~= t.directory;
 
-    auto g = planActions(p.plan, rs, root, tools, null, programs);
+    auto g = planActions(p.plan, rs, root, tools, attempts, programs);
     if (g.hasError)
         return Planned(text(g.error));
     p.graph = g.value;
@@ -592,6 +607,17 @@ struct RunOptions
     /// Tests run through the runner core, as `test:leg` actions (CIC11),
     /// instead of as their binaries' own processes.
     bool runnerCore;
+    /// The packages whose test roots to plan, with `only` null; empty plans
+    /// every one.
+    string[] packages;
+    /// The legs each test binary runs in (CIC11, CIC14); empty keeps the
+    /// graph's default.
+    TestLeg[] legs;
+    /// CIC7: each test a `-cov` attempt, its plain test the fallback.
+    bool coverage;
+    /// `ci test --build-only`: the test binaries and what they link, and no
+    /// test.
+    bool buildOnly;
     /// Changes the tools found on `PATH` before the toolchain is identified
     /// (oracle 9's substitutions).
     void delegate(ref Tools) adjustTools;
@@ -640,7 +666,10 @@ GraphRun runGraph(string root, string only, RunOptions o)
         tools.config = g.toolchain.config;
         tools.prefixMaps = g.toolchain.root.length ? [g.toolchain.root ~ "=/ldc"] : null;
     }
-    g.plan = planRepository(root, false, only, tools, g.toolchain.identity, !o.noLayoutLint);
+    if (o.legs.length)
+        tools.testLegs = o.legs;
+    g.plan = planRepository(root, false, only, tools, g.toolchain.identity, !o.noLayoutLint, o.packages,
+        o.coverage);
     if (g.plan.error.length)
         return GraphRun(g.plan.error);
     if (g.plan.requests == 0)
@@ -697,6 +726,15 @@ GraphRun runGraph(string root, string only, RunOptions o)
     }
     if (o.adjustPlan !is null)
         o.adjustPlan(g.plan);
+    // `--build-only`: every test binary's link, with what it needs.
+    if (o.buildOnly)
+    {
+        string[] links;
+        foreach (ref a; g.plan.graph.actions)
+            if (a.kind == ActionKind.link && a.id.text.canFind(":test-root:"))
+                links ~= a.id.text;
+        g.plan.graph = needing(g.plan.graph, links);
+    }
     if (o.tasks.length)
     {
         string[] targets;
