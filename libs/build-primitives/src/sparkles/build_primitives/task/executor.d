@@ -233,7 +233,20 @@ struct TaskExecutor(X, C, D, S)
         result.outcomes = new TaskOutcome[outcomes.length];
         foreach (i, slot; outcomes)
         {
-            assert(!slot.isNull, "the run ended with an undecided task");
+            if (slot.isNull)
+            {
+                // Name what stalled, and why it could not start.
+                import std.conv : text;
+
+                const t = TaskIndex(cast(uint) i);
+                string waiting;
+                foreach (edge; graph.incoming(t))
+                    waiting ~= text(" ", (*graph)[edge.prerequisite].id.text, "=",
+                        outcomes[edge.prerequisite.value].isNull ? text(state[edge.prerequisite.value]) : "decided");
+                assert(false, text("the run ended with an undecided task: ", (*graph)[t].id.text, " (", state[i],
+                    ", weight ", (*graph)[t].resources.jobsWeight, " of capacity ", options.capacity, ", free ", free,
+                    "), its prerequisites:", waiting));
+            }
             result.outcomes[i] = slot.get;
         }
         result.cancelled = cancelling;
