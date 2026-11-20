@@ -45,7 +45,27 @@ import sparkles.build_primitives.workspace.discovery : ReadKind, ReadSet, readWo
 import sparkles.build_primitives.workspace.package_graph : RecipeRole, buildPackageGraph;
 import sparkles.unittest_layout.lint : checkLayout;
 
-enum host = ["linux", "posix"];
+/// The dub platform tokens of the host this driver runs on: a recipe's
+/// `platform="linux-ldc"` settings must not reach a macOS build.
+string[] host() @safe pure nothrow
+{
+    import sparkles.build_primitives.dub_manifest : hostPlatformTokens;
+
+    return hostPlatformTokens();
+}
+
+/// The host's architecture, as dub names it.
+string[] hostArchitecture() @safe pure nothrow
+{
+    version (X86_64)
+        return ["x86_64"];
+    else version (AArch64)
+        return ["aarch64"];
+    else version (X86)
+        return ["x86"];
+    else
+        return null;
+}
 
 /**
 The platform `compiler` builds for: LDC's or DMD's (build-graph D19), with
@@ -66,7 +86,7 @@ BuildPlatform platformOf(string compiler) @safe
     // `DMD64 D Compiler v2.112.1`; LDC: `(1.43.0)` and `based on DMD v2.113.0`.
     const frontend = output.matchFirst(regex(`v2\.(\d+)`));
     const own = dmd ? output.matchFirst(regex(`v(\d+\.\d+\.\d+)`)) : output.matchFirst(regex(`\((\d+\.\d+\.\d+)`));
-    auto p = BuildPlatform(host.dup, ["x86_64"], dmd ? "dmd" : "ldc", dmd ? "dmd" : "ldc2",
+    auto p = BuildPlatform(host(), hostArchitecture(), dmd ? "dmd" : "ldc", dmd ? "dmd" : "ldc2",
         frontend ? 2000 + frontend[1].to!int : 2113, own ? own[1].idup : (dmd ? "2.112.1" : "1.43.0"));
     memo[compiler] = p;
     return p;
