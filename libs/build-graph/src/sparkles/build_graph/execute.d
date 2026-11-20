@@ -1989,8 +1989,30 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
     publishOne("a", 'a');
     publishOne("b", 'b');
     store.releaseLeases();
-    store.lease("a-key"); // `a` is now the more recently used
-    store.releaseLeases();
+    // `a` is now the more recently used. The kernel stamps an mtime from its
+    // coarse clock, one tick of 1–10 ms, so a lease in the tick `b` was
+    // published in leaves the two equal: lease again until `a` is later.
+    {
+        import core.thread : Thread;
+        import core.time : msecs;
+
+        long recencyOf(string key)
+        {
+            foreach (e; store.entries)
+                if (e.key == key)
+                    return e.recency;
+            assert(0, key);
+        }
+        foreach (attempt; 0 .. 1000)
+        {
+            store.lease("a-key");
+            store.releaseLeases();
+            if (recencyOf("a-key") > recencyOf("b-key"))
+                break;
+            Thread.sleep(1.msecs);
+        }
+        assert(recencyOf("a-key") > recencyOf("b-key"));
+    }
     assert(store.entries.length == 2);
 
     bool dead(string) => false;
