@@ -40,6 +40,7 @@ import std.stdio : stderr, stdout, writeln;
 import std.algorithm.searching : startsWith;
 import std.array : split;
 import std.string : endsWith, replace;
+import graph_driver : GraphRun;
 import watch_mode : runWatchMode, WatchAction;
 
 /// `ci test`: the mode its options select.
@@ -184,7 +185,7 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
     import std.parallelism : totalCPUs;
 
     import core.time : MonoTime;
-    import graph_driver : GraphRun, runGraph, RunOptions;
+    import graph_driver : runGraph, RunOptions;
     import sparkles.build_graph.actions : TestLeg;
     import std.datetime.systime : Clock;
     import std.process : thisProcessID;
@@ -307,7 +308,7 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
             failedPackages ~= pkg;
     }
     if (coverage)
-        mergeCoverage(repoRoot, g.into, failedPackages, subPackages);
+        mergeCoverage(repoRoot, g, failedPackages, subPackages);
     // What `ci cache verify --rerun` checks (CIC13).
     {
         import graph_driver : LastRun, recordLastRun;
@@ -354,35 +355,67 @@ private string focusedPackages(string repoRoot, in TestCommand cmd, out string[]
     return null;
 }
 
-/// Merges each coverage test's listings beneath `into/out` into
-/// `build/coverage` (CIC7) and reports them.
-private void mergeCoverage(string repoRoot, string into, in string[] failedPackages, in string[] subPackages)
+/**
+Merges each coverage test's listings beneath the run's `out` into
+`build/coverage`, published whole (CIC7): merged into a sibling directory,
+which then replaces the old one by rename. Each test wrote its own
+directory, so no two share a destination, and summing is commutative, so
+the merge is deterministic. A package whose coverage build failed but
+whose plain fallback passed is `Degraded(noCoverage)`: reported as
+uncovered, not failed.
+*/
+private void mergeCoverage(string repoRoot, ref const GraphRun g, in string[] failedPackages,
+    in string[] subPackages)
 {
     import coverage : mergeListings;
-    import std.file : dirEntries, rmdirRecurse, SpanMode;
+    import std.file : dirEntries, rename, rmdirRecurse, SpanMode;
+    import std.process : thisProcessID;
+    import std.sumtype : match;
+    import sparkles.build_graph.actions : ActionKind;
+    import sparkles.build_primitives.task.action : ProcessAction;
+
+    // CIC7's classification, from what each package's tests did.
+    bool[string] covered, plainPassed;
+    foreach (ref a; g.plan.graph.actions)
+    {
+        if (a.kind != ActionKind.test || !g.stats.succeeded.get(a.id.text, false))
+            continue;
+        const parts = a.id.text.split(":");
+        const pkg = parts.length > 1 ? parts[1].replace("sparkles.", "") : a.id.text;
+        const withCoverage = a.action.match!((ref const ProcessAction p) => p.argv.any!(x => x.startsWith("--DRT-covopt=")),
+            (ref const _) => false);
+        (withCoverage ? covered : plainPassed)[pkg] = true;
+    }
+    string[] uncovered;
+    foreach (pkg, _; plainPassed)
+        if (pkg !in covered)
+            uncovered ~= pkg;
+    uncovered.sort();
 
     CoverageRun cov = {enabled: true, dir: buildPath(repoRoot, "build", "coverage")};
+    const staging = text(cov.dir, ".", thisProcessID);
+    if (staging.exists)
+        staging.rmdirRecurse;
+    staging.mkdirRecurse;
+    const outs = buildPath(g.into, "out");
+    if (outs.exists)
+        foreach (e; dirEntries(outs, "*.lst", SpanMode.depth))
+        {
+            // The generated test root is each package's own module.
+            if (e.name.baseName.startsWith("generated-"))
+                continue;
+            const dest = buildPath(staging, e.name.baseName);
+            const listing = readText(e.name);
+            if (!dest.exists)
+                write(dest, listing);
+            else if (const merged = mergeListings(readText(dest), listing))
+                write(dest, merged);
+            else
+                warning(i"$(e.name): its source differs from $(dest)'s, kept apart");
+        }
     if (cov.dir.exists)
         cov.dir.rmdirRecurse;
-    cov.dir.mkdirRecurse;
-    const outs = buildPath(into, "out");
-    if (!outs.exists)
-        return;
-    string[] uncovered;
-    foreach (e; dirEntries(outs, "*.lst", SpanMode.depth))
-    {
-        // The generated test root is each package's own module.
-        if (e.name.baseName.startsWith("generated-"))
-            continue;
-        const dest = buildPath(cov.dir, e.name.baseName);
-        const listing = readText(e.name);
-        if (!dest.exists)
-            write(dest, listing);
-        else if (const merged = mergeListings(readText(dest), listing))
-            write(dest, merged);
-        else
-            warning(i"$(e.name): its source differs from $(dest)'s, kept apart");
-    }
+    rename(staging, cov.dir);
     reportCoverage(subPackages, cov, failedPackages, uncovered);
 }
 
