@@ -650,9 +650,30 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
         : cast(uint) totalCPUs;
     const reporting = RunReporting(interlaced: cmd.interlaced, timings: true, dryRun: cmd.dryRun,
         ci: CiLog.detect(&systemEnvironment));
+    // CIC12 under a dry run: the actions that would fail, from BGS8's
+    // explain, which executes and writes nothing.
+    if (cmd.dryRun && cmd.requireCached.length)
+    {
+        auto e = runGraph(repoRoot, null, RunOptions(into: into, cache: cache, packages: names.dup, legs: legs,
+            coverage: coverage, buildOnly: buildOnly, explain: true));
+        if (e.error.length)
+            return failRun(e.error);
+        size_t failing;
+        foreach (line; e.stats.explained)
+        {
+            const kind = line.split(":")[0];
+            if (cmd.requireCached.canFind(kind) && !line.canFind(": hit") && !line.canFind("digest record"))
+            {
+                writeln("would fail (--require-cached ", kind, "): ", line);
+                ++failing;
+            }
+        }
+        writeln(failing, " action(s) would fail under --require-cached ", cmd.requireCached.join(" "));
+        return ranOk();
+    }
     auto g = runGraph(repoRoot, null, RunOptions(into: into, cache: cache, runnerCore: true, packages: names.dup,
         legs: legs, coverage: coverage, buildOnly: buildOnly, failFast: failFast, echo: true, jobs: jobs,
-        reporting: reporting));
+        reporting: reporting, requireCached: cmd.requireCached.dup));
     if (cmd.dryRun)
         return g.error.length ? failRun(g.error) : ranOk();
     if (g.error.length)

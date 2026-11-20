@@ -246,6 +246,12 @@ struct TestCommand
         ~ "replaying whole task blocks in order."))
     bool interlaced;
 
+    @(Option(`require-cached`,
+        description: "Fail each build action of these kinds (compile, archive, link, generate) that "
+        ~ "would execute instead of reusing a stored result, with why it missed. With --dry-run, "
+        ~ "list the actions that would fail."))
+    string[] requireCached;
+
     @(Option(`dry-run`,
         description: "Plan and print the graph: its tasks, claims and edges. Runs nothing and "
         ~ "writes nothing."))
@@ -284,6 +290,12 @@ struct TestCommand
             || sanitize != Sanitizer.off || watch || placement.length))
             return "--since, --dependencies and --dependents select the ordinary tests or "
                 ~ "--build-only, without a placement";
+        // CIC12: only the build graph's cacheable kinds.
+        foreach (kind; requireCached)
+            if (kind != "compile" && kind != "archive" && kind != "link" && kind != "generate")
+                return "--require-cached takes compile, archive, link or generate";
+        if (requireCached.length && (slow || specialModes != SpecialModes.off || sanitize != Sanitizer.off || watch))
+            return "--require-cached applies to the build graph's runs: the ordinary tests or --build-only";
         // CIC1: the common execution options.
         if (jobs.length && !parseCapacity(jobs))
             return "--jobs takes a positive capacity";
@@ -352,6 +364,9 @@ unittest
     assert(TestCommand(since: "HEAD~1", dependents: true).conflict is null);
     assert(TestCommand(dependencies: true, slow: true).conflict !is null);
     assert(TestCommand(since: "main", placement: "p").conflict !is null);
+    // CIC12.
+    assert(TestCommand(requireCached: ["compile", "link"]).conflict is null);
+    assert(TestCommand(requireCached: ["test"]).conflict == "--require-cached takes compile, archive, link or generate");
 }
 
 // === ci placements ===

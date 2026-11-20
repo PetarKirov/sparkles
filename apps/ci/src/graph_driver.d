@@ -657,6 +657,11 @@ struct RunOptions
     bool buildOnly;
     /// The transcript's form, or a dry run (CIC1).
     RunReporting reporting;
+    /// CIC12: the kinds whose actions must reuse a stored result.
+    string[] requireCached;
+    /// BGS8's explain: every action looked up, nothing executed or written;
+    /// `GraphRun.stats.explained` holds the verdicts.
+    bool explain;
     /// Changes the tools found on `PATH` before the toolchain is identified
     /// (oracle 9's substitutions).
     void delegate(ref Tools) adjustTools;
@@ -714,7 +719,7 @@ GraphRun runGraph(string root, string only, RunOptions o)
     if (g.plan.requests == 0)
         return GraphRun("no package " ~ only);
     // A dry run writes nothing (CIC1): no run directory, no dub trap.
-    const dry = o.reporting.dryRun;
+    const dry = o.reporting.dryRun || o.explain;
     if (!dry)
         mkdirRecurse(o.into);
     // Oracle 3: every compile under `strace`, its trace beside its manifest.
@@ -803,6 +808,8 @@ GraphRun runGraph(string root, string only, RunOptions o)
     const trap = buildPath(o.into, "dub-trap");
     const declared = dry ? null : declaredEnvironment(trap);
     auto layout = RunLayout(root, o.into, o.cache, g.toolchain.identity, o.check);
+    layout.requireCached = o.requireCached.dup;
+    layout.explain = o.explain;
     layout.checkTasks = o.checkTasks.dup;
     layout.replaceTasks = o.replaceTasks.dup;
     layout.hashSample = o.hashSample;
