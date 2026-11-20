@@ -1856,15 +1856,29 @@ struct ActionDriver
     }
 }
 
+/// How a run reports: the plain reporter's choices, and whether it runs at
+/// all. The default is a deterministic transcript without timings.
+struct RunReporting
+{
+    import sparkles.ci_provider : CiLog;
+
+    bool interlaced; /// lines as they arrive, not ordered blocks
+    bool timings;    /// elapsed times per task and for the run
+    bool dryRun;     /// print the plan; run nothing
+    CiLog ci;        /// the CI provider's groups and masks
+}
+
 /**
 Runs `nodes` (from $(LREF executionNodes)) with their edges on a scheduler
 of their own, reporting each task's lines to `writer` through the plain
 reporter, at most `capacity` weight at a time, cancelling the rest at
 the first failure with `failFast`. `handlers` runs the client's own
-in-process actions beside the generators', each under its name.
+in-process actions beside the generators', each under its name;
+`reporting` chooses the transcript's form, or a dry run.
 */
 RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout, ref W writer,
-    uint capacity, RunStats* stats = null, bool failFast = false, InProcessHandler[string] handlers = null)
+    uint capacity, RunStats* stats = null, bool failFast = false, InProcessHandler[string] handlers = null,
+    RunReporting reporting = RunReporting.init)
 {
     import sparkles.build_primitives.task.executor : ExecutorOptions, runGraph;
     import sparkles.build_primitives.task.graph : TaskGraphBuilder;
@@ -1884,6 +1898,14 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
     if (built.hasError)
         return RunResult(exitCode: 2);
     auto graph = built.value;
+    // A dry run prints the plan and runs nothing (TDY3, ci task-DAG CIC1).
+    if (reporting.dryRun)
+    {
+        import sparkles.build_primitives.task.graph : writePlan;
+
+        writePlan(writer, graph, capacity);
+        return RunResult(exitCode: 0);
+    }
 
     Sched s;
     // A test leg runs a worker per thread it claims, each supervised by about
@@ -1903,7 +1925,8 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
     // The client's own in-process actions: ci's test actions (CIC11).
     foreach (name, handler; handlers)
         driver.processes.register(name, handler);
-    auto reporter = PlainReporter!W(&writer, &graph, PlainOptions(timings: false));
+    auto reporter = PlainReporter!W(&writer, &graph,
+        PlainOptions(interlaced: reporting.interlaced, timings: reporting.timings, ci: reporting.ci));
     auto sink = new EventChannel;
     MonotonicClock clock;
     RunResult result;
