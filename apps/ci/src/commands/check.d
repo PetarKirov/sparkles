@@ -235,10 +235,10 @@ private string computeDetailedScopeSuggestion(string[] changed)
 }
 
 /// `ci check reference-links` and `ci fix reference-links`.
-RunExpected!void runReferenceLinksCommand(in FileSelection files, bool fix)
+RunExpected!void runReferenceLinksCommand(in FileSelection files, bool fix, bool dryRun = false)
 {
     return collectInputFiles(files, InputFiles.markdown, fix ? "ci fix reference-links" : "ci check reference-links")
-        .andThen!(mdFiles => runReferenceLinkMode(mdFiles, fix));
+        .andThen!(mdFiles => runReferenceLinkMode(mdFiles, fix, dryRun));
 }
 
 /// `ci check vcs-urls`.
@@ -255,7 +255,7 @@ RunExpected!void runCheckBlobPathsCommand(in FileSelection files, string cloneRo
         .andThen!(mdFiles => runCheckBlobPaths(mdFiles, cloneRoot));
 }
 
-private RunExpected!void runReferenceLinkMode(string[] mdFiles, bool fix)
+private RunExpected!void runReferenceLinkMode(string[] mdFiles, bool fix, bool dryRun = false)
 {
     const title = fix
         ? "Rewriting duplicate markdown reference links"
@@ -289,10 +289,13 @@ private RunExpected!void runReferenceLinkMode(string[] mdFiles, bool fix)
     if (!fix)
         return failRun(text(duplicateGroups.length, " duplicate reference group(s)"));
 
-    auto changedFiles = fixDuplicateGroups(existingFiles, duplicateGroups);
+    auto changedFiles = fixDuplicateGroups(existingFiles, duplicateGroups, dryRun);
 
     writeln();
-    info(i"{green ✓} Updated $(changedFiles.length) file(s).");
+    if (dryRun)
+        info(i"{green ✓} Would update $(changedFiles.length) file(s) (--dry-run: nothing written).");
+    else
+        info(i"{green ✓} Updated $(changedFiles.length) file(s).");
     foreach (filePath; changedFiles)
         writeln("  ", filePath);
 
@@ -760,7 +763,7 @@ Whole-tree, like `ci check sidebar`: a requirement's traceability claim is
 not a property of the diff that touched it, and the rows that rot are precisely
 the ones nobody is editing.
 +/
-RunExpected!void runCheckSpecEvidence(bool updateBacklog)
+RunExpected!void runCheckSpecEvidence(bool updateBacklog, bool dryRun = false)
 {
     import std.file : exists, readText, write;
     import std.path : buildPath, extension;
@@ -815,7 +818,12 @@ RunExpected!void runCheckSpecEvidence(bool updateBacklog)
 
     if (updateBacklog)
     {
-        write(backlogFile, renderBacklog(bad));
+        if (dryRun)
+        {
+            info(i"✓ Would write $(backlogPath) (--dry-run: nothing written): $(bad.length) unresolved citation(s) of $(cites.length) in $(files) spec files.");
+            return ranOk();
+        }
+        writeAtomically(backlogFile, renderBacklog(bad));
         info(i"✓ Wrote $(backlogPath): $(bad.length) unresolved citation(s) of $(cites.length) in $(files) spec files.");
         return ranOk();
     }
@@ -1179,7 +1187,7 @@ private void printDuplicateGroups(DuplicateGroup[] groups)
     }
 }
 
-private string[] fixDuplicateGroups(string[] mdFiles, DuplicateGroup[] groups)
+private string[] fixDuplicateGroups(string[] mdFiles, DuplicateGroup[] groups, bool dryRun = false)
 {
     DuplicateGroup[][string] groupsByFile;
     foreach (group; groups)
@@ -1258,10 +1266,26 @@ private string[] fixDuplicateGroups(string[] mdFiles, DuplicateGroup[] groups)
 
         if (rewritten != originalText)
         {
-            filePath.write(rewritten);
+            // Every file's rewrite is computed before any is written; each
+            // write replaces its file whole (§5.6).
+            if (!dryRun)
+                writeAtomically(filePath, rewritten);
             changedFiles ~= filePath;
         }
     }
 
     return changedFiles;
+}
+
+/// Replaces `path` with `content` whole: written beside it, then renamed
+/// over it, so a reader sees the old file or the new one (ci task-DAG §5.6).
+void writeAtomically(string path, scope const(char)[] content)
+{
+    import std.conv : text;
+    import std.file : rename, write;
+    import std.process : thisProcessID;
+
+    const staging = text(path, ".ci-", thisProcessID, ".tmp");
+    write(staging, content);
+    rename(staging, path);
 }
