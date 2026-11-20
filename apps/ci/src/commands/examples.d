@@ -77,7 +77,6 @@ import commands.output :
     FailureReplay, displayFailureReplay, displayResultBox, displaySummary, executeComparisonCommand,
     executeLogged, flushStdout, formatOutputLines, resultBox, uiWidth;
 import core.time : Duration, msecs, seconds;
-import dub_deps : writeInTreeDeps;
 import example_manifest : exampleRunsOnHost;
 import fence_audit : wrapperFenceEnd;
 import sparkles.base.buffer : SharedBuffer, UniqueBuffer;
@@ -95,7 +94,6 @@ import std.algorithm : canFind, countUntil, joiner, map, sort, startsWith;
 import std.array : array, join, split;
 import std.conv : text, to;
 import std.file : exists, mkdirRecurse, readText, tempDir, write;
-import std.parallelism : TaskPool;
 import std.path : baseName, buildPath;
 import std.process : environment;
 import std.range.primitives : put;
@@ -223,9 +221,9 @@ private RunExpected!void runExamplesForFiles(string[] mdFiles, ExampleAction act
     // Building (and running) examples is the expensive, parallelizable work; the
     // per-file presentation below is cheap and order-sensitive. So execute every
     // example across all files up front, concurrently, then replay the results
-    // through the existing serial display/diff/rewrite loops unchanged.
-    // Concurrency is race-free thanks to `--temp-build` (see executeExample) and
-    // bounded by `exampleJobCount` to keep peak memory in check.
+    // through the existing serial display/diff/rewrite loops unchanged. The
+    // build graph runs them (M9): each a single-file package against the
+    // store's variants, the capacity from `exampleJobCount`, bounding memory.
     auto allExamples = gathered.map!(g => g.examples).joiner.array;
     // Shared full-file programs execute once per invocation. Each occurrence
     // still has its own expected output and Markdown positions below.
@@ -253,7 +251,7 @@ private RunExpected!void runExamplesForFiles(string[] mdFiles, ExampleAction act
         contractIndices ~= uniqueExamples.length;
         uniqueExamples ~= example;
     }
-    auto uniqueResults = executeExamplesParallel(uniqueExamples, repoRoot);
+    auto uniqueResults = executeExamplesOnGraph(uniqueExamples, repoRoot);
     foreach (index; contractIndices)
     {
         if (!uniqueResults[index].success)
@@ -296,6 +294,45 @@ private RunExpected!void runExamplesForFiles(string[] mdFiles, ExampleAction act
     }
 
     return totalFailures > 0 ? failRun(text(totalFailures, " markdown file(s) failed")) : ranOk();
+}
+
+/**
+Builds and runs `examples` on the build graph (M9, CIC8): each a single-file
+package, an inline one extracted to its content-addressed path, built against
+the store's variants and run in the worktree. The results are in `examples`'
+order; an inline example's output is ANSI-stripped and right-trimmed by line,
+as the pre-commit hooks leave the Markdown.
+*/
+private ExecutionResult[] executeExamplesOnGraph(Example[] examples, string repoRoot)
+{
+    import example_graph : ExampleJob, extractedExamplePath, runExamplesOnGraph;
+    import std.path : absolutePath;
+
+    ExampleJob[] jobs;
+    foreach (ref e; examples)
+        jobs ~= ExampleJob(e.sourcePath.length ? absolutePath(e.sourcePath)
+            : extractedExamplePath(repoRoot, e.name, e.code), e.name);
+    string why;
+    // Weighted units (CIC1): a compile claims two.
+    const outcomes = runExamplesOnGraph(repoRoot, graphStore(), jobs, 2 * exampleJobCount(), exampleTimeout(),
+        false, why);
+    auto results = new ExecutionResult[examples.length];
+    foreach (i, ref e; examples)
+    {
+        const raw = why.length ? why : outcomes[i].output;
+        const cleaned = e.sourcePath.length ? raw.unstyle
+            : raw.unstyle.lineSplitter.map!(l => l.stripRight).join("\n");
+        results[i] = ExecutionResult(success: !why.length && outcomes[i].success, programOutput: cleaned,
+            rawOutput: raw);
+    }
+    return results;
+}
+
+/// The directory holding the build graph's store: `$XDG_CACHE_HOME/sparkles`.
+private string graphStore()
+{
+    const xdg = environment.get("XDG_CACHE_HOME", buildPath(environment.get("HOME", "/"), ".cache"));
+    return buildPath(xdg, "sparkles");
 }
 
 /// Number of example builds to run concurrently. Honors `SPARKLES_CI_JOBS`,
@@ -361,104 +398,6 @@ package Duration exampleTimeout()
     return 300.seconds;
 }
 
-/// Executes every example concurrently, returning results in input order.
-/// Each build runs in its own `DUB_HOME` and `TMPDIR` (see `executeExample`), so
-/// the parallel `dub run`s never race on a shared dependency artifact.
-///
-/// While the pool works, the main thread polls per-example status slots and
-/// repaints a live progress frame (built N/M + the currently-building examples)
-/// — the workers never touch the terminal, so the single-threaded `LiveRegion`
-/// is safe by construction. On a non-tty the frame is skipped entirely and the
-/// output is unchanged (the serial replay below remains the only output).
-private ExecutionResult[] executeExamplesParallel(Example[] examples, string repoRoot)
-{
-    import core.atomic : atomicLoad, atomicStore;
-    import core.thread : Thread;
-    import std.parallelism : task;
-    import std.range : take;
-    import sparkles.base.term_caps : detectTermCaps;
-    import sparkles.ui.components.live : stdoutLiveRegion;
-    import sparkles.ui.components.meter : ProgressBar;
-    import sparkles.ui.components.progress : spinnerFrame;
-    import sparkles.ui.components.theme : makeTheme, Semantic;
-
-    auto results = new ExecutionResult[](examples.length);
-
-    if (examples.length <= 1)
-    {
-        if (examples.length == 1)
-            results[0] = executeExample(examples[0], repoRoot, 0);
-        return results;
-    }
-
-    const jobs = exampleJobCount();
-
-    // Log the fan-out, because it is the single biggest lever on this mode's
-    // runtime and was previously invisible. It also exposes a host whose
-    // reported core count is not what the job may actually use: a CI runner
-    // that applies a cgroup CPU limit still reports the *host's* cores here,
-    // so the pool silently oversubscribes. `SPARKLES_CI_JOBS` is the override.
-    info(i"{dim Examples:} $(examples.length){dim , parallel jobs:} $(jobs){dim , hwParallelism:} $(hwParallelism()){dim , online:} $(hwOnlineCpuCount())");
-
-    // The calling thread no longer participates in the work (it polls), so the
-    // pool holds all `jobs` workers.
-    auto pool = new TaskPool(jobs < 1 ? 1 : jobs);
-    scope(exit) pool.finish(true);
-
-    enum : size_t { statePending = 0, stateBuilding = 1, stateDone = 2 }
-    auto states = new shared(size_t)[](examples.length);
-
-    void runOne(size_t idx)
-    {
-        atomicStore(states[idx], stateBuilding);
-        results[idx] = executeExample(examples[idx], repoRoot, idx);
-        atomicStore(states[idx], stateDone);
-    }
-
-    foreach (i; 0 .. examples.length)
-        pool.put(task(&runOne, i));
-
-    auto region = stdoutLiveRegion();
-    scope (exit)
-        region.finish(keepFrame: false); // the serial replay is the real output
-    const theme = makeTheme(detectTermCaps());
-
-    size_t spin;
-    for (;;)
-    {
-        size_t completed;
-        string[] buildingNames;
-        foreach (i; 0 .. examples.length)
-        {
-            const s = atomicLoad(states[i]);
-            if (s == stateDone)
-                completed++;
-            else if (s == stateBuilding)
-                buildingNames ~= examples[i].name;
-        }
-
-        if (region.interactive)
-        {
-            SharedBuffer!(char, 128) bar;
-            ProgressBar(done: completed, total: examples.length).toString(bar);
-            string[] frame = ["building examples " ~ bar[].idup];
-            enum size_t maxShown = 4;
-            foreach (name; buildingNames.take(maxShown))
-                frame ~= "  " ~ theme.paint(Semantic.accent, spinnerFrame(spin))
-                    ~ " " ~ name;
-            if (buildingNames.length > maxShown)
-                frame ~= i"  … and $(buildingNames.length - maxShown) more".text;
-            region.update(frame);
-        }
-
-        if (completed == examples.length)
-            break;
-        spin++;
-        Thread.sleep(100.msecs);
-    }
-
-    return results;
-}
 
 private bool isAnsiFence(string fenceType)
 {
@@ -601,106 +540,6 @@ Example[] extractExamples(string content)
     return examples;
 }
 
-/// Builds and runs a single example, returning its combined result.
-///
-/// Uses `dub run --quiet --temp-build`: `--quiet` keeps a successful run's
-/// captured output to just the program's own stdout (no dub progress noise to
-/// pollute the diff against the markdown's expected block), while `--temp-build`
-/// isolates the build so concurrent example runs don't race on shared dependency
-/// artifacts (see `dubSingleFileCommand`). `--temp-build` also places the binary
-/// in a temp folder we don't track, so we let `dub run` execute it rather than
-/// invoking it ourselves.
-ExecutionResult executeExample(in Example example, string repoRoot, size_t uniqueId)
-{
-    if (example.sourcePath.length)
-    {
-        // Run the original file: DUB resolves path dependencies relative to it.
-        // Isolate dependency builds just as for inline examples.
-        import std.uuid : randomUUID;
-        auto importedDir = buildPath(tempDir, "md-import-" ~ randomUUID().toString());
-        mkdirRecurse(importedDir);
-        scope(exit) { import std.file : rmdirRecurse; rmdirRecurse(importedDir); }
-        auto cmd = (example.sourcePath.endsWith(".mjs")
-            ? ["node", example.sourcePath]
-            : dubSingleFileCommand("run", example.sourcePath, repoRoot)).dup;
-        foreach (ref argument; cmd)
-            if (argument == "--build=debug") argument = "--build=checked";
-        const isolatedEnv = ["/usr/bin/env", "DUB_HOME=" ~ importedDir, "TMPDIR=" ~ importedDir];
-        if (!example.sourcePath.endsWith(".mjs"))
-        {
-            import dub_cache : seedBundledDubHome;
-            seedBundledDubHome(importedDir);
-            // Populate this isolated, content-addressed cache first. Compiler
-            // diagnostics are not program output; a failed build still reports
-            // its complete diagnostics. The subsequent run reuses the artifact.
-            auto buildCmd = cmd.dup;
-            buildCmd[1] = "build";
-            auto built = executeComparisonCommand(isolatedEnv ~ buildCmd, "build " ~ example.name);
-            if (built.status != 0)
-                return ExecutionResult(success: false, programOutput: built.output.unstyle,
-                    rawOutput: built.output, usage: built.usage);
-        }
-        auto result = executeComparisonCommand(isolatedEnv ~ cmd, "run " ~ example.name);
-        return ExecutionResult(success: result.status == 0,
-            programOutput: result.output.unstyle, rawOutput: result.output, usage: result.usage);
-    }
-    // Give each example its own subdirectory: examples in different markdown
-    // files can share a `name` (hence the same source filename), and these runs
-    // happen concurrently. Keep the filename itself unchanged — ldc derives the
-    // module name from it, which must stay a valid identifier.
-    auto exampleDir = buildPath(tempDir, "md-examples", uniqueId.to!string);
-    mkdirRecurse(exampleDir);
-    auto tmpFile = buildPath(exampleDir, example.name ~ ".d");
-
-    UniqueBuffer!char code;
-    if (repoRoot.length)
-        writeInTreeDeps(code, example.code, repoRoot, exampleDir);
-    else
-        put(code, example.code);
-    tmpFile.write(code[]);
-    scope(exit)
-    {
-        import std.file : rmdirRecurse;
-        if (exampleDir.exists) rmdirRecurse(exampleDir);
-    }
-
-    // Give each example its own `DUB_HOME` so concurrent builds don't race.
-    // README examples depend on the in-repo `sparkles` package as `~master`,
-    // which dub rebuilds *in place and unlocked* on every `dub run` (it's a
-    // mutable branch version, never cached) — parallel builds then clobber the
-    // shared `libsparkles_*.a`. `--temp-build` only isolates the leaf
-    // single-file build, not this path dependency; a per-example home isolates
-    // it. Seed Nix-vendored sources into this writable, private home first.
-    //
-    // `--temp-build`'s own store follows `TMPDIR`, not `DUB_HOME` — without a
-    // per-example `TMPDIR` all concurrent builds share `/tmp/.dub/build`, and
-    // two of them building the same dependency artifact (anything newly in the
-    // base closure, e.g. `libsparkles_reflection.a`) race on its final rename.
-    auto dubHome = buildPath(exampleDir, "dub-home");
-    import dub_cache : seedBundledDubHome;
-    seedBundledDubHome(dubHome);
-    auto exampleTmp = buildPath(exampleDir, "tmp");
-    mkdirRecurse(exampleTmp);
-    auto cmd = ["/usr/bin/env",
-        "DUB_HOME=" ~ dubHome,
-        "TMPDIR=" ~ exampleTmp]
-        ~ dubSingleFileCommand("run", tmpFile, repoRoot);
-    auto result = executeLogged(cmd, "run " ~ example.name, exampleTimeout());
-
-    // Strip ANSI codes, then trim trailing whitespace from each line
-    // so output matches what pre-commit hooks produce in markdown files.
-    auto cleaned = result.output.unstyle
-        .lineSplitter
-        .map!(l => l.stripRight)
-        .join("\n");
-
-    return ExecutionResult(
-        success: result.status == 0,
-        programOutput: cleaned,
-        rawOutput: result.output,
-        usage: result.usage,
-    );
-}
 
 private RunExpected!void runExampleFilesMode(string[] allExampleFiles, bool failFast)
 {
@@ -727,6 +566,30 @@ private RunExpected!void runExampleFilesMode(string[] allExampleFiles, bool fail
     flushStdout();
 
     const repoRoot = detectRepoRoot();
+
+    // M9: every example file on the build graph at once; the results are
+    // presented below in input order.
+    import example_graph : ExampleJob, runExamplesOnGraph;
+    import std.path : absolutePath;
+
+    ExampleJob[] jobs;
+    size_t[] jobOf = new size_t[exampleFiles.length];
+    foreach (i, exampleFile; exampleFiles)
+    {
+        jobOf[i] = size_t.max;
+        if (!exampleFile.exists)
+            continue;
+        const spec = detectStandaloneExampleSpec(exampleFile);
+        jobOf[i] = jobs.length;
+        jobs ~= ExampleJob(absolutePath(exampleFile), exampleFile.baseName,
+            spec.mode == StandaloneExampleMode.run ? spec.runArgs.dup : null,
+            spec.mode == StandaloneExampleMode.buildOnly);
+    }
+    string why;
+    const outcomes = jobs.length ? runExamplesOnGraph(repoRoot, graphStore(), jobs, 2 * exampleJobCount(),
+        exampleTimeout(), failFast, why) : null;
+    if (why.length)
+        return failRun(why);
 
     int failures = 0;
     size_t processed = 0;
@@ -758,7 +621,8 @@ private RunExpected!void runExampleFilesMode(string[] allExampleFiles, bool fail
         const verb = standaloneExampleVerb(spec.mode);
         const progress = i"[$(i + 1)/$(exampleFiles.length)]".text;
         const header = formatExampleFileHeader(exampleFile, progress, action, spec.runArgs);
-        auto result = executeStandaloneExampleFile(exampleFile, repoRoot, spec);
+        const outcome = outcomes[jobOf[i]];
+        const result = ExecutionResult(success: outcome.success, rawOutput: outcome.output);
 
         if (result.success)
         {
@@ -799,32 +663,6 @@ private RunExpected!void runExampleFilesMode(string[] allExampleFiles, bool fail
     return failures > 0 ? failRun(text(failures, " example file(s) failed")) : ranOk();
 }
 
-private ExecutionResult executeStandaloneExampleFile(
-    string exampleFile,
-    string repoRoot,
-    StandaloneExampleSpec spec,
-)
-{
-    const action = standaloneExampleAction(spec.mode);
-    // A `build-only` example is never executed, so its directive's arguments —
-    // if it somehow carries any — have nowhere to go.
-    auto runArgs = spec.mode == StandaloneExampleMode.run ? spec.runArgs : null;
-    auto result = executeLogged(
-        dubSingleFileCommand(action, exampleFile, repoRoot, runArgs),
-        action ~ " " ~ exampleFile.baseName,
-        exampleTimeout());
-    auto cleaned = result.output.unstyle
-        .lineSplitter
-        .map!(l => l.stripRight)
-        .join("\n");
-
-    return ExecutionResult(
-        success: result.status == 0,
-        programOutput: cleaned,
-        rawOutput: result.output,
-        usage: result.usage,
-    );
-}
 
 /// Default mode: run examples and display output in boxes.
 /// `results` holds the pre-computed execution result for each example.
@@ -1335,50 +1173,6 @@ private string extractExampleName(const(char[])[] codeLines)
     return manifest.hasValue && manifest.value.name.length ? manifest.value.name : "unnamed";
 }
 
-@safe
-private string[] dubSingleFileCommand(
-    string action,
-    string filePath,
-    string repoRoot,
-    string[] runArgs = null,
-)
-in (action == "run" || action == "build", "action must be dub run or dub build")
-{
-    // `--color=always` forces dub *and* the compiler to emit ANSI diagnostics
-    // even though we run them as a captured subprocess (not a TTY). The colored
-    // output flows through `rawOutput` into the failure boxes; `ci` itself
-    // always renders styled output, so forcing color here keeps them in sync.
-    // `--temp-build` is what makes concurrent example builds safe: it routes the
-    // build through dub's lock-protected content-addressed cache
-    // (`~/.dub/cache/<pkg>/<ver>/build/<hash>/`, guarded by `db.lock`) and emits
-    // the final artifact into a per-invocation temp folder. Without it dub copies
-    // each dependency's target into its package's *unlocked* in-place build dir
-    // (`~/.dub/packages/expected/*/expected/libexpected.a`,
-    // `libs/base/build/libsparkles_base.a`, …) on every build — so two builds
-    // running at once race to remove/rewrite the same file ("No such file or
-    // directory"). The cache reuses already-built deps, so this stays fast.
-    // `--build=debug` is dub's default for `run`, stated because `$DFLAGS`
-    // would otherwise replace it (see `testBuildType`).
-    auto command = ["dub", action, "--quiet", "--color=always", "--temp-build",
-        "--build=debug"];
-
-    // Without selections, DUB still checks registry metadata even when every
-    // source is cached. Offline example runs must suppress those requests and
-    // their warnings, which otherwise pollute golden output comparisons.
-    if (environment.get("SPARKLES_CI_OFFLINE", "") == "1")
-        command ~= "--skip-registry=all";
-
-    if (repoRoot !is null)
-        command ~= ["--root", repoRoot];
-
-    command ~= ["--single", filePath];
-
-    // Everything after `--` is the program's, not dub's.
-    if (runArgs.length > 0)
-        command ~= ["--"] ~ runArgs;
-
-    return command;
-}
 
 private StandaloneExampleSpec detectStandaloneExampleSpec(string filePath)
 {
@@ -1515,21 +1309,6 @@ private StandaloneExampleSpec parseStandaloneExampleSpec(const(char[])[] lines)
         == StandaloneExampleSpec(StandaloneExampleMode.run, ["--help"]));
 }
 
-@("ci.dubSingleFileCommand.runArgsAfterDoubleDash")
-@safe unittest
-{
-    // No arguments: the command ends at the file, with no stray `--`.
-    assert(dubSingleFileCommand("run", "e.d", null)[$ - 2 .. $] == ["--single", "e.d"]);
-    // The build type is always stated; `$DFLAGS` must not pick it.
-    assert(dubSingleFileCommand("run", "e.d", null).canFind("--build=debug"));
-
-    // With arguments, `--` separates them — everything after it is the
-    // program's, not dub's.
-    assert(dubSingleFileCommand("run", "e.d", null, ["--help"])[$ - 4 .. $]
-        == ["--single", "e.d", "--", "--help"]);
-    assert(dubSingleFileCommand("run", "e.d", null, ["--width", "80"])[$ - 4 .. $]
-        == ["e.d", "--", "--width", "80"]);
-}
 
 private string standaloneExampleAction(StandaloneExampleMode mode)
 {
@@ -1546,7 +1325,7 @@ private string formatExampleHeader(in Example example, string progress)
 {
     if (example.sourcePath.endsWith(".mjs"))
         return styledText(i"{dim $(progress)} {cyan $(example.name)} {dim › node $(example.sourcePath.baseName)}");
-    return styledText(i"{dim $(progress)} {cyan $(example.name)} {dim › dub run --single $(example.name).d}");
+    return styledText(i"{dim $(progress)} {cyan $(example.name)} {dim › build and run $(example.name).d}");
 }
 
 private string formatExampleFileHeader(
