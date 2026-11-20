@@ -614,7 +614,8 @@ struct CheckCommand
         {
             import wasm_modules_check : runCheckWasmModules;
 
-            return runCheckWasmModules(textModule, tableModule, wiredModule, wasiLoader, wasiShim);
+            return runOneNode("check-wasm-modules", TaskKind.scan,
+                () => runCheckWasmModules(textModule, tableModule, wiredModule, wasiLoader, wasiShim));
         }
     }
 
@@ -638,7 +639,8 @@ struct CheckCommand
         {
             import nix_wasm_check : runCheckNixWasm;
 
-            return runCheckNixWasm(detectRepoRoot(), evaluator, module_, answers);
+            return runOneNode("check-nix-wasm", TaskKind.scan,
+                () => runCheckNixWasm(detectRepoRoot(), evaluator, module_, answers));
         }
     }
 }
@@ -697,7 +699,8 @@ struct DocsCommand
 
         @(Flatten) FileSelection files;
 
-        RunExpected!void run() => runAuditFencesCommand(files, json, root, auditScope);
+        RunExpected!void run() => runOneNode("docs-fences-audit", TaskKind.scan,
+            () => runAuditFencesCommand(files, json, root, auditScope));
     }
 
     @(Command("stage-wasm",
@@ -709,7 +712,7 @@ struct DocsCommand
         {
             import docs_wasm : stageDocsWasm;
 
-            return stageDocsWasm(detectRepoRoot());
+            return runOneNode("docs-stage-wasm", TaskKind.rewrite, () => stageDocsWasm(detectRepoRoot()));
         }
     }
 }
