@@ -659,6 +659,10 @@ struct RunOptions
     RunReporting reporting;
     /// CIC12: the kinds whose actions must reuse a stored result.
     string[] requireCached;
+    /// `--sanitize address` (M8): flags every compile and link takes, and the
+    /// variables every test and generator runs with.
+    string[] extraFlags;
+    EnvEntry[] runtimeEnvironment; /// ditto
     /// BGS8's explain: every action looked up, nothing executed or written;
     /// `GraphRun.stats.explained` holds the verdicts.
     bool explain;
@@ -712,6 +716,8 @@ GraphRun runGraph(string root, string only, RunOptions o)
     }
     if (o.legs.length)
         tools.testLegs = o.legs;
+    tools.extraFlags = o.extraFlags.dup;
+    tools.runtimeEnvironment = o.runtimeEnvironment.dup;
     g.plan = planRepository(root, false, only, tools, g.toolchain.identity, !o.noLayoutLint, o.packages,
         o.coverage);
     if (g.plan.error.length)
