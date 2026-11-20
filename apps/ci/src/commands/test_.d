@@ -794,86 +794,37 @@ private RunExpected!void runSlowTestsMode(in string[] packageNames, in string[] 
     if (all.length == 0)
     return failRun("No @slow test found in the selected packages");
 
+    // M8: each package's slow tests are one leg of its test binary on the
+    // build graph, selecting exactly the chosen names.
+    import graph_driver : runGraph, RunOptions;
+    import sparkles.build_graph.actions : TestLeg;
+    import std.datetime.systime : Clock;
+    import std.process : thisProcessID;
+
     string[] packages;
+    string[][string] arguments;
     foreach (job; all)
-        if (!packages.canFind(job.packageName))
-            packages ~= job.packageName;
-
-    i"Running the slow tests of $(packages.length) package(s)".text
-        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
-        .writeln("\n");
-    flushStdout();
-
-    auto monitor = RunMonitor.start();
-    void onSample(in ResourceUsage) @safe
     {
-        monitor.sample();
-    }
-
-    int failures = 0;
-    size_t processed = 0;
-    string[] failedPackages;
-    foreach (i, pkg; packages)
-    {
-        auto marked = all.filter!(job => job.packageName == pkg).map!(job => job.test).array;
-        const selected = testNames.length
-            ? marked.filter!(name => testNames.canFind(name)).array
-            : marked;
-        processed = i + 1;
-        if (selected.length == 0)
+        if (packages.canFind(job.packageName))
             continue;
-        foreach (path; subPackageDirectories(repoRoot))
-            if (path.baseName == pkg)
-                mkdirRecurse(buildPath(repoRoot, path, "build"));
-
-        // The listing builds the test binary, so its output is dub's too; only
-        // the `@slow` lines are the runner's.
-        info(i"building :$(pkg) and listing its slow tests");
-        const listed = execute(
-            dubTestCommand(repoRoot, pkg, testBuildType(false), ["--list", "--only-slow", "--no-colors"]),
-            withLdcDflags(null));
-        auto binaryNames = slowTestsInListing(listed.output);
-        binaryNames.sort();
-        marked.sort();
-        if (listed.status != 0 || binaryNames != marked)
-        {
-            if (listed.status != 0)
-            {
-                stderr.write(listed.output);
-                error(i":$(pkg) did not build or list its tests");
-            }
-            else
-                error(i"the sources of :$(pkg) mark $(marked) @slow, but its test binary lists $(binaryNames): mark each test directly (`@slow` before `unittest`) and give it a @(\"name\")");
-            failures++;
-            failedPackages ~= pkg ~ " (listing)";
-            if (failFast)
-                break;
+        auto marked = all.filter!(j => j.packageName == job.packageName).map!(j => j.test).array;
+        const selected = testNames.length ? marked.filter!(name => testNames.canFind(name)).array : marked;
+        if (!selected.length)
             continue;
-        }
-
-        const runnerArgs = ["--only-slow", "-i", exactNamesPattern(selected)];
-        const header = styledText(
-            i"{dim [$(i + 1)/$(packages.length)]} {cyan $(pkg)} {dim › $(selected.length) slow test(s)}");
-        auto lines = executeMonitoredLines(
-            dubTestCommand(repoRoot, pkg, testBuildType(false), runnerArgs),
-            250.msecs, &onSample, ChildStdin.empty, Duration.zero, withLdcDflags(null));
-        streamResultBox(header, lines,
-            () => resultVerdict(lines.result.status == 0),
-            (LogDelta d) => resultFooterRight(lines.result.usage, d));
-        monitor.sample();
-        writeln();
-
-        if (lines.result.status != 0)
-        {
-            failures++;
-            failedPackages ~= pkg;
-            if (failFast)
-                break;
-        }
+        packages ~= job.packageName;
+        arguments["sparkles:" ~ job.packageName] = ["--only-slow", "-i", exactNamesPattern(selected)];
     }
-
-    displayTestRunSummary(monitor.finish(processed, packages.length, failedPackages));
-    return failures > 0 ? failRun(text(failures, " slow test(s) failed")) : ranOk();
+    info(i"the slow tests of $(packages.length) package(s): $(packages.join(", "))");
+    const xdg = environment.get("XDG_CACHE_HOME", buildPath(environment.get("HOME", "/"), ".cache"));
+    const cache = buildPath(xdg, "sparkles");
+    const threads = cast(uint) parallelTestThreads(hwParallelism());
+    auto g = runGraph(repoRoot, null, RunOptions(into: buildPath(cache, "runs",
+        text("ci-test-slow-", Clock.currTime.toUnixTime, "-", thisProcessID)), cache: cache, runnerCore: true,
+        packages: packages, legs: [TestLeg(threads, false, "slow")], testArguments: arguments,
+        failFast: failFast, echo: true));
+    if (g.error.length)
+        return failRun(g.error);
+    return g.exitCode != 0 ? failRun("the slow tests failed") : ranOk();
 }
 
 /**

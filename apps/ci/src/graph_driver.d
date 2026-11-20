@@ -663,6 +663,8 @@ struct RunOptions
     /// variables every test and generator runs with.
     string[] extraFlags;
     EnvEntry[] runtimeEnvironment; /// ditto
+    /// Runner options a package's legs add, by its name (`sparkles:base`).
+    string[][string] testArguments;
     /// BGS8's explain: every action looked up, nothing executed or written;
     /// `GraphRun.stats.explained` holds the verdicts.
     bool explain;
@@ -718,6 +720,8 @@ GraphRun runGraph(string root, string only, RunOptions o)
         tools.testLegs = o.legs;
     tools.extraFlags = o.extraFlags.dup;
     tools.runtimeEnvironment = o.runtimeEnvironment.dup;
+    foreach (pkg, more; o.testArguments)
+        tools.testArguments[pkg] = more.dup;
     g.plan = planRepository(root, false, only, tools, g.toolchain.identity, !o.noLayoutLint, o.packages,
         o.coverage);
     if (g.plan.error.length)
