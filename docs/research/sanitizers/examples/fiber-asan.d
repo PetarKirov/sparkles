@@ -25,7 +25,11 @@
  *      required for this particular defect because the faulting read
  *      happens in instrumented user code.
  *   2. With `detect_stack_use_after_return=0` the same child reads garbage
- *      from the reused frame and exits 0 — the bug silently corrupts. The
+ *      from the reused frame, and ASan reports no stack-use-after-return.
+ *      What the garbage does next depends on what the frame holds: the run
+ *      may finish with a wrong value (exit 0) or jump through a garbage
+ *      closure pointer into a SEGV; LDC 1.43 on Linux 6.18 does the latter
+ *      on one host and the former on another, under the same build. The
  *      option gate (LDC default `-fsanitize-address-use-after-return=
  *      runtime`) is what makes leg 1 switchable at run time.
  *
@@ -135,13 +139,16 @@ version (linux) private int run()
         writefln("proved: deferred fiber start through a scope delegate is " ~
             "stack-use-after-return (child exit %s)", caught.status);
 
+        // Without the fake stack the read goes through the reused frame:
+        // whether that garbage finishes the run or crashes it varies by host
+        // and build; what holds everywhere is that ASan names no
+        // stack-use-after-return.
         const silent = runChild(false);
-        assert(silent.status == 0,
-            "expected the bug to go undetected with the fake stack disabled");
-        assert(!silent.output.canFind("AddressSanitizer"),
-            "expected no ASan report with detect_stack_use_after_return=0");
-        writeln("proved: detect_stack_use_after_return=0 turns the same run " ~
-            "into silent corruption");
+        assert(!silent.output.canFind("stack-use-after-return"),
+            "expected no stack-use-after-return report with " ~
+            "detect_stack_use_after_return=0; got:\n" ~ silent.output);
+        writeln("proved: detect_stack_use_after_return=0 leaves the same bug " ~
+            "unreported (the garbage read then finishes or crashes the run)");
 
         writeln("OK: ASan's fake stack catches the fiber " ~
             "stack-use-after-return that killed event-horizon's M5 gate");
