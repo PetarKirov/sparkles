@@ -34,6 +34,8 @@ import commands.perf : runPerfAppendCommand, runPerfImportCommand, runPerfImport
     runPerfSiteCommand, runRecordTask;
 import commands.stats : runCiStatsCommand;
 import commands.test_ : runListPlacements, runListSlowTestsMode, runTestCommand;
+import one_node : runOneNode;
+import sparkles.build_primitives.task.model : TaskKind;
 import fence_audit : AuditScope;
 
 // === Shared option groups ===
@@ -474,7 +476,7 @@ struct CheckCommand
         @(Argument("message-file", optional: true, description: "The commit message file, or - for standard input."))
         string messageFile = "-";
 
-        RunExpected!void run() => runCheckCommitScope(messageFile);
+        RunExpected!void run() => runOneNode("check-commit-scope", TaskKind.scan, () => runCheckCommitScope(messageFile));
     }
 
     @(Command("reference-links",
@@ -484,7 +486,7 @@ struct CheckCommand
     {
         @(Flatten) FileSelection files;
 
-        RunExpected!void run() => runReferenceLinksCommand(files, fix: false);
+        RunExpected!void run() => runOneNode("check-reference-links", TaskKind.scan, () => runReferenceLinksCommand(files, fix: false));
     }
 
     @(Command("vcs-urls",
@@ -494,7 +496,7 @@ struct CheckCommand
     {
         @(Flatten) FileSelection files;
 
-        RunExpected!void run() => runCheckVcsUrlsCommand(files);
+        RunExpected!void run() => runOneNode("check-vcs-urls", TaskKind.scan, () => runCheckVcsUrlsCommand(files));
     }
 
     @(Command("blob-paths",
@@ -510,7 +512,7 @@ struct CheckCommand
 
         @(Flatten) FileSelection files;
 
-        RunExpected!void run() => runCheckBlobPathsCommand(files, cloneRoot);
+        RunExpected!void run() => runOneNode("check-blob-paths", TaskKind.scan, () => runCheckBlobPathsCommand(files, cloneRoot));
     }
 
     @(Command("sidebar",
@@ -520,7 +522,7 @@ struct CheckCommand
     ))
     struct Sidebar
     {
-        RunExpected!void run() => runCheckDocsSidebar();
+        RunExpected!void run() => runOneNode("check-sidebar", TaskKind.scan, () => runCheckDocsSidebar());
     }
 
     @(Command("glossary",
@@ -531,7 +533,7 @@ struct CheckCommand
     ))
     struct Glossary
     {
-        RunExpected!void run() => runCheckGlossary();
+        RunExpected!void run() => runOneNode("check-glossary", TaskKind.scan, () => runCheckGlossary());
     }
 
     @(Command("credits",
@@ -541,7 +543,7 @@ struct CheckCommand
     ))
     struct Credits
     {
-        RunExpected!void run() => runCheckCredits();
+        RunExpected!void run() => runOneNode("check-credits", TaskKind.scan, () => runCheckCredits());
     }
 
     @(Command("spec-evidence",
@@ -552,7 +554,7 @@ struct CheckCommand
     ))
     struct SpecEvidence
     {
-        RunExpected!void run() => runCheckSpecEvidence(updateBacklog: false);
+        RunExpected!void run() => runOneNode("check-spec-evidence", TaskKind.scan, () => runCheckSpecEvidence(updateBacklog: false));
     }
 
     @(Command("adhoc-sdl",
@@ -562,7 +564,7 @@ struct CheckCommand
     ))
     struct AdhocSdl
     {
-        RunExpected!void run() => runCheckAdHocSdl();
+        RunExpected!void run() => runOneNode("check-adhoc-sdl", TaskKind.scan, () => runCheckAdHocSdl());
     }
 
     @(Command("opaque-recipes",
@@ -573,7 +575,7 @@ struct CheckCommand
     ))
     struct OpaqueRecipes
     {
-        RunExpected!void run() => runCheckOpaqueRecipes();
+        RunExpected!void run() => runOneNode("check-opaque-recipes", TaskKind.scan, () => runCheckOpaqueRecipes());
     }
 
     @(Command("pin-cache",
@@ -583,7 +585,7 @@ struct CheckCommand
     ))
     struct PinCache
     {
-        RunExpected!void run() => runCheckPinCache();
+        RunExpected!void run() => runOneNode("check-pin-cache", TaskKind.scan, () => runCheckPinCache());
     }
 
     @(Command("wasm-modules",
@@ -651,7 +653,7 @@ struct FixCommand
     {
         @(Flatten) FileSelection files;
 
-        RunExpected!void run() => runReferenceLinksCommand(files, fix: true);
+        RunExpected!void run() => runOneNode("fix-reference-links", TaskKind.rewrite, () => runReferenceLinksCommand(files, fix: true));
     }
 
     @(Command("spec-evidence-backlog",
@@ -659,7 +661,7 @@ struct FixCommand
     ))
     struct SpecEvidenceBacklog
     {
-        RunExpected!void run() => runCheckSpecEvidence(updateBacklog: true);
+        RunExpected!void run() => runOneNode("fix-spec-evidence-backlog", TaskKind.rewrite, () => runCheckSpecEvidence(updateBacklog: true));
     }
 }
 
