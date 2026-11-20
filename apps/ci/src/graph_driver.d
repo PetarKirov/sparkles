@@ -172,14 +172,14 @@ void marker(string name) @trusted
 
 Planned planRepository(string root, bool markers = false, string only = null, Tools tools = Tools.init,
     string toolchain = "dev-shell", bool lint = true, const string[] packages = null, bool coverage = false,
-    const string[] singleFiles = null)
+    const string[] singleFiles = null, const string[] applications = null)
 {
     // The platform the tools' compiler builds for (D19).
     auto platform = platformOf(tools.compiler);
     // The packages planned: `only`, else `packages`, else every one, unless
     // only single-file packages are asked for.
     bool chosen(string name) => only.length ? name == only : packages.length ? packages.canFind(name)
-        : !singleFiles.length;
+        : !singleFiles.length && !applications.length;
 
     const d = driverEnvironment();
     if (d.sources is null)
@@ -237,6 +237,18 @@ Planned planRepository(string root, bool markers = false, string only = null, To
         if (coverage)
             attempts ~= CoverageAttempt(mine[0], mine[1]);
         testRequests ~= mine;
+    }
+    // `ci commits build-each` (M11): packages' default configurations as
+    // applications, built with dub's `debug` build type, as `dub build` does.
+    foreach (name; applications)
+    {
+        auto request = ResolveRequest(directory: root, subPackage: name, buildType: "debug", platform: platform);
+        foreach (n, s; registry.value)
+            request.registry[n] = s;
+        auto r = resolve(request, tree);
+        if (r.hasError)
+            return Planned(fault() ? fault() : text(name, ": ", r.error.message));
+        rs ~= r.value;
     }
     // CIC8: single-file packages (examples), as applications built with
     // dub's `debug` build type, their in-tree dependencies the worktree's.
@@ -710,6 +722,9 @@ struct RunOptions
     string[][string] testArguments;
     /// Single-file packages to plan as applications (CIC8): examples.
     string[] singleFiles;
+    /// Packages to plan in their default configurations, as `dub build`
+    /// builds them (`ci commits build-each`).
+    string[] applications;
     /// The client's own in-process actions, by name.
     InProcessHandler[string] handlers;
     /// BGS8's explain: every action looked up, nothing executed or written;
@@ -769,7 +784,7 @@ GraphRun runGraph(string root, string only, RunOptions o)
     foreach (pkg, more; o.testArguments)
         tools.testArguments[pkg] = more.dup;
     g.plan = planRepository(root, false, only, tools, g.toolchain.identity, !o.noLayoutLint, o.packages,
-        o.coverage, o.singleFiles);
+        o.coverage, o.singleFiles, o.applications);
     if (g.plan.error.length)
         return GraphRun(g.plan.error);
     if (g.plan.requests == 0)
@@ -829,12 +844,13 @@ GraphRun runGraph(string root, string only, RunOptions o)
     }
     if (o.adjustPlan !is null)
         o.adjustPlan(g.plan);
-    // `--build-only`: every test binary's link, with what it needs.
-    if (o.buildOnly)
+    // `--build-only`: every test binary's link, with what it needs; with
+    // applications planned, all of the plan, their libraries' compiles too.
+    if (o.buildOnly && !o.applications.length)
     {
         string[] links;
         foreach (ref a; g.plan.graph.actions)
-            if (a.kind == ActionKind.link && a.id.text.canFind(":test-root:"))
+            if (a.kind == ActionKind.link && (a.id.text.canFind(":test-root:") || a.id.text.canFind(":application:")))
                 links ~= a.id.text;
         g.plan.graph = needing(g.plan.graph, links);
     }
