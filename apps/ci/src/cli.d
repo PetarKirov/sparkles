@@ -182,9 +182,21 @@ struct TestCommand
     SpecialModes specialModes;
 
     @(Option(`from`,
-        description: "Test only these packages, by name (default: every one the root dub.sdl "
-        ~ "declares). With --slow: the packages whose slow tests to run."))
+        description: "Test only these packages: each a short name, a qualified name, a path, or a "
+        ~ "git-style glob over them (default: every one the root dub.sdl declares). With --slow: "
+        ~ "the packages whose slow tests to run, by name."))
     string[] from;
+
+    @(Option(`since`,
+        description: "Also test the packages a change since REF reaches, judged by the files "
+        ~ "their builds claim (default REF: the branch's upstream, else origin/main)."))
+    string since;
+
+    @(Option(`dependencies`, description: "Add the dependencies of the selected packages."))
+    bool dependencies;
+
+    @(Option(`dependents`, description: "Add the packages that depend on the selected ones."))
+    bool dependents;
 
     @(Option(`coverage`,
         description: "Build each package's tests under -cov, merge the listings into "
@@ -267,6 +279,11 @@ struct TestCommand
             return "--placement does not combine with --build-only, --slow or --watch";
         if (historyTip.length && !shard.length)
             return "--history-tip needs --shard";
+        // §4: focused selection is the graph's, not the slow or special modes'.
+        if ((since.length || dependencies || dependents) && (slow || specialModes != SpecialModes.off
+            || sanitize != Sanitizer.off || watch || placement.length))
+            return "--since, --dependencies and --dependents select the ordinary tests or "
+                ~ "--build-only, without a placement";
         // CIC1: the common execution options.
         if (jobs.length && !parseCapacity(jobs))
             return "--jobs takes a positive capacity";
@@ -331,6 +348,10 @@ unittest
     assert(TestCommand(dryRun: true, interlaced: true).conflict == "--dry-run has no task output to interlace");
     assert(TestCommand(dryRun: true, buildOnly: true).conflict is null);
     assert(TestCommand(slow: true, interlaced: true).conflict !is null);
+    // §4: focused selection runs on the graph, without a placement.
+    assert(TestCommand(since: "HEAD~1", dependents: true).conflict is null);
+    assert(TestCommand(dependencies: true, slow: true).conflict !is null);
+    assert(TestCommand(since: "main", placement: "p").conflict !is null);
 }
 
 // === ci placements ===

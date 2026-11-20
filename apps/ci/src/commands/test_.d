@@ -594,7 +594,16 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
     if (repoRoot is null)
         return failRun("Could not detect repository root");
     string[] subPackages;
-    if (!requestedSubPackages(repoRoot, requested, subPackages))
+    // §4: selectors, a change set and the closures through the selection
+    // algebra (TDS4–TDS8); plain package names as before.
+    if (cmd.since.length || cmd.dependencies || cmd.dependents
+        || requested.any!(r => r.canFind('/') || r.canFind(':') || r.canFind('*') || r.canFind('?')))
+    {
+        const why = focusedPackages(repoRoot, cmd, subPackages);
+        if (why.length)
+            return failRun(why);
+    }
+    else if (!requestedSubPackages(repoRoot, requested, subPackages))
         return failRun("could not resolve the requested sub-packages");
     if (where.shard.length && !narrowToShard(repoRoot, requested, where, subPackages))
         return failRun("could not narrow the sub-packages to shard " ~ where.shard);
@@ -670,6 +679,40 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
         return failRun(failedPackages.length ? text(failedPackages.length, " test package(s) failed: ",
             failedPackages.join(", ")) : text("the build graph's run failed (exit ", g.exitCode, ")"));
     return ranOk();
+}
+
+/**
+The packages `cmd`'s selectors choose (ci task-DAG §4): `--from` selectors and
+globs, `--since`'s change set judged by the packages' claims (CIC5), and the
+dependency and dependent closures, as the directories the root recipe names.
+A package outside this host's platforms is left out. The error, or null.
+*/
+private string focusedPackages(string repoRoot, in TestCommand cmd, out string[] directories)
+{
+    import repository_inputs : repositoryFocus;
+    import sparkles.build_primitives.dub_manifest : hostPlatformTokens;
+    import sparkles.build_primitives.resolve.configure : processEnvironment;
+    import sparkles.build_primitives.workspace.package_graph : RecipeRole;
+    import sparkles.build_primitives.workspace.select : planPackages;
+    import watch_mode : hostBuildPlatform, registrySources;
+
+    auto options = repositoryFocus(hostBuildPlatform(), registrySources(repoRoot), processEnvironment());
+    options.from = cmd.from;
+    options.since = cmd.since.length > 0;
+    options.sinceRef = cmd.since;
+    options.dependencies = cmd.dependencies;
+    options.dependents = cmd.dependents;
+    auto planned = planPackages(repoRoot, cmd.buildOnly ? RecipeRole.build : RecipeRole.test, options,
+        hostPlatformTokens());
+    if (planned.hasError)
+        return text("selection: ", planned.error.detail);
+    foreach (ref p; planned.value.selection.packages)
+        if (!p.platformSkipped)
+            directories ~= planned.value.graph.packages[p.graphIndex].path;
+    if (!directories.length)
+        return "the selection holds no package that runs on this host";
+    info(i"selected $(directories.length) package(s): $(directories.map!(d => d.baseName).join(", "))");
+    return null;
 }
 
 /// Merges each coverage test's listings beneath `into/out` into
