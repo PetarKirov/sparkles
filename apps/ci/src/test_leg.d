@@ -125,6 +125,8 @@ private final class Worker
     bool waiting;    // idle, with no test left for it in its phase
     bool exitSent;
     bool ended;      // its supervised run returned
+    bool exited;     // its process exited, reaped, by itself or a signal
+    bool exitedOk;   // with status zero
     size_t index;    // start order, which is also exit order (TRS4)
 
     this(string binary, size_t index) @safe
@@ -153,6 +155,8 @@ private struct LegRun
     bool callerMerges;    // the druntime options already ask to merge (TRS5)
     bool coverage;        // the binary's hello reports coverage compiled in
     bool driverFailed;    // an extracted mode failed, or was skipped under --require-toolchain
+    bool selfRun;         // the binary speaks no runner protocol: it ran its own tests
+    bool selfRunOk;       // and exited zero
 
     // Takes the session's events: renders them and counts results.
     void drain(Worker w)
@@ -183,6 +187,10 @@ private struct LegRun
                         ++failed;
                     break;
                 case EventKind.protocolError:
+                    // A binary that ran its own tests and exited zero speaks
+                    // no protocol by design: not an error (`runTestLeg`).
+                    if (!w.ready && w.exitedOk && !w.session.hello.version_)
+                        continue;
                     broken = true;
                     break;
                 case EventKind.testStarted, EventKind.testOutput, EventKind.commandFrame,
@@ -233,6 +241,10 @@ private struct LegRun
                 case ProcessEventKind.sample:
                     break;
                 case ProcessEventKind.exited:
+                    import sparkles.event_horizon.proc : ReapOutcome;
+
+                    w.exited = ev.reap == ReapOutcome.reaped;
+                    w.exitedOk = w.exited && ev.status.ok;
                     w.session.feedOutputClosed();
                     w.session.feedEnd(describeEnding(ev.status.signaled ? -ev.status.code : ev.status.code));
                     break;
@@ -367,6 +379,18 @@ TaskOutcome runTestLeg(ref TaskContext!Sched ctx, const ref InProcessAction acti
         sc.spawn(() { run.runWorker(first); });
         while (!first.ready && !first.ended && !run.broken && !ctx.cancelRequested)
             cast(void) sleep(*ctx.exec, 5.msecs);
+        // A binary that exits by itself before any listing speaks no runner
+        // protocol: druntime's runner, or its own `main`, ran its tests, and
+        // its exit status is the verdict, as under `dub test`.
+        while (!first.ready && !first.ended && !ctx.cancelRequested)
+            cast(void) sleep(*ctx.exec, 5.msecs);
+        if (!first.ready && first.ended && first.exited && !first.session.hello.version_)
+        {
+            run.selfRun = true;
+            run.selfRunOk = first.exitedOk;
+            run.broken = false;
+            return;
+        }
         if (!first.ready || ctx.cancelRequested)
         {
             sc.cancel();
@@ -441,6 +465,12 @@ TaskOutcome runTestLeg(ref TaskContext!Sched ctx, const ref InProcessAction acti
         }
     })(*ctx.exec);
 
+    if (run.selfRun)
+    {
+        say(run.selfRunOk ? "the binary ran its own tests, speaking no runner protocol, and exited zero"
+            : "the binary ran its own tests, speaking no runner protocol, and failed");
+        return run.selfRunOk ? TaskOutcome(Succeeded()) : TaskOutcome(Failed(FailureReason.exitStatus, 1));
+    }
     say(summaryLine(run.passed, run.failed, run.skipped));
     if (ctx.cancelRequested)
         return TaskOutcome(Failed(FailureReason.signal));
