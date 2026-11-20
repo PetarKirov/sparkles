@@ -131,7 +131,7 @@ jobs:
             ${{ matrix.system }}-dub-
 
       - name: Test the shard's packages
-        run: ci test --fail-fast --placement "$PLACEMENT" --shard "$SHARD" --history-tip "$TIP"
+        run: ci test --fail-fast --interlaced --placement "$PLACEMENT" --shard "$SHARD" --history-tip "$TIP"
         env:
           # The compiler the placement tests with; both are on PATH via the
           # `ci` dev shell, and `ci` itself embeds dmd.
@@ -139,6 +139,13 @@ jobs:
           PLACEMENT: ${{ matrix.placement }}
           SHARD: ${{ matrix.shard }}
           TIP: ${{ needs.placements.outputs.tip }}
+
+      # CIC13: every run re-executes a sample of the actions its builds ran
+      # or reused, into a private store; a difference fails the job.
+      - name: Check a sample of the shard's builds for determinism
+        run: ci cache verify --rerun
+        env:
+          DC: ${{ matrix.compiler }}
 
       - name: Upload the run record
         if: ${{ !cancelled() }}
