@@ -46,7 +46,7 @@ private Event at(PointerAction action, Point p, PointerButton button = PointerBu
     const t = app.view(h);
     bool found;
     foreach (ref n; t.nodes)
-        if (n.kind == WidgetKind.scrollbar && n.hitId == ExplorerApp.barHitBase + ExplorerApp.Bar.tree)
+        if (n.kind == WidgetKind.scrollbar && n.hitId == app.hitIds.find(ExplorerApp.barsHitKey)[ExplorerApp.Bar.tree])
         {
             found = true;
             assert(n.barContent == app.tv.rows.length && n.barViewport == app.tv.bodyRows,

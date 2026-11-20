@@ -21,7 +21,7 @@ import sparkles.input : Event, isDismiss, isEndOfInput, Key, KeyEvent, match, Mo
     PointerAction, PointerButton, PointerEvent, WheelEvent;
 import sparkles.base.term_control : PointerShape;
 import sparkles.ui.components.chrome : scrollbar, ScrollbarSpec, tabStrip;
-import sparkles.ui.hit_ids : HitBlock;
+import sparkles.ui.hit_ids : HitBlock, HitKey, HitRegistry;
 import sparkles.ui.editor.command : EditCommand;
 import sparkles.ui.state : ScrollAxis, scrollbarThumb, sourceOffsetAt;
 import sparkles.ui.components.controls : chip, ControlSize, segmented;
@@ -132,16 +132,45 @@ struct ExplorerApp
     /// The first row of the help that shows.
     int helpTop() const @safe => cast(int) helpScroll.motion.whole;
 
-    /// The base of the ▶ hit ids: `tryHitBase + at`.
-    enum size_t tryHitBase = 1 << 24;
-    /// The right group's tabs: `tabHitBase + i`.
-    enum size_t tabHitBase = 1 << 22;
-    /// The overlay bars (`FXU14`): `barHitBase + Bar`.
-    enum size_t barHitBase = tabHitBase + 8;
+    /**
+    The hit ids the frame stamps, issued by the registry (`INP27`): `view`
+    begins its frame, each control group asks for its key's block, and a
+    press is decoded by asking which key holds its id.
+    */
+    HitRegistry hitIds;
+
+    /// The help's ▶s, indexed by their fence's source offset (`FXT2`).
+    enum HitKey tryHitKey = HitKey("fileset-explorer.try");
+    /// The right group's tabs, by position (`FXU10`, `FXU11`).
+    enum HitKey tabsHitKey = HitKey("fileset-explorer.tabs");
+    /// The panes' bars, by `Bar` (`FXU14`).
+    enum HitKey barsHitKey = HitKey("fileset-explorer.bars");
     /// The query editor's lines (`FXU15`).
-    enum size_t queryHit = tabHitBase + 12;
-    /// The Export tab's buttons: previous and next target, glob mode, copy.
-    enum size_t exportHitBase = tabHitBase + 16;
+    enum HitKey queryHitKey = HitKey("fileset-explorer.query");
+    /// The Export tab's buttons, by `ExportButton`.
+    enum HitKey exportHitKey = HitKey("fileset-explorer.export");
+    /// The touch layout's buttons, by `Action` (`FXU11`, `FXU13`).
+    enum HitKey actionsHitKey = HitKey("fileset-explorer.actions");
+    /// The Stats tab's name lines, by `nameKeys` index (`FXS2`).
+    enum HitKey statsHitKey = HitKey("fileset-explorer.stats");
+    /// Send's buttons on the touch layout, by `SendButton` (`FXS3`, `FXS4`).
+    enum HitKey sendHitKey = HitKey("fileset-explorer.send");
+
+    /// The Export tab's buttons, and the keys that do the same (t/T, g, y).
+    enum ExportButton : size_t
+    {
+        previous, /// the previous target
+        next,     /// the next target
+        globs,    /// Nix's next glob mode
+        copy,     /// copying the code
+    }
+
+    private size_t barHit(Bar which) => hitIds.block(barsHitKey, Bar.max + 1)[which];
+    private size_t exportHit(ExportButton x) => hitIds.block(exportHitKey, ExportButton.max + 1)[x];
+    private size_t actionHit(size_t action) => actionBlock[action];
+    private HitBlock actionBlock() => hitIds.block(actionsHitKey, Action.insert + chipTexts.length);
+    private size_t statsHit(size_t name) => hitIds.block(statsHitKey, nameKeys.length)[name];
+    private size_t sendHit(SendButton s) => hitIds.block(sendHitKey, SendButton.max + 1)[s];
 
     /// The panes that scroll, each with its bar (`FXU14`).
     enum Bar : ubyte
@@ -319,14 +348,19 @@ struct ExplorerApp
             }
             if (n.decoration.insideGlyphFrame)
                 frameBoxes ~= frames[i].rect;
-            if (n.hitId >= tryHitBase && n.hitId < tryHitBase + helpSource.length)
-                tryHits ~= TryHit(frames[i].rect, n.hitId - tryHitBase);
-            else if (n.hitId >= barHitBase && n.hitId <= barHitBase + Bar.max)
-                barRects[n.hitId - barHitBase] = frames[i].rect;
-            else if (n.hitId == queryHit)
+            // Which control the id is, asked of the registry the frame was
+            // built with; a button keeps its id, decoded when pressed.
+            HitKey key;
+            size_t index;
+            if (!hitIds.ownerOf(n.hitId, key, index))
+                continue;
+            if (key == tryHitKey)
+                tryHits ~= TryHit(frames[i].rect, index);
+            else if (key == barsHitKey)
+                barRects[index] = frames[i].rect;
+            else if (key == queryHitKey)
                 queryRect = frames[i].rect;
-            else if ((n.hitId >= tabHitBase && n.hitId < actionBase + Action.insert + chipTexts.length)
-                    || (n.hitId >= statsHitBase && n.hitId <= sendHitBase + SendButton.max))
+            else
                 buttons ~= TryHit(frames[i].rect, n.hitId);
         }
         // A fence's box: the smallest glyph frame around its viewport, the
@@ -391,6 +425,8 @@ struct ExplorerApp
     {
         const size = h.size;
         auto b = Builder();
+        // Ids this frame does not ask for again are freed (`INP27`).
+        hitIds.beginFrame();
         // A send runs on its own threads: read where it is before drawing it.
         sending.tick();
 
@@ -554,8 +590,8 @@ struct ExplorerApp
     private uint touchChip(ref Builder b, string label, size_t hitId)
         => pill(b, chip(b, label, hitId, false, ControlSize(rows: rowCells)));
 
-    // A segmented control of touch targets: segment `i`'s hit id is `firstHit + i`.
-    private uint touchSegments(ref Builder b, in string[] labels, size_t selected, size_t firstHit)
+    // A segmented control of touch targets: segment `i`'s hit id is `hits[first + i]`.
+    private uint touchSegments(ref Builder b, in string[] labels, size_t selected, HitBlock hits, size_t first = 0)
     {
         uint[] segs;
         foreach (i, l; labels)
@@ -566,7 +602,7 @@ struct ExplorerApp
             // Inset within the group's 32 dp outline by 3 dp on every side, as a
             // segment is: the outline's sides as far off as its top and bottom.
             segs ~= pill(b, b.add(Widget(kind: WidgetKind.panel, children: [t], padding: Insets(0, 1, 0, 1),
-                hitId: firstHit + i, slot: on ? Slot.chromeAccent : Slot.surfaceRaised, paintBackground: on,
+                hitId: hits[first + i], slot: on ? Slot.chromeAccent : Slot.surfaceRaised, paintBackground: on,
                 decoration: Decoration(borderRadius: 3, drawHeight: 32, drawInset: 3))));
         }
         // The group's outline is drawn at the target's middle, around the segments.
@@ -595,13 +631,13 @@ struct ExplorerApp
     {
         const name = centred(b, b.add(Widget(kind: WidgetKind.text, text: targetName(exportTarget),
             slot: Slot.accentPrimary, textStyle: TextStyle(bold: true))));
-        return [touchChip(b, "◀", exportHitBase + 0), gapCells(b, 1), name, gapCells(b, 1),
-            touchChip(b, "▶", exportHitBase + 1)];
+        return [touchChip(b, "◀", exportHit(ExportButton.previous)), gapCells(b, 1), name, gapCells(b, 1),
+            touchChip(b, "▶", exportHit(ExportButton.next))];
     }
 
     // Nix's glob mode, as segments.
     private uint nixModeSegments(ref Builder b)
-        => touchSegments(b, shortModes ? nixModesShort : nixModes, nixGlobs, actionBase + Action.globShim);
+        => touchSegments(b, shortModes ? nixModesShort : nixModes, nixGlobs, actionBlock, Action.globShim);
 
     private static uint gapCells(ref Builder b, int n)
         => b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(n)));
@@ -618,7 +654,7 @@ struct ExplorerApp
             parts ~= [gapCells(b, 1), nixModeSegments(b)];
         parts ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
         if (currentExport.ok)
-            parts ~= touchChip(b, "Copy", exportHitBase + 3);
+            parts ~= touchChip(b, "Copy", exportHit(ExportButton.copy));
         return parts;
     }
 
@@ -634,7 +670,7 @@ struct ExplorerApp
         return w;
     }
 
-    /// What the touch layout's buttons do: their hit ids are `actionBase + Action`.
+    /// What the touch layout's buttons do, their index in `actionsHitKey`'s block.
     enum Action : size_t
     {
         expandAll,
@@ -648,8 +684,6 @@ struct ExplorerApp
         insert, /// `insert + i`: `operatorChips`' `i`th chip
     }
 
-    /// The base of the touch layout's buttons.
-    enum size_t actionBase = tabHitBase + 32;
 
     // The chips under the query: label, and what it inserts (`""`: an action).
     private static immutable string[2][] chipTexts = [
@@ -710,13 +744,13 @@ struct ExplorerApp
         uint[] chips;
         foreach (i, c; chipTexts)
         {
-            chips ~= touchChip(b, c[0], actionBase + Action.insert + i);
+            chips ~= touchChip(b, c[0], actionHit(Action.insert + i));
             chips ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(between)));
         }
         chips ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
-        chips ~= touchChip(b, "⌫", actionBase + Action.backspace);
+        chips ~= touchChip(b, "⌫", actionHit(Action.backspace));
         chips ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(1)));
-        chips ~= touchChip(b, "Clear", actionBase + Action.clear);
+        chips ~= touchChip(b, "Clear", actionHit(Action.clear));
         return b.add(Widget(kind: WidgetKind.row, children: chips, width: SizeSpec.grow(),
             height: SizeSpec.fixed(rowCells), padding: Insets(0, 2, 0, 2)));
     }
@@ -818,7 +852,7 @@ struct ExplorerApp
         }
         // One column, for a pointer to find (`FXU15`).
         return [b.add(Widget(kind: WidgetKind.column, children: out_, width: SizeSpec.grow(),
-            hitId: queryHit))];
+            hitId: hitIds.block(queryHitKey).id))];
     }
 
     /// The byte of the query a click on screen cell `p` puts the caret at
@@ -954,13 +988,15 @@ struct ExplorerApp
             // layout the tabs are a segmented control (`FXU11`).
             const shown = n.children[n.active < n.children.length ? n.active : 0];
             const pane = cast(Pane) dock.layout.nodes[shown].pane;
+            // One id per tab, the right group's only (`INP27`).
+            const tabHits = idx == tabsNode ? hitIds.block(tabsHitKey, labels.length) : HitBlock.init;
             // Export's controls share the tabs' row when it has room (`FXU23`).
             exportControlsInStrip = false;
             shortModes = false;
             uint strip;
             if (touch)
             {
-                uint[] parts = [touchSegments(b, labels, n.active, tabHitBase)];
+                uint[] parts = [touchSegments(b, labels, n.active, tabHits)];
                 // The glob modes' short labels, if only they make it fit.
                 const room = paneRect(pane).width - 2 - (segmentsWidth(labels) + 1);
                 shortModes = room < exportControlsWidth(false);
@@ -976,10 +1012,7 @@ struct ExplorerApp
                     height: SizeSpec.fixed(rowCells), width: SizeSpec.grow(), children: parts));
             }
             else
-                // The explorer's own ids, below the registry's issued slots
-                // (`INP27`): one per tab, from `tabHitBase`.
-                strip = tabStrip(b, labels, n.active,
-                    idx == tabsNode ? HitBlock(tabHitBase, labels.length) : HitBlock.init);
+                strip = tabStrip(b, labels, n.active, tabHits);
             const vertical = dock.layout.nodes[dock.layout.root].axis == DockAxis.vertical;
             return b.add(Widget(kind: WidgetKind.column, children: [strip,
                 paneView(b, pane, null, false, 0, stats)],
@@ -1038,8 +1071,8 @@ struct ExplorerApp
             const gap = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(1)));
             const head = b.add(Widget(kind: WidgetKind.row, width: SizeSpec.grow(), height: SizeSpec.fixed(rowCells),
                 padding: Insets(0, 2, 0, 1), children: [what, fill,
-                    touchChip(b, "Expand all", actionBase + Action.expandAll), gap,
-                    touchChip(b, "Collapse all", actionBase + Action.collapseAll)]));
+                    touchChip(b, "Expand all", actionHit(Action.expandAll)), gap,
+                    touchChip(b, "Collapse all", actionHit(Action.collapseAll))]));
             return b.add(Widget(kind: WidgetKind.column, children: [head, body_],
                 width: SizeSpec.fixed(max(0, r.width)), clipX: true));
         }
@@ -1143,7 +1176,7 @@ struct ExplorerApp
             bar = scrollbar(b, ScrollbarSpec(axis: ScrollAxis.vertical, content: content, viewport: rows,
                 offset: cast(long) whole, offsetFrac: cast(float)(cells - whole),
                 expandPercent: barHot == which || barGrab == which ? 100 : 0,
-                fadePercent: touch ? body.bar.anim.fadePercent : 100, hitId: barHitBase + which), rows);
+                fadePercent: touch ? body.bar.anim.fadePercent : 100, hitId: barHit(which)), rows);
         }
         else
             bar = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(1)));
@@ -1186,7 +1219,7 @@ struct ExplorerApp
             o.maxWidth = max(10, r.width - 2);
             o.tableOverflow = OverflowPolicy(WrapOverflow());
             o.tryRunners = ["fileset"];
-            o.tryHits = HitBlock(tryHitBase, helpSource.length + 1); // by the fence's source offset
+            o.tryHits = hitIds.block(tryHitKey, helpSource.length + 1); // by the fence's source offset
             o.tryResult = (ref Builder bb, size_t at) => resultView(bb, at);
             // The cheat sheet's queries, each with a ▶ that tries it (`FXU19`).
             // Each fence where it was scrolled across to (`FXU25`).
@@ -1277,7 +1310,7 @@ struct ExplorerApp
         {
             auto w = Widget(kind: WidgetKind.rich, spans: spans);
             if (button != size_t.max)
-                w.hitId = exportHitBase + button;
+                w.hitId = exportHit(cast(ExportButton) button);
             return b.add(w);
         }
         int touchRows; // header rows `rowCells` tall
@@ -1291,7 +1324,7 @@ struct ExplorerApp
                 uint[] line = exportTargetControls(b);
                 line ~= b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
                 if (e.ok)
-                    line ~= touchChip(b, "Copy", exportHitBase + 3);
+                    line ~= touchChip(b, "Copy", exportHit(ExportButton.copy));
                 rows ~= b.add(Widget(kind: WidgetKind.row, children: line, width: SizeSpec.grow(),
                     height: SizeSpec.fixed(rowCells)));
                 ++touchRows;
@@ -1427,10 +1460,6 @@ struct ExplorerApp
 
     private enum string sendControls = "\x01";
 
-    /// The Stats tab's name lines (`FXS2`): `statsHitBase + i`.
-    enum size_t statsHitBase = tabHitBase + 256;
-    /// Send's buttons on the touch layout: `sendHitBase + SendButton`.
-    enum size_t sendHitBase = statsHitBase + 32;
 
     /// Send's buttons.
     enum SendButton : ubyte
@@ -1505,12 +1534,12 @@ struct ExplorerApp
                 const val = b.add(Widget(kind: WidgetKind.text, text: piece, slot: s,
                     textStyle: TextStyle(bold: chosen)));
                 put(b.add(Widget(kind: WidgetKind.row, children: [key, val],
-                    hitId: name != size_t.max ? statsHitBase + name : 0)), 1);
+                    hitId: name != size_t.max ? statsHit(name) : 0)), 1);
             }
             // Touch: the ids are a button away, under their line (`FXU13`).
             if (touch && kv[0] == "ids" && fits(rowCells))
                 put(b.add(Widget(kind: WidgetKind.row, padding: Insets(0, 1, 0, 0), children: [
-                    touchChip(b, "Compute ids", actionBase + Action.computeIds)])), rowCells);
+                    touchChip(b, "Compute ids", actionHit(Action.computeIds))])), rowCells);
         }
         return b.add(Widget(kind: WidgetKind.column, children: out_, width: SizeSpec.grow()));
     }
@@ -1521,20 +1550,20 @@ struct ExplorerApp
         final switch (sending.stage)
         {
             case SendStage.idle, SendStage.unavailable:
-                return [touchChip(b, "Send", sendHitBase + SendButton.send)];
+                return [touchChip(b, "Send", sendHit(SendButton.send))];
             case SendStage.asking:
-                return [touchChip(b, "Send", sendHitBase + SendButton.send), gapCells(b, 1),
-                    touchChip(b, "Cancel", sendHitBase + SendButton.cancel)];
+                return [touchChip(b, "Send", sendHit(SendButton.send)), gapCells(b, 1),
+                    touchChip(b, "Cancel", sendHit(SendButton.cancel))];
             case SendStage.running:
                 uint[] chips;
                 if (sending.receiveCommand.length)
                 {
-                    chips ~= [touchChip(b, "Copy", sendHitBase + SendButton.copy), gapCells(b, 1)];
+                    chips ~= [touchChip(b, "Copy", sendHit(SendButton.copy)), gapCells(b, 1)];
                     // Where the platform has a share sheet (Android's).
                     if (shareText !is null)
-                        chips ~= [touchChip(b, "Share", sendHitBase + SendButton.share), gapCells(b, 1)];
+                        chips ~= [touchChip(b, "Share", sendHit(SendButton.share)), gapCells(b, 1)];
                 }
-                return chips ~ touchChip(b, "Stop", sendHitBase + SendButton.stop);
+                return chips ~ touchChip(b, "Stop", sendHit(SendButton.stop));
         }
     }
 
@@ -1863,28 +1892,26 @@ struct ExplorerApp
         foreach (ref hit; buttons)
             if (inside(hit.rect, p.pos))
             {
-                // A name's line copies it; Send's buttons (`FXS2`–`FXS4`).
-                if (hit.at >= sendHitBase && hit.at <= sendHitBase + SendButton.max)
-                {
-                    focus = Focus.side;
-                    return sendAction(h, cast(SendButton)(hit.at - sendHitBase));
-                }
-                if (hit.at >= statsHitBase && hit.at < statsHitBase + nameKeys.length)
-                {
-                    focus = Focus.side;
-                    return copyName(h, hit.at - statsHitBase);
-                }
-                if (hit.at >= actionBase)
-                    return touchAction(cast(size_t)(hit.at - actionBase));
+                HitKey key;
+                size_t index;
+                if (!hitIds.ownerOf(hit.at, key, index))
+                    continue;
+                if (key == actionsHitKey)
+                    return touchAction(index);
                 focus = Focus.side;
-                if (hit.at < exportHitBase)
+                // A name's line copies it; Send's buttons (`FXS2`–`FXS4`).
+                if (key == sendHitKey)
+                    return sendAction(h, cast(SendButton) index);
+                if (key == statsHitKey)
+                    return copyName(h, index);
+                if (key == tabsHitKey)
                 {
                     auto g = &dock.layout.nodes[tabsNode];
-                    if (hit.at - tabHitBase < g.children.length)
-                        g.active = cast(uint)(hit.at - tabHitBase);
+                    if (index < g.children.length)
+                        g.active = cast(uint) index;
                 }
-                else
-                    exportAction(h, hit.at - exportHitBase);
+                else if (key == exportHitKey)
+                    exportAction(h, cast(ExportButton) index);
                 return;
             }
         // Above the dock: the query, and on a phone its keyboard; on its
@@ -2025,7 +2052,8 @@ struct ExplorerApp
             case Key.pageDown: exportScroll.by(page); break;
             case Key.char_:
                 if (k.ch == 'T' || k.ch == 't' || k.ch == 'g' || k.ch == 'y')
-                    exportAction(h, k.ch == 'T' ? 0 : k.ch == 't' ? 1 : k.ch == 'g' ? 2 : 3);
+                    exportAction(h, k.ch == 'T' ? ExportButton.previous : k.ch == 't' ? ExportButton.next
+                        : k.ch == 'g' ? ExportButton.globs : ExportButton.copy);
                 break;
             default: break;
         }
@@ -2082,25 +2110,25 @@ struct ExplorerApp
 
     // The Export tab's four actions, by key or by its button: the previous
     // target, the next, Nix's next glob mode, and copying the code.
-    private void exportAction(H)(ref H h, size_t action)
+    private void exportAction(H)(ref H h, ExportButton action)
     {
         size_t at;
         foreach (i, t; targets)
             if (t == exportTarget)
                 at = i;
-        if (action <= 1)
+        if (action <= ExportButton.next)
         {
-            exportTarget = targets[(at + (action == 1 ? 1 : targets.length - 1)) % targets.length];
+            exportTarget = targets[(at + (action == ExportButton.next ? 1 : targets.length - 1)) % targets.length];
             exportStale = true;
             exportScroll.motion.jumpTo(0, 0);
             exportScrollX.motion.jumpTo(0, 0);
         }
-        else if (action == 2 && exportTarget == Target.nix)
+        else if (action == ExportButton.globs && exportTarget == Target.nix)
         {
             nixGlobs = cast(NixGlobs)((nixGlobs + 1) % (NixGlobs.max + 1));
             exportStale = true;
         }
-        else if (action == 3 && currentExport.ok)
+        else if (action == ExportButton.copy && currentExport.ok)
         {
             static if (__traits(compiles, h.clipboard(currentExport.code)))
                 h.clipboard(currentExport.code);
