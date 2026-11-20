@@ -121,6 +121,20 @@ struct ActionGraph
     }
 }
 
+/**
+One leg of a package's tests (ci task-DAG CIC11, CIC14): one test action
+that runs the binary with `-t threads`, claiming that weight. A named leg's
+action id carries its name as a last segment; the unnamed one's is the
+test root's own.
+*/
+struct TestLeg
+{
+    uint threads = defaultWeight(ActionKind.test); ///
+    /// `--skip-slow`: the `@slow` tests are left to a run of their own.
+    bool skipSlow;
+    string name; /// the id's last segment; empty for none
+}
+
 /// The tools an action graph names.
 struct Tools
 {
@@ -154,6 +168,8 @@ struct Tools
     /// for every other process. `Duration.zero` sets none.
     Duration testLimit = 20.minutes;
     Duration actionLimit = 30.minutes; /// ditto
+    /// The legs each test binary runs in, each its own test action.
+    TestLeg[] testLegs = [TestLeg.init];
 }
 
 /**
@@ -224,7 +240,7 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
     // Each request's root compile and link.
     TaskId[size_t] rootCompileOf, linkOf;
     // Each request's test.
-    TaskId[size_t] testOf;
+    TaskId[][size_t] testOf; // each test root's legs
 
     TaskId add(Action a)
     {
@@ -451,25 +467,36 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
             edge(a, linkId);
 
         if (v.role == Role.testRoot && !programs.canFind!(p => p.program == ri))
-        {
-            const testWeight = defaultWeight(ActionKind.test);
-            // A coverage test writes its listings to its own directory, recording
-            // root-relative paths (CIC7).
-            const coverage = (v.settings.options & BuildOption.coverage) != 0;
-            auto testArgv = [inputPath(linkId, binaryName(*v))];
-            if (coverage)
-                testArgv ~= "--DRT-covopt=dstpath:$OUT srcpath:$ROOT";
-            testArgv ~= testRunnerArguments(*v, root, tools);
-            testArgv ~= ["-t", text(testWeight)];
-            // BGX1: a test runs in the repository root, whatever the recipe's
-            // `workingDirectory`.
-            auto t = Action(ActionKind.test, actionId(ActionKind.test, *v), rootVariant,
-                TaskAction(ProcessAction(argv: testArgv,
-                    sandbox: SandboxPolicy.taskDirectory)),
-                coverage ? [DeclaredOutput(".", true)] : null, testWeight);
-            testOf[ri] = add(t);
-            edge(linkId, testOf[ri]);
-        }
+            foreach (leg; tools.testLegs)
+            {
+                // A coverage test writes its listings to its own directory,
+                // recording root-relative paths (CIC7).
+                const coverage = (v.settings.options & BuildOption.coverage) != 0;
+                auto testArgv = [inputPath(linkId, binaryName(*v))];
+                if (coverage)
+                    testArgv ~= "--DRT-covopt=dstpath:$OUT srcpath:$ROOT";
+                testArgv ~= testRunnerArguments(*v, root, tools);
+                if (leg.skipSlow)
+                    testArgv ~= "--skip-slow";
+                testArgv ~= ["-t", text(leg.threads)];
+                auto id = actionId(ActionKind.test, *v);
+                if (leg.name.length)
+                {
+                    import std.array : split;
+
+                    const named = taskId(id.text.split(":") ~ leg.name);
+                    assert(named.hasValue, leg.name);
+                    id = named.value;
+                }
+                // BGX1: a test runs in the repository root, whatever the
+                // recipe's `workingDirectory`.
+                auto t = Action(ActionKind.test, id, rootVariant,
+                    TaskAction(ProcessAction(argv: testArgv,
+                        sandbox: SandboxPolicy.taskDirectory)),
+                    coverage ? [DeclaredOutput(".", true)] : null, leg.threads);
+                testOf[ri] ~= add(t);
+                edge(linkId, testOf[ri][$ - 1]);
+            }
     }
 
     // D61: a test runs the programs it declares, from their links.
@@ -479,12 +506,15 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
             return planErr!ActionGraph(ActionError(text("a test program names a request with no ",
                 p.program !in linkOf ? "binary" : "test", ": ", p.variable)));
         const binary = inputPath(linkOf[p.program], binaryName(plan.variants[plan.requests[p.program][0]]));
-        foreach (ref a; g.actions)
-            if (a.id == testOf[p.test])
-                a.action.match!(
-                    (ref ProcessAction pa) { pa.envDelta ~= EnvEntry(p.variable, binary); },
-                    (ref other) {});
-        edge(linkOf[p.program], testOf[p.test]);
+        foreach (test; testOf[p.test])
+        {
+            foreach (ref a; g.actions)
+                if (a.id == test)
+                    a.action.match!(
+                        (ref ProcessAction pa) { pa.envDelta ~= EnvEntry(p.variable, binary); },
+                        (ref other) {});
+            edge(linkOf[p.program], test);
+        }
     }
 
     // CIC7: the coverage build is provisional, and the plain retry waits for
@@ -1168,4 +1198,28 @@ version (unittest)
             return;
         }
     assert(false, "no test action");
+}
+
+/// CIC11, CIC14: each leg is a test action of its own, claiming its `-t`.
+@("build_graph.actions.planActions.testLegs")
+@safe unittest
+{
+    import std.algorithm.searching : endsWith;
+
+    const g = graphWith([[":t1", "unittest"]], null,
+        Tools(testLegs: [TestLeg(1, true, "serial"), TestLeg(8, true)]));
+    const(Action)[] legs;
+    foreach (ref a; g.actions)
+        if (a.kind == ActionKind.test)
+            legs ~= a;
+    assert(legs.length == 2);
+    foreach (ref a; legs)
+    {
+        const argv = a.action.match!((ref const ProcessAction p) => p.argv, (_) => null);
+        const serial = a.id.text.endsWith(":serial");
+        assert(argv.canFind("--skip-slow"), text(argv));
+        assert(argv[$ - 2 .. $] == ["-t", serial ? "1" : "8"], text(argv));
+        assert(a.weight == (serial ? 1 : 8));
+    }
+    assert(legs[0].id.text.endsWith(":serial") != legs[1].id.text.endsWith(":serial"));
 }
