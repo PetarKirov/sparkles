@@ -195,6 +195,36 @@ Gate:
 - The removed flags are rejected.
 - A binary run under `ci test` and standalone agrees on every test (CIC11).
 
+Progress, by the gate's items:
+
+- **The cutover:** `ci test` and `ci test --build-only` plan the selected
+  packages' test roots as one build graph (`runTestsOnGraph`) and run it
+  against the shared store, with the compiler `$DC` names, DMD's variants
+  included (build graph D19). Each test leg is the in-process action
+  `test:leg`, which drives the test runner's core over workers fed their
+  commands on standard input (`apps/ci/src/test_leg.d`, Event Horizon's
+  `superviseFed`). The placement chooses the legs and coverage; listings
+  merge into `build/coverage`, and each leg's wall time goes to the run
+  record. The dub build loop is removed; `--sanitize` keeps the dub test
+  loop until its variant (M8).
+- **Options:** `--jobs`, `--interlaced` and `--dry-run` (CIC1), the focused
+  selectors and closures (§4) and `--require-cached` (CIC12) are delivered;
+  `ci cache stats|list|gc|verify|remove|replace|explain` replace
+  `ci cache store`, and `ci cache verify --rerun` runs CIC13's check over the
+  last run.
+- **Workflows:** the `ci test` steps pass `--interlaced`, and each is
+  followed by `ci cache verify --rerun`.
+- **Gate checks so far:** oracle `cic11` of `apps/ci/tools/graph-oracles.d`:
+  a fixture's 17 tests get the same verdicts through the core and
+  standalone, and fail-fast ends another package's leg with the nested
+  processes its test started. Oracle 19 plants a nondeterministic result,
+  which fails the check. `cli.removedFlags.unknown` rejects the removed
+  flags. A second `ci test` of `versions` passes under `--require-cached
+compile archive link`.
+
+Next: the whole repository's `ci test` in both forms, with `--jobs 1`, and a
+second worktree under `--require-cached`; a CI run with the check.
+
 ## M8: Coverage, sanitizers, slow tests and special modes
 
 - Coverage attempts with conditional plain retries and package classification;
@@ -288,7 +318,7 @@ workflow or user-facing document uses a removed flag.
 | M3        | Prerequisite gate                 | done        |
 | M3a       | Placements before the build graph | done        |
 | M7a       | Canonical command line            | done        |
-| M7b       | `ci test` on the build graph      | not started |
+| M7b       | `ci test` on the build graph      | in progress |
 | M8        | Coverage and special modes        | not started |
 | M9        | Examples                          | not started |
 | M10       | Docs commands                     | not started |
