@@ -17,8 +17,8 @@
    State             | | +- > fill                                                      #    | #
    Split             | | +- > metrics                                                   #    | #
    Dock              | | +- > dashes               [3]                                  #    | #
-   Terminal          | | +- id o                   42                                   #    | #
-                     | | +- tint                   3368601                              #    | |
+   Overlays          | | +- id o                   42                                   #    | #
+   Terminal          | | +- tint                   3368601                              #    | |
                      | | +- handle o               Handle(0x12648430)                   #    | |
                      | | +- > extra                {3 keys}                             #    | |
                      | | +- > linked                                                    #    | |

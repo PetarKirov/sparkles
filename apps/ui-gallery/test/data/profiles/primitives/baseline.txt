@@ -17,8 +17,8 @@
    State             | | line * wavy      a squiggled run                                    | #
    Split             | | scrollbar        ||                                                 | #
    Dock              | |                  ||                                                 | |
+   Overlays          | |                  ##                                                 | |
    Terminal          | |                  ##                                                 | |
-                     | |                  ##                                                 | |
                      | |                  ||                                                 | |
                      | |                  ||                                                 | |
                      | | fill span          ########                                         | |

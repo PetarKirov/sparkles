@@ -17,8 +17,8 @@
    State             | +---------------------------------------------------------------------+ |
    Split             |                                                                         |
    Dock              | +---------------------------------------------------------------------+ |
-   Terminal          | | headerBar - leading * centre * trailing                             | |
-                     | |  hue                         file.d                         q quit  | |
+   Overlays          | | headerBar - leading * centre * trailing                             | |
+   Terminal          | |  hue                         file.d                         q quit  | |
                      | |                                                                     | |
                      | |  focused pane                                                       | |
                      | +---------------------------------------------------------------------+ |

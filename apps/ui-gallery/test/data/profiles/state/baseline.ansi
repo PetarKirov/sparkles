@@ -17,8 +17,8 @@
 [0m [0m> [0;1mState[0m            [0m [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
 [0m [0m  Split[0m             [0m|[0m [0m|[0m [0;1mPressState - arm, then activate on the same target[0m                  [0m|[0m [0m|[0m
 [0m [0m  Dock[0m              [0m|[0m [0m|[0m [0marmed[0m          -                                                    [0m|[0m [0m|[0m
-[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0mactivated[0m      -                                                    [0m|[0m [0m|[0m
-[0m                     [0m|[0m [0m|[0m [0mPress one tile and release over another: nothing fires.[0m             [0m|[0m [0m|[0m
+[0m [0m  Overlays[0m          [0m|[0m [0m|[0m [0mactivated[0m      -                                                    [0m|[0m [0m|[0m
+[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0mPress one tile and release over another: nothing fires.[0m             [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
 [0m                     [0m|[0m                                                                         [0m|[0m
 [0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m

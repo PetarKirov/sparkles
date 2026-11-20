@@ -17,8 +17,8 @@
    State             | |                                                                     | |
    Split             | |  scanlines                                                          | |
    Dock              | |  The quick brown fox                                                | |
-   Terminal          | |  jumps over the lazy dog                                            | |
-                     | |                                                                     | |
+   Overlays          | |  jumps over the lazy dog                                            | |
+   Terminal          | |                                                                     | |
                      | |                                                                     | |
                      | |  phosphor                                                           | |
                      | |  The quick brown fox                                                | |

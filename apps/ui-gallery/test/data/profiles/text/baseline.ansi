@@ -17,8 +17,8 @@
 [0m [0m  State[0m             [0m|[0m [0m|[0m A widget names a semantic slot,                                     [0m|[0m [0m|[0m
 [0m [0m  Split[0m             [0m|[0m [0m|[0m never a concrete colour, and the                                    [0m|[0m [0m|[0m
 [0m [0m  Dock[0m              [0m|[0m [0m|[0m palette resolves it while the                                       [0m|[0m [0m|[0m
-[0m [0m  Terminal[0m          [0m|[0m [0m|[0m display list is built.                                              [0m|[0m [0m|[0m
-[0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m [0m  Overlays[0m          [0m|[0m [0m|[0m display list is built.                                              [0m|[0m [0m|[0m
+[0m [0m  Terminal[0m          [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
 [0m                     [0m|[0m                                                                         [0m|[0m
 [0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m [0;1mbalanced - minimum squared slack over all but the last line[0m         [0m|[0m [0m|[0m

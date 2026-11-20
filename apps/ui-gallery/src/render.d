@@ -25,7 +25,8 @@ import std.conv : to;
 
 import sparkles.base.term_caps : ImageProtocol;
 import sparkles.base.term_color : Color;
-import sparkles.input : charEvent, Event, Key, keyEvent;
+import sparkles.input : charEvent, Event, Key, keyEvent, Point, PointerAction,
+    PointerButton, PointerEvent;
 import sparkles.tui.cell : CellStyle, Grid;
 import sparkles.tui.cell : writeStyle;
 import sparkles.tui.render : paintFull, serializeRow;
@@ -57,11 +58,58 @@ Event keyOf(dchar c)
     }
 }
 
+/**
+`--clicks`' argument, `x,y` cells separated by `;` (`"40,15;3,2"`), as
+points; `false` when it does not parse. Empty is no clicks.
+*/
+bool parseClicks(string s, out Point[] points)
+{
+    import std.algorithm : splitter;
+    import std.conv : ConvException, to;
+    import std.string : strip;
+
+    foreach (part; s.splitter(';'))
+    {
+        if (!part.strip.length)
+            continue;
+        auto xy = part.splitter(',');
+        int[2] v;
+        size_t n;
+        foreach (c; xy)
+        {
+            if (n == 2)
+                return false;
+            try
+                v[n++] = c.strip.to!int;
+            catch (ConvException)
+                return false;
+        }
+        if (n != 2)
+            return false;
+        points ~= Point(v[0], v[1]);
+    }
+    return true;
+}
+
+///
+@("ui_gallery.render.parseClicks")
+@safe unittest
+{
+    Point[] p;
+    assert(parseClicks("40,15; 3,2", p) && p == [Point(40, 15), Point(3, 2)]);
+    assert(parseClicks("", p) && p.length == 0);
+    assert(!parseClicks("40", p) && !parseClicks("4,5,6", p) && !parseClicks("a,b", p));
+}
+
 /// What to render, and how big.
 struct RenderRequest
 {
     size_t page;         /// index into the catalog
     string keys;         /// keystrokes delivered before the frame is taken
+    /// Left clicks, in window cells, delivered after the keys — each a press
+    /// and a release at the same cell — so a render can show what a click on
+    /// a given cell does (the overlay routing golden, `POP8`).
+    const(Point)[] clicks;
     int width = 96;      /// surface width in cells
     int height = 32;     /// surface height in cells
     /// The documented capability profile to paint for (`CAP5`). `full` paints
@@ -188,6 +236,13 @@ private Grid paintFrame(in RenderRequest req, out DegradationReport report)
     Event[] script;
     foreach (dchar c; req.keys)
         script ~= keyOf(c);
+    foreach (p; req.clicks)
+    {
+        script ~= Event(PointerEvent(action: PointerAction.press,
+            button: PointerButton.left, pos: p));
+        script ~= Event(PointerEvent(action: PointerAction.release,
+            button: PointerButton.left, pos: p));
+    }
 
     const size = Size(req.width, req.height);
     auto rec = runAppRecorded(app, RunConfig.init, script,
@@ -527,4 +582,65 @@ private string[2][] goldenFiles(size_t page)
         }
     }
     assert(walked >= 2, "the State and Dock pages walk their focus");
+}
+
+/**
+`POP8`/V1's gate, as a golden: on the Overlays page the files pane's menu
+hangs over the divider into the preview, and a click on that part — a cell
+right of the divider, on the menu's "duplicate" row — goes to the files pane
+and its item. Found from the render itself, so the golden is the frame a
+reader would see after clicking where the menu has strayed.
+*/
+@("ui_gallery.render.overlayTakesTheClickPastItsPane")
+@system unittest
+{
+    import std.algorithm : canFind, countUntil;
+    import std.array : split;
+    import std.conv : text;
+    import std.file : exists, readText, write;
+    import std.path : buildPath;
+    import std.process : environment;
+    import std.utf : count;
+    import registry : pageIndexOf;
+
+    const page = pageIndexOf("overlays");
+    const before = renderPlain(RenderRequest(page: page, width: 100, height: 34)).split('\n');
+
+    // The divider's column, from the panes' title row, and the row of the
+    // item to click — both in cells (the sidebar's bar glyphs are wide-free).
+    long divider = -1, row = -1, item = -1;
+    foreach (y, line; before)
+    {
+        const t = line.countUntil("│preview");
+        if (t >= 0 && divider < 0)
+            divider = count(line[0 .. t]);
+        const d = line.countUntil("│duplicate");
+        if (d >= 0)
+        {
+            row = cast(long) y;
+            item = count(line[0 .. d]) + 1;
+        }
+    }
+    assert(divider > 0 && row > 0, "the page shows the panes and the menu");
+    assert(item < divider && item + "duplicate".length + 3 > divider,
+        text("the menu's item starts in the files pane and runs past the divider: ",
+            item, " vs ", divider));
+
+    const at = Point(cast(int) divider + 3, cast(int) row);
+    const after = renderPlain(RenderRequest(page: page, width: 100, height: 34,
+        clicks: [at]));
+    assert(after.canFind("went to          the files pane"), "routed to the menu's pane");
+    assert(after.canFind("item             duplicate"), "and to its item");
+
+    const golden = buildPath(goldenDir("overlays"), "click-past-the-pane.txt");
+    if (environment.get("SPARKLES_UPDATE_GOLDENS", "") == "1")
+    {
+        import std.file : mkdirRecurse;
+        mkdirRecurse(goldenDir("overlays"));
+        write(golden, after);
+    }
+    else
+        assert(golden.exists && readText(golden) == after,
+            "the overlay click render drifted from " ~ golden
+            ~ " (bless with SPARKLES_UPDATE_GOLDENS=1)");
 }

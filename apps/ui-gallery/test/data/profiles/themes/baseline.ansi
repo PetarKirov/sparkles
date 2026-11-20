@@ -17,8 +17,8 @@
 [0m [0m  State[0m             [0m|[0m [0m|[0m [0m  github-light[0m                                                      [0m|[0m [0m#[0m
 [0m [0m  Split[0m             [0m|[0m [0m|[0m [0m  github-dark-dimmed[0m                                                [0m|[0m [0m#[0m
 [0m [0m  Dock[0m              [0m|[0m [0m|[0m [0m> [0;1mtokyo-night[0m                                                      [0m [0m|[0m [0m#[0m
-[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0m  solarized-dark[0m                                                    [0m|[0m [0m#[0m
-[0m                     [0m|[0m [0m|[0m [0m  solarized-light[0m                                                   [0m|[0m [0m#[0m
+[0m [0m  Overlays[0m          [0m|[0m [0m|[0m [0m  solarized-dark[0m                                                    [0m|[0m [0m#[0m
+[0m [0m  Terminal[0m          [0m|[0m [0m|[0m [0m  solarized-light[0m                                                   [0m|[0m [0m#[0m
 [0m                     [0m|[0m [0m|[0m [0m  catppuccin-mocha[0m                                                  [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m [0m  catppuccin-macchiato[0m                                              [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m [0m  catppuccin-frappe[0m                                                 [0m|[0m [0m|[0m

@@ -1,0 +1,32 @@
+ sparkles:ui anchored, out of flow, on top                                          tokyo-night
+   Welcome           | Overlays * anchored, out of flow, on top                                #
+   Primitives        |                                                                         #
+   Layout            |                                                                         #
+   Tracks            | A popup is written as a child of what it hangs off. Layout takes it out #
+   Text              | of its parent's flow and places it against the parent; the display list #
+   Themes            | paints it after everything else, outside every clip it was written      #
+   Slots             | inside; and the hit list puts it last, so it wins the cells it covers.  #
+   Decoration        |                                                                         #
+   Effects           | +---------------------------------------------------------------------+ #
+   Grid              | | a menu wider than its pane                                          | #
+   Components        | | files         |preview                                              | #
+   Tree              | | v actions     |the neighbouring pane                                | #
+   Property tree     | | +---+----------------+                                              | #
+   Table             | | |rename              |                                              | #
+   Scrolling         | | |duplicate           |                                              | #
+   State             | | |move to trash       |                                              | #
+   Split             | | +--------------------+                                              | #
+   Dock              | |               |                                                     | #
+ > Overlays          | +---------------------------------------------------------------------+ #
+   Terminal          |                                                                         #
+                     | +---------------------------------------------------------------------+ #
+                     | | the last click                                                      | #
+                     | | went to          nothing yet                                        | |
+                     | | item             -                                                  | |
+                     | +---------------------------------------------------------------------+ |
+                     |                                                                         |
+                     | +---------------------------------------------------------------------+ |
+                     | | the bands, bottom to top                                            | |
+                     | | adorn            decoration over content: the dock's drop hint      | |
+                     |
+ pages                                                                          ? keys   q quit

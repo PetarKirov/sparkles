@@ -108,4 +108,5 @@ every catalog page shows it for all three.
 | [State](./catalog/state.md)                 | the interaction machines           |
 | [Split](./catalog/split.md)                 | a divider between two panes        |
 | [Dock](./catalog/dock.md)                   | panes as a value                   |
+| [Overlays](./catalog/overlays.md)           | anchored, out of flow, on top      |
 | [Terminal](./catalog/terminal.md)           | a shell as a widget                |

@@ -100,6 +100,11 @@ struct UiGallery
         ~ "e.g. ']]j'."))
     string keys;
 
+    @(Option("clicks", description:
+        "With --render: left clicks to deliver after --keys, as window cells "
+        ~ "'x,y' separated by ';', e.g. '40,15;3,2'."))
+    string clicks;
+
     @(Option("term-tab-glyphs", description:
         "The Terminal page's narrow tab list, one glyph per position — "
         ~ "overrides the default circled-number series."))
@@ -142,9 +147,16 @@ struct UiGallery
 
         if (render || renderPlain)
         {
+            import render : parseClicks;
+            import sparkles.input : Point;
+
+            Point[] at;
+            if (!parseClicks(clicks, at))
+                return failRun(text("--clicks '", clicks, "': expected x,y;x,y…"), 2);
             const req = RenderRequest(
                 page: pageIndexOf(page),
                 keys: keys,
+                clicks: at,
                 width: gui.windowWidth,
                 height: gui.windowHeight,
                 // A render has no host to be native to: it paints the grid's own

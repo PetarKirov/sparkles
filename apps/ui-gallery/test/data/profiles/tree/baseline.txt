@@ -17,8 +17,8 @@
    State             | +---------------------------------------------------------------------+ #
    Split             | | the same data, everything open                                      | |
    Dock              | | +- v src/                                                           | |
-   Terminal          | | |  +- v sparkles/                                                   | |
-                     | | |  |  +- * widget.d                                                 | |
+   Overlays          | | |  +- v sparkles/                                                   | |
+   Terminal          | | |  |  +- * widget.d                                                 | |
                      | | |  |  +- * layout.d                                                 | |
                      | | |  |  +- * theme.d                                                  | |
                      | | |  +- . dub.sdl                                                     | |

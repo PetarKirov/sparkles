@@ -120,6 +120,10 @@
             "link": "/design-system/catalog/dock"
           },
           {
+            "text": "Overlays",
+            "link": "/design-system/catalog/overlays"
+          },
+          {
             "text": "Terminal",
             "link": "/design-system/catalog/terminal"
           }
