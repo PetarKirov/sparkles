@@ -272,6 +272,15 @@ Gate: README verification, a multi-file update fixture, standalone build-only
 and run fixtures, timeout behavior, and parallel duplicate example names are
 green. No `std.parallelism` import remains in `apps/ci`.
 
+Progress: delivered. Each example is a single-file package the build graph
+plans against the store's variants (`apps/ci/src/example_graph.d`): an inline
+one extracted to `build/md-examples/<digest>/`, so an unchanged example
+reuses its compile; its run is the in-process action `example:run`, with
+`/dev/null` as its standard input and the example timeout. Standalone
+examples run the same way, `build-only` ones linked and never run. No
+`std.parallelism` import remains in `apps/ci`. Open: the multi-file update
+fixture.
+
 ## M10: Documentation commands
 
 - Every documentation `ci check` and `ci fix` of SPEC §5.6, including glossary,
@@ -282,6 +291,11 @@ green. No `std.parallelism` import remains in `apps/ci`.
 Gate: every documentation check and fix has a parity fixture. Mutating commands make no
 writes under dry run and write atomically otherwise. The pre-commit hook
 invocations remain green after their migration.
+
+Progress: every `ci check`, `ci fix` and `ci docs` command runs as a one-node
+graph on the executor (`apps/ci/src/one_node.d`, CIC2); the fixes take
+`--dry-run` and replace each file whole. Open: §5.6's finer graphs (a node
+per file or per clone), and parity fixtures beyond the checks' own tests.
 
 ## M11: Statistics, commit checks and maintenance commands
 
@@ -294,6 +308,12 @@ invocations remain green after their migration.
 Gate: complete, partial, empty-comparison, authentication-failure and optional
 metadata fixtures have the specified outcomes and exits; tokens are absent from
 events and dry runs; commit hook output stays concise.
+
+Progress: `ci stats`, `ci github …`, `ci host probe`, `ci slow-tests list` and
+the cache commands run as one-node graphs; `ci commits build-each` builds
+each commit's packages on the build graph against the shared store, the
+WebAssembly cross-builds and any package planning refuses with dub, named;
+`ci cache gc-r2` fans its requests out on threads. Open: the gate's fixtures.
 
 ## M12: `ci pipeline` and removal of the legacy path
 
@@ -320,6 +340,14 @@ Gate: `ci pipeline` covers every job `ci.yml` runs or names it as skipped.
 Forced cancellation leaves no child process or live-region control residue.
 Default non-TTY output is stable across a randomized completion stress run.
 
+Progress: `ci pipeline` runs the tests, the extracted modes, the checks and
+commit scopes as one build graph run, then the examples, the sanitized and
+slow tests and the determinism check as graphs of their own, and reports
+every `ci.yml` job, ran or skipped with its reason (`apps/ci/src/pipeline.d`).
+Open: one graph for all of it (the sanitizer's flags apply to every compile,
+so it needs a variant beside the plain one), the measurements, and the
+cancellation and stress gates.
+
 ## M13: Repository migration
 
 - Change workflows, hooks and developer documentation to the canonical
@@ -332,6 +360,10 @@ Default non-TTY output is stable across a randomized completion stress run.
 Gate: full repository CI is green on canonical commands, and no script, hook,
 workflow or user-facing document uses a removed flag.
 
+Progress: the workflows and hooks run the canonical commands; the
+developer guide leads with `ci pipeline`. Open: generating the workflows
+from the placements, and the `ci stats` terminology.
+
 ## Progress
 
 | Milestone | Deliverable                       | State       |
@@ -342,8 +374,8 @@ workflow or user-facing document uses a removed flag.
 | M7a       | Canonical command line            | done        |
 | M7b       | `ci test` on the build graph      | in progress |
 | M8        | Coverage and special modes        | in progress |
-| M9        | Examples                          | not started |
-| M10       | Docs commands                     | not started |
-| M11       | Stats, commits, maintenance       | not started |
-| M12       | `ci pipeline`, legacy removal     | not started |
-| M13       | Consumer migration                | not started |
+| M9        | Examples                          | in progress |
+| M10       | Docs commands                     | in progress |
+| M11       | Stats, commits, maintenance       | in progress |
+| M12       | `ci pipeline`, legacy removal     | in progress |
+| M13       | Consumer migration                | in progress |
