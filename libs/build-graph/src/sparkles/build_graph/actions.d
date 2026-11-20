@@ -176,6 +176,9 @@ struct Tools
     /// Variables every program the graph builds and runs takes: each test's
     /// and each generator's, such as the sanitizer's runtime options.
     EnvEntry[] runtimeEnvironment;
+    /// Runner options a package's test legs take after the legs' own, by
+    /// the package's name (`sparkles:base`): the slow tests a run selects.
+    string[][string] testArguments;
 }
 
 /**
@@ -485,6 +488,8 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
                 if (leg.skipSlow)
                     testArgv ~= "--skip-slow";
                 testArgv ~= ["-t", text(leg.threads)];
+                if (auto more = v.package_ in tools.testArguments)
+                    testArgv ~= (*more).dup;
                 auto id = actionId(ActionKind.test, *v);
                 if (leg.name.length)
                 {
