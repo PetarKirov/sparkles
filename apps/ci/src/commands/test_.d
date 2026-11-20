@@ -10,7 +10,7 @@ import commands.output :
     RunMonitor, displayTestRunSummary, flushStdout, resultFooterRight, resultVerdict,
     streamResultBox, uiWidth;
 import commands.toolchain :
-    compilerIsLdc, dubBuildCommand, dubTestCommand, findWasiCompiler, mergeEnv, parallelTestThreads,
+    compilerIsLdc, dubTestCommand, findWasiCompiler, mergeEnv, parallelTestThreads,
     resolvedCompiler, sanitizeChildEnv, sanitizePlatformSupported, testBinaryRan, testBuildType,
     withLdcDflags, withTestArgs;
 import core.time : Duration, msecs;
@@ -36,6 +36,8 @@ import std.file : exists, mkdirRecurse, readText, write;
 import std.path : baseName, buildPath;
 import std.process : environment, execute;
 import std.stdio : stderr, stdout, writeln;
+import std.algorithm.searching : startsWith;
+import std.array : split;
 import std.string : endsWith, replace;
 import watch_mode : runWatchMode, WatchAction;
 
@@ -45,7 +47,8 @@ RunExpected!void runTestCommand(in TestCommand cmd)
     seedDubHome();
     const where = PlacementArgs(cmd.placement, cmd.shard, cmd.historyTip, cmd.history.historyRemote);
     if (cmd.buildOnly)
-        return cmd.watch ? runWatchMode(WatchAction.build, cmd.failFast) : runDubBuildMode(cmd.failFast);
+        return cmd.watch ? runWatchMode(WatchAction.build, cmd.failFast)
+            : runTestsOnGraph(cmd.failFast, false, cmd.from, where, buildOnly: true);
     if (cmd.slow)
         return runSlowTestsMode(cmd.from, cmd.tests, cmd.failFast);
     if (cmd.specialModes != SpecialModes.off)
@@ -64,7 +67,7 @@ RunExpected!void runTestCommand(in TestCommand cmd)
     }
     if (cmd.watch)
         return runWatchMode(WatchAction.test, cmd.failFast);
-    return runDubTestsMode(cmd.failFast, cmd.coverage, cmd.from, where);
+    return runTestsOnGraph(cmd.failFast, cmd.coverage, cmd.from, where, buildOnly: false);
 }
 
 /// One package's test outcome, and whether coverage came with it.
@@ -357,77 +360,6 @@ private CoverageRun prepareCoverage(string repoRoot, bool wanted, in string[] su
     return run;
 }
 
-private RunExpected!void runDubBuildMode(bool failFast)
-{
-    import each_commit : targetBuildArgs;
-
-    info(i"resolving repository root");
-    const repoRoot = detectRepoRoot();
-    if (repoRoot is null)
-    return failRun("Could not detect repository root");
-    info(i"repository root: $(repoRoot)");
-
-    info(i"parsing dub.sdl sub-packages");
-    auto subPackages = subPackageDirectories(repoRoot);
-    if (subPackages.length == 0)
-    return failRun("No sub-packages found in dub.sdl");
-    info(i"$(subPackages.length) sub-package(s) to build");
-    string wasiCompiler;
-    if (!findWasiCompiler(subPackages, wasiCompiler))
-        return failRun("no WebAssembly-capable compiler for a package that needs one");
-
-    i"Building $(subPackages.length) sub-package(s)".text
-        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
-        .writeln("\n");
-    flushStdout();
-
-    auto monitor = RunMonitor.start();
-    void onSample(in ResourceUsage) @safe
-    {
-        monitor.sample();
-    }
-
-    int failures = 0;
-    size_t processed = 0;
-    string[] failedPackages;
-
-    foreach (i, pkg; subPackages)
-    {
-        const pkgName = pkg.baseName;
-        const progress = i"[$(i + 1)/$(subPackages.length)]".text;
-        const header = styledText(i"{dim $(progress)} {cyan $(pkgName)} {dim › dub build :$(pkgName)}");
-
-        mkdirRecurse(buildPath(repoRoot, pkg, "build"));
-        auto buildCmd = dubBuildCommand(repoRoot, pkg, pkgName,
-            targetBuildArgs(pkgName, wasiCompiler));
-        auto lines = executeMonitoredLines(
-            buildCmd, 250.msecs, &onSample, ChildStdin.empty, Duration.zero,
-            withLdcDflags(null));
-        streamResultBox(header, lines,
-            () => resultVerdict(lines.result.status == 0),
-            (LogDelta d) => resultFooterRight(lines.result.usage, d));
-        monitor.sample();
-
-        if (lines.result.status != 0)
-        {
-            failures++;
-            failedPackages ~= pkgName;
-            if (failFast)
-            {
-                processed = i + 1;
-                writeln();
-                break;
-            }
-        }
-
-        processed = i + 1;
-        writeln();
-    }
-
-    displayTestRunSummary(monitor.finish(processed, subPackages.length, failedPackages));
-    return failures > 0 ? failRun(text(failures, " sub-package(s) failed to build")) : ranOk();
-}
-
 /**
 The sub-package paths a test run covers: those `--from` names, in request
 order, or every one in `all` when it names none. Names no sub-package has are
@@ -634,6 +566,125 @@ private RunExpected!void runDubTestsMode(bool failFast, bool coverage, in string
     displayTestRunSummary(monitor.finish(processed, subPackages.length, failedPackages));
     reportCoverage(subPackages, cov, failedPackages, uncovered);
     return failures > 0 ? failRun(text(failures, " test package(s) failed")) : ranOk();
+}
+
+/**
+`ci test` and `ci test --build-only` on the build graph (ci task-DAG M7b): the
+selected packages' test roots planned as actions, compiled and linked
+against the shared store, and each test leg run through the runner core
+(CIC11). A placement chooses the legs and whether coverage is collected
+(OD22); each leg's wall time goes to the run record (OD21), and each
+coverage test's listings are merged into `build/coverage`.
+*/
+private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string[] requested,
+    in PlacementArgs where, bool buildOnly)
+{
+    import core.time : MonoTime;
+    import graph_driver : GraphRun, runGraph, RunOptions;
+    import sparkles.build_graph.actions : TestLeg;
+    import std.datetime.systime : Clock;
+    import std.process : thisProcessID;
+
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+        return failRun("Could not detect repository root");
+    string[] subPackages;
+    if (!requestedSubPackages(repoRoot, requested, subPackages))
+        return failRun("could not resolve the requested sub-packages");
+    if (where.shard.length && !narrowToShard(repoRoot, requested, where, subPackages))
+        return failRun("could not narrow the sub-packages to shard " ~ where.shard);
+    // A placement chooses its legs and whether it collects coverage (OD22).
+    bool serialLeg = true, parallelLeg = true;
+    if (where.placement.length)
+    {
+        auto loaded = loadPlacements(repoRoot);
+        const p = loaded.hasError ? null : loaded.value.find(where.placement);
+        if (p is null)
+            return failRun(text(i"$(loaded.hasError ? loaded.error : "ci/placements.json has no placement " ~ where.placement)"));
+        serialLeg = p.serialLeg;
+        parallelLeg = p.parallelLeg;
+        if (coverage && !p.coverage)
+            info(i"$(where.placement) collects no coverage; testing without -cov");
+        coverage = coverage && p.coverage;
+    }
+    coverage = coverage && !buildOnly;
+    const parallelN = cast(uint) parallelTestThreads(hwParallelism());
+    TestLeg[] legs;
+    if (serialLeg)
+        legs ~= TestLeg(1, true, "serial");
+    if (parallelLeg)
+        legs ~= TestLeg(parallelN, true, "parallel");
+
+    const names = subPackages.map!(p => p.baseName).array;
+    const xdg = environment.get("XDG_CACHE_HOME", buildPath(environment.get("HOME", "/"), ".cache"));
+    const cache = buildPath(xdg, "sparkles");
+    const into = buildPath(cache, "runs", text("ci-test-", Clock.currTime.toUnixTime, "-", thisProcessID));
+    info(i"$(names.length) package(s) to $(buildOnly ? "build" : "test") through the build graph; run directory $(into)");
+
+    auto recorder = RunRecorder.open(repoRoot, "test", recordedOptions(requested, coverage), where.placement,
+        where.shard);
+    scope (exit)
+        if (const degradation = recorder.finish())
+            warning(i"$(degradation)");
+
+    auto g = runGraph(repoRoot, null, RunOptions(into: into, cache: cache, runnerCore: true, packages: names.dup,
+        legs: legs, coverage: coverage, buildOnly: buildOnly, failFast: failFast, echo: true));
+    if (g.error.length)
+        return failRun(g.error);
+
+    // OD21: each leg's wall time, under the record's task id.
+    string[] failedPackages;
+    foreach (task, wall; g.stats.wallTimes)
+    {
+        if (!task.startsWith("test:"))
+            continue;
+        const parts = task.split(":");
+        const pkg = parts.length > 1 ? parts[1].replace("sparkles.", "") : task;
+        const serial = task.endsWith(":serial");
+        const ok = g.stats.succeeded.get(task, false);
+        const began = g.stats.startedAt.get(task, MonoTime.init);
+        recorder.add(testTaskId(pkg, "unittest", serial), ok, began, began + wall);
+        if (!ok && !failedPackages.canFind(pkg))
+            failedPackages ~= pkg;
+    }
+    if (coverage)
+        mergeCoverage(repoRoot, g.into, failedPackages, subPackages);
+    if (g.exitCode != 0)
+        return failRun(failedPackages.length ? text(failedPackages.length, " test package(s) failed: ",
+            failedPackages.join(", ")) : text("the build graph's run failed (exit ", g.exitCode, ")"));
+    return ranOk();
+}
+
+/// Merges each coverage test's listings beneath `into/out` into
+/// `build/coverage` (CIC7) and reports them.
+private void mergeCoverage(string repoRoot, string into, in string[] failedPackages, in string[] subPackages)
+{
+    import coverage : mergeListings;
+    import std.file : dirEntries, rmdirRecurse, SpanMode;
+
+    CoverageRun cov = {enabled: true, dir: buildPath(repoRoot, "build", "coverage")};
+    if (cov.dir.exists)
+        cov.dir.rmdirRecurse;
+    cov.dir.mkdirRecurse;
+    const outs = buildPath(into, "out");
+    if (!outs.exists)
+        return;
+    string[] uncovered;
+    foreach (e; dirEntries(outs, "*.lst", SpanMode.depth))
+    {
+        // The generated test root is each package's own module.
+        if (e.name.baseName.startsWith("generated-"))
+            continue;
+        const dest = buildPath(cov.dir, e.name.baseName);
+        const listing = readText(e.name);
+        if (!dest.exists)
+            write(dest, listing);
+        else if (const merged = mergeListings(readText(dest), listing))
+            write(dest, merged);
+        else
+            warning(i"$(e.name): its source differs from $(dest)'s, kept apart");
+    }
+    reportCoverage(subPackages, cov, failedPackages, uncovered);
 }
 
 /**

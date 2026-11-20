@@ -258,6 +258,15 @@ struct RunRecorder
             cast(ulong) (taskStart - startClock).total!"nsecs", cast(ulong) (now - startClock).total!"nsecs");
     }
 
+    /// A task that ran from `began` to `ended`, measured by its runner: a
+    /// test leg the build graph ran beside others.
+    void add(string taskId, bool passed, MonoTime began, MonoTime ended) @safe nothrow
+    {
+        tasks ~= RecordedTask(taskId, passed ? TaskOutcome.passed : TaskOutcome.failed,
+            began > startClock ? cast(ulong) (began - startClock).total!"nsecs" : 0,
+            ended > startClock ? cast(ulong) (ended - startClock).total!"nsecs" : 0);
+    }
+
     /// Write the record; the run degradation, or null.
     string finish() @trusted
     {
