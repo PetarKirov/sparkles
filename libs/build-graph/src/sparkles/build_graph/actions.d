@@ -359,7 +359,8 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
         const linkWeight = defaultWeight(ActionKind.link);
         const toolLink = add(Action(ActionKind.link, actionId(ActionKind.link, *t), gen.tool,
             TaskAction(ProcessAction(argv: linkArgv(*t, root, tools, toolCompile, null, linkWeight),
-                envDelta: linkEnvironment(*t, tools), sandbox: SandboxPolicy.taskDirectory)),
+                envDelta: linkEnvironment(*t, tools), cwd: darwinLink(*t) ? "$RUN" : null,
+                sandbox: SandboxPolicy.taskDirectory)),
             [DeclaredOutput(binaryName(*t))], linkWeight));
         edge(toolCompile, toolLink);
         EnvEntry[] env = [EnvEntry("PATH", "")] ~ tools.runtimeEnvironment.dup;
@@ -474,7 +475,8 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
         const weight = defaultWeight(ActionKind.link);
         auto l = Action(ActionKind.link, actionId(ActionKind.link, *v), rootVariant,
             TaskAction(ProcessAction(argv: linkArgv(*v, root, tools, compileOf[rootVariant], archives, weight),
-                envDelta: linkEnvironment(*v, tools), sandbox: SandboxPolicy.taskDirectory)),
+                envDelta: linkEnvironment(*v, tools), cwd: darwinLink(*v) ? "$RUN" : null,
+                sandbox: SandboxPolicy.taskDirectory)),
             [DeclaredOutput(binaryName(*v))], weight);
         const linkId = add(l);
         rootCompileOf[ri] = compileOf[rootVariant];
@@ -814,11 +816,14 @@ string[] linkArgv(ref const Variant v, string root, const Tools tools, TaskId co
     else if (tools.linker.length)
         argv ~= ["-Xcc=-B" ~ directoryOf(tools.linker), "-Xcc=-fuse-ld=" ~ linkerName(tools.linker)];
     argv ~= archives;
+    // A Darwin link runs in its run directory (`darwinLink`), so a path
+    // beneath the root is named through `$ROOT`.
+    const named = (string f) => darwinLink(v) ? "$ROOT/" ~ relative(f, root) : relative(f, root);
     foreach (f; s.sourceFiles)
         if (isLinkerInput(f))
-            argv ~= relative(f, root);
+            argv ~= named(f);
     foreach (f; s.linkerFiles)
-        argv ~= relative(f, root);
+        argv ~= named(f);
     foreach (dir; tools.libraryPath)
         argv ~= "-L-L" ~ dir;
     foreach (lib; s.libs)
@@ -829,7 +834,22 @@ string[] linkArgv(ref const Variant v, string root, const Tools tools, TaskId co
     // driver's own linker (macOS's `ld`) refuses it.
     if (tools.linker.length)
         argv ~= "-L--threads=" ~ text(threads);
+    // Mach-O's debug map names each object by its path, and the objects lie
+    // in the run's directory: named from it, as `-oso_prefix .` does in the
+    // directory the link runs in, the map is the same in every run, and the
+    // `dsymutil` LDC runs after the link, there too, still finds them.
+    if (darwinLink(v))
+        argv ~= ["-L-oso_prefix", "-L."];
     return argv;
+}
+
+/// Whether `v` links on Darwin, where a link runs in its run directory
+/// (`$RUN`) so that its debug map names the objects the same in every run.
+bool darwinLink(ref const Variant v) @safe pure nothrow
+{
+    import std.algorithm.searching : canFind;
+
+    return v.platform.platform.canFind("osx");
 }
 
 /*
@@ -934,7 +954,8 @@ version (unittest)
 
     // The same packages, each request a sub-package and a build type.
     private ActionGraph graphWith(const string[2][] requests, const CoverageAttempt[] attempts = null,
-        const Tools tools = Tools.init, const TestProgram[] programs = null) @safe
+        const Tools tools = Tools.init, const TestProgram[] programs = null,
+        const string[] platform = ["linux", "posix"]) @safe
     {
         auto tree = memoryTree([
             "/r/dub.sdl": "name \"r\"\nsubPackage \"t1\"\nsubPackage \"t2\"\nsubPackage \"mid\"\nsubPackage \"leaf\"\n",
@@ -953,7 +974,7 @@ version (unittest)
         foreach (q; requests)
         {
             auto r = resolve(ResolveRequest(directory: "/r", subPackage: q[0], buildType: q[1],
-                platform: BuildPlatform(["linux", "posix"], ["x86_64"], "ldc", "ldc2", 2111, "1.41.0"),
+                platform: BuildPlatform(platform.dup, ["x86_64"], "ldc", "ldc2", 2111, "1.41.0"),
                 testRoot: true), tree);
             assert(r.hasValue, r.hasError ? r.error.message : null);
             rs ~= r.value;
@@ -1248,6 +1269,27 @@ version (unittest)
 }
 
 /// CIC11, CIC14: each leg is a test action of its own, claiming its `-t`.
+@("build_graph.actions.linkArgv.darwinNamesObjectsFromTheRun")
+@safe unittest
+{
+    // A Darwin link runs in its run directory and names its debug map's
+    // objects from there; elsewhere a link runs in the root, unchanged.
+    foreach (darwin; [false, true])
+    {
+        const g = graphWith([[":t1", "unittest"]], null, Tools.init, null,
+            darwin ? ["osx", "darwin", "posix"] : ["linux", "posix"]);
+        size_t links;
+        foreach (ref a; g.actions)
+            if (a.kind == ActionKind.link)
+                a.action.match!((ref const ProcessAction p) {
+                    ++links;
+                    assert(p.cwd == (darwin ? "$RUN" : null), p.cwd);
+                    assert(p.argv.canFind("-L-oso_prefix") == darwin, text(p.argv));
+                }, (_) {});
+        assert(links);
+    }
+}
+
 @("build_graph.actions.planActions.testLegs")
 @safe unittest
 {

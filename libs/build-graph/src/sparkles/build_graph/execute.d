@@ -220,6 +220,11 @@ string expand(string arg, const RunLayout layout, TaskId self) @safe
             result ~= layout.root;
             i += 5;
         }
+        else if (rest.startsWith("$RUN"))
+        {
+            result ~= layout.runDirectory;
+            i += 4;
+        }
         else if (rest.startsWith("$OUT"))
         {
             result ~= layout.outOf(self);
