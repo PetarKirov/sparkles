@@ -1,0 +1,1 @@
+{"tasks":[{"id":"test:vulkan-wsi:sanitize:parallel","series":"7abb15227fe07dddf2b15c9531bf7abac4f4421933dde312e665287b586cf52a","outcome":"passed","start":1480421459300,"end":1520375635000,"metrics":{"task.wall":39954175700}}]}
