@@ -191,6 +191,18 @@ final class ExamplePlan
                     }
                 }
             }
+            // Cancelled by fail-fast: the task that failed first, and its lines.
+            if (diagnostics.canFind("cancelled"))
+                foreach (line; g.log.lineSplitter)
+                    if (line.startsWith("cancelled: fail-fast after "))
+                    {
+                        const first = line["cancelled: fail-fast after ".length .. $];
+                        diagnostics ~= line ~ "\n";
+                        foreach (l; g.log.lineSplitter)
+                            if (l.startsWith("[" ~ first ~ " ") || l.startsWith(first ~ ": "))
+                                diagnostics ~= l ~ "\n";
+                        break;
+                    }
             const refused = g.plan.singleFileErrors.get(j.file, null);
             result[i] = ExampleOutcome(j.buildOnly && built, diagnostics.length ? diagnostics
                 : refused.length ? "the example could not be planned: " ~ refused
