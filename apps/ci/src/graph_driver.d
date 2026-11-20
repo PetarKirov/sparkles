@@ -15,11 +15,11 @@ module graph_driver;
 
 
 import core.time : Duration, hours, minutes, seconds;
-import std.algorithm : canFind, endsWith, filter, map, sort, startsWith, uniq;
+import std.algorithm : any, canFind, endsWith, filter, map, sort, startsWith, uniq;
 import std.array : array, join, replace, split;
 import std.conv : octal, text, to;
 import std.file : dirEntries, readText, SpanMode;
-import std.path : absolutePath, buildNormalizedPath, buildPath, dirName;
+import std.path : absolutePath, baseName, buildNormalizedPath, buildPath, dirName;
 import std.process : environment;
 import std.string : indexOf;
 import std.stdio : stderr, writeln;
@@ -851,8 +851,30 @@ GraphRun runGraph(string root, string only, RunOptions o)
         if (o.confine == Confinement.tests)
             return GraphRun("the runner core's tests cannot run confined yet");
         handlers[legHandler] = (ref TaskContext!Sched ctx, const ref InProcessAction a) => runTestLeg(ctx, a);
+        // A package beneath the runner (`metadata`, `test-harness`, …) cannot
+        // depend on it: its binary runs its own tests, and its exit status is
+        // the verdict, as under `dub test`.
+        // The packages whose recipes depend on the runner, from the schema.
+        bool[string] speaking;
+        {
+            const workspace = readWorkspaceAt(root);
+            if (workspace.hasValue)
+                foreach (ref r; workspace.value.recipes)
+                {
+                    bool depends = r.manifest.dependencies.any!(d => d.name == "sparkles:test-runner");
+                    foreach (ref c; r.manifest.configurations)
+                        depends |= c.dependencies.any!(d => d.name == "sparkles:test-runner");
+                    speaking[r.manifest.name] = depends;
+                }
+        }
+        bool speaksProtocol(string task)
+        {
+            const parts = task.split(":");
+            const pkg = parts.length > 1 ? parts[1].replace("sparkles.", "") : null;
+            return speaking.get(pkg, true);
+        }
         foreach (ref n; nodes)
-            if (n.id.text.startsWith("test:"))
+            if (n.id.text.startsWith("test:") && speaksProtocol(n.id.text))
             {
                 auto action = n.action;
                 auto leg = action.match!(
