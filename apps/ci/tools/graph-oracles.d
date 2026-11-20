@@ -129,6 +129,7 @@ immutable Oracle[] oracles = [
     Oracle("21", &oracle21),
     Oracle("21-replay", &oracle21Replay),
     Oracle("24", &oracle24),
+    Oracle("cic11", &oracleCic11),
 ];
 
 // === Fixtures ===
@@ -1457,6 +1458,127 @@ Verdict[] oracle18()
             : found.length ? "the value, or its plain SHA-256, is in " ~ found
             : !preimages.canFind("ORACLE_18_TOKEN=redacted:") ? "no preimage records the redacted entry" : null,
             "the preimage holds the value only as a keyed digest; neither it nor its SHA-256 is in the store");
+    }
+    return vs;
+}
+
+// === ci task-DAG M7b's gate: the runner core and fail-fast ===
+
+/**
+CIC11: a binary run through ci's runner core and run standalone agree on
+every test's verdict, and on the run's. Fail-fast ends another package's
+leg with its whole process tree, nested children included (TDE1, TDE2).
+*/
+Verdict[] oracleCic11()
+{
+    import core.sys.posix.signal : kill;
+    import std.datetime.stopwatch : AutoStart, StopWatch;
+    import std.file : dirEntries, SpanMode;
+    import std.algorithm.iteration : uniq;
+    import std.regex : matchAll, regex;
+    import std.string : lineSplitter, strip;
+    import sparkles.build_graph.actions : TestLeg;
+
+    Verdict[] vs;
+    // The verdict each test got, `✓ name`, from a transcript.
+    static string[] verdicts(string transcript)
+    {
+        string[] found;
+        foreach (m; transcript.matchAll(regex(`([✓✗⊘]) (?:\S+ )?(cic11\.\w+)`)))
+            found ~= m[1] ~ " " ~ m[2];
+        return found.sort.uniq.array;
+    }
+
+    // Step 1: every kind of test, through the core and standalone.
+    {
+        auto f = Fixture.add("cic11", [
+            "dub.sdl": recipeOf("cic11", ["test-attributes"]),
+            "src/sparkles/zz_cic11/t.d": "module sparkles.zz_cic11.t;\n\n"
+                ~ "import sparkles.test_runner.attributes : serial, ThreadAffinity;\n\n"
+                ~ "@(\"cic11.passes\") unittest { assert(1 + 1 == 2); }\n"
+                ~ "@(\"cic11.fails\") unittest { assert(false, \"planted\"); }\n"
+                ~ "@(\"cic11.skips\") unittest\n{\n    import sparkles.test_runner.skip : skipTest;\n\n"
+                ~ "    return skipTest(\"planted\");\n}\n"
+                ~ "@(\"cic11.serial\") @serial unittest {}\n"
+                ~ "@(\"cic11.mainThread\") @serial(threadAffinity: ThreadAffinity.mainThread) unittest {}\n"
+                ~ "static foreach (i; 0 .. 12)\n    mixin(`@(\"cic11.many` ~ i.stringof ~ `\") unittest {}`);\n",
+        ]);
+        RunOptions o;
+        o.runnerCore = true;
+        o.legs = [TestLeg(4, true, "parallel")];
+        auto core = run(f.name, freshCache("cic11"), o);
+        string binary;
+        if (exists(buildPath(core.into, "out", "link")))
+            foreach (e; dirEntries(buildPath(core.into, "out", "link"), SpanMode.depth))
+                if (e.isFile && e.name.canFind(f.name) && e.name.canFind("-test-"))
+                    binary = e.name;
+        auto standalone = binary.length ? std.process.execute([binary, "--skip-slow", "-t", "4"], null,
+            std.process.Config.none, size_t.max, root) : typeof(std.process.execute([""]))(-1, "no binary");
+        const a = verdicts(core.log), b = verdicts(standalone.output);
+        vs ~= Verdict("step 1",
+            core.error.length ? core.error
+            : a.length != 17 ? text("the core reported ", a.length, " verdicts, not 17: ", a)
+            : a != b ? text("the core and the standalone runner disagree:\n  core:       ", a, "\n  standalone: ", b)
+            : (core.exitCode == 0) != (standalone.status == 0) ? text("the runs' statuses disagree: core ",
+                core.exitCode, ", standalone ", standalone.status)
+            : core.exitCode == 0 ? "a failing test passed the leg" : null,
+            text("through the core and standalone, all ", a.length, " tests got the same verdict (",
+                a.count!(v => v.startsWith("✗")), " failed, ", a.count!(v => v.startsWith("⊘")),
+                " skipped), and both runs failed"));
+    }
+
+    // Step 2: fail-fast ends a leg whose test holds a nested process tree.
+    {
+        const pids = buildPath(scratch, "cic11-pids");
+        if (exists(pids))
+            std.file.remove(pids);
+        auto holder = Fixture.add("cic11h", [
+            "dub.sdl": recipeOf("cic11h"),
+            "src/sparkles/zz_cic11h/t.d": "module sparkles.zz_cic11h.t;\n\n"
+                ~ "@(\"cic11h.holds\") unittest\n{\n    import std.process : executeShell;\n\n"
+                ~ "    // A grandchild and a great-grandchild, each recording its pid.\n"
+                ~ "    executeShell(`sh -c 'sleep 300 & echo $! >> " ~ pids ~ "; sleep 300 & echo $! >> " ~ pids
+                ~ "; wait' & echo $! >> " ~ pids ~ "; wait`);\n}\n",
+        ]);
+        auto failer = Fixture.add("cic11f", [
+            "dub.sdl": recipeOf("cic11f"),
+            "src/sparkles/zz_cic11f/t.d": "module sparkles.zz_cic11f.t;\n\n"
+                ~ "@(\"cic11f.fails\") unittest\n{\n    import core.thread : Thread;\n    import core.time : seconds;\n\n"
+                ~ "    Thread.sleep(5.seconds);\n    assert(false, \"planted\");\n}\n",
+        ]);
+        RunOptions o;
+        o.runnerCore = true;
+        o.failFast = true;
+        o.packages = [holder.name, failer.name];
+        auto sw = StopWatch(AutoStart.yes);
+        auto g = run(null, freshCache("cic11ff"), o);
+        const took = sw.peek;
+        // Killed processes are reaped by their new parent shortly after.
+        string[] alive;
+        foreach (attempt; 0 .. 50)
+        {
+            alive = null;
+            if (exists(pids))
+                foreach (line; readText(pids).lineSplitter)
+                    if (line.strip.length && kill(line.strip.to!int, 0) == 0)
+                        alive ~= line.strip.idup;
+            if (!alive.length)
+                break;
+            import core.thread : Thread;
+
+            Thread.sleep(100.msecs);
+        }
+        const recorded = exists(pids) ? readText(pids).lineSplitter.count : 0;
+        vs ~= Verdict("step 2",
+            g.error.length ? g.error
+            : recorded < 3 ? text("the holding test recorded ", recorded, " of its 3 processes")
+            : g.exitCode == 0 ? "the run passed over a failing test"
+            : alive.length ? text("processes of the cancelled leg are alive: ", alive)
+            : took > 240.seconds ? text("fail-fast took ", took) : null,
+            text("a failing package ended the other's leg in ", took.total!"seconds",
+                " s, and none of its ", recorded, " nested processes outlived it"));
+        foreach (pid; alive)
+            kill(pid.to!int, 9);
     }
     return vs;
 }
