@@ -275,6 +275,9 @@ Planned planRepository(string root, bool markers = false, string only = null, To
     }
     // CIC8: single-file packages (examples), as applications built with
     // dub's `debug` build type, their in-tree dependencies the worktree's.
+    // The planner knows a package by its name, so a second file naming one
+    // already planned is refused, not merged into the first.
+    string[string] singleFileOf;
     foreach (file; singleFiles)
     {
         auto request = ResolveRequest(singleFile: file, buildType: "debug", platform: platform,
@@ -287,6 +290,12 @@ Planned planRepository(string root, bool markers = false, string only = null, To
             p.singleFileErrors[file] = fault() ? fault() : r.error.message;
             continue;
         }
+        if (auto first = r.value.rootPackage in singleFileOf)
+        {
+            p.singleFileErrors[file] = text("its package name, ", r.value.rootPackage, ", is ", *first, "'s too");
+            continue;
+        }
+        singleFileOf[r.value.rootPackage] = file;
         rs ~= r.value;
     }
     // D61: the programs each test runs, declared beside its package's recipe,
@@ -1566,12 +1575,22 @@ string pathTools(out Tools tools, out Toolchain toolchain)
 {
     import std.process : execute;
 
-    tools = Tools(compiler: onPath(compilerName), archiver: onPath("ar"), cc: onPath("cc"), linker: onPath("ld.lld"),
+    // lld is Linux's linker (the build-settings policy); elsewhere the C
+    // driver's own links, as dub's do: macOS's `ld64.lld` asserts on the
+    // Objective-C method lists of the windowing packages.
+    version (linux)
+        const linker = onPath("ld.lld");
+    else
+        const string linker = null;
+    tools = Tools(compiler: onPath(compilerName), archiver: onPath("ar"), cc: onPath("cc"), linker: linker,
         fail: onPath("false"), deviceCompiler: onPath("ldc2-vulkan"));
     foreach (name; ["spirv-val", "spirv-opt", "spirv-dis", "spirv-as", "spirv-cross", "glslangValidator"])
         tools.shaderTools ~= [name, onPath(name)];
-    if (tools.compiler is null || tools.archiver is null || tools.cc is null || tools.linker is null)
-        return compilerName ~ ", ar, cc and ld.lld must be on PATH";
+    version (linux)
+        if (tools.linker is null)
+            return "ld.lld must be on PATH";
+    if (tools.compiler is null || tools.archiver is null || tools.cc is null)
+        return compilerName ~ ", ar and cc must be on PATH";
     // The fork's dependency output, which a compile's manifest comes from.
     const help = execute([tools.compiler, "--help-hidden"]);
     tools.dependencyOutput = help.output.canFind("makedeps-digests") && !noDependencyOutput;
