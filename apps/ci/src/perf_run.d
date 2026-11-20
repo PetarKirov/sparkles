@@ -105,9 +105,9 @@ RunFacts collectFacts(string repoRoot, string command, string[] options, string 
             f.memoryGiB = cast(uint) ((parseLong(mem.stdout.strip) + (1L << 29)) >> 30);
     }
 
-    import std.parallelism : totalCPUs;
+    import graph_driver : logicalProcessors;
 
-    f.logicalCores = totalCPUs;
+    f.logicalCores = logicalProcessors;
 
     if (environment.get("GITHUB_ACTIONS") == "true")
     {
