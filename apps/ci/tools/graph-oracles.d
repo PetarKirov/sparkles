@@ -1285,7 +1285,7 @@ ScratchStore ScratchStoreOver(string cache)
 
 // === Oracle 18: miss explanations ===
 
-/// `ci cache store explain <task>`'s lines against the store beneath `cache`.
+/// `ci cache explain <task>`'s lines against the store beneath `cache`.
 string explained(string cache, string task)
 {
     import std.array : appender;
@@ -1506,7 +1506,7 @@ Verdict[] oracle24()
         mkdirRecurse(xdg);
         if (!exists(buildPath(xdg, "sparkles")))
             symlink(cache, buildPath(xdg, "sparkles"));
-        const r = execute(["strace", "-f", "-qq", "-e", "trace=%file", "-o", traceFile, ci, "cache", "store",
+        const r = execute(["strace", "-f", "-qq", "-e", "trace=%file", "-o", traceFile, ci, "cache",
             "explain", compile], ["XDG_CACHE_HOME": xdg]);
         const trace = exists(traceFile) ? readText(traceFile) : "";
         vs ~= Verdict("step 5", built.status ? "cannot build `ci`:\n" ~ built.output
@@ -2355,7 +2355,7 @@ string[] storeDir(string cache, string sub)
     return exists(dir) ? dirEntries(dir, SpanMode.shallow).map!(e => baseName(e.name)).array.sort.release : null;
 }
 
-/// `ci cache store <op>` against the store beneath `cache`: its exit status and lines.
+/// `ci cache` operations against the store beneath `cache`: its exit status and lines.
 int storeOp(string cache, string op, out string lines)
 {
     import std.array : appender;
@@ -2945,7 +2945,7 @@ Verdict[] oracle4()
             : !executed(sampled, compile) ? "a lookup with the hash sample at one served the flipped output"
             : verified == 0 || !lines.canFind(key) ? "verification did not find the flipped output: " ~ lines : null,
             "a flipped byte of the same size passed a lookup that rehashes none, and was found, removed and rebuilt "
-            ~ "by one that rehashes every hit, and by `ci cache store verify`");
+            ~ "by one that rehashes every hit, and by `ci cache verify`");
     }
 
     // Step 4: a modification time in the future is rehashed on every read and
