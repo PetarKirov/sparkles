@@ -224,6 +224,21 @@ struct TestCommand
     @(Option(`F|fail-fast`, description: "Stop at the first failing package."))
     bool failFast;
 
+    @(Option(`jobs`,
+        description: "The weighted capacity running tasks may claim at once, not a count of threads "
+        ~ "(a test leg claims its -t). Default: $SPARKLES_CI_JOBS, else the host's processors."))
+    string jobs;
+
+    @(Option(`interlaced`,
+        description: "Stream each task's lines as they arrive, prefixed with the task, instead of "
+        ~ "replaying whole task blocks in order."))
+    bool interlaced;
+
+    @(Option(`dry-run`,
+        description: "Plan and print the graph: its tasks, claims and edges. Runs nothing and "
+        ~ "writes nothing."))
+    bool dryRun;
+
     @(Flatten) HistoryOptions history;
     @(Flatten) LinuxHostOptions host;
 
@@ -252,8 +267,44 @@ struct TestCommand
             return "--placement does not combine with --build-only, --slow or --watch";
         if (historyTip.length && !shard.length)
             return "--history-tip needs --shard";
+        // CIC1: the common execution options.
+        if (jobs.length && !parseCapacity(jobs))
+            return "--jobs takes a positive capacity";
+        if (dryRun && interlaced)
+            return "--dry-run has no task output to interlace";
+        if ((dryRun || interlaced || jobs.length) && (slow || specialModes != SpecialModes.off
+            || sanitize != Sanitizer.off || watch))
+            return "--jobs, --interlaced and --dry-run run on the build graph: the ordinary tests "
+                ~ "or --build-only";
         return null;
     }
+}
+
+/**
+A `--jobs` or `$SPARKLES_CI_JOBS` value as a weighted capacity (CIC1): a
+positive decimal number, or zero when `text` is not one.
+*/
+uint parseCapacity(scope const(char)[] text) @safe pure nothrow @nogc
+{
+    if (!text.length || text.length > 6)
+        return 0;
+    uint n;
+    foreach (c; text)
+    {
+        if (c < '0' || c > '9')
+            return 0;
+        n = n * 10 + (c - '0');
+    }
+    return n;
+}
+
+@("cli.parseCapacity")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(parseCapacity("4") == 4 && parseCapacity("32") == 32);
+    assert(parseCapacity("0") == 0 && parseCapacity("-1") == 0 && parseCapacity("") == 0);
+    assert(parseCapacity("2x") == 0);
 }
 
 ///
@@ -273,6 +324,13 @@ unittest
     assert(TestCommand(placement: "p", historyTip: "abc").conflict == "--history-tip needs --shard");
     assert(TestCommand(buildOnly: true, watch: true).conflict is null);
     assert(TestCommand(slow: true, watch: true).conflict == "--watch runs the ordinary tests or --build-only");
+    // CIC1: the common execution options.
+    assert(TestCommand(jobs: "0").conflict == "--jobs takes a positive capacity");
+    assert(TestCommand(jobs: "-2").conflict == "--jobs takes a positive capacity");
+    assert(TestCommand(jobs: "4").conflict is null);
+    assert(TestCommand(dryRun: true, interlaced: true).conflict == "--dry-run has no task output to interlace");
+    assert(TestCommand(dryRun: true, buildOnly: true).conflict is null);
+    assert(TestCommand(slow: true, interlaced: true).conflict !is null);
 }
 
 // === ci placements ===

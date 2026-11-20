@@ -48,7 +48,7 @@ RunExpected!void runTestCommand(in TestCommand cmd)
     const where = PlacementArgs(cmd.placement, cmd.shard, cmd.historyTip, cmd.history.historyRemote);
     if (cmd.buildOnly)
         return cmd.watch ? runWatchMode(WatchAction.build, cmd.failFast)
-            : runTestsOnGraph(cmd.failFast, false, cmd.from, where, buildOnly: true);
+            : runTestsOnGraph(cmd.failFast, false, cmd.from, where, buildOnly: true, cmd);
     if (cmd.slow)
         return runSlowTestsMode(cmd.from, cmd.tests, cmd.failFast);
     if (cmd.specialModes != SpecialModes.off)
@@ -67,7 +67,7 @@ RunExpected!void runTestCommand(in TestCommand cmd)
     }
     if (cmd.watch)
         return runWatchMode(WatchAction.test, cmd.failFast);
-    return runTestsOnGraph(cmd.failFast, cmd.coverage, cmd.from, where, buildOnly: false);
+    return runTestsOnGraph(cmd.failFast, cmd.coverage, cmd.from, where, buildOnly: false, cmd);
 }
 
 /// One package's test outcome, and whether coverage came with it.
@@ -577,8 +577,13 @@ against the shared store, and each test leg run through the runner core
 coverage test's listings are merged into `build/coverage`.
 */
 private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string[] requested,
-    in PlacementArgs where, bool buildOnly)
+    in PlacementArgs where, bool buildOnly, in TestCommand cmd = TestCommand.init)
 {
+    import cli : parseCapacity;
+    import sparkles.build_graph.execute : RunReporting;
+    import sparkles.ci_provider : CiLog, systemEnvironment;
+    import std.parallelism : totalCPUs;
+
     import core.time : MonoTime;
     import graph_driver : GraphRun, runGraph, RunOptions;
     import sparkles.build_graph.actions : TestLeg;
@@ -621,14 +626,26 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
     const into = buildPath(cache, "runs", text("ci-test-", Clock.currTime.toUnixTime, "-", thisProcessID));
     info(i"$(names.length) package(s) to $(buildOnly ? "build" : "test") through the build graph; run directory $(into)");
 
+    // A dry run records nothing either.
     auto recorder = RunRecorder.open(repoRoot, "test", recordedOptions(requested, coverage), where.placement,
         where.shard);
     scope (exit)
-        if (const degradation = recorder.finish())
-            warning(i"$(degradation)");
+        if (!cmd.dryRun)
+            if (const degradation = recorder.finish())
+                warning(i"$(degradation)");
 
+    // CIC1: the capacity in weighted units: `--jobs`, `$SPARKLES_CI_JOBS`,
+    // the host's processors.
+    const jobs = cmd.jobs.length ? parseCapacity(cmd.jobs)
+        : parseCapacity(environment.get("SPARKLES_CI_JOBS", "")) ? parseCapacity(environment.get("SPARKLES_CI_JOBS", ""))
+        : cast(uint) totalCPUs;
+    const reporting = RunReporting(interlaced: cmd.interlaced, timings: true, dryRun: cmd.dryRun,
+        ci: CiLog.detect(&systemEnvironment));
     auto g = runGraph(repoRoot, null, RunOptions(into: into, cache: cache, runnerCore: true, packages: names.dup,
-        legs: legs, coverage: coverage, buildOnly: buildOnly, failFast: failFast, echo: true));
+        legs: legs, coverage: coverage, buildOnly: buildOnly, failFast: failFast, echo: true, jobs: jobs,
+        reporting: reporting));
+    if (cmd.dryRun)
+        return g.error.length ? failRun(g.error) : ranOk();
     if (g.error.length)
         return failRun(g.error);
 
