@@ -831,6 +831,8 @@ struct ActionDriver
                     const key = checked.resultKey;
                     cast(void) store.remove((ref const ResultRecord r) => r.resultKey == key,
                         (string h) => holderRuns(h), held);
+                    // An authoritative failure (ci task-DAG CIC13).
+                    return TaskOutcome(Failed(FailureReason.contract));
                 }
                 else
                     stats.miss("deterministic");
