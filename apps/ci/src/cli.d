@@ -653,7 +653,11 @@ struct FixCommand
     {
         @(Flatten) FileSelection files;
 
-        RunExpected!void run() => runOneNode("fix-reference-links", TaskKind.rewrite, () => runReferenceLinksCommand(files, fix: true));
+        @(Option(`dry-run`, description: "Report what would change; write nothing."))
+        bool dryRun;
+
+        RunExpected!void run() => runOneNode("fix-reference-links", TaskKind.rewrite,
+            () => runReferenceLinksCommand(files, fix: true, dryRun: dryRun));
     }
 
     @(Command("spec-evidence-backlog",
@@ -661,7 +665,11 @@ struct FixCommand
     ))
     struct SpecEvidenceBacklog
     {
-        RunExpected!void run() => runOneNode("fix-spec-evidence-backlog", TaskKind.rewrite, () => runCheckSpecEvidence(updateBacklog: true));
+        @(Option(`dry-run`, description: "Report what the backlog would hold; write nothing."))
+        bool dryRun;
+
+        RunExpected!void run() => runOneNode("fix-spec-evidence-backlog", TaskKind.rewrite,
+            () => runCheckSpecEvidence(updateBacklog: true, dryRun: dryRun));
     }
 }
 
