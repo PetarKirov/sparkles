@@ -644,7 +644,7 @@ dependency library and its dependent links once; a single-object archive
 would bring its modules in a second time.
 */
 bool archivesItself(ref const Variant v) @safe pure nothrow @nogc
-    => v.platform.compiler == "ldc" && v.role == Role.dependencyLibrary && v.settings.targetType != TargetType.none;
+    => v.role == Role.dependencyLibrary && v.settings.targetType != TargetType.none;
 string archiveName(ref const Variant v) @safe pure nothrow => "lib" ~ baseName(v) ~ ".a";
 
 /// A link's planned environment: DMD finds its C driver only through `$CC`,
@@ -717,9 +717,12 @@ string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId
     const ldc = v.platform.compiler == "ldc";
     string[] argv = [tools.compiler];
     if (archivesItself(v))
-        // One member per module, each named by its module, written through
-        // a scratch directory the compiler empties again.
-        argv ~= ["-lib", "-oq", "-od=$MEASURE/objects", "-cleanup-obj", "-of=$OUT/" ~ archiveName(v)];
+        // One member per module, as dub builds a library, so a link pulls in
+        // only the modules it needs: LDC names each by its module, written
+        // through a scratch directory it empties again; DMD writes the
+        // archive itself.
+        argv ~= ldc ? ["-lib", "-oq", "-od=$MEASURE/objects", "-cleanup-obj", "-of=$OUT/" ~ archiveName(v)]
+            : ["-lib", "-of=$OUT/" ~ archiveName(v)];
     else
         argv ~= ["-c"] ~ (ldc ? ["-singleobj"] : null) ~ ["-of=$OUT/" ~ objectName(v)];
     // BGK2: the manifest, beside the action's measurements.
