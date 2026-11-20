@@ -113,6 +113,7 @@ version (Posix):
 import sparkles.event_horizon.proc : ProcessEvent, ProcessEventKind, ProcessStream, SupervisedProcessConfig;
 import sparkles.event_horizon.supervise : StdinFeed, superviseFed;
 import sparkles.test_runner.model : Test;
+import sparkles.test_runner.options : RunnerOptions;
 import sparkles.test_runner.session : EventKind, RunnerEvent, WorkerSession, describeEnding, workerArguments;
 
 /// One worker process and its session.
@@ -151,6 +152,7 @@ private struct LegRun
     bool broken;          // a protocol error or a worker that would not start
     bool callerMerges;    // the druntime options already ask to merge (TRS5)
     bool coverage;        // the binary's hello reports coverage compiled in
+    bool driverFailed;    // an extracted mode failed, or was skipped under --require-toolchain
 
     // Takes the session's events: renders them and counts results.
     void drain(Worker w)
@@ -380,6 +382,32 @@ TaskOutcome runTestLeg(ref TaskContext!Sched ctx, const ref InProcessAction acti
         import std.algorithm.iteration : filter;
         import std.array : array;
 
+        // The extracted modes (TRX, ci task-DAG §5.3): the listing worker
+        // ends, and the core's driver compiles and runs the extracted tests
+        // off the scheduler, on a blocking pool of the leg's own.
+        if (options.betterC || options.wasm || options.wasmBare)
+        {
+            first.exitSent = true;
+            if (first.session.idle)
+                cast(void) first.feed.tryPut(cast(immutable(ubyte)[]) first.session.exit(false));
+            first.feed.close();
+            while (!first.ended && !ctx.cancelRequested)
+                cast(void) sleep(*ctx.exec, 5.msecs);
+            if (ctx.cancelRequested)
+            {
+                sc.cancel();
+                return;
+            }
+            auto modes = runDriverModes(*ctx.exec, selection.tests, options, first.session.hello.roots);
+            foreach (line; modes.lines)
+                say(line);
+            run.executed = modes.executed;
+            run.passed = modes.passed;
+            run.failed = modes.executed - modes.passed;
+            run.broken = modes.failed && !modes.executed;
+            run.driverFailed = modes.failed;
+            return;
+        }
         auto runnable = selection.tests
             .filter!(t => !t.traits.isCtfe && !t.traits.isBenchmark && !t.traits.isWorkload).array;
         Worker reuse = first;
@@ -418,6 +446,95 @@ TaskOutcome runTestLeg(ref TaskContext!Sched ctx, const ref InProcessAction acti
         return TaskOutcome(Failed(FailureReason.signal));
     if (run.broken || !run.listing.length && run.executed == 0 && run.started == 0)
         return TaskOutcome(Failed(FailureReason.exitStatus, 1));
+    if (run.driverFailed)
+        return TaskOutcome(Failed(FailureReason.exitStatus, 1));
     const status = verdict(run.executed, run.passed + run.skipped);
     return status == 0 ? TaskOutcome(Succeeded()) : TaskOutcome(Failed(FailureReason.exitStatus, status));
+}
+
+/// What the extracted modes did: their lines, and their counts.
+private struct DriverRun
+{
+    string[] lines;
+    size_t executed, passed;
+    bool failed;
+}
+
+/**
+The `--better-c`, `--wasm` and `--wasm-bare` modes of the core's driver over
+`tests` (the binary's listing, with its harness's `roots`), as the standalone
+runner's `runDriverModes` runs them: a skipped mode, its toolchain missing,
+fails under `--require-toolchain`. The driver compiles and runs programs with
+blocking calls, so it runs on a blocking pool, parking the leg's fiber.
+*/
+private DriverRun runDriverModes(ref Sched s, Test[] tests, const RunnerOptions options, const string[] roots)
+{
+    import sparkles.event_horizon.blocking_pool : BlockingPool;
+    import sparkles.test_runner.driver : DriverOptions, DriverOutcome, ModeReport, runBetterCTests,
+        runWasmBareTests, runWasmTests;
+
+    static struct Job
+    {
+        Test[] tests;
+        RunnerOptions options;
+        string[] roots;
+        DriverRun result;
+        string pending;
+    }
+
+    static void call(void* context) nothrow
+    {
+        auto job = cast(Job*) context;
+        try
+        {
+            import std.algorithm.iteration : filter, splitter;
+            import std.array : array;
+
+            void take(string text) @trusted
+            {
+                job.pending ~= text;
+            }
+            const o = job.options;
+            auto driver = DriverOptions(compiler: o.compiler, importPaths: o.importPaths.dup,
+                includeImports: o.includeImports.dup, noAutoInclude: o.noAutoInclude, keep: o.keep,
+                verbose: o.verbose, report: ModeReport(&take, &take), stringImportPaths: o.stringImportPaths.dup,
+                versions: o.versions.dup, dflags: o.dflags.dup, probeDir: o.probeDir, noDub: o.noDub,
+                harnessRoots: job.roots);
+            void account(DriverOutcome outcome)
+            {
+                if (outcome.skipped)
+                {
+                    job.result.failed |= o.requireToolchain;
+                    return;
+                }
+                job.result.executed += outcome.testCount;
+                job.result.passed += outcome.succeeded ? outcome.testCount : 0;
+                job.result.failed |= !outcome.succeeded;
+            }
+            if (o.betterC)
+                account(runBetterCTests(job.tests.filter!(t => t.traits.isBetterC).array, job.tests, driver));
+            if (o.wasm)
+                account(runWasmTests(job.tests.filter!(t => t.traits.isWasm).array, job.tests, driver));
+            if (o.wasmBare)
+                account(runWasmBareTests(job.tests.filter!(t => t.traits.isWasm).array, job.tests, driver));
+            foreach (line; job.pending.splitter('\n'))
+                job.result.lines ~= line;
+        }
+        catch (Throwable t)
+        {
+            job.result.failed = true;
+            job.result.lines ~= "error: the extracted modes failed: " ~ t.msg;
+        }
+    }
+
+    auto job = new Job(tests, cast(RunnerOptions) options, roots.dup);
+    BlockingPool pool;
+    if (BlockingPool.create(pool, 1, 2).hasError)
+        return DriverRun(["error: no blocking pool for the extracted modes"], 0, 0, true);
+    scope (exit)
+        cast(void) pool.shutdown();
+    const ran = (() @trusted => pool.run(s, &call, cast(void*) job))();
+    if (ran.hasError)
+        return DriverRun(["error: the extracted modes did not run: " ~ ran.error.context], 0, 0, true);
+    return job.result;
 }
