@@ -263,7 +263,11 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
             return *made_;
         const gen = &plan.generators[gi];
         import std.digest.sha : sha256Of;
-        const d = hexOf(sha256Of(gen.directory ~ "\n" ~ gen.command))[0 .. 12];
+        // Root-relative, so the id, and the `$RUN/out/<id>/` paths a reader's
+        // manifest records, are the same in every worktree (BGA5).
+        import std.array : replace;
+
+        const d = hexOf(sha256Of(relative(gen.directory, root) ~ "\n" ~ gen.command.replace(root, "$ROOT")))[0 .. 12];
         string[] arguments;
         foreach (arg; gen.arguments)
             arguments ~= relative(arg, root);
