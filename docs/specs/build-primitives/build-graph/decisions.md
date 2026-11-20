@@ -1057,14 +1057,24 @@ and an unprivileged user and network namespace, and `plan-graph --run
   directory). Every build action of the graph then ran confined.
 - **Tests:** `sparkles:build-primitives`' 352 tests pass confined to their
   task directories and `TMPDIR`; one, `fileset.driver.FSD7.realMount`, skips,
-  since it creates files in `/dev/shm`. The list over the repository's whole
-  test selection is still to be made.
+  since it creates files in `/dev/shm`.
 
-The decision criterion holds for build actions; confining them by default,
-with the wrapper keyed as a tool (BGT1), waits for the whole selection's
-run.
+**Result (2026-11-20).** Every package's tests ran confined to their task
+directories and `TMPDIR`, without a network (`plan-graph --run=<package>
+--confine-tests`, 85 packages on Linux 6.18). No test action writes into the
+tree. The list has one entry:
 
-**Revisit when** the spike's result is recorded here.
+| Test action       | What it writes                                                                   | Decision                                                                                                          |
+| ----------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `dmd-lsp`'s tests | beneath `DUB_HOME`: the `dmd` package's generated configuration, and dub's cache | its declared `dub` (D62) runs there, so a test that declares dub may write beneath `DUB_HOME` too, and only there |
+
+The decision criterion holds for build actions and for tests: local actions
+may run confined, and a violation fails the action. Confining them by
+default, with the wrapper keyed as a tool (BGT1), is the `ci test` cutover's
+(ci task-DAG M7b).
+
+**Revisit when** a test action needs to write beneath another directory, or
+the wrapper becomes the default.
 
 ## D40: Toolchain store paths are remapped (accepted)
 

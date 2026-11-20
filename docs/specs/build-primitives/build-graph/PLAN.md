@@ -203,8 +203,13 @@ Progress, by the gate's items:
   identity is the tools' store-path closure (BGT1, BGT2).
 - **Registry sources without Nix** (BGR4): `plan-graph --fetch-sources`
   builds and tests from a fetched tree equal to Nix's.
-- **Isolation (D39):** builds confined by Landlock and a network namespace
-  at no measurable cost; the whole test selection's list is still to run.
+- **Isolation (D39):** builds and tests confined by Landlock and a network
+  namespace at no measurable cost. Over the whole test selection, no test
+  writes into the tree; the one that writes elsewhere, `dmd-lsp`'s through
+  its declared dub, may write beneath `DUB_HOME`.
+- **The LDC fork:** its lit tests, the dependency output's among them, pass in
+  the toolchain the flake pins (dlang.nix's `toolchain-ldc`, built through
+  this flake's lock).
 - **Gate checks so far:** a second run in another worktree compiles nothing;
   an edit to one `sparkles:base` module recompiles exactly the compiles whose
   manifests list it; oracle 3 passes for `build-primitives` and `ui-app`
@@ -228,8 +233,7 @@ Progress, by the gate's items:
   (BGS6), and `dmd-lsp`'s tests calling dub, which a test may now declare
   (D62).
 
-Next: D39's list over the whole test selection, and the LDC fork's tests in
-the pinned toolchain. The three steps above are gaps until a NixOS VM test
+The gate is met. The three steps above are gaps until a NixOS VM test
 stages them, a follow-up of its own: oracle 4's clock steps against an NFS
 server whose clock is set apart, and oracle 16 step 6 by replaying a
 `dm-log-writes` log of a build's writes to every flush point. Oracle 5 step 5
@@ -275,5 +279,5 @@ Gate:
 | E1a       | superseded  |
 | E1        | done        |
 | E2        | done        |
-| E3        | in progress |
+| E3        | done        |
 | E4        | not started |
