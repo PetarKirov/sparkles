@@ -170,6 +170,12 @@ struct Tools
     Duration actionLimit = 30.minutes; /// ditto
     /// The legs each test binary runs in, each its own test action.
     TestLeg[] testLegs = [TestLeg.init];
+    /// Flags every compile and link takes after the recipe's, such as a
+    /// sanitizer's (ci task-DAG M8); they are part of each declared key.
+    string[] extraFlags;
+    /// Variables every program the graph builds and runs takes: each test's
+    /// and each generator's, such as the sanitizer's runtime options.
+    EnvEntry[] runtimeEnvironment;
 }
 
 /**
@@ -315,7 +321,7 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
             id = taskId("generate", "shader-compile", "generator", vendor, d).value;
             add(Action(ActionKind.generate, id, gen.tool,
                 TaskAction(ProcessAction(argv: argv,
-                    envDelta: [EnvEntry("PATH", ""), EnvEntry("TMPDIR", "$MEASURE")],
+                    envDelta: [EnvEntry("PATH", ""), EnvEntry("TMPDIR", "$MEASURE")] ~ tools.runtimeEnvironment.dup,
                     sandbox: SandboxPolicy.taskDirectory)),
                 [DeclaredOutput(".", true)], defaultWeight(ActionKind.generate)));
             edge(toolLink, id);
@@ -345,7 +351,7 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
                 envDelta: linkEnvironment(*t, tools), sandbox: SandboxPolicy.taskDirectory)),
             [DeclaredOutput(binaryName(*t))], linkWeight));
         edge(toolCompile, toolLink);
-        EnvEntry[] env = [EnvEntry("PATH", "")];
+        EnvEntry[] env = [EnvEntry("PATH", "")] ~ tools.runtimeEnvironment.dup;
         if (tools.fail.length)
         {
             if (shim.empty)
@@ -491,7 +497,7 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
                 // BGX1: a test runs in the repository root, whatever the
                 // recipe's `workingDirectory`.
                 auto t = Action(ActionKind.test, id, rootVariant,
-                    TaskAction(ProcessAction(argv: testArgv,
+                    TaskAction(ProcessAction(argv: testArgv, envDelta: tools.runtimeEnvironment.dup,
                         sandbox: SandboxPolicy.taskDirectory)),
                     coverage ? [DeclaredOutput(".", true)] : null, leg.threads);
                 testOf[ri] ~= add(t);
@@ -726,6 +732,7 @@ string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId
         argv ~= "--cov-increment=atomic";
     foreach (f; s.dflags)
         argv ~= f;
+    argv ~= tools.extraFlags;
     foreach (p; s.importPaths)
         argv ~= "-I=" ~ relative(p, root);
     // The C preprocessor's include roots, as dub passes them (ImportC).
@@ -772,6 +779,7 @@ string[] linkArgv(ref const Variant v, string root, const Tools tools, TaskId co
     argv ~= optionFlags(s.options, v.platform.compiler == "ldc");
     foreach (f; s.dflags)
         argv ~= f;
+    argv ~= tools.extraFlags;
     argv ~= ["-of=$OUT/" ~ binaryName(v), inputPath(compile, objectName(v))];
     if (v.platform.compiler == "ldc")
     {
