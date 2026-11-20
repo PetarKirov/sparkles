@@ -237,6 +237,9 @@ TaskOutcome runExample(ref TaskContext!Sched ctx, const ref InProcessAction acti
     cfg.timeout = timeout;
     cfg.collectOutput = true;
     cfg.process.stderrSpec = StdioSpec(StdioMode.mergeStdout);
+    // An empty, already-ended standard input: a program that would prompt
+    // when it sees a terminal never does, on CI or a developer's terminal.
+    cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
     cfg.sampleInterval = Duration.zero;
     void onEvent(in ProcessEvent ev)
     {
