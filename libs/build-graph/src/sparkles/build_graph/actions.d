@@ -342,7 +342,7 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
         const linkWeight = defaultWeight(ActionKind.link);
         const toolLink = add(Action(ActionKind.link, actionId(ActionKind.link, *t), gen.tool,
             TaskAction(ProcessAction(argv: linkArgv(*t, root, tools, toolCompile, null, linkWeight),
-                sandbox: SandboxPolicy.taskDirectory)),
+                envDelta: linkEnvironment(*t, tools), sandbox: SandboxPolicy.taskDirectory)),
             [DeclaredOutput(binaryName(*t))], linkWeight));
         edge(toolCompile, toolLink);
         EnvEntry[] env = [EnvEntry("PATH", "")];
@@ -457,7 +457,7 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
         const weight = defaultWeight(ActionKind.link);
         auto l = Action(ActionKind.link, actionId(ActionKind.link, *v), rootVariant,
             TaskAction(ProcessAction(argv: linkArgv(*v, root, tools, compileOf[rootVariant], archives, weight),
-                sandbox: SandboxPolicy.taskDirectory)),
+                envDelta: linkEnvironment(*v, tools), sandbox: SandboxPolicy.taskDirectory)),
             [DeclaredOutput(binaryName(*v))], weight);
         const linkId = add(l);
         rootCompileOf[ri] = compileOf[rootVariant];
@@ -630,6 +630,11 @@ would bring its modules in a second time.
 bool archivesItself(ref const Variant v) @safe pure nothrow @nogc
     => v.platform.compiler == "ldc" && v.role == Role.dependencyLibrary && v.settings.targetType != TargetType.none;
 string archiveName(ref const Variant v) @safe pure nothrow => "lib" ~ baseName(v) ~ ".a";
+
+/// A link's planned environment: DMD finds its C driver only through `$CC`,
+/// and a build action's `PATH` is empty (BGA4).
+EnvEntry[] linkEnvironment(ref const Variant v, const Tools tools) @safe pure nothrow
+    => v.platform.compiler != "ldc" && tools.cc.length ? [EnvEntry("CC", tools.cc)] : null;
 string binaryName(ref const Variant v) @safe pure nothrow => baseName(v);
 
 string inputPath(TaskId producer, string path) @safe pure nothrow => "$IN(" ~ producer.text ~ ")/" ~ path;
@@ -777,6 +782,10 @@ string[] linkArgv(ref const Variant v, string root, const Tools tools, TaskId co
         if (tools.linker.length)
             argv ~= ["--linker=" ~ linkerName(tools.linker), "-Xcc=-B" ~ directoryOf(tools.linker)];
     }
+    // DMD names its C driver only through `$CC` (`linkEnvironment`) and the
+    // linker only through that driver's options.
+    else if (tools.linker.length)
+        argv ~= ["-Xcc=-B" ~ directoryOf(tools.linker), "-Xcc=-fuse-ld=" ~ linkerName(tools.linker)];
     argv ~= archives;
     foreach (f; s.sourceFiles)
         if (isLinkerInput(f))

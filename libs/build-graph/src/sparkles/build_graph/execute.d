@@ -134,7 +134,9 @@ TaskNode[] executionNodes(ref const ActionGraph g, const RunLayout layout, const
                 if (q.cwd.length && !q.cwd.startsWith("/"))
                     q.cwd = layout.root ~ "/" ~ q.cwd;
                 // A typed generator states its environment over a build's (§7).
-                q.envDelta = build ? plannedEnvironment(null, layout, id)
+                // A build states its few planned entries (DMD's `$CC`) over
+                // the complete environment.
+                q.envDelta = build ? plannedEnvironment(p.envDelta, layout, id)
                     : a.kind == ActionKind.generate && p.envDelta.length ? plannedEnvironment(p.envDelta, layout, id)
                     : declaredWith(declared, p.envDelta, layout, id);
                 q.completeEnvironment = true;
