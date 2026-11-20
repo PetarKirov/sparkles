@@ -1550,9 +1550,16 @@ struct ActionDriver
                     roots ~= dir;
                 foreach (arg; p.argv)
                 {
-                    foreach (prefix; ["-I=", "-J=", "-P-I"])
-                        if (arg.startsWith(prefix))
-                            roots ~= named(arg[prefix.length .. $]);
+                    import std.path : buildNormalizedPath;
+
+                    // A recipe's own `dflags "-I…"` states a root as surely
+                    // as its `importPaths` (an example's sibling module).
+                    foreach (prefix; ["-I=", "-J=", "-P-I", "-I", "-J"])
+                        if (arg.startsWith(prefix) && arg.length > prefix.length)
+                        {
+                            roots ~= named(buildNormalizedPath(arg[prefix.length .. $]));
+                            break;
+                        }
                     if (arg.length && arg[0] != '-' && arg[0] != '$' && arg.canFind('/'))
                         roots ~= arg;
                 }
