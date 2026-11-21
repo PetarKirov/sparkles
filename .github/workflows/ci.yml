@@ -627,6 +627,9 @@ jobs:
         run: ci test --sanitize address --fail-fast --interlaced --placement "$PLACEMENT" --shard "$SHARD" --history-tip "$TIP"
         env:
           DC: ldc2
+          # Two ASan test-root compiles at once (`terminal`'s, `ui`'s) ran
+          # this 16 GiB runner out of memory: one compile (weight 2) at a time.
+          SPARKLES_CI_JOBS: '2'
           PLACEMENT: ${{ matrix.placement }}
           SHARD: ${{ matrix.shard }}
           TIP: ${{ needs.placements.outputs.tip }}
