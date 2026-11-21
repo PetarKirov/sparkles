@@ -258,7 +258,7 @@ def myProgram: Result < MyEffects = ???
 [Kyo GitHub repository]: https://github.com/getkyo/kyo
 [Kyo website]: https://getkyo.io/
 [Kyo on Scaladex]: https://index.scala-lang.org/getkyo/kyo
-[Writing Modular Applications Using The Kyo Library]: https://www.scalamatters.io/post/writing-modular-applications-using-the-kyo-library
+[Writing Modular Applications Using The Kyo Library]: https://web.archive.org/web/20260611194301/https://www.scalamatters.io/post/writing-modular-applications-using-the-kyo-library
 [What are Effect Systems and Why Do We Care?]: https://idiomaticsoft.com/post/2024-01-02-effect-systems/
 [Kyo -- Functional Scala 2023 slides]: https://speakerdeck.com/fwbrasil/kyo-functional-scala-2023
 [Debasish Ghosh on Kyo's type encoding]: https://x.com/debasishg/status/1881557372331856347
