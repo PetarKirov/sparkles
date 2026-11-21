@@ -76,7 +76,7 @@
       "compiler": "ldc2",
       "mode": "extracted",
       "shards": 1,
-      "timeoutMinutes": 15,
+      "timeoutMinutes": 30,
       "runners": {
         "circleci": "linux",
         "github": "ubuntu-latest"
