@@ -6,7 +6,8 @@ executor.
 
 $(LREF executionNodes) replaces each action's placeholders: `$ROOT` by the
 worktree, `$OUT` by the action's output directory beneath the run
-directory, `$MEASURE` by its measurement directory, and `$IN(<id>)` by
+directory (`$OUTREL` by the same directory relative to the run directory,
+for an action that runs there), `$MEASURE` by its measurement directory, and `$IN(<id>)` by
 another action's output directory. It gives each action a complete
 environment (BGA4): compiles, archives and links run with a fixed
 `SOURCE_DATE_EPOCH`, `TERM` and `NO_COLOR` and an empty `PATH`, and inherit
@@ -82,7 +83,7 @@ struct RunLayout
     string measureOf(TaskId id) const @safe pure nothrow => runDirectory ~ "/measure/" ~ idPath(id);
 
     // A task id as a relative path, each segment a component.
-    private static string idPath(TaskId id) @safe pure nothrow
+    package static string idPath(TaskId id) @safe pure nothrow
     {
         import sparkles.build_primitives.task.process : sandboxPath;
 
@@ -224,6 +225,11 @@ string expand(string arg, const RunLayout layout, TaskId self) @safe
         {
             result ~= layout.runDirectory;
             i += 4;
+        }
+        else if (rest.startsWith("$OUTREL"))
+        {
+            result ~= "out/" ~ RunLayout.idPath(self);
+            i += 7;
         }
         else if (rest.startsWith("$OUT"))
         {
@@ -1973,6 +1979,19 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
     if (ran.hasError)
         return RunResult(exitCode: 2);
     return result;
+}
+
+@("build_graph.execute.expand.outRelative")
+@safe unittest
+{
+    import sparkles.build_primitives.task.model : taskId;
+
+    // `$OUTREL` names the action's `$OUT` from the run directory, the same
+    // in every run; `$OUT` names it absolutely.
+    const link = taskId("link", "r.t1", "test-root", "ldc", "def").value;
+    const layout = RunLayout("/w", "/run");
+    assert(expand("-of=$OUTREL/t", layout, link) == "-of=out/link/r.t1/test-root/ldc/def/t");
+    assert(expand("-of=$OUT/t", layout, link) == "-of=/run/out/link/r.t1/test-root/ldc/def/t");
 }
 
 /// Placeholders become the run's paths; a build action's environment is

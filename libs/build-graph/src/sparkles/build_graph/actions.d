@@ -801,7 +801,9 @@ string[] linkArgv(ref const Variant v, string root, const Tools tools, TaskId co
     foreach (f; s.dflags)
         argv ~= f;
     argv ~= tools.extraFlags;
-    argv ~= ["-of=$OUT/" ~ binaryName(v), inputPath(compile, objectName(v))];
+    // A Darwin link names its binary from the run directory it runs in, as
+    // `dsymutil`'s relocation map records it (`binary-path`).
+    argv ~= [(darwinLink(v) ? "-of=$OUTREL/" : "-of=$OUT/") ~ binaryName(v), inputPath(compile, objectName(v))];
     if (v.platform.compiler == "ldc")
     {
         if (tools.cc.length)
@@ -1273,7 +1275,7 @@ version (unittest)
 @safe unittest
 {
     // A Darwin link runs in its run directory and names its debug map's
-    // objects from there; elsewhere a link runs in the root, unchanged.
+    // objects and its binary from there; elsewhere a link runs in the root, unchanged.
     foreach (darwin; [false, true])
     {
         const g = graphWith([[":t1", "unittest"]], null, Tools.init, null,
@@ -1285,6 +1287,7 @@ version (unittest)
                     ++links;
                     assert(p.cwd == (darwin ? "$RUN" : null), p.cwd);
                     assert(p.argv.canFind("-L-oso_prefix") == darwin, text(p.argv));
+                    assert(p.argv.canFind!(x => x.startsWith("-of=$OUTREL/")) == darwin, text(p.argv));
                 }, (_) {});
         assert(links);
     }
