@@ -207,3 +207,95 @@ PackageCoverage collectCoverage(string dir, string name, string pkgDir, scope co
     r.files.sort!((a, b) => a.percent < b.percent);
     return r;
 }
+
+/**
+Merges two `-cov` listings of one source file, as druntime's `merge:1` does
+when a second process writes over the first's (ci task-DAG CIC7): each line's
+counter is the sum of both, a line either listing counted is coverable, and
+the trailer is recomputed from the merged counters. The listings' source
+lines must agree; `null` when they do not, and the caller keeps them apart.
+*/
+string mergeListings(const(char)[] a, const(char)[] b) @safe pure
+{
+    import std.algorithm.searching : findSplit;
+    import std.array : appender;
+    import std.conv : ConvException, to;
+    import std.format : format;
+    import std.string : strip;
+
+    // Lines end at `\n` alone: a source line may hold U+2028 or NEL, which
+    // `lineSplitter` would also split at.
+    auto as = linesOf(a), bs = linesOf(b);
+    if (as.length != bs.length || as.length == 0)
+        return null;
+    auto out_ = appender!string;
+    size_t covered, coverable;
+    const(char)[] path;
+    foreach (i; 0 .. as.length - 1)
+    {
+        auto x = as[i].findSplit("|"), y = bs[i].findSplit("|");
+        if (!x[1].length || !y[1].length || x[2] != y[2])
+            return null;
+        const cx = x[0].strip, cy = y[0].strip;
+        if (!cx.length && !cy.length)
+        {
+            out_ ~= x[0];
+        }
+        else
+        {
+            ulong n;
+            try
+                n = (cx.length ? cx.to!ulong : 0) + (cy.length ? cy.to!ulong : 0);
+            catch (ConvException)
+                return null;
+            ++coverable;
+            covered += n > 0;
+            out_ ~= n ? format("%7d", n) : "0000000";
+        }
+        out_ ~= "|";
+        out_ ~= x[2];
+        out_ ~= "\n";
+    }
+    // The trailer: `<path> is N% covered` or `<path> has no code`.
+    const trailer = as[$ - 1];
+    if (auto is_ = trailer.findSplit(" is "))
+        path = is_[0];
+    else if (auto none = trailer.findSplit(" has no code"))
+        path = none[0];
+    else
+        return null;
+    out_ ~= coverable ? format("%s is %d%% covered\n", path, covered * 100 / coverable)
+        : format("%s has no code\n", path);
+    return out_[];
+}
+
+// `text`'s lines, each without its `\n` (and a `\r` before it).
+private const(char)[][] linesOf(const(char)[] text) @safe pure
+{
+    import std.algorithm.iteration : splitter;
+
+    const(char)[][] result;
+    foreach (l; text.splitter('\n'))
+        result ~= l.length && l[$ - 1] == '\r' ? l[0 .. $ - 1] : l;
+    if (result.length && result[$ - 1].length == 0)
+        result = result[0 .. $ - 1];
+    return result;
+}
+
+///
+@("coverage.mergeListings.sumsCounters")
+@safe
+unittest
+{
+    const a = "       |module m;\n      2|f();\n0000000|g();\nm.d is 50% covered\n";
+    const b = "       |module m;\n0000000|f();\n      1|g();\nm.d is 50% covered\n";
+    assert(mergeListings(a, b) == "       |module m;\n      2|f();\n      1|g();\nm.d is 100% covered\n");
+    // Different sources are different listings.
+    assert(mergeListings(a, "       |module n;\n      2|f();\n0000000|g();\nm.d is 50% covered\n") is null);
+    // A merged listing parses as one.
+    const merged = parseCoverageListing(mergeListings(a, b));
+    assert(merged.path == "m.d" && merged.covered == 2 && merged.coverable == 2);
+    // A line separator inside a source line does not end the line.
+    const sep = "      1|s = \u2028;\nm.d is 100% covered\n";
+    assert(mergeListings(sep, sep) == "      2|s = \u2028;\nm.d is 100% covered\n");
+}

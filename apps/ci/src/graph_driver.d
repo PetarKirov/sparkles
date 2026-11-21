@@ -4,7 +4,7 @@ the test selection, or one package's test root, and runs it on the
 task-DAG executor against the shared store, with the toolchain from `PATH`
 named by absolute path (§8).
 
-`ci` drives it (`ci cache store explain`, `ci commits build-each`), and so
+`ci` drives it (`ci cache explain`, `ci commits build-each`), and so
 does the test-only planner, `apps/ci/tools/plan-graph.d`, whose `--check`
 and `--run=` verify E2's and E3's gates through it.
 
@@ -15,20 +15,20 @@ module graph_driver;
 
 
 import core.time : Duration, hours, minutes, seconds;
-import std.algorithm : canFind, endsWith, filter, map, sort, startsWith, uniq;
+import std.algorithm : any, canFind, endsWith, filter, map, sort, startsWith, uniq;
 import std.array : array, join, replace, split;
 import std.conv : octal, text, to;
 import std.file : dirEntries, readText, SpanMode;
-import std.path : absolutePath, buildNormalizedPath, buildPath, dirName;
+import std.path : absolutePath, baseName, buildNormalizedPath, buildPath, dirName;
 import std.process : environment;
 import std.string : indexOf;
 import std.stdio : stderr, writeln;
 import std.sumtype : match;
 import std.typecons : Nullable;
 
-import sparkles.build_graph.actions : ActionGraph, ActionKind, CoverageAttempt, TestProgram, Tools,
+import sparkles.build_graph.actions : ActionGraph, ActionKind, CoverageAttempt, TestLeg, TestProgram, Tools,
     planActions, taskNodes;
-import sparkles.build_graph.execute : RunStats;
+import sparkles.build_graph.execute : RunReporting, RunStats;
 import sparkles.build_graph.variants : LayoutCheck, PlanError, PlanOptions, Role, ToolchainIdentity,
     VariantPlan, planVariants;
 import sparkles.build_primitives.task.model : PlanExpected, planErr, planOk;
@@ -37,14 +37,92 @@ import sparkles.build_primitives.resolve.libraries : PkgConfigDriver, RecordingP
 import sparkles.build_primitives.resolve.platform : BuildPlatform;
 import sparkles.build_primitives.resolve.registry : nixRegistrySources, readDubLocks;
 import sparkles.build_primitives.resolve.tree : ResolveTree, memoryTree, rootedTree, systemTree;
-import sparkles.build_primitives.task.action : EnvEntry, InProcessAction, InertAction, ProcessAction;
+import sparkles.build_primitives.task.action : EnvEntry, InProcessAction, InertAction, ProcessAction, TaskAction;
+import sparkles.build_primitives.task.executor : TaskContext;
+import sparkles.build_primitives.task.process : InProcessHandler;
+import sparkles.event_horizon.sched : Sched;
 import sparkles.build_primitives.workspace.discovery : ReadKind, ReadSet, readWorkspaceAt;
 import sparkles.build_primitives.workspace.package_graph : RecipeRole, buildPackageGraph;
 import sparkles.unittest_layout.lint : checkLayout;
 
-enum host = ["linux", "posix"];
+/// The dub platform tokens of the host this driver runs on: a recipe's
+/// `platform="linux-ldc"` settings must not reach a macOS build.
+string[] host() @safe pure nothrow
+{
+    import sparkles.build_primitives.dub_manifest : hostPlatformTokens;
 
-BuildPlatform platform() @safe => BuildPlatform(host.dup, ["x86_64"], "ldc", "ldc2", 2113, "1.43.0");
+    return hostPlatformTokens();
+}
+
+/// The host's architecture, as dub names it.
+string[] hostArchitecture() @safe pure nothrow
+{
+    version (X86_64)
+        return ["x86_64"];
+    else version (AArch64)
+        return ["aarch64"];
+    else version (X86)
+        return ["x86"];
+    else
+        return null;
+}
+
+/**
+The platform `compiler` builds for: LDC's or DMD's (build-graph D19), with
+the frontend and compiler versions its `--version` reports. Memoized per
+compiler.
+*/
+BuildPlatform platformOf(string compiler) @safe
+{
+    import std.path : baseName;
+    import std.process : execute;
+    import std.regex : matchFirst, regex;
+
+    static BuildPlatform[string] memo;
+    if (auto known = compiler in memo)
+        return *known;
+    const dmd = compiler.baseName.startsWith("dmd");
+    const output = execute([compiler, "--version"]).output;
+    // `DMD64 D Compiler v2.112.1`; LDC: `(1.43.0)` and `based on DMD v2.113.0`.
+    const frontend = output.matchFirst(regex(`v2\.(\d+)`));
+    const own = dmd ? output.matchFirst(regex(`v(\d+\.\d+\.\d+)`)) : output.matchFirst(regex(`\((\d+\.\d+\.\d+)`));
+    auto p = BuildPlatform(host(), hostArchitecture(), dmd ? "dmd" : "ldc", dmd ? "dmd" : "ldc2",
+        frontend ? 2000 + frontend[1].to!int : 2113, own ? own[1].idup : (dmd ? "2.112.1" : "1.43.0"));
+    memo[compiler] = p;
+    return p;
+}
+
+/// The processors online, as `std.parallelism.totalCPUs` counts them.
+uint logicalProcessors() @trusted nothrow @nogc
+{
+    version (Posix)
+    {
+        import core.sys.posix.unistd : _SC_NPROCESSORS_ONLN, sysconf;
+
+        const n = sysconf(_SC_NPROCESSORS_ONLN);
+        return n > 0 ? cast(uint) n : 1;
+    }
+    else
+    {
+        import core.sys.windows.winbase : GetSystemInfo, SYSTEM_INFO;
+
+        SYSTEM_INFO info;
+        GetSystemInfo(&info);
+        return info.dwNumberOfProcessors ? info.dwNumberOfProcessors : 1;
+    }
+}
+
+/// The platform of the compiler `$DC` names, LDC's by default.
+BuildPlatform platform() @safe => platformOf(compilerName);
+
+/// The compiler a run builds with: `$DC` (`ldc2` or `dmd`), LDC by default.
+string compilerName() @safe
+{
+    import std.path : baseName;
+
+    const dc = environment.get("DC", "ldc2");
+    return dc.baseName.startsWith("dmd") ? "dmd" : "ldc2";
+}
 
 struct Planned
 {
@@ -58,6 +136,11 @@ struct Planned
     string[] roots;
     /// D62: per package, the tools its tests declare they run (only `dub`).
     string[][string] testTools;
+    /// Each planned single-file package's link task, by its file (CIC8).
+    string[string] singleFileLinks;
+    /// Why each single-file package that could not be resolved was left out:
+    /// its own failure, not the run's (§5.5).
+    string[string] singleFileErrors;
 }
 
 LayoutCheck layoutLint() @safe
@@ -111,8 +194,16 @@ void marker(string name) @trusted
 }
 
 Planned planRepository(string root, bool markers = false, string only = null, Tools tools = Tools.init,
-    string toolchain = "dev-shell", bool lint = true)
+    string toolchain = "dev-shell", bool lint = true, const string[] packages = null, bool coverage = false,
+    const string[] singleFiles = null, const string[] applications = null)
 {
+    // The platform the tools' compiler builds for (D19).
+    auto platform = platformOf(tools.compiler);
+    // The packages planned: `only`, else `packages`, else every one, unless
+    // only single-file packages are asked for.
+    bool chosen(string name) => only.length ? name == only : packages.length ? packages.canFind(name)
+        : !singleFiles.length && !applications.length;
+
     const d = driverEnvironment();
     if (d.sources is null)
         return Planned("SPARKLES_DUB_SOURCES is not set; run in the dev shell");
@@ -146,17 +237,65 @@ Planned planRepository(string root, bool markers = false, string only = null, To
         return Planned(text(graph.error));
 
     Resolution[] rs;
+    size_t[][] testRequests; // per chosen package, its test requests' indices
+    CoverageAttempt[] attempts;
     foreach (ref pkg; graph.value.packages)
     {
-        if (only.length && pkg.shortName != only)
+        if (!chosen(pkg.shortName))
             continue;
-        auto request = ResolveRequest(directory: root, subPackage: pkg.shortName, buildType: "unittest",
-            platform: platform, testRoot: true);
+        // CIC7: with coverage, a `-cov` test whose plain one is its fallback.
+        size_t[] mine;
+        foreach (buildType; coverage ? ["unittest-cov", "unittest"] : ["unittest"])
+        {
+            auto request = ResolveRequest(directory: root, subPackage: pkg.shortName, buildType: buildType,
+                platform: platform, testRoot: true);
+            foreach (n, s; registry.value)
+                request.registry[n] = s;
+            auto r = resolve(request, tree);
+            if (r.hasError)
+                return Planned(fault() ? fault() : text(pkg.shortName, ": ", r.error.message));
+            mine ~= rs.length;
+            rs ~= r.value;
+        }
+        if (coverage)
+            attempts ~= CoverageAttempt(mine[0], mine[1]);
+        testRequests ~= mine;
+    }
+    // `ci commits build-each` (M11): packages' default configurations as
+    // applications, built with dub's `debug` build type, as `dub build` does.
+    foreach (name; applications)
+    {
+        auto request = ResolveRequest(directory: root, subPackage: name, buildType: "debug", platform: platform);
         foreach (n, s; registry.value)
             request.registry[n] = s;
         auto r = resolve(request, tree);
         if (r.hasError)
-            return Planned(fault() ? fault() : text(pkg.shortName, ": ", r.error.message));
+            return Planned(fault() ? fault() : text(name, ": ", r.error.message));
+        rs ~= r.value;
+    }
+    // CIC8: single-file packages (examples), as applications built with
+    // dub's `debug` build type, their in-tree dependencies the worktree's.
+    // The planner knows a package by its name, so a second file naming one
+    // already planned is refused, not merged into the first.
+    string[string] singleFileOf;
+    foreach (file; singleFiles)
+    {
+        auto request = ResolveRequest(singleFile: file, buildType: "debug", platform: platform,
+            inTree: [read.value.rootName: root]);
+        foreach (n, s; registry.value)
+            request.registry[n] = s;
+        auto r = resolve(request, tree);
+        if (r.hasError)
+        {
+            p.singleFileErrors[file] = fault() ? fault() : r.error.message;
+            continue;
+        }
+        if (auto first = r.value.rootPackage in singleFileOf)
+        {
+            p.singleFileErrors[file] = text("its package name, ", r.value.rootPackage, ", is ", *first, "'s too");
+            continue;
+        }
+        singleFileOf[r.value.rootPackage] = file;
         rs ~= r.value;
     }
     // D61: the programs each test runs, declared beside its package's recipe,
@@ -168,7 +307,7 @@ Planned planRepository(string root, bool markers = false, string only = null, To
 
         string[] testDirectories, testPackages;
         foreach (ref pkg; graph.value.packages)
-            if (!only.length || pkg.shortName == only)
+            if (chosen(pkg.shortName))
             {
                 testDirectories ~= pkg.path.length ? root ~ "/" ~ pkg.path : root;
                 testPackages ~= pkg.shortName;
@@ -207,7 +346,8 @@ Planned planRepository(string root, bool markers = false, string only = null, To
                     if (r.hasError)
                         return Planned(fault() ? fault() : text(file, ": ", r.error.message));
                     rs ~= r.value;
-                    programs ~= TestProgram(test: ti, program: rs.length - 1, variable: entry["variable"].str);
+                    foreach (test; testRequests[ti])
+                        programs ~= TestProgram(test: test, program: rs.length - 1, variable: entry["variable"].str);
                 }
             }
             catch (JSONException e)
@@ -240,7 +380,7 @@ Planned planRepository(string root, bool markers = false, string only = null, To
     }
     // `lint` false only for oracle 8's revert check: without it a test can
     // misread a dependency's aggregate.
-    auto options = PlanOptions(ToolchainIdentity("ldc", toolchain), lint ? layoutLint() : null, registry.value.keys,
+    auto options = PlanOptions(ToolchainIdentity(platform.compiler, toolchain), lint ? layoutLint() : null, registry.value.keys,
         pkgConfig);
     options.host = platform;
     options.resolveTool = &resolveTool;
@@ -258,10 +398,15 @@ Planned planRepository(string root, bool markers = false, string only = null, To
             if (!p.packageDirectories.canFind(t.directory))
                 p.packageDirectories ~= t.directory;
 
-    auto g = planActions(p.plan, rs, root, tools, null, programs);
+    auto g = planActions(p.plan, rs, root, tools, attempts, programs);
     if (g.hasError)
         return Planned(text(g.error));
     p.graph = g.value;
+    foreach (ref a; p.graph.actions)
+        if (a.kind == ActionKind.link && a.variant < p.plan.variants.length)
+            foreach (file; singleFiles)
+                if (p.plan.variants[a.variant].settings.sourceFiles.canFind(file))
+                    p.singleFileLinks[file] = a.id.text;
     p.text = render(p.graph, root);
     p.testTools = testTools;
     return p;
@@ -518,6 +663,8 @@ and its outcome; the exit status is the run's.
 */
 /// Oracle 3: whether a run traces its compiles (`--trace-compiles`).
 __gshared bool traceCompiles;
+/// `plan-graph --run --runner-core`: tests through the runner core (CIC11).
+__gshared bool runnerCore;
 /// BGK6 by hand: compiles run as with a compiler without the fork's
 /// dependency output (`--no-dependency-output`).
 __gshared bool noDependencyOutput;
@@ -584,6 +731,40 @@ struct RunOptions
     bool failFast;          /// cancel the rest at the first failure
     bool noLayoutLint;      /// plan without BGV4's lint (oracle 8's revert check)
     double hashSample = 1.0 / 64; /// BGS6: the fraction of hits a lookup rehashes
+    /// Tests run through the runner core, as `test:leg` actions (CIC11),
+    /// instead of as their binaries' own processes.
+    bool runnerCore;
+    /// The packages whose test roots to plan, with `only` null; empty plans
+    /// every one.
+    string[] packages;
+    /// The legs each test binary runs in (CIC11, CIC14); empty keeps the
+    /// graph's default.
+    TestLeg[] legs;
+    /// CIC7: each test a `-cov` attempt, its plain test the fallback.
+    bool coverage;
+    /// `ci test --build-only`: the test binaries and what they link, and no
+    /// test.
+    bool buildOnly;
+    /// The transcript's form, or a dry run (CIC1).
+    RunReporting reporting;
+    /// CIC12: the kinds whose actions must reuse a stored result.
+    string[] requireCached;
+    /// `--sanitize address` (M8): flags every compile and link takes, and the
+    /// variables every test and generator runs with.
+    string[] extraFlags;
+    EnvEntry[] runtimeEnvironment; /// ditto
+    /// Runner options a package's legs add, by its name (`sparkles:base`).
+    string[][string] testArguments;
+    /// Single-file packages to plan as applications (CIC8): examples.
+    string[] singleFiles;
+    /// Packages to plan in their default configurations, as `dub build`
+    /// builds them (`ci commits build-each`).
+    string[] applications;
+    /// The client's own in-process actions, by name.
+    InProcessHandler[string] handlers;
+    /// BGS8's explain: every action looked up, nothing executed or written;
+    /// `GraphRun.stats.explained` holds the verdicts.
+    bool explain;
     /// Changes the tools found on `PATH` before the toolchain is identified
     /// (oracle 9's substitutions).
     void delegate(ref Tools) adjustTools;
@@ -618,7 +799,6 @@ GraphRun runGraph(string root, string only, RunOptions o)
 {
     import std.array : appender;
     import std.file : exists, mkdirRecurse, readText;
-    import std.parallelism : totalCPUs;
     import sparkles.build_graph.execute : RunLayout, executionNodes, runActions;
 
     GraphRun g;
@@ -632,12 +812,24 @@ GraphRun runGraph(string root, string only, RunOptions o)
         tools.config = g.toolchain.config;
         tools.prefixMaps = g.toolchain.root.length ? [g.toolchain.root ~ "=/ldc"] : null;
     }
-    g.plan = planRepository(root, false, only, tools, g.toolchain.identity, !o.noLayoutLint);
+    if (o.legs.length)
+        tools.testLegs = o.legs;
+    tools.extraFlags = o.extraFlags.dup;
+    tools.runtimeEnvironment = o.runtimeEnvironment.dup;
+    foreach (pkg, more; o.testArguments)
+        tools.testArguments[pkg] = more.dup;
+    g.plan = planRepository(root, false, only, tools, g.toolchain.identity, !o.noLayoutLint, o.packages,
+        o.coverage, o.singleFiles, o.applications);
     if (g.plan.error.length)
         return GraphRun(g.plan.error);
-    if (g.plan.requests == 0)
+    // Single files that all failed to plan leave nothing to run but are no
+    // error of the run's: each is its own (§5.5).
+    if (g.plan.requests == 0 && !o.singleFiles.length)
         return GraphRun("no package " ~ only);
-    mkdirRecurse(o.into);
+    // A dry run writes nothing (CIC1): no run directory, no dub trap.
+    const dry = o.reporting.dryRun || o.explain;
+    if (!dry)
+        mkdirRecurse(o.into);
     // Oracle 3: every compile under `strace`, its trace beside its manifest.
     if (o.traceCompiles)
     {
@@ -689,6 +881,16 @@ GraphRun runGraph(string root, string only, RunOptions o)
     }
     if (o.adjustPlan !is null)
         o.adjustPlan(g.plan);
+    // `--build-only`: every test binary's link, with what it needs; with
+    // applications planned, all of the plan, their libraries' compiles too.
+    if (o.buildOnly && !o.applications.length)
+    {
+        string[] links;
+        foreach (ref a; g.plan.graph.actions)
+            if (a.kind == ActionKind.link && (a.id.text.canFind(":test-root:") || a.id.text.canFind(":application:")))
+                links ~= a.id.text;
+        g.plan.graph = needing(g.plan.graph, links);
+    }
     if (o.tasks.length)
     {
         string[] targets;
@@ -713,8 +915,10 @@ GraphRun runGraph(string root, string only, RunOptions o)
     // declared whole (BGX1): the driver's own, with a `dub` first on `PATH`
     // that records each call and fails (oracle 11 step 1).
     const trap = buildPath(o.into, "dub-trap");
-    const declared = declaredEnvironment(trap);
+    const declared = dry ? null : declaredEnvironment(trap);
     auto layout = RunLayout(root, o.into, o.cache, g.toolchain.identity, o.check);
+    layout.requireCached = o.requireCached.dup;
+    layout.explain = o.explain;
     layout.checkTasks = o.checkTasks.dup;
     layout.replaceTasks = o.replaceTasks.dup;
     layout.hashSample = o.hashSample;
@@ -737,6 +941,50 @@ GraphRun runGraph(string root, string only, RunOptions o)
                         (ref _) {});
                     (() @trusted { n.action = action; })();
                 }
+    // CIC11: each test leg through the runner core, in this process; and the
+    // client's own actions.
+    InProcessHandler[string] handlers;
+    foreach (name, handler; o.handlers)
+        handlers[name] = handler;
+    if (o.runnerCore)
+    {
+        import test_leg : legAction, legHandler, runTestLeg;
+
+        if (o.confine == Confinement.tests)
+            return GraphRun("the runner core's tests cannot run confined yet");
+        handlers[legHandler] = (ref TaskContext!Sched ctx, const ref InProcessAction a) => runTestLeg(ctx, a);
+        // A package beneath the runner (`metadata`, `test-harness`, …) cannot
+        // depend on it: its binary runs its own tests, and its exit status is
+        // the verdict, as under `dub test`.
+        // The packages whose recipes depend on the runner, from the schema.
+        bool[string] speaking;
+        {
+            const workspace = readWorkspaceAt(root);
+            if (workspace.hasValue)
+                foreach (ref r; workspace.value.recipes)
+                {
+                    bool depends = r.manifest.dependencies.any!(d => d.name == "sparkles:test-runner");
+                    foreach (ref c; r.manifest.configurations)
+                        depends |= c.dependencies.any!(d => d.name == "sparkles:test-runner");
+                    speaking[r.manifest.name] = depends;
+                }
+        }
+        bool speaksProtocol(string task)
+        {
+            const parts = task.split(":");
+            const pkg = parts.length > 1 ? parts[1].replace("sparkles.", "") : null;
+            return speaking.get(pkg, true);
+        }
+        foreach (ref n; nodes)
+            if (n.id.text.startsWith("test:") && speaksProtocol(n.id.text))
+            {
+                auto action = n.action;
+                auto leg = action.match!(
+                    (ref ProcessAction pa) => TaskAction(legAction(pa)),
+                    (ref _) => action);
+                (() @trusted { n.action = leg; })();
+            }
+    }
     if (o.adjustExecution !is null)
         foreach (ref n; nodes)
         {
@@ -761,12 +1009,12 @@ GraphRun runGraph(string root, string only, RunOptions o)
     }
     auto log = appender!string;
     auto w = Tee(&log, o.echo);
-    const r = runActions(nodes, g.plan.graph, layout, w, o.jobs ? o.jobs : cast(uint) totalCPUs, &g.stats,
-        o.failFast);
+    const r = runActions(nodes, g.plan.graph, layout, w, o.jobs ? o.jobs : logicalProcessors, &g.stats,
+        o.failFast, handlers, o.reporting);
     g.exitCode = r.exitCode;
     g.log = log.data;
     // BGS5: eviction after the run, off its publish path.
-    if (o.cache.length)
+    if (o.cache.length && !dry)
     {
         import sparkles.build_graph.execute : storeOperation;
 
@@ -807,7 +1055,7 @@ int runPackage(string root, string only, string into, string cache, bool checkDe
         return reportOracle3(p, root, into);
     }
     auto g = runGraph(root, only, RunOptions(into: into, cache: cache, check: checkDeterminism, confine: confine,
-        traceCompiles: traceCompiles, jobs: runJobs, echo: true));
+        traceCompiles: traceCompiles, jobs: runJobs, echo: true, runnerCore: runnerCore));
     if (g.error.length)
     {
         stderr.writeln("plan-graph: ", g.error);
@@ -953,7 +1201,7 @@ string[] configDirectories(string config)
 string[] cRuntimeFiles(string cc)
 {
     import std.process : Config, execute;
-    import std.string : strip;
+    import std.string : lineSplitter, strip;
 
     string[] found;
     foreach (name; ["crt1.o", "crti.o", "crtn.o", "Scrt1.o", "libc.so", "libc.a", "libgcc.a"])
@@ -1121,8 +1369,8 @@ string identityListing(const string[] files, const string[] trees, scope string[
 
 
 /**
-BGS7's operations on the store beneath `cache`, the test-only driver's
-`ci cache store`: `size`, `list`, `gc`, `verify`, `evict[=<results bytes>]`,
+BGS7's operations on the store beneath `cache`, behind `ci cache stats`,
+`list`, `gc`, `verify` and `remove`: `size`, `list`, `gc`, `verify`, `evict[=<results bytes>]`,
 and `remove-key=`, `remove-task=`, `remove-package=` or
 `remove-toolchain=` a value.
 */
@@ -1327,12 +1575,22 @@ string pathTools(out Tools tools, out Toolchain toolchain)
 {
     import std.process : execute;
 
-    tools = Tools(compiler: onPath("ldc2"), archiver: onPath("ar"), cc: onPath("cc"), linker: onPath("ld.lld"),
+    // lld is Linux's linker (the build-settings policy); elsewhere the C
+    // driver's own links, as dub's do: macOS's `ld64.lld` asserts on the
+    // Objective-C method lists of the windowing packages.
+    version (linux)
+        const linker = onPath("ld.lld");
+    else
+        const string linker = null;
+    tools = Tools(compiler: onPath(compilerName), archiver: onPath("ar"), cc: onPath("cc"), linker: linker,
         fail: onPath("false"), deviceCompiler: onPath("ldc2-vulkan"));
     foreach (name; ["spirv-val", "spirv-opt", "spirv-dis", "spirv-as", "spirv-cross", "glslangValidator"])
         tools.shaderTools ~= [name, onPath(name)];
-    if (tools.compiler is null || tools.archiver is null || tools.cc is null || tools.linker is null)
-        return "ldc2, ar, cc and ld.lld must be on PATH";
+    version (linux)
+        if (tools.linker is null)
+            return "ld.lld must be on PATH";
+    if (tools.compiler is null || tools.archiver is null || tools.cc is null)
+        return compilerName ~ ", ar and cc must be on PATH";
     // The fork's dependency output, which a compile's manifest comes from.
     const help = execute([tools.compiler, "--help-hidden"]);
     tools.dependencyOutput = help.output.canFind("makedeps-digests") && !noDependencyOutput;
@@ -1340,6 +1598,14 @@ string pathTools(out Tools tools, out Toolchain toolchain)
     tools.config = toolchain.config;
     if (testTimeout != Duration.max)
         tools.testLimit = testTimeout;
+    // The library directories a C driver finds through `$LIBRARY_PATH`, and
+    // the `-L` ones Nix's compiler wrapper adds from `$NIX_LDFLAGS`.
+    foreach (dir; environment.get("LIBRARY_PATH", "").split(":"))
+        if (dir.length && !tools.libraryPath.canFind(dir))
+            tools.libraryPath ~= dir;
+    foreach (flag; environment.get("NIX_LDFLAGS", "").split(" "))
+        if (flag.startsWith("-L") && flag.length > 2 && !tools.libraryPath.canFind(flag[2 .. $]))
+            tools.libraryPath ~= flag[2 .. $];
     if (toolchain.root.length)
         tools.prefixMaps = [toolchain.root ~ "=/ldc"];
     return null;
@@ -1365,7 +1631,7 @@ EnvEntry[] declaredEnvironment(string trap)
 }
 
 /**
-`ci cache store explain <task>` (BGS8): plans the repository's test
+`ci cache explain <task>` (BGS8): plans the repository's test
 selection with the tools a run would name, and looks `task` up, with each
 action it needs, as a run beneath `cache` would, executing nothing and
 publishing nothing. `task` is an id, or a prefix only one id has.
@@ -1380,7 +1646,6 @@ int explainTask(W)(string root, string cache, string task, ref W writer)
 {
     import std.datetime.systime : Clock;
     import std.file : exists, mkdirRecurse, rmdirRecurse;
-    import std.parallelism : totalCPUs;
     import std.process : thisProcessID;
     import sparkles.build_graph.execute : RunLayout, RunStats, executionNodes, runActions;
 
@@ -1448,7 +1713,7 @@ int explainTask(W)(string root, string cache, string task, ref W writer)
     }
     Discard quiet;
     RunStats stats;
-    cast(void) runActions(nodes, sub, layout, quiet, cast(uint) totalCPUs, &stats);
+    cast(void) runActions(nodes, sub, layout, quiet, logicalProcessors, &stats);
 
     string verdict;
     string[] misses;
@@ -1512,7 +1777,7 @@ ActionGraph needing(ref ActionGraph g, const string[] targets)
 }
 
 /**
-`ci cache store replace <task>` (BGS7): plans the repository's test selection
+`ci cache replace <task>` (BGS7): plans the repository's test selection
 with the tools a run would name, and executes `task` (an id, or a prefix only
 one id has) with its lookup bypassed, after looking up or building what it
 needs; its result replaces the published one, which moves to `trash/`. A live
@@ -1520,6 +1785,118 @@ lease another process holds keeps the published result, and is reported.
 Returns 0, 1 when the task failed or a lease held the replacement back, or 2
 when the task is unknown or ambiguous.
 */
+/**
+What `ci test` records of its last run beneath the cache (`runs/last-ci-test.json`)
+for `ci cache verify --rerun`: the selection it planned and each action's
+result key.
+*/
+struct LastRun
+{
+    string[] packages;  ///
+    TestLeg[] legs;     ///
+    bool coverage;      ///
+    bool buildOnly;     ///
+    string[string] resultKeys; ///
+}
+
+/// Writes `run` as the cache's last run.
+void recordLastRun(string cache, const LastRun run)
+{
+    import std.file : mkdirRecurse, write;
+    import std.json : JSONValue;
+
+    JSONValue[] legs;
+    foreach (l; run.legs)
+        legs ~= JSONValue(["threads": JSONValue(l.threads), "skipSlow": JSONValue(l.skipSlow),
+            "name": JSONValue(l.name)]);
+    JSONValue keys = JSONValue.emptyObject;
+    foreach (t, k; run.resultKeys)
+        keys[t] = k;
+    auto j = JSONValue(["packages": JSONValue(run.packages), "legs": JSONValue(legs),
+        "coverage": JSONValue(run.coverage), "buildOnly": JSONValue(run.buildOnly), "resultKeys": keys]);
+    mkdirRecurse(buildPath(cache, "runs"));
+    write(buildPath(cache, "runs", "last-ci-test.json"), j.toString);
+}
+
+/// The cache's last run; null `why` when there is one.
+LastRun lastRun(string cache, out string why)
+{
+    import std.file : exists, readText;
+    import std.json : JSONException, JSONType, parseJSON;
+
+    LastRun run;
+    const file = buildPath(cache, "runs", "last-ci-test.json");
+    if (!exists(file))
+    {
+        why = "no `ci test` run is recorded beneath " ~ cache;
+        return run;
+    }
+    try
+    {
+        const j = parseJSON(readText(file));
+        foreach (p; j["packages"].array)
+            run.packages ~= p.str;
+        foreach (l; j["legs"].array)
+            run.legs ~= TestLeg(cast(uint) l["threads"].integer, l["skipSlow"].type == JSONType.true_,
+                l["name"].str);
+        run.coverage = j["coverage"].type == JSONType.true_;
+        run.buildOnly = j["buildOnly"].type == JSONType.true_;
+        foreach (t, k; j["resultKeys"].object)
+            run.resultKeys[t] = k.str;
+    }
+    catch (JSONException e)
+        why = file ~ ": " ~ e.msg;
+    return run;
+}
+
+/**
+`ci cache verify --rerun` (BGS9, CIC13): re-plans the last `ci test` run's
+selection and re-executes `tasks`, or else CIC13's sample of `n` compiles
+and `n` other actions by `HEAD`, each with its lookup bypassed into a private
+store; a result whose outputs differ is removed, and fails the check.
+*/
+int rerunCheck(W)(string root, string cache, size_t n, const string[] tasks, ref W writer)
+{
+    import sparkles.build_graph.execute : determinismSample;
+    import sparkles.build_primitives.git_env : runGitStdout;
+    import std.datetime.systime : Clock;
+    import std.process : thisProcessID;
+    import std.string : lineSplitter, strip;
+
+    void say(string line) { writer.put(line); writer.put("\n"); }
+
+    string why;
+    const run = lastRun(cache, why);
+    if (why.length)
+    {
+        say("verify --rerun: " ~ why);
+        return 2;
+    }
+    const head = runGitStdout(["rev-parse", "HEAD"], root);
+    auto sample = tasks.length ? tasks.dup : determinismSample(run.resultKeys, head.output.strip, n);
+    if (!sample.length)
+    {
+        say("verify --rerun: the last run has no cacheable action to check");
+        return 0;
+    }
+    auto g = runGraph(root, null, RunOptions(into: buildPath(cache, "runs",
+        text("check-", Clock.currTime.toUnixTime, "-", thisProcessID)), cache: cache, check: true,
+        checkTasks: sample, packages: run.packages.dup, legs: run.legs.dup, coverage: run.coverage,
+        buildOnly: true));
+    if (g.error.length)
+    {
+        say("verify --rerun: " ~ g.error);
+        return 2;
+    }
+    foreach (line; g.log.lineSplitter)
+        if (line.canFind("nondeterministic"))
+            say(line.idup);
+    const differing = g.stats.misses.get("nondeterministic", 0);
+    say(text("verify --rerun: ", sample.length, " action(s) re-executed, ", differing, " differed",
+        differing ? "; their results are removed" : ""));
+    return differing || g.exitCode != 0 ? 1 : 0;
+}
+
 int replaceTask(W)(string root, string cache, string task, ref W writer)
 {
     import std.datetime.systime : Clock;

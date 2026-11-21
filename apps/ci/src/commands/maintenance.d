@@ -15,11 +15,10 @@ import sparkles.base.styled_template : styledText;
 import sparkles.core_cli.args : failRun, ranOk, RunExpected;
 import sparkles.core_cli.process_utils : ChildStdin, executeMonitoredLines, ResourceUsage;
 import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
-import std.algorithm : filter, map;
+import std.algorithm : any, canFind, filter, map, startsWith;
 import std.array : array, join;
 import std.conv : text, to;
 import std.file : exists, mkdirRecurse, remove, tempDir, write;
-import std.parallelism : TaskPool;
 import std.path : baseName, buildPath;
 import std.process : environment, execute;
 import std.stdio : writeln;
@@ -57,7 +56,12 @@ RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool fa
     import std.process : thisProcessID;
     import sparkles.build_primitives.git_env : runGit;
     import each_commit : CommitFailure, defaultEachCommitPackages, failureReport,
-        parseCommitRange, selectPackages, targetBuildArgs;
+        parseCommitRange, selectPackages, targetBuildArgs, wasiPackages;
+    import std.process : thisProcessID;
+
+    // The build graph's store, shared by every commit's builds.
+    const graphCache = buildPath(environment.get("XDG_CACHE_HOME",
+        buildPath(environment.get("HOME", "/"), ".cache")), "sparkles");
 
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
@@ -129,19 +133,73 @@ RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool fa
         const co = runGit(["-C", wt, "checkout", "--quiet", "--detach", commit.sha]);
         if (co.status != 0)
         return failRun(text(i"Could not check out $(commit.sha): $(co.output.strip)"));
-        foreach (pi, pkg; pkgs)
-        {
-            const pkgName = pkg.baseName;
-            const progress = i"[$(cIdx * pkgs.length + pi + 1)/$(total)]".text;
-            const header = styledText(i"{dim $(progress)} {yellow $(commit.sha)} {cyan $(pkgName)} {dim › $(commit.subject)}");
-
-            // A package a later commit adds is not here yet: nothing to build.
-            if (!buildPath(wt, pkg, "dub.sdl").exists && !buildPath(wt, pkg, "dub.json").exists)
+        // The packages this commit has; a package a later commit adds is not
+        // here yet, and has nothing to build.
+        string[] present;
+        foreach (pkg; pkgs)
+            if (buildPath(wt, pkg, "dub.sdl").exists || buildPath(wt, pkg, "dub.json").exists)
+                present ~= pkg;
+            else
             {
-                writeln(styledText(i"{dim $(progress) $(commit.sha) $(pkgName): not in this commit}"));
+                writeln(styledText(i"{dim $(commit.sha) $(pkg.baseName): not in this commit}"));
                 ++processed;
+            }
+        // The build graph builds what it can model against the shared store
+        // (build graph E3's follow-up): a commit compiles only the actions
+        // whose keys it changes. The WebAssembly cross-builds, and a package
+        // planning refuses, build with dub, and the report names them.
+        string[] onGraph, withDub;
+        foreach (pkg; present)
+            (wasiPackages.canFind(pkg.baseName) ? withDub : onGraph) ~= pkg;
+        while (onGraph.length)
+        {
+            import graph_driver : logicalProcessors, runGraph, RunOptions;
+
+            const header = styledText(i"{dim $(commit.sha)} {cyan $(onGraph.map!(p => p.baseName).join(", "))} {dim › the build graph › $(commit.subject)}");
+            writeln(header);
+            auto g = runGraph(wt, null, RunOptions(into: buildPath(graphCache, "runs",
+                text("build-each-", commit.sha, "-", thisProcessID)), cache: graphCache,
+                applications: onGraph.map!(p => p.baseName).array, buildOnly: true, failFast: failFast,
+                jobs: logicalProcessors));
+            if (g.error.length)
+            {
+                // A package the graph cannot plan builds with dub instead.
+                const refused = onGraph.filter!(p => g.error.startsWith(p.baseName ~ ":")).array;
+                if (!refused.length)
+                    return failRun(text(i"$(commit.sha): the build graph cannot plan: $(g.error)"));
+                warning(i"$(commit.sha): the build graph cannot model $(refused[0].baseName) ($(g.error)); building it with dub");
+                withDub ~= refused[0];
+                onGraph = onGraph.filter!(p => p != refused[0]).array;
                 continue;
             }
+            processed += onGraph.length;
+            if (g.exitCode != 0)
+            {
+                foreach (line; g.log.lineSplitter.filter!(l => l.canFind(": failed")))
+                    writeln("  ", line);
+                foreach (pkg; onGraph)
+                    if (g.log.lineSplitter.any!(l => l.canFind(": failed") && l.canFind("sparkles." ~ pkg.baseName ~ ":")))
+                    {
+                        failures ~= CommitFailure(commit, pkg.baseName);
+                        failedLabels ~= commit.sha ~ " :" ~ pkg.baseName;
+                    }
+                if (!failures.length || failures[$ - 1].commit.sha != commit.sha)
+                {
+                    failures ~= CommitFailure(commit, onGraph.map!(p => p.baseName).join(","));
+                    failedLabels ~= commit.sha ~ " :" ~ onGraph.map!(p => p.baseName).join(",");
+                }
+                if (failFast)
+                    break walk;
+            }
+            else
+                info(i"✓ $(commit.sha): $(onGraph.length) package(s) built by the build graph: $(g.stats.summary)");
+            break;
+        }
+        foreach (pi, pkg; withDub)
+        {
+            const pkgName = pkg.baseName;
+            const progress = i"[$(processed + 1)/$(total)]".text;
+            const header = styledText(i"{dim $(progress)} {yellow $(commit.sha)} {cyan $(pkgName)} {dim › dub (not on the build graph) › $(commit.subject)}");
             mkdirRecurse(buildPath(wt, pkg, "build"));
             auto lines = executeMonitoredLines(
                 dubBuildCommand(wt, pkg, pkgName, targetBuildArgs(pkgName, wasiCompiler)),
@@ -180,7 +238,6 @@ RunExpected!void runGcR2Command(int keepCommits, int graceDays, bool dryRun)
     import std.datetime.systime : Clock;
     import std.format : format;
     import std.datetime.timezone : UTC;
-    import std.parallelism : TaskPool;
     import std.process : execute;
     import std.stdio : writefln;
     import std.string : lineSplitter, strip;
@@ -209,23 +266,19 @@ RunExpected!void runGcR2Command(int keepCommits, int graceDays, bool dryRun)
     }
     const string[] keepTrees = log.output.lineSplitter.map!(l => l.strip.idup).filter!(l => l.length).array;
 
-    auto pool = new TaskPool(16);
-    scope (exit) pool.finish(blocking: true);
-
-    // `parallel` foreach, not `amap`: a local lambda given to a TaskPool member
-    // needs a dual context, which LDC does not support.
+    // Sixteen fetches at once, each blocking on its request, on threads of
+    // their own (ci task-DAG M11: blocking HTTP, until a native client).
     Expected!(string, string)[] getAll(string[] keys)
     {
         // Plain arrays: an `Expected` cannot be default-constructed.
         auto bodies = new string[keys.length], failures = new string[keys.length];
-        foreach (i, ref body_; pool.parallel(bodies, 1))
-        {
+        fanOut(keys.length, (size_t i) {
             auto got = getObject(bucket.value, keys[i]);
             if (got.hasError)
                 failures[i] = got.error;
             else
-                body_ = got.value;
-        }
+                bodies[i] = got.value;
+        });
         Expected!(string, string)[] results;
         foreach (i; 0 .. keys.length)
             results ~= failures[i].length ? err!string(failures[i]) : ok(bodies[i]);
@@ -296,12 +349,11 @@ RunExpected!void runGcR2Command(int keepCommits, int graceDays, bool dryRun)
     foreach (batch; [p.deleteNarinfos, p.deleteNars, p.deleteRoots])
     {
         auto messages = new string[batch.length];
-        foreach (i, ref message; pool.parallel(messages, 1))
-        {
+        fanOut(batch.length, (size_t i) {
             auto res = deleteObject(bucket.value, batch[i]);
             if (res.hasError)
-                message = res.error;
-        }
+                messages[i] = res.error;
+        });
         foreach (msg; messages)
             if (msg.length)
             {
@@ -333,4 +385,29 @@ RunExpected!void runWritePinCosts(string path, string historyRemote)
     write(path, json.value ~ "\n");
     info(i"wrote $(path)");
     return ranOk();
+}
+
+/// Runs `work(0 .. n)` on up to sixteen threads, each request blocking on
+/// its own (ci task-DAG M11: blocking HTTP, until a native client).
+private void fanOut(size_t n, scope void delegate(size_t) work)
+{
+    import core.atomic : atomicOp;
+    import core.thread : Thread;
+
+    shared size_t next;
+    void drain()
+    {
+        for (;;)
+        {
+            const i = atomicOp!"+="(next, 1) - 1;
+            if (i >= n)
+                return;
+            work(i);
+        }
+    }
+    Thread[] threads;
+    foreach (_; 0 .. n < 16 ? n : 16)
+        threads ~= new Thread(&drain).start();
+    foreach (t; threads)
+        t.join();
 }

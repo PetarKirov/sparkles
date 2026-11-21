@@ -380,7 +380,10 @@ later read — and that is exactly the bug shape the probe
 defect: a `scope` delegate stored for deferred `Fiber.call`). With
 `ASAN_OPTIONS=detect_stack_use_after_return=1`, the deferred fiber's call through
 the dead closure dies with `stack-use-after-return` symbolized to the closure
-body, exit 1; with `=0` the same run reads garbage and exits 0.
+body, exit 1; with `=0` the same run reads garbage and ASan reports nothing about
+it. What the garbage does next depends on what the dead frame holds: one host
+finishes the run (exit 0), another jumps through a garbage closure pointer into a
+`SEGV`, under the same LDC 1.43 build. Either way the bug is unreported.
 `[hw-verified: x86_64-linux]`
 
 The finding that matters for the runner: **this catch works against the stock,

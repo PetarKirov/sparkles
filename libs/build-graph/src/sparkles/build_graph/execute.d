@@ -30,6 +30,8 @@ dependency output gives (BGK2). Tests are not reused. Without a cache, every run
 */
 module sparkles.build_graph.execute;
 
+import core.time : Duration, MonoTime;
+
 import std.algorithm.searching : canFind, endsWith, startsWith;
 import std.array : join, replace;
 import std.conv : text;
@@ -67,6 +69,11 @@ struct RunLayout
     bool explain;
     /// BGS6: the fraction of hits a lookup rehashes; one rehashes every hit.
     double hashSample = 1.0 / 64;
+    /// ci task-DAG CIC12: the kinds (`compile`, `archive`, `link`,
+    /// `generate`) whose actions must reuse a stored result. One that would
+    /// execute fails before it starts, with its miss's explanation; the
+    /// determinism check's own executions are exempt.
+    string[] requireCached;
 
     /// The output directory of action `id`: its `$OUT`.
     string outOf(TaskId id) const @safe pure nothrow => runDirectory ~ "/out/" ~ idPath(id);
@@ -132,7 +139,9 @@ TaskNode[] executionNodes(ref const ActionGraph g, const RunLayout layout, const
                 if (q.cwd.length && !q.cwd.startsWith("/"))
                     q.cwd = layout.root ~ "/" ~ q.cwd;
                 // A typed generator states its environment over a build's (§7).
-                q.envDelta = build ? plannedEnvironment(null, layout, id)
+                // A build states its few planned entries (DMD's `$CC`) over
+                // the complete environment.
+                q.envDelta = build ? plannedEnvironment(p.envDelta, layout, id)
                     : a.kind == ActionKind.generate && p.envDelta.length ? plannedEnvironment(p.envDelta, layout, id)
                     : declaredWith(declared, p.envDelta, layout, id);
                 q.completeEnvironment = true;
@@ -210,6 +219,11 @@ string expand(string arg, const RunLayout layout, TaskId self) @safe
         {
             result ~= layout.root;
             i += 5;
+        }
+        else if (rest.startsWith("$RUN"))
+        {
+            result ~= layout.runDirectory;
+            i += 4;
         }
         else if (rest.startsWith("$OUT"))
         {
@@ -315,7 +329,7 @@ version (Posix):
 
 import sparkles.build_primitives.task.executor : RunResult, TaskContext;
 import sparkles.build_primitives.task.model : TaskOutcome;
-import sparkles.build_primitives.task.process : ProcessDriver, ProcessDriverOptions;
+import sparkles.build_primitives.task.process : InProcessHandler, ProcessDriver, ProcessDriverOptions;
 import sparkles.event_horizon.sched : Sched;
 import sparkles.build_graph.store : Manifest, ManifestEntry, OutputRecord, ResultRecord, Store,
     preimageDifferences, differences,
@@ -354,6 +368,11 @@ struct RunStats
     /// The tasks that executed, in the order they finished; every other
     /// keyed task was reused.
     string[] executedTasks;
+    /// Per executed task: how long its action ran, and whether it succeeded
+    /// (the run records of observability OD21 time each test leg).
+    Duration[string] wallTimes;
+    bool[string] succeeded; /// ditto
+    MonoTime[string] startedAt; /// ditto: when it started
 
     void future(string path) @safe pure nothrow
     {
@@ -692,6 +711,7 @@ struct ActionDriver
         if (layout.explain)
             return explainOnly(ctx.node.id, a is null ? null : *a, declared, preimage);
         const(ResultRecord)* checked;
+        string missed = declared.length ? null : "it has no declared key";
         // BGS9: checked actions run with their own lookup bypassed.
         const checking = layout.check && (layout.checkTasks.length == 0 || layout.checkTasks.canFind(id.text));
         const replacing = layout.replaceTasks.canFind(id.text);
@@ -733,6 +753,16 @@ struct ActionDriver
             const miss = explainMiss(**a, declared, preimage);
             stats.miss(miss[0]);
             ctx.output(OutputStream.stderr, "miss (" ~ miss[0] ~ "): " ~ miss[1]);
+            missed = miss[0] ~ ": " ~ miss[1];
+        }
+        else if (replacing)
+            missed = "it is being replaced";
+        // CIC12: a required hit that would execute fails before it starts.
+        if (layout.requireCached.canFind(kind) && !checking)
+        {
+            ctx.output(OutputStream.stderr, "a stored result is required (--require-cached " ~ kind ~ "), "
+                ~ "and it would execute: " ~ missed);
+            return TaskOutcome(Failed(FailureReason.contract));
         }
         if (stored && a !is null)
             if (const why = materializeInputs(**a, (string m) => ctx.output(OutputStream.stderr, m)))
@@ -742,7 +772,11 @@ struct ActionDriver
             }
         if (!makeDirectories(id))
             return TaskOutcome(Failed(FailureReason.contract));
+        const began = MonoTime.currTime;
         auto outcome = process.run(ctx);
+        stats.wallTimes[id.text] = MonoTime.currTime - began;
+        stats.startedAt[id.text] = began;
+        stats.succeeded[id.text] = outcome.match!((ref Succeeded _) => true, (ref _) => false);
         stats.count(kind, false);
         stats.executedTasks ~= id.text;
         // BGA9: what an ending publishes. A success; a compile, archive or
@@ -802,6 +836,8 @@ struct ActionDriver
                     const key = checked.resultKey;
                     cast(void) store.remove((ref const ResultRecord r) => r.resultKey == key,
                         (string h) => holderRuns(h), held);
+                    // An authoritative failure (ci task-DAG CIC13).
+                    return TaskOutcome(Failed(FailureReason.contract));
                 }
                 else
                     stats.miss("deterministic");
@@ -1519,9 +1555,16 @@ struct ActionDriver
                     roots ~= dir;
                 foreach (arg; p.argv)
                 {
-                    foreach (prefix; ["-I=", "-J=", "-P-I"])
-                        if (arg.startsWith(prefix))
-                            roots ~= named(arg[prefix.length .. $]);
+                    import std.path : buildNormalizedPath;
+
+                    // A recipe's own `dflags "-I…"` states a root as surely
+                    // as its `importPaths` (an example's sibling module).
+                    foreach (prefix; ["-I=", "-J=", "-P-I", "-I", "-J"])
+                        if (arg.startsWith(prefix) && arg.length > prefix.length)
+                        {
+                            roots ~= named(buildNormalizedPath(arg[prefix.length .. $]));
+                            break;
+                        }
                     if (arg.length && arg[0] != '-' && arg[0] != '$' && arg.canFind('/'))
                         roots ~= arg;
                 }
@@ -1843,14 +1886,29 @@ struct ActionDriver
     }
 }
 
+/// How a run reports: the plain reporter's choices, and whether it runs at
+/// all. The default is a deterministic transcript without timings.
+struct RunReporting
+{
+    import sparkles.ci_provider : CiLog;
+
+    bool interlaced; /// lines as they arrive, not ordered blocks
+    bool timings;    /// elapsed times per task and for the run
+    bool dryRun;     /// print the plan; run nothing
+    CiLog ci;        /// the CI provider's groups and masks
+}
+
 /**
 Runs `nodes` (from $(LREF executionNodes)) with their edges on a scheduler
 of their own, reporting each task's lines to `writer` through the plain
 reporter, at most `capacity` weight at a time, cancelling the rest at
-the first failure with `failFast`.
+the first failure with `failFast`. `handlers` runs the client's own
+in-process actions beside the generators', each under its name;
+`reporting` chooses the transcript's form, or a dry run.
 */
 RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout, ref W writer,
-    uint capacity, RunStats* stats = null, bool failFast = false)
+    uint capacity, RunStats* stats = null, bool failFast = false, InProcessHandler[string] handlers = null,
+    RunReporting reporting = RunReporting.init)
 {
     import sparkles.build_primitives.task.executor : ExecutorOptions, runGraph;
     import sparkles.build_primitives.task.graph : TaskGraphBuilder;
@@ -1870,9 +1928,20 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
     if (built.hasError)
         return RunResult(exitCode: 2);
     auto graph = built.value;
+    // A dry run prints the plan and runs nothing (TDY3, ci task-DAG CIC1).
+    if (reporting.dryRun)
+    {
+        import sparkles.build_primitives.task.graph : writePlan;
+
+        writePlan(writer, graph, capacity);
+        return RunResult(exitCode: 0);
+    }
 
     Sched s;
-    if (Sched.create(s, SchedOptions(stackSize: 256 * 1024), LoopConfig()).hasError)
+    // A test leg runs a worker per thread it claims, each supervised by about
+    // seven fibers (its drains, stdin, clock, sampler): room for a leg as
+    // wide as a large host, beside the tasks' own.
+    if (Sched.create(s, SchedOptions(stackSize: 256 * 1024, maxFibers: 1024), LoopConfig()).hasError)
         return RunResult(exitCode: 2);
     auto driver = new ActionDriver(layout, nodes, &g); // the generators' handlers hold its address
     if (driver.error.length)
@@ -1883,7 +1952,11 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
         (ref TaskContext!Sched ctx, const ref InProcessAction a) => driver.generateFile(ctx, a));
     driver.processes.register("generate:failing-tools",
         (ref TaskContext!Sched ctx, const ref InProcessAction a) => driver.generateFailingTools(ctx, a));
-    auto reporter = PlainReporter!W(&writer, &graph, PlainOptions(timings: false));
+    // The client's own in-process actions: ci's test actions (CIC11).
+    foreach (name, handler; handlers)
+        driver.processes.register(name, handler);
+    auto reporter = PlainReporter!W(&writer, &graph,
+        PlainOptions(interlaced: reporting.interlaced, timings: reporting.timings, ci: reporting.ci));
     auto sink = new EventChannel;
     MonotonicClock clock;
     RunResult result;

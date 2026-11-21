@@ -306,10 +306,10 @@ string[] hostArchitecture() @safe pure nothrow
         return null;
 }
 
-// The registry the locks pin, from `$SPARKLES_DUB_SOURCES` (the dev shell
-// sets it): without it, the requests resolve no registry dependency, and
-// their import paths are no package's inputs.
-private RegistrySources registrySources(string repoRoot)
+/// The registry the locks pin, from `$SPARKLES_DUB_SOURCES` (the dev shell
+/// sets it): without it, the requests resolve no registry dependency, and
+/// their import paths are no package's inputs.
+RegistrySources registrySources(string repoRoot)
 {
     import std.path : buildPath;
     import std.process : environment;

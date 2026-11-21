@@ -34,6 +34,8 @@ import commands.perf : runPerfAppendCommand, runPerfImportCommand, runPerfImport
     runPerfSiteCommand, runRecordTask;
 import commands.stats : runCiStatsCommand;
 import commands.test_ : runListPlacements, runListSlowTestsMode, runTestCommand;
+import one_node : runOneNode;
+import sparkles.build_primitives.task.model : TaskKind;
 import fence_audit : AuditScope;
 
 // === Shared option groups ===
@@ -129,6 +131,7 @@ struct Ci
 {
     @(Flatten("Global options")) GlobalOptions global;
 
+    mixin addSubCommand!PipelineCommand;
     mixin addSubCommand!TestCommand;
     mixin addSubCommand!PlacementsCommand;
     mixin addSubCommand!ExamplesCommand;
@@ -143,6 +146,61 @@ struct Ci
     mixin addSubCommand!SlowTestsCommand;
     mixin addSubCommand!GcReportCommand;
     mixin addSubCommand!PerfCommand;
+}
+
+// === ci pipeline ===
+
+@(Command("pipeline",
+    shortDescription: "Every CI job's work, on the build graph's shared store (§1.3)",
+    description: "Runs the tests (the placement's legs and coverage), the extracted modes, the "
+    ~ "repository's checks and commit scopes as one build graph run, then the examples, the "
+    ~ "sanitized and slow tests and the determinism check, and reports each CI job: ran, or skipped "
+    ~ "and why. With --placement, only that placement's mode runs.",
+))
+struct PipelineCommand
+{
+    @(Option(`placement`, description: "Run only this placement of ci/placements.json: its mode, legs and coverage."))
+    string placement;
+
+    @(Option(`shard`, description: "With --placement: which of its shards this run is, as K/N."))
+    string shard;
+
+    @(Option(`history-tip`, description: "With --shard: the refs/perf/data commit to pack from."))
+    string historyTip;
+
+    @(Option(`from`, description: "Only these packages, by name."))
+    string[] from;
+
+    @(Option(`F|fail-fast`, description: "Stop at the first failure."))
+    bool failFast;
+
+    @(Option(`jobs`, description: "The weighted capacity running tasks may claim at once."))
+    string jobs;
+
+    @(Option(`interlaced`, description: "Stream each task's lines as they arrive."))
+    bool interlaced;
+
+    @(Option(`determinism-sample`,
+        description: "How many compiles, and how many other actions, the determinism check re-executes (default 4)."))
+    string determinismSample;
+
+    @(Flatten) HistoryOptions history;
+
+    RunExpected!void run()
+    {
+        import pipeline : PipelineRequest, runPipeline;
+
+        if (shard.length && !placement.length)
+            return failRun("--shard needs --placement", 2);
+        if (jobs.length && !parseCapacity(jobs))
+            return failRun("--jobs takes a positive capacity", 2);
+        if (determinismSample.length && !parseCapacity(determinismSample))
+            return failRun("--determinism-sample takes a positive count", 2);
+        return runPipeline(PipelineRequest(placement: placement, shard: shard, historyTip: historyTip,
+            historyRemote: history.historyRemote, from: from, failFast: failFast,
+            jobs: jobs.length ? parseCapacity(jobs) : 0, interlaced: interlaced,
+            determinismSample: determinismSample.length ? parseCapacity(determinismSample) : 4));
+    }
 }
 
 // === ci test ===
@@ -182,9 +240,21 @@ struct TestCommand
     SpecialModes specialModes;
 
     @(Option(`from`,
-        description: "Test only these packages, by name (default: every one the root dub.sdl "
-        ~ "declares). With --slow: the packages whose slow tests to run."))
+        description: "Test only these packages: each a short name, a qualified name, a path, or a "
+        ~ "git-style glob over them (default: every one the root dub.sdl declares). With --slow: "
+        ~ "the packages whose slow tests to run, by name."))
     string[] from;
+
+    @(Option(`since`,
+        description: "Also test the packages a change since REF reaches, judged by the files "
+        ~ "their builds claim (default REF: the branch's upstream, else origin/main)."))
+    string since;
+
+    @(Option(`dependencies`, description: "Add the dependencies of the selected packages."))
+    bool dependencies;
+
+    @(Option(`dependents`, description: "Add the packages that depend on the selected ones."))
+    bool dependents;
 
     @(Option(`coverage`,
         description: "Build each package's tests under -cov, merge the listings into "
@@ -224,6 +294,27 @@ struct TestCommand
     @(Option(`F|fail-fast`, description: "Stop at the first failing package."))
     bool failFast;
 
+    @(Option(`jobs`,
+        description: "The weighted capacity running tasks may claim at once, not a count of threads "
+        ~ "(a test leg claims its -t). Default: $SPARKLES_CI_JOBS, else the host's processors."))
+    string jobs;
+
+    @(Option(`interlaced`,
+        description: "Stream each task's lines as they arrive, prefixed with the task, instead of "
+        ~ "replaying whole task blocks in order."))
+    bool interlaced;
+
+    @(Option(`require-cached`,
+        description: "Fail each build action of these kinds (compile, archive, link, generate) that "
+        ~ "would execute instead of reusing a stored result, with why it missed. With --dry-run, "
+        ~ "list the actions that would fail."))
+    string[] requireCached;
+
+    @(Option(`dry-run`,
+        description: "Plan and print the graph: its tasks, claims and edges. Runs nothing and "
+        ~ "writes nothing."))
+    bool dryRun;
+
     @(Flatten) HistoryOptions history;
     @(Flatten) LinuxHostOptions host;
 
@@ -252,8 +343,55 @@ struct TestCommand
             return "--placement does not combine with --build-only, --slow or --watch";
         if (historyTip.length && !shard.length)
             return "--history-tip needs --shard";
+        // §4: focused selection is the graph's, not the slow or special modes'.
+        if ((since.length || dependencies || dependents) && (slow || specialModes != SpecialModes.off
+            || watch || placement.length))
+            return "--since, --dependencies and --dependents select the ordinary or sanitized tests or "
+                ~ "--build-only, without a placement";
+        // CIC12: only the build graph's cacheable kinds.
+        foreach (kind; requireCached)
+            if (kind != "compile" && kind != "archive" && kind != "link" && kind != "generate")
+                return "--require-cached takes compile, archive, link or generate";
+        if (requireCached.length && (slow || specialModes != SpecialModes.off || watch))
+            return "--require-cached applies to the build graph's runs: the ordinary or sanitized tests "
+                ~ "or --build-only";
+        // CIC1: the common execution options.
+        if (jobs.length && !parseCapacity(jobs))
+            return "--jobs takes a positive capacity";
+        if (dryRun && interlaced)
+            return "--dry-run has no task output to interlace";
+        if ((dryRun || interlaced || jobs.length) && (slow || specialModes != SpecialModes.off || watch))
+            return "--jobs, --interlaced and --dry-run run on the build graph: the ordinary or sanitized "
+                ~ "tests or --build-only";
         return null;
     }
+}
+
+/**
+A `--jobs` or `$SPARKLES_CI_JOBS` value as a weighted capacity (CIC1): a
+positive decimal number, or zero when `text` is not one.
+*/
+uint parseCapacity(scope const(char)[] text) @safe pure nothrow @nogc
+{
+    if (!text.length || text.length > 6)
+        return 0;
+    uint n;
+    foreach (c; text)
+    {
+        if (c < '0' || c > '9')
+            return 0;
+        n = n * 10 + (c - '0');
+    }
+    return n;
+}
+
+@("cli.parseCapacity")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(parseCapacity("4") == 4 && parseCapacity("32") == 32);
+    assert(parseCapacity("0") == 0 && parseCapacity("-1") == 0 && parseCapacity("") == 0);
+    assert(parseCapacity("2x") == 0);
 }
 
 ///
@@ -273,6 +411,20 @@ unittest
     assert(TestCommand(placement: "p", historyTip: "abc").conflict == "--history-tip needs --shard");
     assert(TestCommand(buildOnly: true, watch: true).conflict is null);
     assert(TestCommand(slow: true, watch: true).conflict == "--watch runs the ordinary tests or --build-only");
+    // CIC1: the common execution options.
+    assert(TestCommand(jobs: "0").conflict == "--jobs takes a positive capacity");
+    assert(TestCommand(jobs: "-2").conflict == "--jobs takes a positive capacity");
+    assert(TestCommand(jobs: "4").conflict is null);
+    assert(TestCommand(dryRun: true, interlaced: true).conflict == "--dry-run has no task output to interlace");
+    assert(TestCommand(dryRun: true, buildOnly: true).conflict is null);
+    assert(TestCommand(slow: true, interlaced: true).conflict !is null);
+    // §4: focused selection runs on the graph, without a placement.
+    assert(TestCommand(since: "HEAD~1", dependents: true).conflict is null);
+    assert(TestCommand(dependencies: true, slow: true).conflict !is null);
+    assert(TestCommand(since: "main", placement: "p").conflict !is null);
+    // CIC12.
+    assert(TestCommand(requireCached: ["compile", "link"]).conflict is null);
+    assert(TestCommand(requireCached: ["test"]).conflict == "--require-cached takes compile, archive, link or generate");
 }
 
 // === ci placements ===
@@ -380,7 +532,7 @@ struct CheckCommand
         @(Argument("message-file", optional: true, description: "The commit message file, or - for standard input."))
         string messageFile = "-";
 
-        RunExpected!void run() => runCheckCommitScope(messageFile);
+        RunExpected!void run() => runOneNode("check-commit-scope", TaskKind.scan, () => runCheckCommitScope(messageFile));
     }
 
     @(Command("reference-links",
@@ -390,7 +542,7 @@ struct CheckCommand
     {
         @(Flatten) FileSelection files;
 
-        RunExpected!void run() => runReferenceLinksCommand(files, fix: false);
+        RunExpected!void run() => runOneNode("check-reference-links", TaskKind.scan, () => runReferenceLinksCommand(files, fix: false));
     }
 
     @(Command("vcs-urls",
@@ -400,7 +552,7 @@ struct CheckCommand
     {
         @(Flatten) FileSelection files;
 
-        RunExpected!void run() => runCheckVcsUrlsCommand(files);
+        RunExpected!void run() => runOneNode("check-vcs-urls", TaskKind.scan, () => runCheckVcsUrlsCommand(files));
     }
 
     @(Command("blob-paths",
@@ -416,7 +568,7 @@ struct CheckCommand
 
         @(Flatten) FileSelection files;
 
-        RunExpected!void run() => runCheckBlobPathsCommand(files, cloneRoot);
+        RunExpected!void run() => runOneNode("check-blob-paths", TaskKind.scan, () => runCheckBlobPathsCommand(files, cloneRoot));
     }
 
     @(Command("sidebar",
@@ -426,7 +578,7 @@ struct CheckCommand
     ))
     struct Sidebar
     {
-        RunExpected!void run() => runCheckDocsSidebar();
+        RunExpected!void run() => runOneNode("check-sidebar", TaskKind.scan, () => runCheckDocsSidebar());
     }
 
     @(Command("glossary",
@@ -437,7 +589,7 @@ struct CheckCommand
     ))
     struct Glossary
     {
-        RunExpected!void run() => runCheckGlossary();
+        RunExpected!void run() => runOneNode("check-glossary", TaskKind.scan, () => runCheckGlossary());
     }
 
     @(Command("credits",
@@ -447,7 +599,7 @@ struct CheckCommand
     ))
     struct Credits
     {
-        RunExpected!void run() => runCheckCredits();
+        RunExpected!void run() => runOneNode("check-credits", TaskKind.scan, () => runCheckCredits());
     }
 
     @(Command("spec-evidence",
@@ -458,7 +610,7 @@ struct CheckCommand
     ))
     struct SpecEvidence
     {
-        RunExpected!void run() => runCheckSpecEvidence(updateBacklog: false);
+        RunExpected!void run() => runOneNode("check-spec-evidence", TaskKind.scan, () => runCheckSpecEvidence(updateBacklog: false));
     }
 
     @(Command("adhoc-sdl",
@@ -468,7 +620,7 @@ struct CheckCommand
     ))
     struct AdhocSdl
     {
-        RunExpected!void run() => runCheckAdHocSdl();
+        RunExpected!void run() => runOneNode("check-adhoc-sdl", TaskKind.scan, () => runCheckAdHocSdl());
     }
 
     @(Command("opaque-recipes",
@@ -479,7 +631,7 @@ struct CheckCommand
     ))
     struct OpaqueRecipes
     {
-        RunExpected!void run() => runCheckOpaqueRecipes();
+        RunExpected!void run() => runOneNode("check-opaque-recipes", TaskKind.scan, () => runCheckOpaqueRecipes());
     }
 
     @(Command("pin-cache",
@@ -489,7 +641,7 @@ struct CheckCommand
     ))
     struct PinCache
     {
-        RunExpected!void run() => runCheckPinCache();
+        RunExpected!void run() => runOneNode("check-pin-cache", TaskKind.scan, () => runCheckPinCache());
     }
 
     @(Command("wasm-modules",
@@ -518,7 +670,8 @@ struct CheckCommand
         {
             import wasm_modules_check : runCheckWasmModules;
 
-            return runCheckWasmModules(textModule, tableModule, wiredModule, wasiLoader, wasiShim);
+            return runOneNode("check-wasm-modules", TaskKind.scan,
+                () => runCheckWasmModules(textModule, tableModule, wiredModule, wasiLoader, wasiShim));
         }
     }
 
@@ -542,7 +695,8 @@ struct CheckCommand
         {
             import nix_wasm_check : runCheckNixWasm;
 
-            return runCheckNixWasm(detectRepoRoot(), evaluator, module_, answers);
+            return runOneNode("check-nix-wasm", TaskKind.scan,
+                () => runCheckNixWasm(detectRepoRoot(), evaluator, module_, answers));
         }
     }
 }
@@ -557,7 +711,11 @@ struct FixCommand
     {
         @(Flatten) FileSelection files;
 
-        RunExpected!void run() => runReferenceLinksCommand(files, fix: true);
+        @(Option(`dry-run`, description: "Report what would change; write nothing."))
+        bool dryRun;
+
+        RunExpected!void run() => runOneNode("fix-reference-links", TaskKind.rewrite,
+            () => runReferenceLinksCommand(files, fix: true, dryRun: dryRun));
     }
 
     @(Command("spec-evidence-backlog",
@@ -565,7 +723,11 @@ struct FixCommand
     ))
     struct SpecEvidenceBacklog
     {
-        RunExpected!void run() => runCheckSpecEvidence(updateBacklog: true);
+        @(Option(`dry-run`, description: "Report what the backlog would hold; write nothing."))
+        bool dryRun;
+
+        RunExpected!void run() => runOneNode("fix-spec-evidence-backlog", TaskKind.rewrite,
+            () => runCheckSpecEvidence(updateBacklog: true, dryRun: dryRun));
     }
 }
 
@@ -593,7 +755,8 @@ struct DocsCommand
 
         @(Flatten) FileSelection files;
 
-        RunExpected!void run() => runAuditFencesCommand(files, json, root, auditScope);
+        RunExpected!void run() => runOneNode("docs-fences-audit", TaskKind.scan,
+            () => runAuditFencesCommand(files, json, root, auditScope));
     }
 
     @(Command("stage-wasm",
@@ -605,7 +768,7 @@ struct DocsCommand
         {
             import docs_wasm : stageDocsWasm;
 
-            return stageDocsWasm(detectRepoRoot());
+            return runOneNode("docs-stage-wasm", TaskKind.rewrite, () => stageDocsWasm(detectRepoRoot()));
         }
     }
 }
@@ -642,7 +805,8 @@ struct GithubCommand
                 return failRun("ci github mirror-checks needs --sha");
             if (!github.repo.length)
                 return failRun("ci github mirror-checks needs --repo owner/repo");
-            return runMirrorChecksCommand(github, sha, skipCheck, dryRun: noWrite);
+            return runOneNode("github-mirror-checks", TaskKind.fetch,
+                () => runMirrorChecksCommand(github, sha, skipCheck, dryRun: noWrite));
         }
     }
 
@@ -669,7 +833,8 @@ struct GithubCommand
         {
             if (!github.repo.length)
                 return failRun("ci github link-rot-issue needs --repo owner/repo");
-            return runReportLinkRotCommand(github, report, rotten, runUrl);
+            return runOneNode("github-link-rot-issue", TaskKind.fetch,
+                () => runReportLinkRotCommand(github, report, rotten, runUrl));
         }
     }
 }
@@ -745,7 +910,8 @@ struct StatsCommand
                 cast(void) parseSplitInstant(split);
             catch (Exception e)
                 return failRun("--split: " ~ e.msg);
-        return runCiStatsCommand(this);
+        auto self = this;
+        return runOneNode("stats", TaskKind.fetch, () => runCiStatsCommand(self));
     }
 }
 
@@ -780,6 +946,33 @@ struct CommitsCommand
     }
 }
 
+/// The directory holding the build graph's store: `$XDG_CACHE_HOME/sparkles`.
+string storeDirectory() @safe
+{
+    import std.path : buildPath;
+    import std.process : environment;
+
+    return buildPath(environment.get("XDG_CACHE_HOME", buildPath(environment.get("HOME", "/"), ".cache")), "sparkles");
+}
+
+/// Standard output as a writer of the store's lines.
+auto stdoutWriter() @trusted
+{
+    import std.stdio : stdout;
+
+    return stdout.lockingTextWriter;
+}
+
+/// One of `storeOperation`'s operations on the store, as a command's outcome.
+RunExpected!void storeCommand(string operation)
+{
+    import sparkles.build_graph.execute : storeOperation;
+
+    auto writer = stdoutWriter();
+    const status = storeOperation(storeDirectory(), operation, writer);
+    return status == 0 ? ranOk() : failRun("ci cache: " ~ operation ~ " failed", status);
+}
+
 @(Command("cache", shortDescription: "Dependency, toolchain and binary caches"))
 struct CacheCommand
 {
@@ -789,61 +982,155 @@ struct CacheCommand
     ))
     struct SeedDub
     {
-        RunExpected!void run() => runSeedDubCache();
+        RunExpected!void run() => runOneNode("cache-seed-dub", TaskKind.rewrite, () => runSeedDubCache());
     }
 
-    @(Command("store",
-        shortDescription: "Inspect or repair the build graph's store (build graph BGS7)",
-        description: "Runs one operation on the store beneath $XDG_CACHE_HOME/sparkles: size, list, "
-        ~ "gc, verify, evict (to the default bound, or evict=<bytes>), or remove-key=, remove-task=, "
-        ~ "remove-package= or remove-toolchain= a value. `explain <task>` plans the repository's test "
-        ~ "selection and prints, executing nothing, whether the task and each action it needs would "
-        ~ "hit, and why each miss would miss; `replace <task>` executes the task with its lookup "
-        ~ "bypassed and publishes its result in the published one's place. Exits 1 when verification finds a corrupt result or a "
-        ~ "lease holds a removal back, and 2 for an unknown operation or task.",
-    ))
-    struct Store
-    {
-        @(Argument("operation", description: "The operation: size, list, gc, verify, evict[=<bytes>], "
-            ~ "or remove-key=, remove-task=, remove-package= or remove-toolchain=<value>."))
-        string operation;
+    // The build graph's store (build graph §6) beneath $XDG_CACHE_HOME/sparkles.
 
-        @(Argument("task", optional: true, description: "With explain or replace: the task, by id or by a prefix "
-            ~ "only one id has."))
+    @(Command("stats", shortDescription: "The build graph's store: its results and their bytes"))
+    struct Stats
+    {
+        RunExpected!void run() => storeCommand("size");
+    }
+
+    @(Command("list", shortDescription: "Each stored result: key, bytes, recency and task"))
+    struct List
+    {
+        RunExpected!void run() => storeCommand("list");
+    }
+
+    @(Command("gc",
+        shortDescription: "Collect the store's abandoned staging, leases and older layouts, then evict",
+        description: "Collects what crashed builders left (staging entries, dead leases) and the "
+        ~ "directories of older store layouts, then evicts the least recently used results down "
+        ~ "to --bound bytes (default 20 GiB) (BGS5, BGS10).",
+    ))
+    struct Gc
+    {
+        @(Option(`bound`, description: "Evict down to this many result bytes (default 20 GiB)."))
+        string bound;
+
+        RunExpected!void run()
+        {
+            auto collected = storeCommand("gc");
+            if (collected.hasError)
+                return collected;
+            return storeCommand(bound.length ? "evict=" ~ bound : "evict");
+        }
+    }
+
+    @(Command("verify",
+        shortDescription: "Check stored results, or re-execute a sample of a run's (CIC13)",
+        description: "Rehashes every stored result's outputs against its record, removing a corrupt "
+        ~ "one (BGS6). With --rerun, re-executes a sample of the last `ci test` run's cacheable "
+        ~ "actions with their lookups bypassed, into a private store, and fails naming each whose "
+        ~ "outputs differ from its stored result, which it removes (BGS9, CIC13).",
+    ))
+    struct Verify
+    {
+        @(Option(`rerun`, description: "Re-execute a sample of the last run's actions and compare (BGS9)."))
+        bool rerun;
+
+        @(Option(`determinism-sample`,
+            description: "With --rerun: how many compiles, and how many other actions, to check (default 4)."))
+        string determinismSample;
+
+        @(Option(`task`, description: "With --rerun: check these tasks instead of the sample."))
+        string[] tasks;
+
+        RunExpected!void run()
+        {
+            import graph_driver : rerunCheck;
+
+            if (!rerun)
+                return determinismSample.length || tasks.length
+                    ? failRun("--determinism-sample and --task need --rerun", 2) : storeCommand("verify");
+            const n = determinismSample.length ? parseCapacity(determinismSample) : 4;
+            if (!n)
+                return failRun("--determinism-sample takes a positive count", 2);
+            auto writer = stdoutWriter();
+            const status = rerunCheck(detectRepoRoot(), storeDirectory(), n, tasks, writer);
+            return status == 0 ? ranOk() : failRun("ci cache verify --rerun found a difference", status);
+        }
+    }
+
+    @(Command("remove",
+        shortDescription: "Remove stored results by key, task, package or toolchain (BGS7)",
+    ))
+    struct Remove
+    {
+        @(Option(`key`, description: "Results with these result keys."))
+        string[] keys;
+        @(Option(`task`, description: "The results of these tasks."))
+        string[] tasks;
+        @(Option(`package`, description: "The results of these packages' actions."))
+        string[] packages;
+        @(Option(`toolchain`, description: "The results built by this toolchain identity."))
+        string toolchain;
+
+        RunExpected!void run()
+        {
+            string[] ops;
+            foreach (k; keys)
+                ops ~= "remove-key=" ~ k;
+            foreach (t; tasks)
+                ops ~= "remove-task=" ~ t;
+            foreach (p; packages)
+                ops ~= "remove-package=" ~ p;
+            if (toolchain.length)
+                ops ~= "remove-toolchain=" ~ toolchain;
+            if (!ops.length)
+                return failRun("ci cache remove needs --key, --task, --package or --toolchain", 2);
+            foreach (op; ops)
+            {
+                auto removed = storeCommand(op);
+                if (removed.hasError)
+                    return removed;
+            }
+            return ranOk();
+        }
+    }
+
+    @(Command("replace",
+        shortDescription: "Execute tasks with their lookups bypassed, replacing their results (BGS7)",
+    ))
+    struct Replace
+    {
+        @(Argument("tasks", description: "Each task by id, or by a prefix only one id has."))
+        string[] tasks;
+
+        RunExpected!void run()
+        {
+            import graph_driver : replaceTask;
+
+            if (!tasks.length)
+                return failRun("ci cache replace needs a task", 2);
+            auto writer = stdoutWriter();
+            foreach (task; tasks)
+            {
+                const status = replaceTask(detectRepoRoot(), storeDirectory(), task, writer);
+                if (status != 0)
+                    return failRun("ci cache replace " ~ task ~ " failed", status);
+            }
+            return ranOk();
+        }
+    }
+
+    @(Command("explain",
+        shortDescription: "Whether a task and each action it needs would hit the store, and why not (BGS8)",
+    ))
+    struct Explain
+    {
+        @(Argument("task", description: "The task, by id or by a prefix only one id has."))
         string task;
 
         RunExpected!void run()
         {
-            import std.path : buildPath;
-            import std.process : environment;
-            import std.stdio : stdout;
-            import sparkles.build_graph.execute : storeOperation;
+            import graph_driver : explainTask;
 
-            const home = environment.get("HOME", "/");
-            const xdg = environment.get("XDG_CACHE_HOME", buildPath(home, ".cache"));
-            auto writer = stdout.lockingTextWriter;
-            if (operation == "explain")
-            {
-                import graph_driver : explainTask;
-
-                if (!task.length)
-                    return failRun("ci cache store explain needs a task", 2);
-                const status = explainTask(detectRepoRoot(), buildPath(xdg, "sparkles"), task, writer);
-                return status == 0 ? ranOk() : failRun("ci cache store explain " ~ task ~ " failed", status);
-            }
-            if (operation == "replace")
-            {
-                import graph_driver : replaceTask;
-
-                if (!task.length)
-                    return failRun("ci cache store replace needs a task", 2);
-                const status = replaceTask(detectRepoRoot(), buildPath(xdg, "sparkles"), task, writer);
-                return status == 0 ? ranOk() : failRun("ci cache store replace " ~ task ~ " failed", status);
-            }
-            if (task.length)
-                return failRun("ci cache store " ~ operation ~ " takes no task", 2);
-            const status = storeOperation(buildPath(xdg, "sparkles"), operation, writer);
-            return status == 0 ? ranOk() : failRun("ci cache store " ~ operation ~ " failed", status);
+            auto writer = stdoutWriter();
+            const status = explainTask(detectRepoRoot(), storeDirectory(), task, writer);
+            return status == 0 ? ranOk() : failRun("ci cache explain " ~ task ~ " failed", status);
         }
     }
 
@@ -859,7 +1146,8 @@ struct CacheCommand
 
         @(Flatten) HistoryOptions history;
 
-        RunExpected!void run() => runWritePinCosts(file, history.historyRemote);
+        RunExpected!void run() => runOneNode("cache-pin-costs", TaskKind.rewrite,
+            () => runWritePinCosts(file, history.historyRemote));
     }
 
     @(Command("gc-r2",
@@ -883,7 +1171,8 @@ struct CacheCommand
         {
             if (keepCommits <= 0 || graceDays < 0)
                 return failRun("--keep-commits must be positive and --grace-days not negative");
-            return runGcR2Command(keepCommits, graceDays, dryRun: noDelete);
+            return runOneNode("cache-gc-r2", TaskKind.fetch,
+                () => runGcR2Command(keepCommits, graceDays, dryRun: noDelete));
         }
     }
 }
@@ -898,7 +1187,7 @@ struct HostCommand
         {
             import linux_host : runLinuxHostProbe;
 
-            return runLinuxHostProbe();
+            return runOneNode("host-probe", TaskKind.scan, () => runLinuxHostProbe());
         }
     }
 }
@@ -912,7 +1201,7 @@ struct SlowTestsCommand
     ))
     struct List
     {
-        RunExpected!void run() => runListSlowTestsMode();
+        RunExpected!void run() => runOneNode("slow-tests-list", TaskKind.scan, () => runListSlowTestsMode());
     }
 }
 

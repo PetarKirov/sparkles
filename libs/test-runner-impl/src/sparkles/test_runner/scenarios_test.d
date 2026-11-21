@@ -441,6 +441,7 @@ unittest
 unittest
 {
     import core.time : seconds;
+    import std.conv : text;
 
     // A test writes a `result` frame with none of its members to the frames
     // channel: a protocol error that fails the run (TRP9), where the reader
@@ -450,7 +451,7 @@ unittest
         const r = runWithin([built.runner, "--test-binary=" ~ built.fixture, "-t", "1",
             "--no-colors"], ["FIXTURE_BAD_FRAME": "1"], 60.seconds);
         assert(!r.timedOut, "the runner hung: " ~ r.output);
-        assert(r.status == 2, r.output);
+        assert(r.status == 2, text("exit status ", r.status, ": ", r.output));
         assert(r.output.canFind("protocol error from") && r.output.canFind("a malformed frame"),
             r.output);
     }

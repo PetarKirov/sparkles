@@ -46,10 +46,10 @@ configuration "library" {
 // shipped configuration, or the test helpers travel with the binary.
 configuration "testing" {
     targetType "library"
-    // The fileset and content-addressing oracles are tests, not helpers, and
+    // The fileset, emit and content-addressing oracles are tests, not helpers, and
     // need the test runner, which a consumer's closure does not give this
     // package.
-    excludedSourceFiles "src/app.d" "src/sparkles/build_primitives/fileset/testing.d" "src/sparkles/build_primitives/content_addressing/testing.d"
+    excludedSourceFiles "src/app.d" "src/sparkles/build_primitives/fileset/testing.d" "src/sparkles/build_primitives/content_addressing/testing.d" "src/sparkles/build_primitives/fileset/emit/testing.d"
     dependency "sparkles:test-utils" path="../.."
     // The helpers skip a test where the host lacks what it needs (`skipTest`).
     dependency "sparkles:test-harness" path="../.."

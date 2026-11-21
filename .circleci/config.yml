@@ -232,8 +232,13 @@ jobs:
           # are on PATH via the `default` devShell.
           name: Build and test with dub
           command: >-
-            ci/run-batch.sh 20m ci test --fail-fast --placement x86_64-linux-<< parameters.dc >>
+            ci/run-batch.sh 20m ci test --fail-fast --interlaced --placement x86_64-linux-<< parameters.dc >>
             --shard "$((CIRCLE_NODE_INDEX + 1))/$CIRCLE_NODE_TOTAL"
+          no_output_timeout: 20m
+      - run:
+          # CIC13: a sample of this node's builds, re-executed and compared.
+          name: Check a sample of the builds for determinism
+          command: ci/run-batch.sh 20m ci cache verify --rerun
           no_output_timeout: 20m
       - run:
           name: Build and run examples
@@ -288,8 +293,13 @@ jobs:
       - run:
           name: Build and test with dub
           command: >-
-            ci/run-batch.sh 20m ci test --fail-fast --placement aarch64-darwin-ldc2
+            ci/run-batch.sh 20m ci test --fail-fast --interlaced --placement aarch64-darwin-ldc2
             --shard "$((CIRCLE_NODE_INDEX + 1))/$CIRCLE_NODE_TOTAL"
+          no_output_timeout: 20m
+      - run:
+          # CIC13: a sample of this node's builds, re-executed and compared.
+          name: Check a sample of the builds for determinism
+          command: ci/run-batch.sh 20m ci cache verify --rerun
           no_output_timeout: 20m
       - run:
           name: Build and run examples
@@ -345,7 +355,7 @@ jobs:
       - run:
           name: Run tests under ASan
           command: >-
-            ci/run-batch.sh 45m ci test --sanitize address --fail-fast --placement x86_64-linux-sanitize
+            ci/run-batch.sh 45m ci test --sanitize address --fail-fast --interlaced --placement x86_64-linux-sanitize
             --shard "$((CIRCLE_NODE_INDEX + 1))/$CIRCLE_NODE_TOTAL"
           no_output_timeout: 45m
       - save_asan_dub_cache

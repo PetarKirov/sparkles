@@ -195,6 +195,42 @@ Gate:
 - The removed flags are rejected.
 - A binary run under `ci test` and standalone agrees on every test (CIC11).
 
+Progress, by the gate's items:
+
+- **The cutover:** `ci test` and `ci test --build-only` plan the selected
+  packages' test roots as one build graph (`runTestsOnGraph`) and run it
+  against the shared store, with the compiler `$DC` names, DMD's variants
+  included (build graph D19). Each test leg is the in-process action
+  `test:leg`, which drives the test runner's core over workers fed their
+  commands on standard input (`apps/ci/src/test_leg.d`, Event Horizon's
+  `superviseFed`). The placement chooses the legs and coverage; listings
+  merge into `build/coverage`, and each leg's wall time goes to the run
+  record. The dub build loop is removed; `--sanitize` keeps the dub test
+  loop until its variant (M8).
+- **Options:** `--jobs`, `--interlaced` and `--dry-run` (CIC1), the focused
+  selectors and closures (§4) and `--require-cached` (CIC12) are delivered;
+  `ci cache stats|list|gc|verify|remove|replace|explain` replace
+  `ci cache store`, and `ci cache verify --rerun` runs CIC13's check over the
+  last run.
+- **Workflows:** the `ci test` steps pass `--interlaced`, and each is
+  followed by `ci cache verify --rerun`.
+- **Gate checks so far:** oracle `cic11` of `apps/ci/tools/graph-oracles.d`:
+  a fixture's 17 tests get the same verdicts through the core and
+  standalone, and fail-fast ends another package's leg with the nested
+  processes its test started. Oracle 19 plants a nondeterministic result,
+  which fails the check. `cli.removedFlags.unknown` rejects the removed
+  flags. A second `ci test` of `versions` passes under `--require-cached
+compile archive link`.
+
+- **The whole repository** (pc2-local, `dc4041727`): `ci test` (761 tasks
+  succeeded, 340 unneeded fallbacks), `ci test --build-only` (405),
+  `--build-only --jobs 1` (405) and `--jobs 1 --no-coverage` (575 tests) pass,
+  `ci cache verify --rerun` passes, and a second worktree builds all 405
+  tasks under `--require-cached compile archive link`, compiling nothing.
+
+Open: a CI run with the determinism check, which this branch's pull request
+gives.
+
 ## M8: Coverage, sanitizers, slow tests and special modes
 
 - Coverage attempts with conditional plain retries and package classification;
@@ -206,6 +242,28 @@ Gate:
 Gate: ordinary tests pass with and without coverage. A fixture that fails only
 under coverage is degraded and exits zero, and a true fallback failure exits
 one. Parallel listings never share a destination.
+
+Progress: delivered on the build graph, beside M7b.
+
+- **Coverage:** each package's test is a `-cov` attempt with a plain fallback
+  (build graph CIC7 planning); a package whose coverage build failed but
+  whose fallback passed is reported uncovered (`Degraded(noCoverage)`), and
+  the listings merge (`coverage.mergeListings`) into a sibling directory
+  that replaces `build/coverage` by rename. Oracle `m8` checks the degraded
+  and the failing fallback.
+- **`--sanitize address`:** `-fsanitize=address` in every compile and link
+  and `ASAN_OPTIONS` in every test and generator (`Tools.extraFlags`,
+  `Tools.runtimeEnvironment`), one leg keeping the `@slow` tests.
+- **`--slow`:** each package's chosen `@slow` tests are one leg,
+  `--only-slow -i <names>` (`Tools.testArguments`).
+- **`--special-modes`:** each package's modes are one leg, which runs the
+  runner core's driver on a blocking pool.
+- **Packages beneath the runner** (`metadata`, `profiling-counters`,
+  `test-attributes`, `test-harness`, `test-runner`) speak no runner protocol:
+  their test actions stay processes, the exit status their verdict.
+
+The dub test loops are removed. The whole repository passes with coverage and
+without it (M7b's runs), and oracle `m8` passes: the gate is met.
 
 ## M9: Markdown and standalone examples
 
@@ -220,6 +278,15 @@ Gate: README verification, a multi-file update fixture, standalone build-only
 and run fixtures, timeout behavior, and parallel duplicate example names are
 green. No `std.parallelism` import remains in `apps/ci`.
 
+Progress: delivered. Each example is a single-file package the build graph
+plans against the store's variants (`apps/ci/src/example_graph.d`): an inline
+one extracted to `build/md-examples/<digest>/`, so an unchanged example
+reuses its compile; its run is the in-process action `example:run`, with
+`/dev/null` as its standard input and the example timeout. Standalone
+examples run the same way, `build-only` ones linked and never run. No
+`std.parallelism` import remains in `apps/ci`. Open: the multi-file update
+fixture.
+
 ## M10: Documentation commands
 
 - Every documentation `ci check` and `ci fix` of SPEC §5.6, including glossary,
@@ -230,6 +297,11 @@ green. No `std.parallelism` import remains in `apps/ci`.
 Gate: every documentation check and fix has a parity fixture. Mutating commands make no
 writes under dry run and write atomically otherwise. The pre-commit hook
 invocations remain green after their migration.
+
+Progress: every `ci check`, `ci fix` and `ci docs` command runs as a one-node
+graph on the executor (`apps/ci/src/one_node.d`, CIC2); the fixes take
+`--dry-run` and replace each file whole. Open: §5.6's finer graphs (a node
+per file or per clone), and parity fixtures beyond the checks' own tests.
 
 ## M11: Statistics, commit checks and maintenance commands
 
@@ -242,6 +314,12 @@ invocations remain green after their migration.
 Gate: complete, partial, empty-comparison, authentication-failure and optional
 metadata fixtures have the specified outcomes and exits; tokens are absent from
 events and dry runs; commit hook output stays concise.
+
+Progress: `ci stats`, `ci github …`, `ci host probe`, `ci slow-tests list` and
+the cache commands run as one-node graphs; `ci commits build-each` builds
+each commit's packages on the build graph against the shared store, the
+WebAssembly cross-builds and any package planning refuses with dub, named;
+`ci cache gc-r2` fans its requests out on threads. Open: the gate's fixtures.
 
 ## M12: `ci pipeline` and removal of the legacy path
 
@@ -268,6 +346,14 @@ Gate: `ci pipeline` covers every job `ci.yml` runs or names it as skipped.
 Forced cancellation leaves no child process or live-region control residue.
 Default non-TTY output is stable across a randomized completion stress run.
 
+Progress: `ci pipeline` runs the tests, the extracted modes, the checks and
+commit scopes as one build graph run, then the examples, the sanitized and
+slow tests and the determinism check as graphs of their own, and reports
+every `ci.yml` job, ran or skipped with its reason (`apps/ci/src/pipeline.d`).
+Open: one graph for all of it (the sanitizer's flags apply to every compile,
+so it needs a variant beside the plain one), the measurements, and the
+cancellation and stress gates.
+
 ## M13: Repository migration
 
 - Change workflows, hooks and developer documentation to the canonical
@@ -280,6 +366,10 @@ Default non-TTY output is stable across a randomized completion stress run.
 Gate: full repository CI is green on canonical commands, and no script, hook,
 workflow or user-facing document uses a removed flag.
 
+Progress: the workflows and hooks run the canonical commands; the
+developer guide leads with `ci pipeline`. Open: generating the workflows
+from the placements, and the `ci stats` terminology.
+
 ## Progress
 
 | Milestone | Deliverable                       | State       |
@@ -288,10 +378,10 @@ workflow or user-facing document uses a removed flag.
 | M3        | Prerequisite gate                 | done        |
 | M3a       | Placements before the build graph | done        |
 | M7a       | Canonical command line            | done        |
-| M7b       | `ci test` on the build graph      | not started |
-| M8        | Coverage and special modes        | not started |
-| M9        | Examples                          | not started |
-| M10       | Docs commands                     | not started |
-| M11       | Stats, commits, maintenance       | not started |
-| M12       | `ci pipeline`, legacy removal     | not started |
-| M13       | Consumer migration                | not started |
+| M7b       | `ci test` on the build graph      | in progress |
+| M8        | Coverage and special modes        | done        |
+| M9        | Examples                          | in progress |
+| M10       | Docs commands                     | in progress |
+| M11       | Stats, commits, maintenance       | in progress |
+| M12       | `ci pipeline`, legacy removal     | in progress |
+| M13       | Consumer migration                | in progress |

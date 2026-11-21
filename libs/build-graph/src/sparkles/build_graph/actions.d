@@ -102,6 +102,9 @@ struct Action
     /// `pkgConfigSearch` writes it: each file used and each candidate absent
     /// before it, which its declared key covers when the action runs.
     string[] searchInputs;
+    /// What it holds alone while it runs: a package's test legs share one
+    /// key, as they run the same tests, whose fixtures may name fixed paths.
+    string[] exclusiveKeys;
 }
 
 /// The actions and their edges.
@@ -119,6 +122,20 @@ struct ActionGraph
                 return &a;
         return null;
     }
+}
+
+/**
+One leg of a package's tests (ci task-DAG CIC11, CIC14): one test action
+that runs the binary with `-t threads`, claiming that weight. A named leg's
+action id carries its name as a last segment; the unnamed one's is the
+test root's own.
+*/
+struct TestLeg
+{
+    uint threads = defaultWeight(ActionKind.test); ///
+    /// `--skip-slow`: the `@slow` tests are left to a run of their own.
+    bool skipSlow;
+    string name; /// the id's last segment; empty for none
 }
 
 /// The tools an action graph names.
@@ -154,6 +171,22 @@ struct Tools
     /// for every other process. `Duration.zero` sets none.
     Duration testLimit = 20.minutes;
     Duration actionLimit = 30.minutes; /// ditto
+    /// The legs each test binary runs in, each its own test action.
+    TestLeg[] testLegs = [TestLeg.init];
+    /// Flags every compile and link takes after the recipe's, such as a
+    /// sanitizer's (ci task-DAG M8); they are part of each declared key.
+    string[] extraFlags;
+    /// Variables every program the graph builds and runs takes: each test's
+    /// and each generator's, such as the sanitizer's runtime options.
+    EnvEntry[] runtimeEnvironment;
+    /// Directories every link searches for libraries a recipe names by
+    /// `libs` without `pkg-config`: what `$LIBRARY_PATH` gives a C driver,
+    /// which a build action's empty environment (BGA4) does not. Each is a
+    /// `-L-L` of the link, so its library search keys on them (BGK9).
+    string[] libraryPath;
+    /// Runner options a package's test legs take after the legs' own, by
+    /// the package's name (`sparkles:base`): the slow tests a run selects.
+    string[][string] testArguments;
 }
 
 /**
@@ -224,7 +257,7 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
     // Each request's root compile and link.
     TaskId[size_t] rootCompileOf, linkOf;
     // Each request's test.
-    TaskId[size_t] testOf;
+    TaskId[][size_t] testOf; // each test root's legs
 
     TaskId add(Action a)
     {
@@ -299,7 +332,7 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
             id = taskId("generate", "shader-compile", "generator", vendor, d).value;
             add(Action(ActionKind.generate, id, gen.tool,
                 TaskAction(ProcessAction(argv: argv,
-                    envDelta: [EnvEntry("PATH", ""), EnvEntry("TMPDIR", "$MEASURE")],
+                    envDelta: [EnvEntry("PATH", ""), EnvEntry("TMPDIR", "$MEASURE")] ~ tools.runtimeEnvironment.dup,
                     sandbox: SandboxPolicy.taskDirectory)),
                 [DeclaredOutput(".", true)], defaultWeight(ActionKind.generate)));
             edge(toolLink, id);
@@ -326,10 +359,11 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
         const linkWeight = defaultWeight(ActionKind.link);
         const toolLink = add(Action(ActionKind.link, actionId(ActionKind.link, *t), gen.tool,
             TaskAction(ProcessAction(argv: linkArgv(*t, root, tools, toolCompile, null, linkWeight),
+                envDelta: linkEnvironment(*t, tools), cwd: darwinLink(*t) ? "$RUN" : null,
                 sandbox: SandboxPolicy.taskDirectory)),
             [DeclaredOutput(binaryName(*t))], linkWeight));
         edge(toolCompile, toolLink);
-        EnvEntry[] env = [EnvEntry("PATH", "")];
+        EnvEntry[] env = [EnvEntry("PATH", "")] ~ tools.runtimeEnvironment.dup;
         if (tools.fail.length)
         {
             if (shim.empty)
@@ -441,6 +475,7 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
         const weight = defaultWeight(ActionKind.link);
         auto l = Action(ActionKind.link, actionId(ActionKind.link, *v), rootVariant,
             TaskAction(ProcessAction(argv: linkArgv(*v, root, tools, compileOf[rootVariant], archives, weight),
+                envDelta: linkEnvironment(*v, tools), cwd: darwinLink(*v) ? "$RUN" : null,
                 sandbox: SandboxPolicy.taskDirectory)),
             [DeclaredOutput(binaryName(*v))], weight);
         const linkId = add(l);
@@ -451,25 +486,41 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
             edge(a, linkId);
 
         if (v.role == Role.testRoot && !programs.canFind!(p => p.program == ri))
-        {
-            const testWeight = defaultWeight(ActionKind.test);
-            // A coverage test writes its listings to its own directory, recording
-            // root-relative paths (CIC7).
-            const coverage = (v.settings.options & BuildOption.coverage) != 0;
-            auto testArgv = [inputPath(linkId, binaryName(*v))];
-            if (coverage)
-                testArgv ~= "--DRT-covopt=dstpath:$OUT srcpath:$ROOT";
-            testArgv ~= testRunnerArguments(*v, root, tools);
-            testArgv ~= ["-t", text(testWeight)];
-            // BGX1: a test runs in the repository root, whatever the recipe's
-            // `workingDirectory`.
-            auto t = Action(ActionKind.test, actionId(ActionKind.test, *v), rootVariant,
-                TaskAction(ProcessAction(argv: testArgv,
-                    sandbox: SandboxPolicy.taskDirectory)),
-                coverage ? [DeclaredOutput(".", true)] : null, testWeight);
-            testOf[ri] = add(t);
-            edge(linkId, testOf[ri]);
-        }
+            foreach (leg; tools.testLegs)
+            {
+                // A coverage test writes its listings to its own directory,
+                // recording root-relative paths (CIC7).
+                const coverage = (v.settings.options & BuildOption.coverage) != 0;
+                auto testArgv = [inputPath(linkId, binaryName(*v))];
+                if (coverage)
+                    testArgv ~= "--DRT-covopt=dstpath:$OUT srcpath:$ROOT";
+                testArgv ~= testRunnerArguments(*v, root, tools);
+                if (leg.skipSlow)
+                    testArgv ~= "--skip-slow";
+                testArgv ~= ["-t", text(leg.threads)];
+                if (auto more = v.package_ in tools.testArguments)
+                    testArgv ~= (*more).dup;
+                auto id = actionId(ActionKind.test, *v);
+                if (leg.name.length)
+                {
+                    import std.array : split;
+
+                    const named = taskId(id.text.split(":") ~ leg.name);
+                    assert(named.hasValue, leg.name);
+                    id = named.value;
+                }
+                // BGX1: a test runs in the repository root, whatever the
+                // recipe's `workingDirectory`.
+                auto t = Action(ActionKind.test, id, rootVariant,
+                    TaskAction(ProcessAction(argv: testArgv, envDelta: tools.runtimeEnvironment.dup,
+                        sandbox: SandboxPolicy.taskDirectory)),
+                    coverage ? [DeclaredOutput(".", true)] : null, leg.threads);
+                // The legs run the same tests, one after another, as dub's
+                // runs of them did.
+                t.exclusiveKeys = ["test:" ~ v.package_];
+                testOf[ri] ~= add(t);
+                edge(linkId, testOf[ri][$ - 1]);
+            }
     }
 
     // D61: a test runs the programs it declares, from their links.
@@ -479,12 +530,15 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
             return planErr!ActionGraph(ActionError(text("a test program names a request with no ",
                 p.program !in linkOf ? "binary" : "test", ": ", p.variable)));
         const binary = inputPath(linkOf[p.program], binaryName(plan.variants[plan.requests[p.program][0]]));
-        foreach (ref a; g.actions)
-            if (a.id == testOf[p.test])
-                a.action.match!(
-                    (ref ProcessAction pa) { pa.envDelta ~= EnvEntry(p.variable, binary); },
-                    (ref other) {});
-        edge(linkOf[p.program], testOf[p.test]);
+        foreach (test; testOf[p.test])
+        {
+            foreach (ref a; g.actions)
+                if (a.id == test)
+                    a.action.match!(
+                        (ref ProcessAction pa) { pa.envDelta ~= EnvEntry(p.variable, binary); },
+                        (ref other) {});
+            edge(linkOf[p.program], test);
+        }
     }
 
     // CIC7: the coverage build is provisional, and the plain retry waits for
@@ -527,7 +581,7 @@ TaskNode[] taskNodes(ref const ActionGraph g) @safe
             kind: a.kind == ActionKind.test ? TaskKind.test : TaskKind.build,
             label: a.id.text,
             order: PresentationKey(1, a.id.text, a.kind, 0),
-            resources: ResourceClaim(jobsWeight: a.weight),
+            resources: ResourceClaim(jobsWeight: a.weight, exclusiveKeys: a.exclusiveKeys.dup),
             action: copyOf(a.action),
             failurePolicy: a.provisional ? FailurePolicy.provisional : FailurePolicy.authoritative,
             outputPolicy: OutputPolicy.replay);
@@ -598,8 +652,13 @@ dependency library and its dependent links once; a single-object archive
 would bring its modules in a second time.
 */
 bool archivesItself(ref const Variant v) @safe pure nothrow @nogc
-    => v.platform.compiler == "ldc" && v.role == Role.dependencyLibrary && v.settings.targetType != TargetType.none;
+    => v.role == Role.dependencyLibrary && v.settings.targetType != TargetType.none;
 string archiveName(ref const Variant v) @safe pure nothrow => "lib" ~ baseName(v) ~ ".a";
+
+/// A link's planned environment: DMD finds its C driver only through `$CC`,
+/// and a build action's `PATH` is empty (BGA4).
+EnvEntry[] linkEnvironment(ref const Variant v, const Tools tools) @safe pure nothrow
+    => v.platform.compiler != "ldc" && tools.cc.length ? [EnvEntry("CC", tools.cc)] : null;
 string binaryName(ref const Variant v) @safe pure nothrow => baseName(v);
 
 string inputPath(TaskId producer, string path) @safe pure nothrow => "$IN(" ~ producer.text ~ ")/" ~ path;
@@ -666,9 +725,12 @@ string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId
     const ldc = v.platform.compiler == "ldc";
     string[] argv = [tools.compiler];
     if (archivesItself(v))
-        // One member per module, each named by its module, written through
-        // a scratch directory the compiler empties again.
-        argv ~= ["-lib", "-oq", "-od=$MEASURE/objects", "-cleanup-obj", "-of=$OUT/" ~ archiveName(v)];
+        // One member per module, as dub builds a library, so a link pulls in
+        // only the modules it needs: LDC names each by its module, written
+        // through a scratch directory it empties again; DMD writes the
+        // archive itself.
+        argv ~= ldc ? ["-lib", "-oq", "-od=$MEASURE/objects", "-cleanup-obj", "-of=$OUT/" ~ archiveName(v)]
+            : ["-lib", "-of=$OUT/" ~ archiveName(v)];
     else
         argv ~= ["-c"] ~ (ldc ? ["-singleobj"] : null) ~ ["-of=$OUT/" ~ objectName(v)];
     // BGK2: the manifest, beside the action's measurements.
@@ -691,6 +753,7 @@ string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId
         argv ~= "--cov-increment=atomic";
     foreach (f; s.dflags)
         argv ~= f;
+    argv ~= tools.extraFlags;
     foreach (p; s.importPaths)
         argv ~= "-I=" ~ relative(p, root);
     // The C preprocessor's include roots, as dub passes them (ImportC).
@@ -737,6 +800,7 @@ string[] linkArgv(ref const Variant v, string root, const Tools tools, TaskId co
     argv ~= optionFlags(s.options, v.platform.compiler == "ldc");
     foreach (f; s.dflags)
         argv ~= f;
+    argv ~= tools.extraFlags;
     argv ~= ["-of=$OUT/" ~ binaryName(v), inputPath(compile, objectName(v))];
     if (v.platform.compiler == "ldc")
     {
@@ -747,18 +811,45 @@ string[] linkArgv(ref const Variant v, string root, const Tools tools, TaskId co
         if (tools.linker.length)
             argv ~= ["--linker=" ~ linkerName(tools.linker), "-Xcc=-B" ~ directoryOf(tools.linker)];
     }
+    // DMD names its C driver only through `$CC` (`linkEnvironment`) and the
+    // linker only through that driver's options.
+    else if (tools.linker.length)
+        argv ~= ["-Xcc=-B" ~ directoryOf(tools.linker), "-Xcc=-fuse-ld=" ~ linkerName(tools.linker)];
     argv ~= archives;
+    // A Darwin link runs in its run directory (`darwinLink`), so a path
+    // beneath the root is named through `$ROOT`.
+    const named = (string f) => darwinLink(v) ? "$ROOT/" ~ relative(f, root) : relative(f, root);
     foreach (f; s.sourceFiles)
         if (isLinkerInput(f))
-            argv ~= relative(f, root);
+            argv ~= named(f);
     foreach (f; s.linkerFiles)
-        argv ~= relative(f, root);
+        argv ~= named(f);
+    foreach (dir; tools.libraryPath)
+        argv ~= "-L-L" ~ dir;
     foreach (lib; s.libs)
         argv ~= "-L-l" ~ lib;
     foreach (f; s.lflags)
         argv ~= "-L" ~ f;
-    argv ~= "-L--threads=" ~ text(threads);
+    // lld's thread count: only a link that names lld takes it, and the C
+    // driver's own linker (macOS's `ld`) refuses it.
+    if (tools.linker.length)
+        argv ~= "-L--threads=" ~ text(threads);
+    // Mach-O's debug map names each object by its path, and the objects lie
+    // in the run's directory: named from it, as `-oso_prefix .` does in the
+    // directory the link runs in, the map is the same in every run, and the
+    // `dsymutil` LDC runs after the link, there too, still finds them.
+    if (darwinLink(v))
+        argv ~= ["-L-oso_prefix", "-L."];
     return argv;
+}
+
+/// Whether `v` links on Darwin, where a link runs in its run directory
+/// (`$RUN`) so that its debug map names the objects the same in every run.
+bool darwinLink(ref const Variant v) @safe pure nothrow
+{
+    import std.algorithm.searching : canFind;
+
+    return v.platform.platform.canFind("osx");
 }
 
 /*
@@ -863,7 +954,8 @@ version (unittest)
 
     // The same packages, each request a sub-package and a build type.
     private ActionGraph graphWith(const string[2][] requests, const CoverageAttempt[] attempts = null,
-        const Tools tools = Tools.init, const TestProgram[] programs = null) @safe
+        const Tools tools = Tools.init, const TestProgram[] programs = null,
+        const string[] platform = ["linux", "posix"]) @safe
     {
         auto tree = memoryTree([
             "/r/dub.sdl": "name \"r\"\nsubPackage \"t1\"\nsubPackage \"t2\"\nsubPackage \"mid\"\nsubPackage \"leaf\"\n",
@@ -882,7 +974,7 @@ version (unittest)
         foreach (q; requests)
         {
             auto r = resolve(ResolveRequest(directory: "/r", subPackage: q[0], buildType: q[1],
-                platform: BuildPlatform(["linux", "posix"], ["x86_64"], "ldc", "ldc2", 2111, "1.41.0"),
+                platform: BuildPlatform(platform.dup, ["x86_64"], "ldc", "ldc2", 2111, "1.41.0"),
                 testRoot: true), tree);
             assert(r.hasValue, r.hasError ? r.error.message : null);
             rs ~= r.value;
@@ -950,15 +1042,21 @@ version (unittest)
     assert(compile.kind == ActionKind.compile && compile.id.text.startsWith("compile:r.t1:test-root:ldc:"),
         compile.id.text);
 
-    // A link carries its claimed thread count, and so does a test run.
-    foreach (ref act; a.actions)
-    {
-        const argv = act.action.match!((ref const ProcessAction p) => p.argv.dup, (_) => string[].init);
-        if (act.kind == ActionKind.link)
-            assert(argv.canFind("-L--threads=2"));
-        if (act.kind == ActionKind.test)
-            assert(argv[$ - 2 .. $] == ["-t", "2"]);
-    }
+    // A test run carries its claimed thread count, and so does a link that
+    // names lld; the C driver's own linker is given none.
+    import std.algorithm.searching : startsWith;
+
+    const withLld = graphWith([[":t1", "unittest"]], null, Tools(linker: "/lld/bin/ld.lld"));
+    foreach (lld, graph; [a, withLld])
+        foreach (ref act; graph.actions)
+        {
+            const argv = act.action.match!((ref const ProcessAction p) => p.argv.dup, (_) => string[].init);
+            if (act.kind == ActionKind.link)
+                assert(lld ? argv.canFind("-L--threads=2")
+                    : !argv.canFind!(f => f.startsWith("-L--threads")), text(argv));
+            if (act.kind == ActionKind.test)
+                assert(argv[$ - 2 .. $] == ["-t", "2"]);
+        }
 
     // The executor accepts the nodes: no cycle, no unknown endpoint.
     TaskGraphBuilder builder;
@@ -1168,4 +1266,51 @@ version (unittest)
             return;
         }
     assert(false, "no test action");
+}
+
+/// CIC11, CIC14: each leg is a test action of its own, claiming its `-t`.
+@("build_graph.actions.linkArgv.darwinNamesObjectsFromTheRun")
+@safe unittest
+{
+    // A Darwin link runs in its run directory and names its debug map's
+    // objects from there; elsewhere a link runs in the root, unchanged.
+    foreach (darwin; [false, true])
+    {
+        const g = graphWith([[":t1", "unittest"]], null, Tools.init, null,
+            darwin ? ["osx", "darwin", "posix"] : ["linux", "posix"]);
+        size_t links;
+        foreach (ref a; g.actions)
+            if (a.kind == ActionKind.link)
+                a.action.match!((ref const ProcessAction p) {
+                    ++links;
+                    assert(p.cwd == (darwin ? "$RUN" : null), p.cwd);
+                    assert(p.argv.canFind("-L-oso_prefix") == darwin, text(p.argv));
+                }, (_) {});
+        assert(links);
+    }
+}
+
+@("build_graph.actions.planActions.testLegs")
+@safe unittest
+{
+    import std.algorithm.searching : endsWith;
+
+    const g = graphWith([[":t1", "unittest"]], null,
+        Tools(testLegs: [TestLeg(1, true, "serial"), TestLeg(8, true)]));
+    const(Action)[] legs;
+    foreach (ref a; g.actions)
+        if (a.kind == ActionKind.test)
+            legs ~= a;
+    assert(legs.length == 2);
+    foreach (ref a; legs)
+    {
+        const argv = a.action.match!((ref const ProcessAction p) => p.argv, (_) => null);
+        const serial = a.id.text.endsWith(":serial");
+        assert(argv.canFind("--skip-slow"), text(argv));
+        assert(argv[$ - 2 .. $] == ["-t", serial ? "1" : "8"], text(argv));
+        assert(a.weight == (serial ? 1 : 8));
+    }
+    assert(legs[0].id.text.endsWith(":serial") != legs[1].id.text.endsWith(":serial"));
+    // They run the same tests, so never at once.
+    assert(legs[0].exclusiveKeys.length == 1 && legs[0].exclusiveKeys == legs[1].exclusiveKeys);
 }

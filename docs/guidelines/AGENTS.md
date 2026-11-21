@@ -240,7 +240,9 @@ test under a debugger. Every sub-package integrates it the same way:
 ### Run the full CI check locally
 
 ```bash
-nix run .#ci -- test --fail-fast                            # dub test, every sub-package
+nix run .#ci -- pipeline                                    # every CI job this host runs, then a report
+nix run .#ci -- test --fail-fast                            # every sub-package's tests, on the build graph
+nix run .#ci -- test --from base --dependents --dry-run     # what a focused run would plan
 DC=ldc2 nix run .#ci -- test --sanitize address --fail-fast # Linux: AddressSanitizer
 nix run .#ci -- test --special-modes all                    # --better-c/--wasm where used
 nix run .#ci -- test --slow                                 # the @slow tests `ci test` skips
@@ -250,6 +252,14 @@ nix run .#ci -- check sidebar                               # sidebar ↔ pages
 nix run .#ci -- check spec-evidence                         # spec evidence cites what exists
 nix run .#ci -- check blob-paths                            # local only, see below
 ```
+
+`ci test` plans every selected package's test root as one build graph and runs
+it against the shared store beneath `$XDG_CACHE_HOME/sparkles`: a second run,
+or another worktree, compiles only what changed (`ci cache explain <task>` says
+why an action missed). Each test binary runs through the runner core, and
+`DC=dmd` plans DMD's variants. `ci pipeline` adds the extracted modes, the
+checks, the examples, the sanitized and slow tests and the determinism check,
+and names each CI job it skips.
 
 `ci check blob-paths` checks that a SHA-pinned citation names a path that exists
 at that SHA (`git cat-file -e` against the upstream clones under `$REPOS`) — the

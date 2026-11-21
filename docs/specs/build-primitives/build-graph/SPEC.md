@@ -838,7 +838,8 @@ Removal and replacement **must** wait for every live lease on an entry held by
 another process, as eviction does (BGS5 steps 1 and 3), and report the
 entries they wait for. The operating process's own leases do not hold it back.
 
-`apps/ci` exposes them as `ci cache store` operations. The store's top directory,
+`apps/ci` exposes them as `ci cache` commands: `stats`, `list`, `gc`, `verify`,
+`remove`, `replace` and `explain`. The store's top directory,
 and the directory under which `ci` keeps its run directories, each hold a
 `CACHEDIR.TAG` file, as the
 [Cache Directory Tagging Specification](https://bford.info/cachedir/) defines,
@@ -864,7 +865,7 @@ it as one of:
 3. **evicted:** a manifest matches, but its result is gone and no record
    serves the lookup.
 
-Each miss is reported with its class. `ci cache store explain <task>` plans the task
+Each miss is reported with its class. `ci cache explain <task>` plans the task
 and prints the classification of its lookup against the current tree and
 store, executing nothing. A value marked redacted (TDM4) **must** appear in a
 preimage only as a digest keyed with a secret private to the store, so that

@@ -922,7 +922,7 @@ every CI run?
 
 **Alternatives.**
 
-- An opt-in tool: `ci cache store verify --rerun`, run when someone suspects a
+- An opt-in tool: `ci cache verify --rerun`, run when someone suspects a
   result.
 - A nightly job over a sample, once a binary cache shares results.
 - A sampled check in every CI run.

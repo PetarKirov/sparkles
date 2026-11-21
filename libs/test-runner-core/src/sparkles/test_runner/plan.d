@@ -5,6 +5,8 @@
  */
 module sparkles.test_runner.plan;
 
+import core.time : Duration, msecs, seconds;
+
 import sparkles.test_runner.model : Test;
 import sparkles.test_runner.options : RunnerOptions;
 
@@ -148,4 +150,54 @@ unittest
     assert(verdict(0, 0) == 0);
     assert(verdict(3, 3) == 0);
     assert(verdict(3, 2) == 1);
+}
+
+/// What another worker costs to start and end: a process start, a hello,
+/// and in a coverage build a dump of every module's listing.
+enum workerStartCost = 250.msecs;
+
+/**
+How many workers a run wants now (TRS1, TRD14), the rule both clients
+place tests by, at least `running` and at most `cap`:
+enough that each has at least `workerStartCost` of the remaining work. The
+remaining work is the `pending` tests at the pace so far, a test taking
+`elapsed × running / done` on one worker. While no test has finished for
+longer than that cost (`sinceProgress`, counted from the start before the
+first result), the run is behind slow work, and doubles its workers each tick.
+*/
+size_t workersWanted(size_t pending, size_t done, size_t running, Duration elapsed,
+    Duration sinceProgress, size_t cap) @safe pure nothrow @nogc
+{
+    if (pending == 0 || running >= cap)
+        return running;
+    // No test finished for longer than a worker costs, with tests waiting:
+    // the run is behind slow work, which the pace so far does not show.
+    if (done == 0 || sinceProgress > workerStartCost)
+        return sinceProgress <= workerStartCost ? running : running * 2 > cap ? cap : running * 2;
+    const perTest = elapsed * cast(long) running / cast(long) done;
+    const work = perTest * cast(long) pending;
+    const wanted = cast(size_t) (work / workerStartCost);
+    return wanted < running ? running : wanted > cap ? cap : wanted;
+}
+
+@("runner.workersWanted.paceDecides")
+@safe pure nothrow @nogc
+unittest
+{
+    // `versions`: 167 tests in about 33 ms; after 50 ms on one worker, 160 done.
+    assert(workersWanted(7, 160, 1, 50.msecs, 0.msecs, 25) == 1, "milliseconds of work left");
+    // 20 of 790 done in 50 ms on one worker: about 2 s of work left, 7 workers.
+    assert(workersWanted(770, 20, 1, 50.msecs, 0.msecs, 25) == 7);
+    // Heavy tests: 3 of 400 done in 100 ms: far more work than workers.
+    assert(workersWanted(397, 3, 1, 100.msecs, 0.msecs, 25) == 25, "capped at -t");
+    // A first test still running past the start cost: twice the workers.
+    assert(workersWanted(10, 0, 1, 100.msecs, 100.msecs, 8) == 1);
+    assert(workersWanted(10, 0, 1, 300.msecs, 300.msecs, 8) == 2);
+    assert(workersWanted(10, 0, 4, 400.msecs, 400.msecs, 6) == 6, "doubling stops at -t");
+    // `ui`: 702 quick tests done, then one long test holds the only worker
+    // while 87 wait; their pace says milliseconds, the stall says otherwise.
+    assert(workersWanted(87, 702, 1, 500.msecs, 50.msecs, 25) == 1);
+    assert(workersWanted(87, 702, 1, 800.msecs, 350.msecs, 25) == 2);
+    assert(workersWanted(0, 5, 2, 1.seconds, 0.msecs, 8) == 2, "nothing left to take");
+    assert(workersWanted(5, 100, 4, 1.seconds, 0.msecs, 25) == 4, "never fewer than are running");
 }
