@@ -1,0 +1,1 @@
+{"tasks":[{"id":"test:ui:special:serial","series":"ec64a6f929b1923ec3b75a8f1e496206e0caaf54353084bbd36612add2225c37","outcome":"passed","start":793587388700,"end":801684673700,"metrics":{"task.wall":8097285000}}]}
