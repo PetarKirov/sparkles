@@ -2,6 +2,8 @@
   "nodes": {
     "dlang-nix": {
       "inputs": {
+        "dlang-tools-master": "dlang-tools-master",
+        "dmd-sparkles": "dmd-sparkles",
         "flake-compat": [
           "flake-compat"
         ],
@@ -15,20 +17,55 @@
         "llvm-sparkles": "llvm-sparkles",
         "nixpkgs": [
           "nixpkgs"
-        ]
+        ],
+        "phobos-master": "phobos-master"
       },
       "locked": {
-        "lastModified": 1795005256,
-        "narHash": "sha256-GbvEdmnjd9CWKYgGCjibQu+CEEXi6BrzSs3lBEAFLNA=",
+        "lastModified": 1795485442,
+        "narHash": "sha256-OM15UJIx4JR0GoygxdiRULnquDSB0yPzJ8YV3CufWOg=",
         "owner": "PetarKirov",
         "repo": "dlang.nix",
-        "rev": "7bf1b178b1034a1b1f8ebcec89a568b48cb0de50",
+        "rev": "e9a6d1301d98ae204185815b2d3037790c62d93c",
         "type": "github"
       },
       "original": {
         "owner": "PetarKirov",
         "ref": "feat/ldc-sparkles",
         "repo": "dlang.nix",
+        "type": "github"
+      }
+    },
+    "dlang-tools-master": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1787010337,
+        "narHash": "sha256-loXsGNaMH93dw9U2+s9D5xQBbO1aeeAPPS/bSHLJkP4=",
+        "owner": "dlang",
+        "repo": "tools",
+        "rev": "298f0452c8b7ed4e234bb508e3429d379d08808f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "dlang",
+        "ref": "master",
+        "repo": "tools",
+        "type": "github"
+      }
+    },
+    "dmd-sparkles": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1795485427,
+        "narHash": "sha256-A9h263DqQ8nNBbu0vASm01fSnYTcprwu0Oa2BWZ9Hrg=",
+        "owner": "PetarKirov",
+        "repo": "dmd",
+        "rev": "e0b6e795ff3c9841a1fb5d944b3b422cd8e1c3d3",
+        "type": "github"
+      },
+      "original": {
+        "owner": "PetarKirov",
+        "ref": "sparkles/main",
+        "repo": "dmd",
         "type": "github"
       }
     },
@@ -577,6 +614,23 @@
         "owner": "rycee",
         "repo": "nmt",
         "type": "gitlab"
+      }
+    },
+    "phobos-master": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1794921207,
+        "narHash": "sha256-zgBJAARClXhhfnyX5ZcyOkhKEoFKzdK7QiG5iy8NLO8=",
+        "owner": "dlang",
+        "repo": "phobos",
+        "rev": "79358d1593b9647a2151dc699c34046f8f74fce8",
+        "type": "github"
+      },
+      "original": {
+        "owner": "dlang",
+        "ref": "master",
+        "repo": "phobos",
+        "type": "github"
       }
     },
     "phobos-src": {

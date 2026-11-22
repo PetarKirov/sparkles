@@ -172,7 +172,10 @@
                 doCheck = !isDarwin;
               };
 
-              dmd = inputs'.dlang-nix.packages.dmd-2_112_1;
+              # PetarKirov/dmd `sparkles/main`: DMD master with reproducible
+              # `-lib` output and `-ffile-prefix-map`, so a DMD variant's
+              # outputs, like LDC's, name no run directory or worktree (#760).
+              dmd = inputs'.dlang-nix.packages.dmd-sparkles;
 
               # dub, compiled by the fork (toolchain spec TC1): dlang.nix builds it
               # with a released LDC by default, which brought a second LDC and
