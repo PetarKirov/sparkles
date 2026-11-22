@@ -1955,7 +1955,8 @@ Verdict[] oracle5()
     {
         RunOptions o;
         o.adjustPlan = (ref Planned p) {
-            wrapActions(p, "compile:", (string[] argv) => argv.filter!(x => !x.startsWith("--ffile-prefix-map=")).array);
+            wrapActions(p, "compile:", (string[] argv) => argv.filter!(x => !x.startsWith("--ffile-prefix-map=")
+                && !x.startsWith("-ffile-prefix-map=")).array);
         };
         auto na = run("versions", freshCache("o5"), o);
         auto nb = run("versions", freshCache("o5"), o, other);

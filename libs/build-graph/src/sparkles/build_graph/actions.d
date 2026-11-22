@@ -739,9 +739,10 @@ string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId
             "--makedeps-digests=$MEASURE/digests"];
     if (tools.config.length)
         argv ~= "-conf=" ~ tools.config;
-    // BGA5: the root maps to `.` in what the outputs record.
-    if (ldc)
-        argv ~= "--ffile-prefix-map=$ROOT=.";
+    // BGA5: the root maps to `.` in what the outputs record. DMD spells the
+    // option with one dash (the toolchain's `dmd-sparkles`, D19).
+    const prefixMap = ldc ? "--ffile-prefix-map=" : "-ffile-prefix-map=";
+    argv ~= prefixMap ~ "$ROOT=.";
     if (ldc)
         foreach (m; tools.prefixMaps)
             argv ~= "--ffile-prefix-map=" ~ m;
@@ -778,8 +779,7 @@ string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId
     {
         // The generated module lies in its producer's output directory,
         // which the run chooses: mapped to a fixed name, as the root is.
-        if (ldc)
-            argv ~= "--ffile-prefix-map=$IN(" ~ generatedRoot.text ~ ")=generated";
+        argv ~= prefixMap ~ "$IN(" ~ generatedRoot.text ~ ")=generated";
         argv ~= inputPath(generatedRoot, "dub_test_root.d");
     }
     return argv;
@@ -957,7 +957,7 @@ version (unittest)
     // The same packages, each request a sub-package and a build type.
     private ActionGraph graphWith(const string[2][] requests, const CoverageAttempt[] attempts = null,
         const Tools tools = Tools.init, const TestProgram[] programs = null,
-        const string[] platform = ["linux", "posix"]) @safe
+        const string[] platform = ["linux", "posix"], string compiler = "ldc") @safe
     {
         auto tree = memoryTree([
             "/r/dub.sdl": "name \"r\"\nsubPackage \"t1\"\nsubPackage \"t2\"\nsubPackage \"mid\"\nsubPackage \"leaf\"\n",
@@ -976,12 +976,13 @@ version (unittest)
         foreach (q; requests)
         {
             auto r = resolve(ResolveRequest(directory: "/r", subPackage: q[0], buildType: q[1],
-                platform: BuildPlatform(platform.dup, ["x86_64"], "ldc", "ldc2", 2111, "1.41.0"),
+                platform: BuildPlatform(platform.dup, ["x86_64"], compiler, compiler == "ldc" ? "ldc2" : compiler, 2111,
+                    compiler == "ldc" ? "1.41.0" : "2.111.0"),
                 testRoot: true), tree);
             assert(r.hasValue, r.hasError ? r.error.message : null);
             rs ~= r.value;
         }
-        const plan = planVariants(rs, PlanOptions(ToolchainIdentity("ldc", "toolchain-1")), tree);
+        const plan = planVariants(rs, PlanOptions(ToolchainIdentity(compiler, "toolchain-1")), tree);
         assert(plan.hasValue);
         auto g = planActions(plan.value, rs, "/r", tools, attempts, programs);
         assert(g.hasValue, g.hasError ? g.error.message : null);
@@ -1271,6 +1272,29 @@ version (unittest)
 }
 
 /// CIC11, CIC14: each leg is a test action of its own, claiming its `-t`.
+@("build_graph.actions.compileArgv.bothCompilersMapTheRoot")
+@safe unittest
+{
+    // BGA5, D63: every compile maps the root to `.`, and a test root's compile
+    // its generated module's directory to `generated`, in each compiler's
+    // spelling, so no compile takes the fallback.
+    foreach (compiler; ["ldc", "dmd"])
+    {
+        const g = graphWith([[":t1", "unittest"]], null, Tools.init, null, ["linux", "posix"], compiler);
+        const option = compiler == "ldc" ? "--ffile-prefix-map=" : "-ffile-prefix-map=";
+        size_t compiles, testRoots;
+        foreach (ref a; g.actions)
+            if (a.kind == ActionKind.compile)
+                a.action.match!((ref const ProcessAction p) {
+                    ++compiles;
+                    assert(p.argv.canFind(option ~ "$ROOT=."), text(p.argv));
+                    if (p.argv.canFind!(x => x.startsWith(option ~ "$IN(") && x.endsWith(")=generated")))
+                        ++testRoots;
+                }, (_) {});
+        assert(compiles && testRoots == 1, text(compiler, ": ", compiles, " compiles, ", testRoots, " test roots"));
+    }
+}
+
 @("build_graph.actions.linkArgv.darwinNamesObjectsFromTheRun")
 @safe unittest
 {

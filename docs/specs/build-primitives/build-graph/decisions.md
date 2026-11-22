@@ -424,7 +424,12 @@ the other's root, and all their tests passed: 984, 275 and 35.
 **Revisit when** LDC's map gains a form that drops the root without a `./`
 prefix and still maps the compilation directory.
 
-## D19: DMD variants key on the root (accepted)
+## D19: DMD variants key on the root (superseded)
+
+**Superseded** by [D63](#d63-dmd-maps-the-root-as-ldc-does-accepted): the
+toolchain's DMD has `-ffile-prefix-map`, so its variants map the root as LDC's
+do and share across worktrees. The record below was accepted for DMD 2.112.1
+and is kept as history.
 
 **Question.** E0 spike 1 (O3): do relative paths alone make DMD's outputs
 independent of the worktree?
@@ -1822,3 +1827,53 @@ there.
 
 **Revisit when** E4 confines tests: dub's home becomes a runtime input, or
 these tests move to `sparkles:build-primitives`' in-process resolver.
+
+## D63: DMD maps the root as LDC does (accepted)
+
+**Question.** D19 made every DMD variant key on the root, because DMD had no
+prefix map. Its outputs also differed from run to run, which `ci cache verify
+--rerun` (CIC13) reported on every DMD run (sparkles#760):
+
+- **Archives:** `dmd -lib` stamped each member header with the time it ran
+  and the builder's uid and gid, with no override.
+- **Test roots:** the generated test-root module lies in the run's output
+  directory, and DMD wrote that path into the object (the ELF file symbol and
+  `__FILE__` strings), as it does any source path, `-g` or not.
+
+Work around both in the graph, or fix DMD?
+
+**Alternatives.**
+
+- **Rewrite archives after the compile:** the executor zeroes a declared
+  archive's member headers (as `llvm-ar D` writes them). Fixes the archives
+  only.
+- **Compile a fixed stub:** a checked-in `dub_test_root.d` that mixes in the
+  generated body through a string import, so DMD names only the stub's
+  root-relative path. Fixes the test roots only, and couples the graph to a
+  file in this repository.
+- **Exempt DMD from the determinism check:** hides both.
+- **Fix DMD:** build it from a fork, as LDC is built.
+
+**Choice.** Decided by the owner on 2026-11-22: fix DMD. The toolchain's `dmd`
+is dlang.nix's `dmd-sparkles`, built from PetarKirov/dmd `sparkles/main`: DMD
+master with three changes written for upstream (each on a `fix/*` branch
+there):
+
+- `-lib` writes every member header with time, owner and group zero, as
+  `llvm-ar` does by default;
+- `-ffile-prefix-map=<old>=<new>`, GCC's and LDC's option, mapped in
+  `__FILE__`, `__FILE_FULL_PATH__`, assert, bounds and `-cov` file names, the
+  object's file name and DWARF's compilation directory and file tables;
+- an output file is written in as many `write()` calls as it takes.
+
+So a DMD compile takes BGA5's prefix map, spelled `-ffile-prefix-map=`, for
+the root and for the generated test root, and no DMD variant takes its
+fallback: DMD variants share across worktrees, as LDC's do.
+
+**Trade-offs.** The toolchain's DMD is master, not a release, and Phobos is
+master to match: a regression there reaches the DMD job first. A DMD without
+the option (a release, before upstream takes it) rejects these compiles; the
+graph plans for the toolchain's compiler only.
+
+**Revisit when** upstream DMD has `-ffile-prefix-map` and reproducible `-lib`
+in a release: build that instead, and drop the fork.

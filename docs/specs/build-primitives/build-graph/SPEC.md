@@ -427,7 +427,8 @@ identity could hash one driver while the compiler runs another.
 - **Prefix map:** with a compiler that supports it, the action **must** map the
   absolute repository root, without a trailing separator, to `.` in debug
   information, `__FILE__`, `__FILE_FULL_PATH__`, coverage registration and the
-  C preprocessor's output (`--ffile-prefix-map=<root>=.` on LDC). So every
+  C preprocessor's output (`--ffile-prefix-map=<root>=.` on LDC,
+  `-ffile-prefix-map=<root>=.` on the toolchain's DMD, D63). So every
   in-tree path the outputs record is relative to the root, such as
   `./libs/base/src/…`, and so is the debug information's compilation
   directory, which is the root itself. Store paths name no worktree, so this
