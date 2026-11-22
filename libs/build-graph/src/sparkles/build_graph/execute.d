@@ -1124,7 +1124,8 @@ struct ActionDriver
                 }
                 // BGA5's fallback: a compile that cannot map the root to `.` records
                 // it in its outputs, so its absolute path is part of the key.
-                if (a.kind == ActionKind.compile && !p.argv.canFind!(x => x.startsWith("--ffile-prefix-map=")))
+                if (a.kind == ActionKind.compile && !p.argv.canFind!(x => x.startsWith("--ffile-prefix-map=")
+                    || x.startsWith("-ffile-prefix-map=")))
                     s ~= "root " ~ layout.root ~ "\n";
                 // BGK2: the C preprocessor reports no failed lookup, so a compile
                 // with ImportC sources keys on every file under its C include

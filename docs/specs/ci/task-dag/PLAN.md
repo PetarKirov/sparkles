@@ -200,7 +200,7 @@ Progress, by the gate's items:
 - **The cutover:** `ci test` and `ci test --build-only` plan the selected
   packages' test roots as one build graph (`runTestsOnGraph`) and run it
   against the shared store, with the compiler `$DC` names, DMD's variants
-  included (build graph D19). Each test leg is the in-process action
+  included (build graph D63). Each test leg is the in-process action
   `test:leg`, which drives the test runner's core over workers fed their
   commands on standard input (`apps/ci/src/test_leg.d`, Event Horizon's
   `superviseFed`). The placement chooses the legs and coverage; listings
