@@ -3504,6 +3504,98 @@
         ]
       },
       {
+        "text": "Reactive Programming",
+        "link": "/research/reactive-programming/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Cross-Cutting",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Concepts",
+                "link": "/research/reactive-programming/concepts"
+              },
+              {
+                "text": "Comparison",
+                "link": "/research/reactive-programming/comparison"
+              }
+            ]
+          },
+          {
+            "text": "Streams",
+            "collapsed": true,
+            "items": [
+              { "text": "RxJS", "link": "/research/reactive-programming/rxjs" },
+              {
+                "text": "Effect Stream",
+                "link": "/research/reactive-programming/effect-ts"
+              },
+              {
+                "text": "Kotlin Flow",
+                "link": "/research/reactive-programming/kotlin-flow"
+              },
+              {
+                "text": "Swift Async Algorithms",
+                "link": "/research/reactive-programming/swift-async-algorithms"
+              },
+              {
+                "text": "Rust streams and signals",
+                "link": "/research/reactive-programming/rust-streams"
+              },
+              { "text": "fs2", "link": "/research/reactive-programming/fs2" }
+            ]
+          },
+          {
+            "text": "Single-Value Async",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "C++ senders and receivers",
+                "link": "/research/reactive-programming/cpp-senders-receivers"
+              }
+            ]
+          },
+          {
+            "text": "Signals",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Solid 2.0",
+                "link": "/research/reactive-programming/solid-signals"
+              },
+              {
+                "text": "TC39 Signals",
+                "link": "/research/reactive-programming/tc39-signals"
+              },
+              {
+                "text": "Angular",
+                "link": "/research/reactive-programming/angular-signals"
+              },
+              {
+                "text": "Jetpack Compose",
+                "link": "/research/reactive-programming/jetpack-compose"
+              }
+            ]
+          },
+          {
+            "text": "FRP and Synchronous",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Sodium",
+                "link": "/research/reactive-programming/sodium"
+              },
+              { "text": "Elm", "link": "/research/reactive-programming/elm" },
+              {
+                "text": "Esterel and Céu",
+                "link": "/research/reactive-programming/synchronous-languages"
+              }
+            ]
+          }
+        ]
+      },
+      {
         "text": "Algebraic Effects",
         "link": "/research/algebraic-effects/",
         "collapsed": true,
