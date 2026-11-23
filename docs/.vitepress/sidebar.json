@@ -3543,7 +3543,15 @@
                 "text": "Rust streams and signals",
                 "link": "/research/reactive-programming/rust-streams"
               },
-              { "text": "fs2", "link": "/research/reactive-programming/fs2" }
+              { "text": "fs2", "link": "/research/reactive-programming/fs2" },
+              {
+                "text": "Rx.NET",
+                "link": "/research/reactive-programming/rx-dotnet"
+              },
+              {
+                "text": "Pekko Streams",
+                "link": "/research/reactive-programming/pekko-streams"
+              }
             ]
           },
           {
@@ -3590,6 +3598,28 @@
               {
                 "text": "Esterel and Céu",
                 "link": "/research/reactive-programming/synchronous-languages"
+              },
+              {
+                "text": "Reflex",
+                "link": "/research/reactive-programming/reflex"
+              },
+              {
+                "text": "Yampa",
+                "link": "/research/reactive-programming/yampa"
+              }
+            ]
+          },
+          {
+            "text": "Transformers and Incremental",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Clojure transducers",
+                "link": "/research/reactive-programming/clojure-transducers"
+              },
+              {
+                "text": "Jane Street Incremental",
+                "link": "/research/reactive-programming/jane-street-incremental"
               }
             ]
           }
