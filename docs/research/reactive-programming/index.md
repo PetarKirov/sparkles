@@ -31,6 +31,8 @@ This survey answers seven questions:
    [comparison § Delta][cmp-delta].
 8. **How do mature libraries structure and name their API, and what did they
    later regret?** — [comparison § API structure and naming][cmp-api].
+9. **How do tests script inputs and assert outputs, cancellation included?** —
+   [testing], with three theme pages behind it.
 
 The shared vocabulary is defined once in [concepts]; the deep-dives use it.
 
@@ -188,6 +190,7 @@ the [master catalog](#master-catalog). The Sparkles side of the comparison cites
 [cmp-time]: ./comparison.md#virtual-time
 [cmp-delta]: ./comparison.md#delta-what-event-horizon-has-and-what-is-missing
 [cmp-api]: ./comparison.md#api-structure-and-naming
+[testing]: ./testing.md
 [rx-dotnet]: ./rx-dotnet.md
 [pekko-streams]: ./pekko-streams.md
 [clojure-transducers]: ./clojure-transducers.md

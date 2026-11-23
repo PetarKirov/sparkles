@@ -3622,6 +3622,28 @@
                 "link": "/research/reactive-programming/jane-street-incremental"
               }
             ]
+          },
+          {
+            "text": "Testing",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Overview",
+                "link": "/research/reactive-programming/testing"
+              },
+              {
+                "text": "Stream-library test DSLs",
+                "link": "/research/reactive-programming/testing-stream-dsls"
+              },
+              {
+                "text": "FRP, UI and snapshot testing",
+                "link": "/research/reactive-programming/testing-frp-and-snapshots"
+              },
+              {
+                "text": "Deterministic simulation",
+                "link": "/research/reactive-programming/testing-deterministic-simulation"
+              }
+            ]
           }
         ]
       },
