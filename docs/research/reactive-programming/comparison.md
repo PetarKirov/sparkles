@@ -1,35 +1,41 @@
-# Comparison: fourteen implementations of one pipeline
+# Comparison: twenty implementations of one pipeline
 
 The capstone of the [reactive-programming survey][index]. Every deep-dive wrote the
 same **worked pipeline**: a query field → debounce _N_ ms, _N_ adjustable at
 runtime → hash a file set on a worker, a newer query cancelling the running hash →
 show the result, with a toggle that switches the whole pipeline off. This page lays
-the fourteen answers side by side, extracts what they agree on, and maps each
+the twenty answers side by side, extracts what they agree on, and maps each
 capability onto what [`event-horizon`][eh-docs] has today. Terms are defined in
 [concepts].
 
-**Last reviewed:** November 22, 2026
+**Last reviewed:** November 23, 2026
 
 ---
 
 ## At a glance
 
-| Subject                              | Model              | Latest-wins form                       | Cancel waits?                | Built-in debounce                       | Interval changeable while waiting?    | Value cell         | Glitch-free     | Virtual time                                 |
-| ------------------------------------ | ------------------ | -------------------------------------- | ---------------------------- | --------------------------------------- | ------------------------------------- | ------------------ | --------------- | -------------------------------------------- |
-| [RxJS][rxjs]                         | push               | `switchMap`                            | no                           | `debounceTime` (fixed), `debounce(sel)` | next value only (`debounce(sel)`)     | `BehaviorSubject`  | no              | `TestScheduler` (7.x); patched globals (9.x) |
-| [Effect][effect-ts]                  | pull, chunked      | `Stream.switchMap`                     | yes (`switchMap`)            | `Stream.debounce` (fixed)               | no                                    | `SubscriptionRef`  | n/a             | `TestClock`                                  |
-| [Kotlin Flow][kotlin-flow]           | push, suspending   | `transformLatest`                      | yes (join)                   | `debounce { … }`                        | next value only                       | `StateFlow`        | no              | `runTest` dispatcher                         |
-| [Swift][swift-async-algorithms]      | pull               | `flatMapLatest`; `.task(id:)`          | no                           | `debounce(for:)` (fixed)                | no                                    | none (Observation) | n/a             | none built in (`swift-clocks`)               |
-| [Rust][rust-streams]                 | poll               | `select!` loop; `map_future`           | no                           | none                                    | yes (`Sleep::reset`)                  | `watch`, `Mutable` | undocumented    | tokio `pause`/`advance`                      |
-| [fs2][fs2]                           | pull, chunked      | `switchMap`                            | yes (finalizers)             | `debounce` (fixed, audit-like)          | no                                    | `SignallingRef`    | no              | `TestControl`                                |
-| [Solid 2.0][solid-signals]           | push-pull          | async memo                             | never cancels                | none                                    | n/a                                   | signal             | yes             | none                                         |
-| [TC39][tc39-signals]                 | push-pull          | none                                   | n/a                          | none                                    | n/a                                   | `Signal.State`     | yes             | none                                         |
-| [Angular][angular-signals]           | push-pull          | `resource`                             | no                           | `debounced` (experimental)              | next value only                       | `signal`           | yes             | `TestBed.tick` + fake timers                 |
-| [Compose][jetpack-compose]           | snapshot state     | `LaunchedEffect(key)`                  | no                           | none                                    | yes, by keying on it                  | `MutableState`     | yes             | `MainTestClock`                              |
-| [Sodium][sodium]                     | transactional push | `switchS`; .NET `MapAsync`             | no                           | none                                    | yes (deadline cell)                   | `Cell`             | yes             | timer system `runTimersTo`                   |
-| [Elm][elm]                           | model-update       | none (sequence number)                 | never cancels                | none                                    | yes (per sleep)                       | the model          | n/a             | `elm-program-test` `advanceTime`             |
-| [Esterel/Céu][synchronous-languages] | synchronous        | `par/or`, `abort … when`               | threads: no                  | none (`await N ms`)                     | with a third race branch              | variables          | by construction | `emit` time from `async`                     |
-| [C++ senders][cpp-senders-receivers] | lazy single-value  | none (scope + stop source per request) | composites: yes; spawned: no | none                                    | yes (an argument to `schedule_after`) | none               | n/a             | none (fake a `timed_scheduler`)              |
+| Subject                                | Model              | Latest-wins form                       | Cancel waits?                 | Built-in debounce                        | Interval changeable while waiting?    | Value cell                   | Glitch-free     | Virtual time                                 |
+| -------------------------------------- | ------------------ | -------------------------------------- | ----------------------------- | ---------------------------------------- | ------------------------------------- | ---------------------------- | --------------- | -------------------------------------------- |
+| [RxJS][rxjs]                           | push               | `switchMap`                            | no                            | `debounceTime` (fixed), `debounce(sel)`  | next value only (`debounce(sel)`)     | `BehaviorSubject`            | no              | `TestScheduler` (7.x); patched globals (9.x) |
+| [Effect][effect-ts]                    | pull, chunked      | `Stream.switchMap`                     | yes (`switchMap`)             | `Stream.debounce` (fixed)                | no                                    | `SubscriptionRef`            | n/a             | `TestClock`                                  |
+| [Kotlin Flow][kotlin-flow]             | push, suspending   | `transformLatest`                      | yes (join)                    | `debounce { … }`                         | next value only                       | `StateFlow`                  | no              | `runTest` dispatcher                         |
+| [Swift][swift-async-algorithms]        | pull               | `flatMapLatest`; `.task(id:)`          | no                            | `debounce(for:)` (fixed)                 | no                                    | none (Observation)           | n/a             | none built in (`swift-clocks`)               |
+| [Rust][rust-streams]                   | poll               | `select!` loop; `map_future`           | no                            | none                                     | yes (`Sleep::reset`)                  | `watch`, `Mutable`           | undocumented    | tokio `pause`/`advance`                      |
+| [fs2][fs2]                             | pull, chunked      | `switchMap`                            | yes (finalizers)              | `debounce` (fixed, audit-like)           | no                                    | `SignallingRef`              | no              | `TestControl`                                |
+| [Solid 2.0][solid-signals]             | push-pull          | async memo                             | never cancels                 | none                                     | n/a                                   | signal                       | yes             | none                                         |
+| [TC39][tc39-signals]                   | push-pull          | none                                   | n/a                           | none                                     | n/a                                   | `Signal.State`               | yes             | none                                         |
+| [Angular][angular-signals]             | push-pull          | `resource`                             | no                            | `debounced` (experimental)               | next value only                       | `signal`                     | yes             | `TestBed.tick` + fake timers                 |
+| [Compose][jetpack-compose]             | snapshot state     | `LaunchedEffect(key)`                  | no                            | none                                     | yes, by keying on it                  | `MutableState`               | yes             | `MainTestClock`                              |
+| [Sodium][sodium]                       | transactional push | `switchS`; .NET `MapAsync`             | no                            | none                                     | yes (deadline cell)                   | `Cell`                       | yes             | timer system `runTimersTo`                   |
+| [Elm][elm]                             | model-update       | none (sequence number)                 | never cancels                 | none                                     | yes (per sleep)                       | the model                    | n/a             | `elm-program-test` `advanceTime`             |
+| [Esterel/Céu][synchronous-languages]   | synchronous        | `par/or`, `abort … when`               | threads: no                   | none (`await N ms`)                      | with a third race branch              | variables                    | by construction | `emit` time from `async`                     |
+| [C++ senders][cpp-senders-receivers]   | lazy single-value  | none (scope + stop source per request) | composites: yes; spawned: no  | none                                     | yes (an argument to `schedule_after`) | none                         | n/a             | none (fake a `timed_scheduler`)              |
+| [Rx.NET][rx-dotnet]                    | push               | `Select(f).Switch()`                   | no (AsyncRx: yes, unreleased) | `Throttle` (fixed), `Throttle(selector)` | next value only (selector)            | `BehaviorSubject`            | no              | `TestScheduler`, `HistoricalScheduler`       |
+| [Pekko Streams][pekko-streams]         | demand-driven      | `switchMap` (1.2.0)                    | no                            | none (`switchMap` + `initialDelay`)      | next value only                       | none                         | n/a             | `ManualTime` (process-wide)                  |
+| [Transducers][clojure-transducers]     | push into a step   | none (hand-written `go-loop`)          | never cancels                 | none (`alts!` + `timeout`)               | yes, in hand-written code             | none (atom, sliding channel) | n/a             | none (wall-clock timers)                     |
+| [Reflex][reflex]                       | push-pull, frames  | `switchHold`, `switchDyn`              | never cancels                 | `debounce` (fixed)                       | no (user code sampling a `Behavior`)  | `Dynamic`                    | yes             | none (frame-by-frame test plans)             |
+| [Yampa][yampa]                         | sampled dataflow   | `rSwitch`                              | n/a (pure)                    | none (`localTime` after a restart)       | yes (compared on every sample)        | none first-class             | by construction | `embed` with explicit `dt`                   |
+| [Incremental][jane-street-incremental] | explicit stabilise | `bind`                                 | n/a (no async)                | none (`bind` over `Clock.after`)         | yes (an input of the `bind`)          | `Var`                        | yes             | `Clock.advance_clock`                        |
 
 ---
 
@@ -223,10 +229,86 @@ lessons recur:
 
 ---
 
+## API structure and naming
+
+The second-wave deep-dives each carry an `API structure and naming` subsection
+([Rx.NET][rx-dotnet-api], [Pekko][pekko-api], [transducers][transducers-api],
+[Reflex][reflex-api], [Yampa][yampa-api], [Incremental][incr-api]). Read together
+with the first wave, they agree on six points, and their regrets are more
+instructive than their designs.
+
+**1. Sources, transforms and sinks are different kinds of thing.** The libraries
+that make the split a type split age best. [Pekko][pekko-streams] has `Source`,
+`Flow` and `Sink` blueprints that do nothing until a `RunnableGraph` is
+materialised. [Incremental][jane-street-incremental] has `Var` (input), `Incr`
+(derived) and `Observer` (sink), with one one-way conversion between each.
+[Transducers][clojure-transducers] separate the transformation from both the
+process that applies it and the reducing function that receives it. Effect
+makes running a stream a `run*` family that returns the single-value type
+([Effect][effect-ts]: `runCollect`, `runDrain`, `runFold`). [Rx.NET][rx-dotnet] puts
+all three on one static `Observable` class, split over 18 files, and its
+`Qbservable` ADR has to name the split after the fact ("factory-like" versus
+"combinator-like" operators).
+
+**2. An operator is written once, for every source kind.** Pekko defines each
+operator once in `FlowOps`, and the return type follows the receiver (a `Source`
+stays a `Source`). Transducers run the same `map`, `filter`, `dedupe` and `scan` over
+collections, lazy sequences and channels; core.async then deprecated its parallel
+channel family (`map<`, `filter>`, `unique`) with "Use transducer instead". The
+boundary is the same everywhere: per-element operators can be source-independent;
+operators that need time (debounce), concurrency (switch) or several inputs (merge)
+cannot, and core.async writes those as `go` processes.
+
+**3. A second type channel is expensive.** Pekko's materialised-value parameter
+`Mat` forces 27 `…Mat` twins in `scaladsl/Flow.scala`, `Keep.left/right/both`, and a
+series of escape hatches (`preMaterialize`, `Sink.source`). Effect's `R` channel is
+the same cost paid for dependency injection. A sink that returns one `Effect` and
+handles (queues, cells, cancel tokens) created before the pipeline avoid it.
+
+**4. Variant axes become parameters, not names.** Every long-lived library grew a
+suffix grammar, and the later releases fold it back into arguments:
+
+| Library                                   | Grammar                                                                 | What happened                                                                     |
+| ----------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| [Yampa][yampa]                            | `d`/`r`/`k`/`p` prefixes, `B`/`Z`, `Cat`, `By`: 22 switch names         | documented in the source; still the hardest part of the API                       |
+| [Reflex][reflex]                          | `Dyn`, `B`, `E`, `With`, `Maybe`, `M`, `'`, `Promptly`, `Cheap`         | stacks to `attachPromptlyDynWithMaybe`; the safe default got the short name       |
+| [Rx.NET][rx-dotnet] (`System.Linq.Async`) | `SelectAwait`, `WhereAwait`, `SelectAwaitWithCancellation`              | retired in .NET 10 for overloads that always take a token                         |
+| [Effect][effect-ts] v4                    | `catchAll` → `catch`, `catchSome` → `catchFilter`; `fork` → `forkChild` | concurrency and discard moved into an options object (`{ concurrency, discard }`) |
+| [Pekko][pekko-streams]                    | `flatMapConcat`/`flatMapMerge`, `…Unordered`, `…Within`, `…Weighted`    | regular, but latest-wins is `switchMap`, outside the `flatMap…` family            |
+| [Incremental][jane-street-incremental]    | `_exn`, `map2`…`map15`, `'`, `opt_`; an `Expert` submodule              | mechanical and uniform; the sugar (`Let_syntax`) builds more nodes than `mapN`    |
+
+The renames in Effect v4 are recorded in its migration notes
+([`error-handling.md`][eff-mig-errors], [`forking.md`][eff-mig-forking]). Distinct
+names are kept for distinct semantics: merge versus switch versus concat, ordered
+versus `Unordered`.
+
+**5. A name is chosen for the semantics, once.** The most-cited regret in the survey
+is Rx.NET's `Throttle`, which is a debounce; its packaging ADR is premised on
+"almost nobody likes `Throttle`". The same word means two things across the
+catalog: a trailing debounce ([RxJS][rxjs]' `debounceTime`) and an audit
+([fs2][fs2]'s `debounce`). Reflex
+renamed `switchPromptly` to `switchHoldPromptly` to group operators by how they are
+built. Renames cost a major version in Pekko (`TestSource.probe` → `TestSource()`).
+
+**6. Free-function operators collide.** In .NET 10, two libraries defining `Select`
+on `IAsyncEnumerable` became an ambiguity error and forced the
+`AsyncEnumerableDeprecated` rename. D's UFCS has the same failure mode: a stream
+`map` beside `std.algorithm.map`, or an operator struct named like
+`event-horizon`'s own `Mapped` and `Zipped`. One canonical module per operator
+family, with aliases in separately imported modules, keeps resolution predictable.
+
+Two documentation practices are worth copying. Pekko's operator index sorts about
+230 operators into 17 categories, and every operator page carries the same four
+lines: emits when, backpressures when, completes when, cancels when. Reflex's
+Quickref groups functions by the type they return and tags each with the capability
+it needs to run.
+
+---
+
 ## The consensus standard
 
 What a reactive library for a structured-concurrency loop should provide, as far as
-fourteen designs agree:
+twenty designs agree:
 
 1. **Latest-wins is the primitive** — a switch that owns a child scope per value and
    cancels it on the next one. Debounce, toggles and restarts are built from it.
@@ -289,6 +371,20 @@ on where a pipeline runs relative to the UI frame**. Everything else exists.
 [jetpack-compose]: ./jetpack-compose.md
 [sodium]: ./sodium.md
 [cpp-senders-receivers]: ./cpp-senders-receivers.md
+[rx-dotnet]: ./rx-dotnet.md
+[pekko-streams]: ./pekko-streams.md
+[clojure-transducers]: ./clojure-transducers.md
+[reflex]: ./reflex.md
+[yampa]: ./yampa.md
+[jane-street-incremental]: ./jane-street-incremental.md
+[rx-dotnet-api]: ./rx-dotnet.md#api-structure-and-naming
+[pekko-api]: ./pekko-streams.md#api-structure-and-naming
+[transducers-api]: ./clojure-transducers.md#api-structure-and-naming
+[reflex-api]: ./reflex.md#api-structure-and-naming
+[yampa-api]: ./yampa.md#api-structure-and-naming
+[incr-api]: ./jane-street-incremental.md#api-structure-and-naming
+[eff-mig-errors]: https://github.com/Effect-TS/effect/blob/e3aca1f1484e623cee09b7f3fa18d6ff5d66c0e8/migration/error-handling.md
+[eff-mig-forking]: https://github.com/Effect-TS/effect/blob/e3aca1f1484e623cee09b7f3fa18d6ff5d66c0e8/migration/forking.md
 [elm]: ./elm.md
 [synchronous-languages]: ./synchronous-languages.md
 [eh-docs]: ../../libs/event-horizon/index.md

@@ -7,7 +7,7 @@ reactive library for Sparkles built on [`event-horizon`][eh-docs], the repositor
 completion-based event loop with structured scopes, fibers and a single-value lazy
 [`Effect`][eh-effect]. Every deep-dive answers the same questions in the same order,
 and every one ends by writing **the worked pipeline** in its own idiom, so the
-fourteen answers can be laid side by side in the [comparison][comparison].
+twenty answers can be laid side by side in the [comparison][comparison].
 
 The worked pipeline is the first consumer, taken from the
 [fileset explorer][fsx-spec]: a query field → debounce _N_ ms, with _N_ adjustable
@@ -29,38 +29,48 @@ This survey answers seven questions:
 6. **How is time made deterministic in tests?** — [comparison § Virtual time][cmp-time].
 7. **What does `event-horizon` already have, and what is missing?** —
    [comparison § Delta][cmp-delta].
+8. **How do mature libraries structure and name their API, and what did they
+   later regret?** — [comparison § API structure and naming][cmp-api].
 
 The shared vocabulary is defined once in [concepts]; the deep-dives use it.
 
-**Last reviewed:** November 22, 2026
+**Last reviewed:** November 23, 2026
 
 ---
 
 ## Master catalog
 
-| Subject                   | Ecosystem       | School                           | Versions surveyed                                                                      | Latest-wins primitive                               | Link                     |
-| ------------------------- | --------------- | -------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------- | ------------------------ |
-| RxJS                      | TypeScript      | push streams                     | 7.8.2; 9.0.0-beta.0 (`master`, unpublished)                                            | `switchMap`                                         | [rxjs]                   |
-| Effect `Stream`           | TypeScript      | pull streams on fibers           | `effect@4.1.5`; `effect@3.22.5`                                                        | `Stream.switchMap` (v4), `flatMap` `switch`         | [effect-ts]              |
-| Kotlin Flow               | Kotlin          | suspending streams               | kotlinx.coroutines 1.11.0                                                              | `transformLatest` / `flatMapLatest`                 | [kotlin-flow]            |
-| Swift Async Algorithms    | Swift           | pull streams (async iterators)   | `main` @ `088f92a3` (2026-11-18)                                                       | `flatMapLatest` (proposed); `.task(id:)`            | [swift-async-algorithms] |
-| Rust streams and signals  | Rust            | poll streams + signals           | futures 0.3.34; tokio 1.54.1; futures-signals 0.3.34                                   | `map_future` (futures-signals); `select!` loop      | [rust-streams]           |
-| fs2                       | Scala           | pull streams on fibers           | fs2 3.16; cats-effect 3.7                                                              | `switchMap`                                         | [fs2]                    |
-| Solid 2.0 signals         | TypeScript      | push-pull signals                | `solid-js@2.0.3`                                                                       | async memo (stale result discarded)                 | [solid-signals]          |
-| TC39 Signals              | JavaScript      | push-pull signals (standard)     | Stage 1; `signal-polyfill@0.2.3`                                                       | none (framework code)                               | [tc39-signals]           |
-| Angular signals           | TypeScript      | push-pull signals + resources    | 22.4.0-next.0                                                                          | `resource` / `rxResource`                           | [angular-signals]        |
-| Jetpack Compose runtime   | Kotlin          | snapshot state + keyed effects   | `compose.runtime` 1.14.0-alpha02                                                       | `LaunchedEffect(key)`                               | [jetpack-compose]        |
-| Sodium                    | Java, C#        | transactional FRP                | `master` @ `03d0c0fe` (2026-09-28)                                                     | `switchS` (streams); .NET `MapAsync`                | [sodium]                 |
-| Elm                       | Elm             | model-update loop (ex-FRP)       | `elm/core` 1.0.5; `elm-lang/core` 3.0.0 (signals)                                      | none (sequence number, result discarded)            | [elm]                    |
-| Esterel and Céu           | Esterel, Céu, C | synchronous languages            | Esterel v5.91; Céu v0.30; HipHop.js                                                    | `par/or`, `abort … when`, `watching`                | [synchronous-languages]  |
-| C++ senders and receivers | C++             | single-value operations + scopes | C++26 draft (P2300R10, P3149R11, P2079R10, P3552R3); stdexec @ `f27cd131` (2026-11-21) | none (`counting_scope` + a stop source per request) | [cpp-senders-receivers]  |
+| Subject                   | Ecosystem       | School                           | Versions surveyed                                                                      | Latest-wins primitive                               | Link                      |
+| ------------------------- | --------------- | -------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------- | ------------------------- |
+| RxJS                      | TypeScript      | push streams                     | 7.8.2; 9.0.0-beta.0 (`master`, unpublished)                                            | `switchMap`                                         | [rxjs]                    |
+| Effect `Stream`           | TypeScript      | pull streams on fibers           | `effect@4.1.5`; `effect@3.22.5`                                                        | `Stream.switchMap` (v4), `flatMap` `switch`         | [effect-ts]               |
+| Kotlin Flow               | Kotlin          | suspending streams               | kotlinx.coroutines 1.11.0                                                              | `transformLatest` / `flatMapLatest`                 | [kotlin-flow]             |
+| Swift Async Algorithms    | Swift           | pull streams (async iterators)   | `main` @ `088f92a3` (2026-11-18)                                                       | `flatMapLatest` (proposed); `.task(id:)`            | [swift-async-algorithms]  |
+| Rust streams and signals  | Rust            | poll streams + signals           | futures 0.3.34; tokio 1.54.1; futures-signals 0.3.34                                   | `map_future` (futures-signals); `select!` loop      | [rust-streams]            |
+| fs2                       | Scala           | pull streams on fibers           | fs2 3.16; cats-effect 3.7                                                              | `switchMap`                                         | [fs2]                     |
+| Solid 2.0 signals         | TypeScript      | push-pull signals                | `solid-js@2.0.3`                                                                       | async memo (stale result discarded)                 | [solid-signals]           |
+| TC39 Signals              | JavaScript      | push-pull signals (standard)     | Stage 1; `signal-polyfill@0.2.3`                                                       | none (framework code)                               | [tc39-signals]            |
+| Angular signals           | TypeScript      | push-pull signals + resources    | 22.4.0-next.0                                                                          | `resource` / `rxResource`                           | [angular-signals]         |
+| Jetpack Compose runtime   | Kotlin          | snapshot state + keyed effects   | `compose.runtime` 1.14.0-alpha02                                                       | `LaunchedEffect(key)`                               | [jetpack-compose]         |
+| Sodium                    | Java, C#        | transactional FRP                | `master` @ `03d0c0fe` (2026-09-28)                                                     | `switchS` (streams); .NET `MapAsync`                | [sodium]                  |
+| Elm                       | Elm             | model-update loop (ex-FRP)       | `elm/core` 1.0.5; `elm-lang/core` 3.0.0 (signals)                                      | none (sequence number, result discarded)            | [elm]                     |
+| Esterel and Céu           | Esterel, Céu, C | synchronous languages            | Esterel v5.91; Céu v0.30; HipHop.js                                                    | `par/or`, `abort … when`, `watching`                | [synchronous-languages]   |
+| C++ senders and receivers | C++             | single-value operations + scopes | C++26 draft (P2300R10, P3149R11, P2079R10, P3552R3); stdexec @ `f27cd131` (2026-11-21) | none (`counting_scope` + a stop source per request) | [cpp-senders-receivers]   |
+| Rx.NET, Ix.NET, AsyncRx   | C#              | push streams (+ pull Ix)         | `System.Reactive` 7.0.0; `System.Linq.Async` 7.0.1; AsyncRx 6.0.0-alpha (unreleased)   | `Select(f).Switch()`                                | [rx-dotnet]               |
+| Pekko Streams             | Scala, Java     | demand-driven dataflow graphs    | `main` @ `df133f7d` (2026-11-23; `v2.0.0-RC1`)                                         | `switchMap` (since 1.2.0)                           | [pekko-streams]           |
+| Clojure transducers       | Clojure, Java   | source-independent transformers  | Clojure @ `92ce2a85` (2026-11-23); core.async 1.9.865; JDK `Gatherer` (24)             | none (hand-written `go-loop`)                       | [clojure-transducers]     |
+| Reflex                    | Haskell         | higher-order push-pull FRP       | reflex 0.10.0.0 @ `f443526b` (2026-11-22); reflex-dom @ `de31ceff`                     | `switchHold`, `switchDyn` (no cancellation)         | [reflex]                  |
+| Yampa                     | Haskell         | arrowized FRP (signal functions) | Yampa 0.15.1; dunai 0.14.2; rhine 1.8                                                  | `rSwitch` (the old machine is no longer stepped)    | [yampa]                   |
+| Jane Street Incremental   | OCaml           | self-adjusting computation       | `master` @ `371fc83a` (2026-11-03); Salsa 0.28.6; Bonsai @ `3a02b573`                  | `bind` (invalidates the old subgraph)               | [jane-street-incremental] |
 
 > [!NOTE]
 > Two subjects sit next to existing catalogs rather than inside them. Effect, ZIO
 > and cats-effect as _effect systems_ are covered by
 > [algebraic effects][alg-effects] ([Effect][alg-effect-ts], [ZIO][alg-zio],
 > [cats-effect][alg-cats]); this tree covers their streaming halves. Incremental
-> recomputation (Salsa, Adapton) is covered by [parsing § incremental][incremental].
+> recomputation is covered twice: as a parsing technique by
+> [parsing § incremental][incremental], and as a reactive value graph by
+> [jane-street-incremental] (with Adapton, Salsa and Bonsai as related designs).
 
 ---
 
@@ -68,53 +78,63 @@ The shared vocabulary is defined once in [concepts]; the deep-dives use it.
 
 ### By evaluation model
 
-| Model                       | Who sends the next value                                                  | Subjects                                                                                       |
-| --------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| **Push**                    | the producer calls the consumer                                           | [rxjs], [sodium], [kotlin-flow] (with suspension as backpressure)                              |
-| **Pull**                    | the consumer asks for the next value (or chunk)                           | [effect-ts], [fs2], [swift-async-algorithms], [rust-streams]                                   |
-| **Push-pull**               | invalidation is pushed, values are pulled when read                       | [solid-signals], [tc39-signals], [angular-signals], [jetpack-compose] (snapshot read-tracking) |
-| **Model-update loop**       | the runtime feeds one message at a time to a pure `update`                | [elm]                                                                                          |
-| **Synchronous reaction**    | an input event starts one run-to-completion reaction of all trails        | [synchronous-languages]                                                                        |
-| **Single-value operations** | a sender completes once, on one of three channels (value, error, stopped) | [cpp-senders-receivers] (streams only as experimental sequence senders)                        |
+| Model                               | Who sends the next value                                                  | Subjects                                                                                                 |
+| ----------------------------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| **Push**                            | the producer calls the consumer                                           | [rxjs], [rx-dotnet], [sodium], [kotlin-flow] (with suspension as backpressure)                           |
+| **Pull**                            | the consumer asks for the next value (or chunk)                           | [effect-ts], [fs2], [swift-async-algorithms], [rust-streams], [rx-dotnet] (Ix, `IAsyncEnumerable`)       |
+| **Demand-driven graph**             | downstream signals demand, upstream pushes up to it (Reactive Streams)    | [pekko-streams]                                                                                          |
+| **Push-pull**                       | invalidation is pushed, values are pulled when read                       | [solid-signals], [tc39-signals], [angular-signals], [jetpack-compose] (snapshot read-tracking), [reflex] |
+| **Process-independent transformer** | whichever process applies it (reduce, sequence, channel) pushes into it   | [clojure-transducers] (and Java `Gatherer`)                                                              |
+| **Sampled dataflow**                | the driver steps every signal function once per sample, with a time delta | [yampa]                                                                                                  |
+| **Explicit stabilisation**          | inputs are set freely; one `stabilize` call propagates in height order    | [jane-street-incremental]                                                                                |
+| **Model-update loop**               | the runtime feeds one message at a time to a pure `update`                | [elm]                                                                                                    |
+| **Synchronous reaction**            | an input event starts one run-to-completion reaction of all trails        | [synchronous-languages]                                                                                  |
+| **Single-value operations**         | a sender completes once, on one of three channels (value, error, stopped) | [cpp-senders-receivers] (streams only as experimental sequence senders)                                  |
 
 ### By what a cancel does to running work
 
-| Cancel                                           | Subjects                                                                                                                                      |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Waits** until the cancelled work finished      | [kotlin-flow] (`transformLatest` joins), [effect-ts] (`switchMap` awaits the old inner's scope), [fs2] (`switchMap` awaits finalizers)        |
-| **Does not wait**; stale output filtered         | [rxjs], [swift-async-algorithms], [rust-streams], [jetpack-compose], [angular-signals], [tc39-signals], [sodium] (.NET `MapAsync`)            |
-| **Never cancels**; only discards the result      | [solid-signals] (cleanup is the run's business), [elm] (stale timers still fire)                                                              |
-| **Lexical abortion** in the same reaction        | [synchronous-languages] (threads: flagged, reaped later)                                                                                      |
-| **Joins in composites, forgets in spawned work** | [cpp-senders-receivers] (`when_all` and `exec::when_any` join; a spawned request joins only when chained on its predecessor's `spawn_future`) |
+| Cancel                                           | Subjects                                                                                                                                                                                                                                                         |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Waits** until the cancelled work finished      | [kotlin-flow] (`transformLatest` joins), [effect-ts] (`switchMap` awaits the old inner's scope), [fs2] (`switchMap` awaits finalizers), Salsa in [jane-street-incremental] (a write waits for every other handle), Java `mapConcurrent` in [clojure-transducers] |
+| **Does not wait**; stale output filtered         | [rxjs], [rx-dotnet] (AsyncRx awaits, unreleased), [pekko-streams] (`switchMap`; `mapAsync` futures keep running), [swift-async-algorithms], [rust-streams], [jetpack-compose], [angular-signals], [tc39-signals], [sodium] (.NET `MapAsync`)                     |
+| **Never cancels**; only discards the result      | [solid-signals] (cleanup is the run's business), [elm] (stale timers still fire), [reflex] (IO "cannot be undone"), [clojure-transducers] (core.async has no cancel)                                                                                             |
+| **Nothing to cancel**: pure graph, no async      | [yampa] (a switched-out machine is not stepped again), [jane-street-incremental] (an invalidated node is not recomputed)                                                                                                                                         |
+| **Lexical abortion** in the same reaction        | [synchronous-languages] (threads: flagged, reaped later)                                                                                                                                                                                                         |
+| **Joins in composites, forgets in spawned work** | [cpp-senders-receivers] (`when_all` and `exec::when_any` join; a spawned request joins only when chained on its predecessor's `spawn_future`)                                                                                                                    |
 
 ### By where time comes from
 
-| Source of time                                      | Subjects                                                                                         |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| An injectable scheduler or clock service            | [rxjs] 7.x, [effect-ts], [swift-async-algorithms] (`Clock` generic), [sodium] (Java/.NET timers) |
-| The dispatcher or runtime (virtual time global)     | [kotlin-flow], [fs2] (`TestControl`), [rust-streams] (tokio `pause`), [jetpack-compose]          |
-| Platform timers (`setTimeout`), patched in tests    | [rxjs] 9.x, [solid-signals], [tc39-signals], [angular-signals], [elm]                            |
-| An input event the host feeds                       | [synchronous-languages]                                                                          |
-| None in the standard; a `timed_scheduler` extension | [cpp-senders-receivers] (stdexec `schedule_after`/`schedule_at`)                                 |
+| Source of time                                      | Subjects                                                                                                                                              |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| An injectable scheduler or clock service            | [rxjs] 7.x, [rx-dotnet] (an `IScheduler` overload per operator), [effect-ts], [swift-async-algorithms] (`Clock` generic), [sodium] (Java/.NET timers) |
+| The dispatcher or runtime (virtual time global)     | [kotlin-flow], [fs2] (`TestControl`), [rust-streams] (tokio `pause`), [jetpack-compose], [pekko-streams] (a process-wide scheduler swap)              |
+| Platform timers (`setTimeout`), patched in tests    | [rxjs] 9.x, [solid-signals], [tc39-signals], [angular-signals], [elm], [reflex] (`forkIO` + sleep), [clojure-transducers] (core.async `timeout`)      |
+| An input event the host feeds                       | [synchronous-languages], [yampa] (`dt` per sample; `embed` in tests), [jane-street-incremental] (`Clock.advance_clock`)                               |
+| None in the standard; a `timed_scheduler` extension | [cpp-senders-receivers] (stdexec `schedule_after`/`schedule_at`)                                                                                      |
 
 ---
 
 ## Milestones
 
-| Date       | Milestone                                                                                            | Link                    |
-| ---------- | ---------------------------------------------------------------------------------------------------- | ----------------------- |
-| 1992       | Berry & Gonthier publish the semantics of Esterel                                                    | [synchronous-languages] |
-| 2012       | Czaplicki's thesis _Elm: Concurrent FRP for Functional GUIs_                                         | [elm]                   |
-| 2013       | Céu at SenSys: structured synchronous reactive programming with lexical abortion                     | [synchronous-languages] |
-| 2016-05-10 | Elm 0.17, "A Farewell to FRP", replaces signals with The Elm Architecture                            | [elm]                   |
-| 2016       | _Functional Reactive Programming_ (Blackheath & Jones) documents Sodium's transactions               | [sodium]                |
-| 2024-04    | TC39 Signals reaches Stage 1                                                                         | [tc39-signals]          |
-| 2024-06    | P2300R10 `std::execution` adopted for C++26 (date from the paper, not plenary minutes)               | [cpp-senders-receivers] |
-| 2025-02-21 | RxJS 7.8.2, the current stable line                                                                  | [rxjs]                  |
-| 2025-06    | P3149 `async_scope`, P2079 parallel scheduler and P3552 `task` adopted (dates from the papers)       | [cpp-senders-receivers] |
-| 2026-11-16 | Solid 2.0.0: async-first derivations, the `@solidjs/signals` core                                    | [solid-signals]         |
-| 2026-11-18 | RxJS 9.0.0-beta.0 on `master`: the web-platform `Observable`, `AbortSignal`, no schedulers           | [rxjs]                  |
-| 2026-11-20 | Effect 4.1.5: v4 stable on the canonical repository, with `Stream.switchMap` and `effect/reactivity` | [effect-ts]             |
+| Date       | Milestone                                                                                            | Link                      |
+| ---------- | ---------------------------------------------------------------------------------------------------- | ------------------------- |
+| 1992       | Berry & Gonthier publish the semantics of Esterel                                                    | [synchronous-languages]   |
+| 1997       | Elliott & Hudak's _Functional Reactive Animation_ (Fran), the first FRP                              | [yampa]                   |
+| 2002       | Nilsson, Courtney & Peterson, _Functional Reactive Programming, Continued_: arrowized FRP (Yampa)    | [yampa]                   |
+| 2012       | Czaplicki's thesis _Elm: Concurrent FRP for Functional GUIs_                                         | [elm]                     |
+| 2013       | Céu at SenSys: structured synchronous reactive programming with lexical abortion                     | [synchronous-languages]   |
+| 2014-08-06 | "Transducers are Coming": transformations separated from sources and sinks                           | [clojure-transducers]     |
+| 2015-07-18 | Jane Street's "Introducing Incremental"                                                              | [jane-street-incremental] |
+| 2016-05-10 | Elm 0.17, "A Farewell to FRP", replaces signals with The Elm Architecture                            | [elm]                     |
+| 2016       | _Functional Reactive Programming_ (Blackheath & Jones) documents Sodium's transactions               | [sodium]                  |
+| 2022-09-07 | Akka moves to the Business Source License; Apache Pekko forks the Apache-2.0 line                    | [pekko-streams]           |
+| 2024-04    | TC39 Signals reaches Stage 1                                                                         | [tc39-signals]            |
+| 2024-06    | P2300R10 `std::execution` adopted for C++26 (date from the paper, not plenary minutes)               | [cpp-senders-receivers]   |
+| 2025-02-21 | RxJS 7.8.2, the current stable line                                                                  | [rxjs]                    |
+| 2025-06    | P3149 `async_scope`, P2079 parallel scheduler and P3552 `task` adopted (dates from the papers)       | [cpp-senders-receivers]   |
+| 2026-11-16 | Solid 2.0.0: async-first derivations, the `@solidjs/signals` core                                    | [solid-signals]           |
+| 2026-11-18 | RxJS 9.0.0-beta.0 on `master`: the web-platform `Observable`, `AbortSignal`, no schedulers           | [rxjs]                    |
+| 2026-11-20 | Effect 4.1.5: v4 stable on the canonical repository, with `Stream.switchMap` and `effect/reactivity` | [effect-ts]               |
 
 ---
 
@@ -132,8 +152,16 @@ The shared vocabulary is defined once in [concepts]; the deep-dives use it.
 - **I want the signal algorithm.** [tc39-signals] (the smallest specification),
   [angular-signals] (the graph the polyfill forked), [solid-signals] (async in the
   graph), then [sodium] (transactions).
-- **I want the operator libraries.** [rxjs], [effect-ts], [kotlin-flow],
-  [swift-async-algorithms], [rust-streams], [fs2].
+- **I want the operator libraries.** [rxjs], [rx-dotnet], [effect-ts],
+  [kotlin-flow], [swift-async-algorithms], [rust-streams], [fs2], [pekko-streams].
+- **I am naming the API.** [comparison § API structure and naming][cmp-api], then
+  the `API structure and naming` subsection of [rx-dotnet] (the most-cited
+  naming regret), [pekko-streams] (blueprints and the cost of a second type
+  channel), [clojure-transducers] (operators written once for every source) and
+  [reflex] (affix families and capability tags).
+- **I want FRP without a garbage collector.** [yampa] (signal functions as Mealy
+  machines), [jane-street-incremental] (explicit stabilisation, a frame-shaped
+  step), then [reflex] (what a GC-driven teardown costs).
 
 ---
 
@@ -159,6 +187,13 @@ the [master catalog](#master-catalog). The Sparkles side of the comparison cites
 [cmp-frame]: ./comparison.md#the-frame
 [cmp-time]: ./comparison.md#virtual-time
 [cmp-delta]: ./comparison.md#delta-what-event-horizon-has-and-what-is-missing
+[cmp-api]: ./comparison.md#api-structure-and-naming
+[rx-dotnet]: ./rx-dotnet.md
+[pekko-streams]: ./pekko-streams.md
+[clojure-transducers]: ./clojure-transducers.md
+[reflex]: ./reflex.md
+[yampa]: ./yampa.md
+[jane-street-incremental]: ./jane-street-incremental.md
 [rxjs]: ./rxjs.md
 [effect-ts]: ./effect-ts.md
 [kotlin-flow]: ./kotlin-flow.md
