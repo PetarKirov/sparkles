@@ -36,7 +36,11 @@ models) — none of which covers the viewport-versus-data-size axis.
    [Textual](./textual-line-api.md), [Ratatui](./ratatui-offsets.md)
 7. **Where does sparkles stand, measured rather than guessed?** →
    [sparkles baseline](./sparkles-baseline.md)
-8. **So what should sparkles do?** → [comparison](./comparison.md)
+8. **What does rebuilding every frame cost at 10⁶ rows, and which retained
+   structures does an immediate-mode tree still need?** →
+   [immediate mode at scale](./immediate-mode-large-views.md), measured
+   headless across Dear ImGui, egui, Clay and sparkles
+9. **So what should sparkles do?** → [comparison](./comparison.md)
 
 ## Master catalog
 
@@ -119,7 +123,8 @@ models) — none of which covers the viewport-versus-data-size axis.
 **"I'm designing virtualization for an immediate-mode toolkit."** →
 [concepts](./concepts.md) → [Dear ImGui](./dear-imgui-clipper.md) →
 [egui](./egui-show-rows.md) → [Gio](./gio-list.md) →
-[sparkles baseline](./sparkles-baseline.md) → [comparison](./comparison.md).
+[sparkles baseline](./sparkles-baseline.md) →
+[immediate mode at scale](./immediate-mode-large-views.md) → [comparison](./comparison.md).
 
 **"I want to know whether to recycle."** →
 [Qt Quick](./qt-quick-listview.md) (the hazards, stated by the vendor) →
