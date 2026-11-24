@@ -1210,6 +1210,10 @@
             "link": "/specs/base/custom-float"
           },
           {
+            "text": "Status lines spec",
+            "link": "/specs/base/console"
+          },
+          {
             "text": "Capability VFS",
             "collapsed": true,
             "items": [

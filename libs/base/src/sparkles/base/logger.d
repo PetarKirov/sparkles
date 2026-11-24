@@ -16,6 +16,8 @@ import std.datetime : DateTime;
 public import std.logger : LogLevel;
 import std.logger : Logger;
 
+import sparkles.base.status_line : StatusLine, StatusSpan, Tone;
+
 /**
 Metadata captured for a Sparkles log call.
 */
@@ -50,6 +52,11 @@ struct CoreLogEntry
 
     /// Wall-clock second in local time.
     int second;
+
+    /// The line's structure when the call was $(LREF status) (CON2): a sink
+    /// that draws status lines draws it, any other writes the message, its
+    /// plain text. Borrowed for the call.
+    const(StatusLine)* status;
 }
 
 /// Fatal-log policy hook.
@@ -518,6 +525,32 @@ void trace(Args...)(
 )
 {
     log!Args(LogLevel.trace, loc, header, args, footer);
+}
+
+/**
+Reports a status line (`CON2`): `verb`, right-aligned and coloured by `tone`,
+then `spans` — what happened to what, as the console's one line form
+($(REF writeStatusLine, sparkles,base,status_line)) writes it. It goes
+through the installed logger at `level`, so a detail reported at
+`LogLevel.trace` shows only under `--log-level trace`. A sink that draws
+status lines draws it; any other writes its plain text.
+*/
+void status(LogLevel level = LogLevel.info, string file = __FILE__, int line = __LINE__)(
+    const(char)[] verb, Tone tone, scope const(StatusSpan)[] spans...) @safe nothrow @nogc
+{
+    import sparkles.base.buffer : SharedBuffer;
+    import sparkles.base.status_line : writeStatusLine;
+
+    if (!coreLogEnabled(level))
+        return;
+    const statusLine = StatusLine(verb, tone, spans);
+    SharedBuffer!(char, 1024) message;
+    writeStatusLine(message, statusLine, false);
+    auto entry = makeCoreLogEntry(level, line, file, null, null, null);
+    // `@trusted`: the entry, and the line it points to, live for the call alone.
+    () @trusted { entry.status = &statusLine; }();
+    if (auto logger = sharedCoreLog)
+        () @trusted nothrow @nogc { (cast(CoreLogger) logger).forwardCoreLog(entry, message[]); }();
 }
 
 /// Logs a styled IES message at [LogLevel.info].
