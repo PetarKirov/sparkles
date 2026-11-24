@@ -167,8 +167,11 @@ final class ExamplePlan
             // Not run: its build failed (or, build-only, it built). The
             // build's diagnostics are the lines its own actions wrote.
             const link = linkOf.get(j.file, null);
+            // The transcript names a task by its label (`link base:example
+            // 4a0065`), not its id.
+            static string labelOf(string id) => shortLabel(taskId(id.split(":")).value);
             // Executed or reused, the reporter says it succeeded.
-            const built = link.length && g.log.lineSplitter.canFind(link ~ ": succeeded");
+            const built = link.length && g.log.lineSplitter.canFind(labelOf(link) ~ ": succeeded");
             // The lines of every action the link needs, and how each ended:
             // a dependency's failure, a cancellation or a timeout says why.
             string diagnostics;
@@ -185,25 +188,33 @@ final class ExamplePlan
                             grew = true;
                         }
                 }
+                string[] labels;
+                foreach (id, _; needed)
+                    labels ~= labelOf(id);
                 foreach (line; g.log.lineSplitter)
-                {
-                    const open = line.startsWith("[") ? line.indexOf(" ") : -1;
-                    if (open > 1 && line[1 .. open] in needed)
-                        diagnostics ~= line[line.indexOf("] ") + 2 .. $] ~ "\n";
-                    else
+                    foreach (label; labels)
                     {
-                        const colon = line.indexOf(": ");
-                        if (colon > 0 && line[0 .. colon] in needed && !line[colon .. $].startsWith(": succeeded"))
+                        // `[<label> <stream>] <text>`: an action's own line.
+                        if (line.startsWith("[" ~ label ~ " ") && line.indexOf("] ") > 0)
+                        {
+                            diagnostics ~= line[line.indexOf("] ") + 2 .. $] ~ "\n";
+                            break;
+                        }
+                        // `<label>: <outcome>`, unless it succeeded.
+                        if (line.startsWith(label ~ ": ") && !line[label.length .. $].startsWith(": succeeded"))
+                        {
                             diagnostics ~= line ~ "\n";
+                            break;
+                        }
                     }
-                }
             }
             // Cancelled by fail-fast: the task that failed first, and its lines.
             if (diagnostics.canFind("cancelled"))
                 foreach (line; g.log.lineSplitter)
                     if (line.startsWith("cancelled: fail-fast after "))
                     {
-                        const first = line["cancelled: fail-fast after ".length .. $];
+                        // The summary names it by id; its lines, by label.
+                        const first = labelOf(line["cancelled: fail-fast after ".length .. $]);
                         diagnostics ~= line ~ "\n";
                         foreach (l; g.log.lineSplitter)
                             if (l.startsWith("[" ~ first ~ " ") || l.startsWith(first ~ ": "))
@@ -297,6 +308,8 @@ version (Posix):
 import sparkles.build_primitives.task.action : InProcessAction;
 import sparkles.build_primitives.task.executor : TaskContext;
 import sparkles.build_primitives.task.model : Failed, FailureReason, OutputStream, Succeeded, TaskOutcome;
+import sparkles.build_primitives.task.model : taskId;
+import sparkles.build_graph.actions : shortLabel;
 import sparkles.event_horizon.sched : Sched;
 
 /**
