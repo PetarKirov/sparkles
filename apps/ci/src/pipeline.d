@@ -280,6 +280,7 @@ RunExpected!void runPipeline(in PipelineRequest r)
         "nix-build-android": "Android's Nix builds: the Nix backend",
         "static-apps": "static application builds: the Nix backend",
         "shader-reproducibility": "shader builds on two systems: the Nix backend",
+        "wasm-reproducibility": "the WebAssembly modules built on three hosts: the Nix backend",
         "docs": "the documentation site's build: Node and VitePress",
         "cloud-env": "a cloud environment's preparation",
         "text-conformance": "the WebAssembly text conformance: the Nix backend",
@@ -299,7 +300,8 @@ RunExpected!void runPipeline(in PipelineRequest r)
         if (v.job == "check-spec-evidence")
             verdicts ~= JobVerdict("spec-evidence", v.verdict);
     static immutable ciJobs = ["placements", "test", "platform", "slow-tests-list", "slow-tests",
-        "extracted-tests", "sanitize", "nix-build", "shader-reproducibility", "nix-build-android", "static-apps",
+        "extracted-tests", "sanitize", "nix-build", "shader-reproducibility", "wasm-reproducibility",
+        "nix-build-android", "static-apps",
         "lint", "docs", "cloud-env", "text-conformance", "nix-wasm", "sync", "freebsd", "spec-evidence",
         "pin-plan", "pin-build", "pin-cache", "ci"];
     foreach (job; ciJobs)

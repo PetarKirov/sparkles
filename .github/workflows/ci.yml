@@ -272,6 +272,27 @@ jobs:
           name: shaders-${{ runner.os }}-${{ runner.arch }}
           path: shaders-${{ runner.os }}-${{ runner.arch }}.hash
 
+      # The WebAssembly modules on their third build host (toolchain spec
+      # TCM2, TC21): this leg skips `nix flake check`, so it builds the
+      # modules' tests itself (the agreement under node, the emulator, the
+      # npm package), then hashes the modules for `wasm-reproducibility`.
+      - name: Test and hash the WebAssembly modules
+        if: matrix.system == 'aarch64-linux'
+        run: |
+          nix build -L --no-link .#checks.aarch64-linux.{wasm-modules,npm-wired,text-wasm-emulator,table-wasm-emulator,wired-wasm-emulator}
+          for p in text-wasm table-wasm wired-wasm dub-manifest-nix-wasm; do
+            out="$(nix build --no-link --print-out-paths ".#$p")"
+            ls -A "$out"
+            echo "$p $(nix hash path --type sha256 "$out")"
+          done | tee "wasm-${{ runner.os }}-${{ runner.arch }}.hash"
+
+      - name: Upload the WebAssembly modules' hash
+        if: matrix.system == 'aarch64-linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: wasm-${{ runner.os }}-${{ runner.arch }}
+          path: wasm-${{ runner.os }}-${{ runner.arch }}.hash
+
       - name: The terminal on the raylib arm
         if: runner.os == 'Linux'
         run: dub test :terminal --compiler=${{ matrix.DC }} -c unittest-raylib
@@ -724,6 +745,42 @@ jobs:
         with:
           name: shaders-${{ runner.os }}-${{ runner.arch }}
           path: shaders-${{ runner.os }}-${{ runner.arch }}.hash
+
+      # Toolchain spec TCM2: the WebAssembly modules are the same bytes on
+      # every build host. `wasm-reproducibility` compares the hashes.
+      - name: Hash the WebAssembly modules
+        run: |
+          for p in text-wasm table-wasm wired-wasm dub-manifest-nix-wasm; do
+            out="$(nix build --no-link --print-out-paths ".#$p")"
+            ls -A "$out"
+            echo "$p $(nix hash path --type sha256 "$out")"
+          done | tee "wasm-${{ runner.os }}-${{ runner.arch }}.hash"
+
+      - name: Upload the WebAssembly modules' hash
+        uses: actions/upload-artifact@v7
+        with:
+          name: wasm-${{ runner.os }}-${{ runner.arch }}
+          path: wasm-${{ runner.os }}-${{ runner.arch }}.hash
+
+  wasm-reproducibility:
+    name: WebAssembly modules agree across build hosts
+    # The Nix build job hashes x86_64 Linux and aarch64 macOS; the aarch64
+    # Linux test leg hashes the third.
+    needs: [nix-build, platform]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download every host's hash
+        uses: actions/download-artifact@v8
+        with:
+          pattern: wasm-*
+          merge-multiple: true
+
+      - name: Compare
+        run: |
+          for f in wasm-*.hash; do echo "$f:"; cat "$f"; done
+          hashes=(wasm-*.hash)
+          [ "${#hashes[@]}" -eq 3 ] || { echo "::error::${#hashes[@]} build hosts reported, not 3"; exit 1; }
+          [ "$(for f in wasm-*.hash; do sha256sum < "$f"; done | sort -u | wc -l)" -eq 1 ] || { echo "::error::the WebAssembly modules differ between build hosts (TCM2)"; exit 1; }
 
   shader-reproducibility:
     name: Generated shaders agree across platforms
@@ -1431,6 +1488,7 @@ jobs:
       - nix-build-android
       - static-apps
       - shader-reproducibility
+      - wasm-reproducibility
       - lint
       - docs
       - cloud-env
