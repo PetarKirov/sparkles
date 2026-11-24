@@ -283,6 +283,9 @@ enum OutputPolicy
     replay,
     /// Keep a bounded tail, shown only if the node does not succeed.
     tailOnFailure,
+    /// As `tailOnFailure`, but a success shows its last line: the summary a
+    /// test run ends with.
+    lastLineOnSuccess,
     /// The node writes nothing worth showing (a pure reducer).
     none,
 }

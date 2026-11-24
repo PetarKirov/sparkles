@@ -93,7 +93,10 @@ struct PlainReporter(Writer)
         lastAt = e.at;
         e.payload.match!(
             (const TaskOutput o) {
-                if (options.interlaced)
+                // A node whose policy is not `replay` is written once it is
+                // terminal, even interlaced: which lines show depends on how
+                // it ended (TDO3, TDO4).
+                if (options.interlaced && policy(o.task) == OutputPolicy.replay)
                     writeLine(o.task, o.stream, e.text);
                 blocks.output(o.task, o.stream, e.text, o.unterminated);
             },
@@ -128,9 +131,10 @@ struct PlainReporter(Writer)
         {
             if (started)
                 options.ci.endUntrusted(*writer);
+            // One line per task: collapsed, the failures below stay in view.
             if (options.ci.groups)
-                options.ci.openGroup(*writer, "results", collapsed: false);
-            blocks.releaseAll(&writeTerminal);
+                options.ci.openGroup(*writer, "results", collapsed: true);
+            blocks.releaseAll(&writeHeldAndTerminal);
             if (options.ci.groups)
                 options.ci.closeGroup(*writer);
             writeFailureReplay();
@@ -157,28 +161,91 @@ private:
     bool started, ended, finished;
     MonoTime firstAt, lastAt;
 
+    OutputPolicy policy(TaskIndex t) => (*graph)[t].outputPolicy;
+
+    // A line, prefixed; text holding line breaks (a multi-line message sent
+    // as one) is written as that many lines, each prefixed.
     void writeLine(TaskIndex t, OutputStream stream, scope const(char)[] text)
     {
-        writeLinePrefix(*writer, *graph, t, stream);
-        options.ci.writeUntrusted(*writer, text);
-        put(*writer, '\n');
+        while (true)
+        {
+            size_t end;
+            while (end < text.length && text[end] != '\n')
+                ++end;
+            writeLinePrefix(*writer, *graph, t, stream);
+            options.ci.writeUntrusted(*writer, text[0 .. end]);
+            put(*writer, '\n');
+            if (end >= text.length)
+                break;
+            text = text[end + 1 .. $];
+        }
     }
 
-    // A block's lines, fenced from the provider's command parser.
+    // Which of a terminal task's lines its policy shows (TDO3): all, its
+    // tail when it did not succeed, its last line when it did
+    // (`lastLineOnSuccess`), or none.
+    enum Shown { none, all, tail, last }
+    Shown shown(TaskIndex t)
+    {
+        if (blocks.spool(t).lines == 0)
+            return Shown.none;
+        const succeeded = blocks.isDone(t) && kindOf(blocks.outcome(t)) == OutcomeKind.succeeded;
+        final switch (policy(t))
+        {
+            case OutputPolicy.replay: return Shown.all;
+            case OutputPolicy.none: return Shown.none;
+            case OutputPolicy.tailOnFailure: return succeeded ? Shown.none : Shown.tail;
+            case OutputPolicy.lastLineOnSuccess: return succeeded ? Shown.last : Shown.tail;
+        }
+    }
+
+    void writeShown(TaskIndex t, Shown what)
+    {
+        options.ci.beginUntrusted(*writer);
+        final switch (what)
+        {
+            case Shown.none: break;
+            case Shown.all:
+                blocks.spool(t).replay((const ref SpooledLine l) { writeLine(t, l.stream, l.text); });
+                break;
+            case Shown.tail:
+                foreach (ref l; blocks.spool(t).tail)
+                    writeLine(t, l.stream, l.text);
+                break;
+            case Shown.last:
+                const tail = blocks.spool(t).tail;
+                if (tail.length)
+                    writeLine(t, tail[$ - 1].stream, tail[$ - 1].text);
+                break;
+        }
+        options.ci.endUntrusted(*writer);
+    }
+
+    // A block's lines, as its policy shows them, fenced from the provider's
+    // command parser.
     void writeBlock(TaskIndex t)
     {
-        const hasLines = blocks.spool(t).lines > 0;
-        const grouped = options.ci.groups && hasLines;
+        const what = shown(t);
+        const grouped = options.ci.groups && what != Shown.none;
         if (grouped)
             options.ci.openGroup(*writer, blockTitle(t));
-        if (hasLines)
-        {
-            options.ci.beginUntrusted(*writer);
-            blocks.spool(t).replay((const ref SpooledLine l) { writeLine(t, l.stream, l.text); });
-            options.ci.endUntrusted(*writer);
-        }
+        if (what != Shown.none)
+            writeShown(t, what);
         if (grouped)
             options.ci.closeGroup(*writer);
+        writeTerminal(t);
+    }
+
+    // Interlaced: the lines a non-`replay` node held until it ended, but a
+    // failure's, which the failure replay shows; then its terminal line.
+    void writeHeldAndTerminal(TaskIndex t)
+    {
+        if (policy(t) != OutputPolicy.replay)
+        {
+            const what = shown(t);
+            if (what == Shown.last)
+                writeShown(t, what);
+        }
         writeTerminal(t);
     }
 
@@ -188,7 +255,7 @@ private:
         import std.array : appender;
 
         auto title = appender!string;
-        title.put((*graph)[t].id.text);
+        title.put(displayName(*graph, t));
         title.put(": ");
         if (blocks.isDone(t))
             writeOutcome(title, *graph, blocks.outcome(t));
@@ -206,7 +273,7 @@ private:
         foreach (i; 0 .. graph.nodes.length)
         {
             const t = TaskIndex(cast(uint) i);
-            if (!blocks.isDone(t) || kindOf(blocks.outcome(t)) != OutcomeKind.failed
+            if (!blocks.isDone(t) || kindOf(blocks.outcome(t)) != OutcomeKind.failed || policy(t) == OutputPolicy.none
                 || blocks.spool(t).lines == 0)
                 continue;
             if (!any)
@@ -243,7 +310,7 @@ private:
 
     void writeTerminal(TaskIndex t)
     {
-        put(*writer, (*graph)[t].id.text);
+        put(*writer, displayName(*graph, t));
         put(*writer, ": ");
         if (blocks.isDone(t))
             writeOutcome(*writer, *graph, blocks.outcome(t));
@@ -576,7 +643,7 @@ unittest
         ++i;
     assert(i == 5);
     assert(lines[i .. $] == [
-        "\x1b[0Ksection_start:42:task_1\r\x1b[0Kresults",
+        "\x1b[0Ksection_start:42:task_1[collapsed=true]\r\x1b[0Kresults",
         "a: succeeded", "b: succeeded", "c: failed: exit-status 3",
         "d: blocked: prerequisite-failed c", "e: skipped: platform", "f: degraded: no-coverage",
         "\x1b[0Ksection_end:42:task_1\r\x1b[0K",
@@ -613,4 +680,80 @@ unittest
 
     // A provider without masks never sees the value.
     assert(!transcript(g, run.events, PlainOptions(timings: false)).canFind("hunter2"));
+}
+
+// A graph with every output policy (TDO3): `a` and `b` show their tail only
+// when they fail, `c` its last line when it succeeds, `d` nothing, and `e`,
+// with a label, everything, one of its lines a two-line message.
+version (unittest) private TaskGraph policyGraph() @safe pure nothrow
+{
+    auto nodes = [tnode("a"), tnode("b"), tnode("c"), tnode("d"), tnode("e")];
+    nodes[0].outputPolicy = OutputPolicy.tailOnFailure;
+    nodes[1].outputPolicy = OutputPolicy.tailOnFailure;
+    nodes[2].outputPolicy = OutputPolicy.lastLineOnSuccess;
+    nodes[3].outputPolicy = OutputPolicy.none;
+    nodes[4].label = "the e";
+    return graphOf(nodes, null);
+}
+
+version (unittest) private Script[string] policyScripts(const(int)[] durations) @safe pure nothrow
+    => [
+        "a": Script(durations[0].msecs, lines: ["a deprecation", "a note"]),
+        "b": Script(durations[1].msecs, TaskOutcome(Failed(FailureReason.exitStatus, 1)), ["b noise", "b error"]),
+        "c": Script(durations[2].msecs, lines: ["✓ c.one", "Summary: 1 passed"]),
+        "d": Script(durations[3].msecs, lines: ["d chatter"]),
+        "e": Script(durations[4].msecs, lines: ["one\ntwo"]),
+    ];
+
+@("build_primitives.task.reporter_plain.outputPolicies")
+@system
+unittest
+{
+    const g = policyGraph();
+    enum expected =
+        "a: succeeded\n"
+        ~ "[b stdout] b noise\n"
+        ~ "[b stdout] b error\n"
+        ~ "b: failed: exit-status 1\n"
+        ~ "[c stdout] Summary: 1 passed\n"
+        ~ "c: succeeded\n"
+        ~ "d: succeeded\n"
+        ~ "[the e stdout] one\n"
+        ~ "[the e stdout] two\n"
+        ~ "the e: succeeded\n"
+        ~ "summary: 5 tasks: 4 succeeded, 1 failed, 0 degraded, 0 skipped, 0 blocked, 0 unneeded, 0 cancelled\n"
+        ~ "failed: b\n"
+        ~ "exit: 1\n";
+    foreach (durations; permutations([1, 2, 3, 4, 5]))
+    {
+        auto run = runFake(g, policyScripts(durations), ExecutorOptions(capacity: 3));
+        const text = transcript(g, run.events, PlainOptions(timings: false));
+        assert(text == expected, text);
+    }
+}
+
+@("build_primitives.task.reporter_plain.interlacedStreamsOnlyReplayedNodes")
+@system
+unittest
+{
+    const g = policyGraph();
+    auto run = runFake(g, policyScripts([1, 2, 3, 4, 5]), ExecutorOptions(capacity: 1));
+    const text = transcript(g, run.events, PlainOptions(interlaced: true, timings: false));
+    // Only `e`, a `replay` node, streams; the rest are written once
+    // terminal: `c`'s last line with its result, `b`'s tail as a failure.
+    assert(text ==
+        "[the e stdout] one\n"
+        ~ "[the e stdout] two\n"
+        ~ "a: succeeded\n"
+        ~ "b: failed: exit-status 1\n"
+        ~ "[c stdout] Summary: 1 passed\n"
+        ~ "c: succeeded\n"
+        ~ "d: succeeded\n"
+        ~ "the e: succeeded\n"
+        ~ "failure b: failed: exit-status 1\n"
+        ~ "[b stdout] b noise\n"
+        ~ "[b stdout] b error\n"
+        ~ "summary: 5 tasks: 4 succeeded, 1 failed, 0 degraded, 0 skipped, 0 blocked, 0 unneeded, 0 cancelled\n"
+        ~ "failed: b\n"
+        ~ "exit: 1\n", text);
 }
