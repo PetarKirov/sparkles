@@ -829,3 +829,33 @@ unittest
     assert(rec.messages[0] == "one" && rec.messages[2] == "two");
     assert(rec.messages[1].canFind("file logging is off"));
 }
+
+/// A status line reaches a sink that draws no lines as its plain text, at its
+/// level; one reported at trace stays below an info sink (`CON2`).
+@("log_sinks.status.plainTextElsewhere")
+@safe
+unittest
+{
+    import sparkles.base.logger : status;
+    import sparkles.base.status_line : detail, subject, Tone;
+    import std.logger : sharedLog;
+
+    lockLoggerGlobalTests();
+    auto oldLog = sharedCoreLog;
+    auto oldShared = sharedLog;
+    auto oldLevel = coreGlobalLogLevel;
+    scope (exit)
+    {
+        sharedCoreLog = oldLog;
+        sharedLog = oldShared;
+        coreGlobalLogLevel = oldLevel;
+        unlockLoggerGlobalTests();
+    }
+
+    auto rec = new Recorder(LogLevel.info);
+    sharedCoreLog = () @trusted { return cast(shared) rec; }();
+    coreGlobalLogLevel = LogLevel.all;
+    status("Compiled", Tone.success, subject("base"), detail("31ms"));
+    status!(LogLevel.trace)("Reused", Tone.muted, subject("a detail"));
+    assert(rec.messages == ["    Compiled base  31ms"]);
+}

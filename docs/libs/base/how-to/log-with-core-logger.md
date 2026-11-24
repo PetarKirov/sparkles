@@ -136,6 +136,26 @@ compile-time `-J` stamp the section replaced. Nothing calls it, and it is due
 for removal (the terminal [delivery plan](../../../specs/terminal/PLAN.md),
 M4).
 
+## Report progress as status lines
+
+Progress — what a command compiled, tested, fetched — goes through the logger
+too, as a status line
+([spec](../../../specs/base/console.md)): a verb, a tone, and spans that say
+what each part is.
+
+```d
+import sparkles.base.logger : LogLevel, status;
+import sparkles.base.status_line : detail, subject, tag, Tone;
+
+status("Compiled", Tone.success, subject("base"), tag("[library]"), detail("1.2s"));
+status!(LogLevel.trace)("Reused", Tone.muted, subject("compile base"));  // only at --log-level trace
+```
+
+A sink that draws status lines (`ci`'s console) writes the verb
+right-aligned in twelve columns and coloured; every other sink, the
+`DeltaTimeLogger` included, logs the line's plain text. Report a detail
+nobody acts on at `trace`, so the default output stays clean.
+
 ## Advanced Customization: Fatal Handlers
 
 `fatal` calls follow the same rule. By default, the fatal handler throws a thread-local, recycled `FatalLogError` to avoid GC allocation.
