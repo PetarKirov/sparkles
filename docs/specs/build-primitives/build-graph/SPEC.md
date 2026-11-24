@@ -949,7 +949,10 @@ a recorded divergence from dub
 sources, import paths, output directory and tool paths as arguments, and it
 does not call dub or search `PATH`. The shader compiler gains a direct
 invocation mode for this, and its own specification
-([shaders build](../../shaders/build.md)) is amended with it. A
+([shaders build](../../shaders/build.md)) is amended with it. The device
+configuration the graph writes for it names paths beneath the root as
+`$ROOT/…`, and the tool resolves them against the root it runs in: the file,
+and the result that holds it, is then the same in every worktree. A
 single-file program that searches `PATH` anyway finds there only tools that
 fail ([D60](./decisions.md#d60-a-single-file-generator-runs-where-git-fails)).
 

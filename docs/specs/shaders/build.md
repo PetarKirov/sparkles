@@ -159,7 +159,9 @@ nothing for it.
 **must** read the device configuration from that file, which holds what
 `dub describe` would report of it (the root package, each package's
 directory, and each target's import paths, versions, dflags and source
-files), and **must not** run dub. With `--tool=<name>=<path>`, it **must**
+files), and **must not** run dub. A path in it that begins `$ROOT` names a
+path beneath the directory the step runs in, the repository root. With
+`--tool=<name>=<path>`, it **must**
 run the SPIR-V or GLSL tool `<name>` at `<path>`, never from `PATH`, and the
 device compiler runs the `spirv-opt` it names over an optimised compilation's
 SPIR-V (`-mdcompute-spirv-opt`), so the compilation does not depend on `PATH`
