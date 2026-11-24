@@ -579,14 +579,53 @@ TaskNode[] taskNodes(ref const ActionGraph g) @safe
         nodes ~= TaskNode(
             id: a.id,
             kind: a.kind == ActionKind.test ? TaskKind.test : TaskKind.build,
-            label: a.id.text,
+            label: shortLabel(a.id),
             order: PresentationKey(1, a.id.text, a.kind, 0),
             resources: ResourceClaim(jobsWeight: a.weight, exclusiveKeys: a.exclusiveKeys.dup),
             action: copyOf(a.action),
             failurePolicy: a.provisional ? FailurePolicy.provisional : FailurePolicy.authoritative,
-            outputPolicy: OutputPolicy.replay);
+            // A build action's output (deprecations, cache notes) matters
+            // only when it fails; a test leg's success is its summary line.
+            outputPolicy: a.kind == ActionKind.test ? OutputPolicy.lastLineOnSuccess : OutputPolicy.tailOnFailure);
     }
     return nodes;
+}
+
+/**
+What a transcript calls an action (task-DAG TDO3): `<kind> <package>:<role>`,
+a test leg's name after its role, and the first six digits of its variant's
+key, which tell a package's variants apart: `compile doc-view:test-root
+48f533` for `compile:sparkles.doc-view:test-root:dmd:48f533bbe24f`. The
+`sparkles.` prefix and the vendor are left out; an id of another form is its
+own label.
+*/
+string shortLabel(TaskId id) @safe pure
+{
+    import std.array : split;
+
+    const s = id.text.split(":");
+    if (s.length < 5 || s[4].length < 6)
+        return id.text;
+    enum prefix = "sparkles.";
+    const pkg = s[1].startsWith(prefix) ? s[1][prefix.length .. $] : s[1];
+    string where = pkg ~ ":" ~ s[2];
+    foreach (more; s[5 .. $])
+        where ~= ":" ~ more;
+    return s[0] ~ " " ~ where ~ " " ~ s[4][0 .. 6];
+}
+
+///
+@("build_graph.actions.shortLabel.kindPackageRoleAndKey")
+@safe pure unittest
+{
+    assert(shortLabel(taskId("compile", "sparkles.doc-view", "test-root", "dmd", "48f533bbe24f").value)
+        == "compile doc-view:test-root 48f533");
+    assert(shortLabel(taskId("test", "sparkles.wsi", "test-root", "dmd", "8ef20d4bcc5f", "parallel").value)
+        == "test wsi:test-root:parallel 8ef20d");
+    assert(shortLabel(taskId("compile", "bolts", "library", "ldc", "4a00f67485f7").value)
+        == "compile bolts:library 4a00f6");
+    // Another form is its own label.
+    assert(shortLabel(taskId("plan", "discover").value) == "plan:discover");
 }
 
 /// The id of `v`'s action of `kind` (OBD2): `<kind>:<package>:<role>:<vendor>:<d>`,

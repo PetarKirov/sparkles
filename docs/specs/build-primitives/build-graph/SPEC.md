@@ -472,6 +472,13 @@ A `test` action **must** pass its claimed weight as the test runner's
 maximum thread count, and a `link` action as the linker's thread count
 (`--threads` on `ld.lld`).
 
+A node's label is `<kind> <package>:<role>`, a test leg's name after the role,
+and the first six digits of its variant key (`compile doc-view:test-root
+48f533`), the name a transcript gives it ([task DAG TDO3](../task-dag/SPEC.md)).
+A `test` node's output policy is `lastLineOnSuccess`, so a passing leg shows
+its summary line; every other node's is `tailOnFailure`, so a build action's
+output (deprecations, cache notes) shows only when it fails.
+
 **BGA9: Which results are published.** A result **must** be published only for
 an action that ran to completion and exited on its own:
 
