@@ -1,0 +1,1 @@
+{"tasks":[{"id":"pin-build:toolchain-dmd-x86_64-linux","series":"3719b830c067b6929340b289b8026d8cd93c0aba4fde2ec4d856e3747deffe6c","outcome":"passed","start":300,"end":10050707400,"metrics":{"task.wall":10050707100}}]}
