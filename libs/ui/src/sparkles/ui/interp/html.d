@@ -18,6 +18,7 @@ range of `char`).
 */
 module sparkles.ui.interp.html;
 
+import sparkles.ui.canvas : FillAxis;
 import sparkles.ui.geometry : Insets;
 import sparkles.ui.style :
     BorderStyle, FontRole, Palette, resolveVisual, Slot, Visual;
@@ -259,6 +260,28 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
             put(w, "<div style=\"");
             boxStyle(w, node, vis);
             put(w, "\"></div>");
+            break;
+
+        case fillSpan:
+            // `GLY8`: a box of one row (one column going up) that takes the
+            // room its flex parent leaves, holding the fill as a positioned
+            // child at the exact fractions; the browser draws it to the pixel.
+            {
+                const across = node.fillAxis == FillAxis.across;
+                put(w, "<div style=\"");
+                boxStyle(w, node, vis);
+                put(w, across ? ";position:relative;flex:1 1 0;min-width:0;height:1lh"
+                    : ";position:relative;width:1ch;align-self:stretch");
+                put(w, "\"><div style=\"position:absolute;");
+                const from = unitFraction(node.fillFrom), to = unitFraction(node.fillTo);
+                put(w, across ? "top:0;bottom:0;left:" : "left:0;right:0;bottom:");
+                percent(w, from);
+                put(w, across ? ";width:" : ";height:");
+                percent(w, to > from ? to - from : 0);
+                put(w, ";background:");
+                rgba(w, vis.fg, vis.fgAlpha);
+                put(w, "\"></div></div>");
+            }
             break;
 
         case row, column, stack, panel, popup:
@@ -745,4 +768,42 @@ unittest
     const DrawOp[1] ops = [DrawOp(FillRect(chrome: &chrome, hasBg: true, bgAlpha: 0x80))];
     assert(degradationsOf(ops[], htmlCapabilities).empty);
     assert(!degradationsOf(ops[], semanticHtmlCapabilities).empty);
+}
+
+// A fraction clamped to `[0, 1]`; NaN is 0.
+package float unitFraction(float f) @safe pure nothrow @nogc
+    => f != f || f < 0 ? 0 : f > 1 ? 1 : f;
+
+// `f` (a fraction) as a CSS percentage to two decimals: `0.375` → `37.50%`.
+package void percent(Writer)(ref Writer w, float f)
+{
+    const hundredths = cast(int)(f * 10_000 + 0.5f);
+    num(w, hundredths / 100);
+    put(w, '.');
+    const frac = hundredths % 100;
+    if (frac < 10)
+        put(w, '0');
+    num(w, frac);
+    put(w, '%');
+}
+
+/// A fill span is a positioned child at its exact fractions, in the slot's
+/// colour (`GLY8`): the browser paints it at pixel precision.
+@("ui.interp.html.fillSpanIsPositionedAtItsFractions")
+@safe unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.array : appender;
+    import sparkles.ui.canvas : FillAxis;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    Builder b;
+    const span = b.add(Widget(kind: WidgetKind.fillSpan, fillFrom: 0.25f, fillTo: 0.625f,
+        slot: Slot.success));
+    const tree = b.finish(b.container(WidgetKind.row, [span]));
+    auto w = appender!string;
+    renderWidgetHtml(w, tree, defaultTwoslashPalette(), RgbColor(0, 0, 0), RgbColor(255, 255, 255));
+    assert(w[].canFind("height:1lh"), w[]);
+    assert(w[].canFind("position:absolute;top:0;bottom:0;left:25.00%;width:37.50%;background:"), w[]);
 }

@@ -9,7 +9,7 @@ interpreters are later siblings under `interp/`.
 */
 module sparkles.ui.interp.immediate;
 
-import sparkles.ui.canvas : DrawOp, FillRect, Glyph, ImageDraw, isCanvas, Line,
+import sparkles.ui.canvas : DrawOp, FillAxis, FillRect, FillSpan, Glyph, ImageDraw, isCanvas, Line,
     LineStyle, match, OpKind, PopClip, PopEffect, PopShift, PushClip, PushEffect,
     PushShift, Rule,
     RuleEdge, ruleSpan, Scrollbar, scrollbarCell, scrollbarCellCount, TextRun,
@@ -129,6 +129,15 @@ if (isCanvas!Canvas)
             {
                 static if (__traits(compiles, canvas.popShift()))
                     canvas.popShift();
+            },
+            (in FillSpan s)
+            {
+                // `GLY8`: optional like `scrollbar`. A pixel canvas fills the
+                // fractions exactly; any other gets whole cells.
+                static if (__traits(compiles, canvas.fillSpan(s)))
+                    canvas.fillSpan(s);
+                else
+                    paintFillSpanCells(canvas, s);
             },
         );
 }
@@ -465,4 +474,92 @@ private void paintScrollbarCells(Canvas)(ref Canvas canvas, in Scrollbar bar)
         popEffectOp(),
     ]);
     assert(blind.ops.length == 1 && blind.ops[0].kind == OpKind.fillRect);
+}
+
+/**
+The cells a $(REF FillSpan, sparkles,ui,canvas) covers at whole-cell
+resolution, along its axis from its anchored edge: `[first, last)`, each end
+rounded to the nearest cell, and at least one cell for a span that is not
+empty, so nothing that ran disappears (`GLY8`).
+*/
+void fillSpanCells(float from, float to, int extent, out int first, out int last)
+    @safe pure nothrow @nogc
+{
+    static int nearest(float f, int extent) pure nothrow @nogc
+    {
+        const v = cast(int)(f * extent + 0.5f);
+        return v < 0 ? 0 : v > extent ? extent : v;
+    }
+
+    first = nearest(from, extent);
+    last = nearest(to, extent);
+    if (to > from && last <= first)
+    {
+        if (first < extent)
+            last = first + 1;
+        else if (extent > 0)
+            first = extent - 1;
+    }
+}
+
+/**
+A $(REF FillSpan, sparkles,ui,canvas) on a canvas without sub-cell fills:
+the cells $(LREF fillSpanCells) gives, each a full block in the span's colour,
+which the canvas projects to its glyph tier (`GLY1`).
+*/
+void paintFillSpanCells(Canvas)(ref Canvas canvas, in FillSpan s)
+{
+    const across = s.axis == FillAxis.across;
+    const extent = across ? s.rect.width : s.rect.height;
+    const breadth = across ? s.rect.height : s.rect.width;
+    int first, last;
+    fillSpanCells(s.from, s.to, extent, first, last);
+    const visual = visualOf(s);
+    foreach (at; first .. last)
+        foreach (k; 0 .. breadth)
+        {
+            // `up` counts from the bottom row.
+            const p = across ? Point(s.rect.x + at, s.rect.y + k)
+                : Point(s.rect.x + k, s.rect.y + s.rect.height - 1 - at);
+            canvas.glyph(p, '█', visual);
+        }
+}
+
+@("ui.interp.immediate.fillSpanCells.roundsToTheNearestCell")
+@safe pure nothrow @nogc unittest
+{
+    int first, last;
+    fillSpanCells(0.25f, 0.75f, 10, first, last);
+    assert(first == 3 && last == 8);
+    fillSpanCells(0.5f, 0.5f, 10, first, last);
+    assert(first == 5 && last == 5, "an empty span covers nothing");
+    fillSpanCells(0.51f, 0.52f, 10, first, last);
+    assert(first == 5 && last == 6, "a short span keeps one cell");
+    fillSpanCells(0.99f, 1f, 10, first, last);
+    assert(first == 9 && last == 10, "even at the far end");
+}
+
+@("ui.interp.immediate.fillSpanFallsBackToCells")
+@safe unittest
+{
+    import sparkles.ui.canvas : Line, LineStyle;
+    import sparkles.ui.geometry : Size;
+
+    // A canvas with no `fillSpan` gets full blocks on whole cells.
+    struct Cells
+    {
+        Point[] blocks;
+        void fillRect(in Rect, in Visual) {}
+        void textRun(in Point, scope const(char)[], in Visual) {}
+        void glyph(in Point at, dchar g, in Visual) { if (g == '█') blocks ~= at; }
+        void line(in Point, in Point, in Visual, LineStyle) {}
+        Size measure(scope const(char)[] s) => Size(cast(int) s.length, 1);
+    }
+
+    Cells c;
+    paint(c, [DrawOp(FillSpan(rect: Rect(2, 1, 4, 1), from: 0.25f, to: 1f))]);
+    assert(c.blocks == [Point(3, 1), Point(4, 1), Point(5, 1)]);
+    c.blocks = null;
+    paint(c, [DrawOp(FillSpan(rect: Rect(0, 0, 1, 4), from: 0f, to: 0.5f, axis: FillAxis.up))]);
+    assert(c.blocks == [Point(0, 3), Point(0, 2)], "up fills from the bottom");
 }

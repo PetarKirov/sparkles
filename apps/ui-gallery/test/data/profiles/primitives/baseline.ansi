@@ -1,5 +1,5 @@
-[0m [0;1msparkles:ui[0m [0mthe twelve widget kinds[0m                                                [0mtokyo-night[0m [0m
-[0m [0m  Welcome[0m           [0m|[0m [0;1mPrimitives * the twelve widget kinds[0m                                    [0m#[0m
+[0m [0;1msparkles:ui[0m [0mthe thirteen widget kinds[0m                                              [0mtokyo-night[0m [0m
+[0m [0m  Welcome[0m           [0m|[0m [0;1mPrimitives * the thirteen widget kinds[0m                                  [0m#[0m
 [0m [0m> [0;1mPrimitives[0m       [0m [0m|[0m                                                                         [0m#[0m
 [0m [0m  Layout[0m            [0m|[0m                                                                         [0m#[0m
 [0m [0m  Tracks[0m            [0m|[0m [0mEvery tree in this catalog is built from these and nothing else. A[0m      [0m#[0m
@@ -21,12 +21,12 @@
 [0m                     [0m|[0m [0m|[0m                  [0m##[0m                                                 [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m                  [0m||[0m                                                 [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m                  [0m||[0m                                                 [0m|[0m [0m|[0m
+[0m                     [0m|[0m [0m|[0m [0mfill span[0m          [0m########[0m                                         [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m [0mimage[0m            [0m[a colo][0m                                           [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m                                                                     [0m|[0m [0m|[0m
 [0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
 [0m                     [0m|[0m                                                                         [0m|[0m
 [0m                     [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
 [0m                     [0m|[0m [0m|[0m [0;1mflow containers[0m                                                     [0m|[0m [0m|[0m
-[0m                     [0m|[0m [0m|[0m [0mrow[0m              [0m [0mone[0m [0m [0m [0mtwo[0m [0m [0m [0mthree[0m [0m                                [0m|[0m [0m|[0m
 [0m                     [0m|[0m                                                                          [0m
 [0m [0;1mpages[0m                                                                          [0m? keys   q quit[0m [0m

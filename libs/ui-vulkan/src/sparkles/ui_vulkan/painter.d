@@ -33,13 +33,13 @@ import sparkles.base.text.grapheme : byGraphemeCluster, ClusterMeasure, emojiPre
 import sparkles.base.text.utf : convertPrefix, UtfMode;
 import sparkles.base.text.width : codepointWidth;
 import sparkles.shaders : v4, vec4;
-import sparkles.ui.canvas : isCanvas, LineStyle, RuleEdge, Scrollbar;
+import sparkles.ui.canvas : FillSpan, isCanvas, LineStyle, RuleEdge, Scrollbar;
 import sparkles.ui.effect : EffectId;
 import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.image : fitRect, ImageFit, ImageHandle;
 import sparkles.ui.interp.immediate : paintImagePlaceholder;
 import sparkles.ui.pixel_geometry : arrowTriangle, borderRects, centredSpan, ClipEntry, fillInsideBorder, insetSpan, insideGlyphFrame,
-    cornerRadiusPx, densityPx, lineRects, roundedBorderPx, ruleRect, ScissorBox,
+    cornerRadiusPx, densityPx, fillSpanRect, lineRects, roundedBorderPx, ruleRect, ScissorBox,
     scissorBoxOfStack, scrollbarMinExtentPx, scrollbarRail, shadowRect, shiftPx;
 import sparkles.ui.style : FontRole, Visual;
 import sparkles.ui_vulkan.shading : Instance, QuadKind;
@@ -1004,6 +1004,13 @@ if (isImageSource!Images)
         if (v.cellsOnly)
             return;
         solid(ruleRect(pixelsOf(rect), edge), rgba(v.fg, v.fgAlpha));
+    }
+
+    /// A fill span to the pixel (`GLY8`): one solid rectangle at the
+    /// fractions of its rect, from `fillSpanRect`.
+    void fillSpan(in FillSpan s)
+    {
+        solid(fillSpanRect(pixelsOf(s.rect), s.from, s.to, s.axis), rgba(s.fg, s.fgAlpha));
     }
 
     /// A scrollbar's rail and thumb, from `scrollbarRail`; a bar that owns

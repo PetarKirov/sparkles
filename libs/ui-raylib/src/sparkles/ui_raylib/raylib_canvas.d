@@ -21,7 +21,7 @@ import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text.cstring : writeStringz;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 
-import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, RuleEdge, Scrollbar,
+import sparkles.ui.canvas : DrawOp, FillSpan, isCanvas, LineStyle, RuleEdge, Scrollbar,
     visualOf;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.ui.geometry : Insets, Point, Rect, Size;
@@ -33,7 +33,7 @@ import sparkles.ui.effect : EffectId;
 import sparkles.ui_raylib.effect_gpu : EffectGpu, scissorInTarget;
 import sparkles.ui_raylib.image_textures : ImageTextures;
 import sparkles.ui.pixel_geometry : arrowTriangle, borderRects, centredSpan, ClipEntry, fillInsideBorder, insetSpan, insideGlyphFrame,
-    cornerRadiusPx, densityPx, lineRects, railExpandedPx, railIdlePx, roundedBorderPx,
+    cornerRadiusPx, densityPx, fillSpanRect, lineRects, railExpandedPx, railIdlePx, roundedBorderPx,
     ruleRect, ScissorBox, scissorBoxOfStack, scrollbarMinExtentPx, ScrollbarRail,
     scrollbarRail, scrollbarRailPx, shadowRect, shiftPx;
 public import sparkles.ui.pixel_geometry : alignOffsetPx, cellsCeil;
@@ -611,6 +611,13 @@ struct RaylibCanvas
             return;
         const v = narrowed(visual);
         fillExact(ruleRect(pixelsOf(rect), edge), rlFg(v));
+    }
+
+    /// A fill span to the pixel (`GLY8`): one rectangle at the fractions of
+    /// its rect, from `fillSpanRect`, in the narrowed colour.
+    void fillSpan(in FillSpan s) @system
+    {
+        fillExact(fillSpanRect(pixelsOf(s.rect), s.from, s.to, s.axis), rlFg(narrowed(visualOf(s))));
     }
 
     /// The hairline an owned track shows while idle — `rule`'s geometry, in

@@ -26,7 +26,7 @@ import sparkles.tui.images : ImagePlacement;
 import sparkles.base.text.grapheme : byGraphemeCluster, ClusterMeasure;
 import sparkles.base.text.width : codepointWidth;
 
-import sparkles.ui.canvas : DrawOp, fillRectOp, isCanvas, LineStyle, match, OpKind,
+import sparkles.ui.canvas : DrawOp, FillAxis, FillSpan, fillRectOp, isCanvas, LineStyle, match, OpKind,
     ruleSpan, RuleEdge, Scrollbar, scrollbarCell, scrollbarCellCount,
     textRunOp;
 import sparkles.ui.geometry : Point, Rect, Size;
@@ -39,7 +39,7 @@ import sparkles.ui.effect : EffectId, EffectRegistry, Tier0Fn, Tier0Input;
 import sparkles.ui.image : defaultCellPixels, fitRect, ImageData, ImageFit, ImageHandle,
     ImageRegistry;
 import sparkles.ui.image_raster : ImageRung, imageRungOf, paintImageRaster;
-import sparkles.ui.interp.immediate : paintImagePlaceholder;
+import sparkles.ui.interp.immediate : fillSpanCells, paintFillSpanCells, paintImagePlaceholder;
 import sparkles.ui.style : BorderStyle, Visual;
 import sparkles.base.term_caps : BlockTier;
 import sparkles.ui.tokens : boxGlyphs, projectBorder, TargetCapabilities;
@@ -212,6 +212,9 @@ void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
                 break;
             case popClip:
                 canvas.popClip();
+                break;
+            case fillSpan:
+                op.payload.match!((in FillSpan s) => canvas.fillSpan(s), (_) {});
                 break;
             case pushShift:
             case popShift:
@@ -915,6 +918,55 @@ struct GridCanvas
     /// Underlines the cells `from` → `to` in `v.fg`: `wavy` → an SGR-58 curly
     /// undercurl (the error squiggle), `solid` → a single underline. The glyphs
     /// beneath keep their own foreground.
+    /**
+    A fill span (`GLY8`) at the finest unit the target has. With the half
+    blocks: from the cell boundary nearest its start, full blocks, then the
+    eighth-block that ends it, grown from the edge its ladder is anchored to
+    (`▏…▉` across, `▁…▇` up) — the far end to an eighth of a cell, and at
+    least one eighth, so nothing that ran disappears. A block element has no
+    right- or top-anchored partials, so the near end keeps to a cell boundary.
+    Without the half blocks, the whole cells `paintFillSpanCells` gives,
+    projected (`GLY1`) and reported (`blocks-folded`).
+    */
+    void fillSpan(in FillSpan s) scope
+    {
+        if (!capabilities.unicode || capabilities.blocks < BlockTier.half)
+        {
+            paintFillSpanCells(this, s);
+            return;
+        }
+        static immutable dchar[8] acrossLadder = ['█', '▏', '▎', '▍', '▌', '▋', '▊', '▉'];
+        static immutable dchar[8] upLadder = ['█', '▁', '▂', '▃', '▄', '▅', '▆', '▇'];
+        const across = s.axis == FillAxis.across;
+        const extent = across ? s.rect.width : s.rect.height;
+        const breadth = across ? s.rect.height : s.rect.width;
+        if (extent <= 0 || !(s.to > s.from))
+            return;
+        int first, last;
+        fillSpanCells(s.from, s.to, extent, first, last);
+        long end = cast(long)(s.to * extent * 8 + 0.5f);
+        if (end > extent * 8L)
+            end = extent * 8L;
+        if (end <= first * 8L)
+            end = first * 8L + 1;
+        foreach (at; first .. cast(int)((end + 7) / 8))
+        {
+            const left = end - at * 8L;
+            const g = left >= 8 ? '█' : (across ? acrossLadder : upLadder)[left];
+            foreach (k; 0 .. breadth)
+            {
+                const x = across ? s.rect.x + at : s.rect.x + k;
+                const y = across ? s.rect.y + k : s.rect.y + s.rect.height - 1 - at;
+                if (!inBounds(x, y))
+                    continue;
+                auto c = &cell(x, y);
+                auto st = c.style;
+                st.fg = Color.fromRgb(s.fg);
+                c.setCodepoint(g, 1, st);
+            }
+        }
+    }
+
     /**
     A hairline on the cell boundary `edge` names (`GLY2a`): `▔` along the top,
     `▁` the bottom, `▏` the left and `▕` the right edge of the cells the rule
@@ -1961,4 +2013,38 @@ static assert(isCanvas!GridCanvas);
     paintGrid(b, RgbColor(0, 0, 0), [imageOp(Rect(0, 2, 2, 1), h, ImageFit.fill, "flag")],
         caps: sixel, images: &reg, placements: &placed);
     assert(placed.length == 0 && b[0, 2].grapheme == "▀");
+}
+
+/// `GLY8` at the canvas: a fill span is eighth-blocks where the target has
+/// the half blocks — its far end to an eighth of a cell, growing up from the
+/// bottom on the `up` axis — and whole cells, reported, where it has not.
+@("tui_canvas.fillSpan.eighthBlocksOrWholeCells")
+@safe unittest
+{
+    import sparkles.ui.canvas : fillSpanOp;
+    import sparkles.ui.degradation : degradationsOf, Substitution;
+    import sparkles.ui.tokens : capabilitiesOf, Profile;
+
+    const DrawOp[2] ops = [
+        fillSpanOp(Rect(0, 0, 4, 1), 0.25f, 0.84375f), // cells 1–3, ending 3/8 into cell 3
+        fillSpanOp(Rect(5, 0, 1, 2), 0f, 0.5625f, FillAxis.up), // a row and an eighth
+    ];
+
+    Grid g;
+    g.resize(6, 2);
+    paintGrid(g, RgbColor(0, 0, 0), ops[]);
+    assert(g[0, 0].grapheme == " " && g[1, 0].grapheme == "█" && g[2, 0].grapheme == "█");
+    assert(g[3, 0].grapheme == "▍", g[3, 0].grapheme);
+    assert(g[5, 1].grapheme == "█" && g[5, 0].grapheme == "▁", "up grows from the bottom row");
+    assert(degradationsOf(ops[], capabilitiesOf(Profile.enhanced))[Substitution.blocksFolded] == 0);
+
+    auto noBlocks = capabilitiesOf(Profile.enhanced);
+    noBlocks.blocks = BlockTier.none;
+    Grid n;
+    n.resize(6, 2);
+    paintGrid(n, RgbColor(0, 0, 0), ops[], caps: noBlocks);
+    assert(n[3, 0].grapheme != "▍", "no eighth-block without the half blocks");
+    assert(n[1, 0].grapheme == n[2, 0].grapheme && n[1, 0].grapheme != " ", "whole cells");
+    assert(n[0, 0].grapheme == " ");
+    assert(degradationsOf(ops[], noBlocks)[Substitution.blocksFolded] == 2, "one per span");
 }

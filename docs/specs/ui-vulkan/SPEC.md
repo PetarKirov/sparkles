@@ -118,7 +118,7 @@ specification (`UVK16`).
 ## 2. The frame
 
 **UVK1: Canvas conformance.** The canvas **must** satisfy `isCanvas` and
-provide the optional methods `textRunIn`, `rule`, `scrollbar`, `image`,
+provide the optional methods `textRunIn`, `rule`, `scrollbar`, `fillSpan`, `image`,
 `pushClip`/`popClip`, `pushShift`/`popShift` and `pushEffect`/`popEffect`,
 so the immediate interpreter hands it every operation.
 

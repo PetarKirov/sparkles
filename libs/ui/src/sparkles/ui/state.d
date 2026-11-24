@@ -604,7 +604,7 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames, ref DocRowStore sto
                 else
                     addSpans(inner.y, node.spans);
                 break;
-            case glyph, line, scrollbar, box, image:
+            case glyph, line, scrollbar, fillSpan, box, image:
                 break;
             case row, column, stack, panel, popup:
                 const keepTop = clipTop, keepBottom = clipBottom;

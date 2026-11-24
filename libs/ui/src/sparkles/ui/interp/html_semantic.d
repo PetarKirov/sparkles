@@ -31,7 +31,9 @@ module sparkles.ui.interp.html_semantic;
 import std.conv : to;
 import std.range.primitives : isOutputRange, put;
 
+import sparkles.ui.canvas : FillAxis;
 import sparkles.ui.geometry : Insets, SizeSpec;
+import sparkles.ui.interp.html : percent, unitFraction;
 import sparkles.ui.css : writeThemeProperties;
 import sparkles.ui.style : InteractionState, Slot;
 import sparkles.ui.theme : Theme;
@@ -81,6 +83,10 @@ if (isOutputRange!(Writer, char))
         ~ ".spk-row{display:flex;flex-direction:row;align-items:flex-start}"
         ~ ".spk-column{display:flex;flex-direction:column}"
         ~ ".spk-stack,.spk-panel,.spk-popup{position:relative;display:flex;flex-direction:column}"
+        // `GLY8`: a fill span is a row (a column going up) whose fill, in
+        // the slot's colour, is placed at its fractions inline.
+        ~ ".spk-fillSpan{position:relative;min-height:1lh;min-width:1ch}"
+        ~ ".spk-fill{position:absolute;background:currentColor}"
         ~ ".spk-clip-x{overflow-x:hidden}.spk-clip-y{overflow-y:hidden}"
         ~ ".spk-hidden{visibility:hidden}.spk-collapsed{display:none}"
         // Tier-0 interactivity (INP tier 0), no script:
@@ -224,6 +230,18 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx)
                 put(w, "[");
                 escape(w, node.text);
                 put(w, "]");
+            }
+            break;
+        case fillSpan:
+            {
+                const across = node.fillAxis == FillAxis.across;
+                const from = unitFraction(node.fillFrom), to = unitFraction(node.fillTo);
+                put(w, across ? "<div class=\"spk-fill\" style=\"top:0;bottom:0;left:"
+                    : "<div class=\"spk-fill\" style=\"left:0;right:0;bottom:");
+                percent(w, from);
+                put(w, across ? ";width:" : ";height:");
+                percent(w, to > from ? to - from : 0);
+                put(w, "\"></div>");
             }
             break;
         case line, scrollbar, box:
@@ -409,4 +427,25 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
     assert(html.canFind("padding:1lh 1ch 1lh 1ch"));
     // The whole point: not one color in the markup.
     assert(!html.canFind("rgba(") && !html.canFind("color:"));
+}
+
+/// A fill span is its slot's class around a fill placed at its fractions,
+/// painted in the slot's colour by the base rules (`GLY8`).
+@("ui.interp.html_semantic.fillSpanIsAPlacedFill")
+@safe unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.array : appender;
+    import sparkles.ui.widget : Builder;
+
+    Builder b;
+    const span = b.add(Widget(kind: WidgetKind.fillSpan, slot: Slot.success,
+        fillFrom: 0.5f, fillTo: 1f, fillAxis: FillAxis.up));
+    auto w = appender!string;
+    renderWidgetHtmlClasses(w, b.finish(b.container(WidgetKind.column, [span])));
+    assert(w[].canFind("spk-fillSpan spk-status-success"), w[]);
+    assert(w[].canFind("<div class=\"spk-fill\" style=\"left:0;right:0;bottom:50.00%;height:50.00%\"></div>"), w[]);
+    auto css = appender!string;
+    writeSlotRules(css);
+    assert(css[].canFind(".spk-fill{position:absolute;background:currentColor}"));
 }
