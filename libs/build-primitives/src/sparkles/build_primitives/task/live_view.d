@@ -98,6 +98,46 @@ if (isReporter!R)
     }
 }
 
+/**
+A transcript the consumer draws itself (TDO9), in place of the plain one: it
+sees every event and writes where it chooses — `ci` through its console, in
+its line form. A live view, when there is one, sees each event after it.
+*/
+interface Transcript
+{
+    /// Every event, in order.
+    void onEvent(const ref TaskEvent e);
+
+    /// The run is over: the last lines, the summary.
+    void finish();
+}
+
+/// The reporter that drives a consumer's 100 1 17 20 59 62 67 100 131 979 982 983 985 986 987 988 990 996LREF Transcript) and, when not
+/// null, a live view after it.
+struct TranscriptAndView
+{
+    Transcript transcript; ///
+    LiveView view;         /// or null
+
+    /// Hands `e` to the transcript, then to the view.
+    void onEvent(const ref TaskEvent e)
+    {
+        transcript.onEvent(e);
+        if (view !is null)
+            view.onEvent(e);
+    }
+
+    /// Ends the transcript, then the view.
+    void finish()
+    {
+        transcript.finish();
+        if (view !is null)
+            view.finish();
+    }
+}
+
+static assert(isReporter!TranscriptAndView);
+
 version (unittest)
 {
     import sparkles.build_primitives.task.model : TaskFinished;
@@ -159,4 +199,36 @@ unittest
     assert(view.calls[$ - 1] == "finish");
     assert(view.calls.countUntil("finished") < view.calls.countUntil("above exit: 1"),
         "events reach the view as they come");
+}
+
+/// A consumer's transcript sees each event before the view, and ends first
+/// (TDO9); without a view, it runs alone.
+@("build_primitives.task.live_view.transcriptThenView")
+@system
+unittest
+{
+    import core.time : MonoTime;
+    import sparkles.build_primitives.task.model : RunFinished, TaskEventPayload;
+
+    static final class Log : Transcript
+    {
+        string[]* calls;
+        this(string[]* calls) { this.calls = calls; }
+        override void onEvent(const ref TaskEvent e) { *calls ~= "transcript"; }
+        override void finish() { *calls ~= "transcript finish"; }
+    }
+
+    // One log for both, so their order shows.
+    auto view = new RecordingView;
+    auto both = TranscriptAndView(new Log(&view.calls), view);
+    auto e = TaskEvent(0, MonoTime.init, TaskEventPayload(RunFinished(0)));
+    both.onEvent(e);
+    both.finish();
+    assert(view.calls == ["transcript", "transcript finish", "finish"]);
+
+    string[] calls;
+    auto alone = TranscriptAndView(new Log(&calls), null);
+    alone.onEvent(e);
+    alone.finish();
+    assert(calls == ["transcript", "transcript finish"]);
 }

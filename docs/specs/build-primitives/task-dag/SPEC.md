@@ -602,6 +602,14 @@ instead of a TTY reporter of its own. Then:
 The view is the consumer's, like the TTY reporter; this package defines only
 the seam (`LiveView`) and the reporter that drives both.
 
+**TDO9: A consumer's transcript.** A command **may** draw its transcript
+itself (`Transcript`) in place of the plain reporter's: a person's account
+of the run rather than the ordered, deterministic one, written where the
+command chooses. Then the transcript sees every event first and ends first,
+and a live view, when there is one, sees each event after it and ends after
+it (`TranscriptAndView`). A command that draws its own transcript still owes
+what TDO7 asks of child output on a CI service: masked values, fenced lines.
+
 ### 7.3 Non-TTY default
 
 **TDO3: Deterministic blocks.** Non-TTY output **must** contain no cursor

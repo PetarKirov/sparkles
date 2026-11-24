@@ -340,7 +340,7 @@ string moduleNameOf(string relativePath, const(char)[] source, scope const(strin
 version (Posix):
 
 import sparkles.build_primitives.task.executor : RunResult, TaskContext;
-import sparkles.build_primitives.task.live_view : LiveView, TranscriptLines, WithLiveView;
+import sparkles.build_primitives.task.live_view : LiveView, TranscriptAndView, TranscriptLines, WithLiveView;
 import sparkles.build_primitives.task.model : OutcomeKind, TaskOutcome, kindOf;
 import sparkles.build_primitives.task.process : EventChannel, InProcessHandler, ProcessDriver, ProcessDriverOptions;
 import sparkles.event_horizon.sched : Sched;
@@ -1969,7 +1969,7 @@ struct ActionDriver
 struct RunReporting
 {
     import sparkles.build_primitives.task.graph : TaskGraph;
-    import sparkles.build_primitives.task.live_view : LiveView;
+    import sparkles.build_primitives.task.live_view : LiveView, Transcript;
     import sparkles.ci_provider : CiLog;
 
     bool interlaced; /// lines as they arrive, not ordered blocks
@@ -1980,6 +1980,9 @@ struct RunReporting
     /// built; the transcript's lines then go to it instead of the writer.
     /// `null` writes the transcript alone.
     LiveView delegate(const(TaskGraph)*) live;
+    /// A transcript the consumer draws itself (TDO9), made once the graph is
+    /// built, in place of the plain reporter's; `null` keeps the plain one.
+    Transcript delegate(const(TaskGraph)*) transcript;
 }
 
 /**
@@ -2098,7 +2101,13 @@ in (stats.length == parts.length, "one stats slot per part")
             driver.finish();
     }
     bool ran;
-    if (reporting.live is null)
+    if (reporting.transcript !is null)
+    {
+        auto view = reporting.live is null ? null : reporting.live(&graph);
+        auto reporter = TranscriptAndView(reporting.transcript(&graph), view);
+        ran = runReported(s, reporter, sink, view, &work);
+    }
+    else if (reporting.live is null)
     {
         auto reporter = PlainReporter!W(&writer, &graph, options);
         ran = runReported(s, reporter, sink, null, &work);
