@@ -21,6 +21,13 @@
     let
       ldcSparkles = inputs'.dlang-nix.packages.ldc-sparkles;
 
+      # The modules' host platform is WASI and the build platform this system:
+      # nixpkgs' cross package set, whose `stdenvNoCC` builds no C toolchain
+      # (the modules link through `ldc-sparkles`' own WASI sysroots, built
+      # with the exception handling nixpkgs' WASI libc++ leaves out). Its
+      # `hostPlatform.emulator` is wasmtime.
+      wasiPkgs = pkgs.pkgsCross.wasm32-wasip1;
+
       # `ldc-sparkles` mapping the compiler's store paths to `/ldc` in `__FILE__`,
       # assertion messages and debug info. Its `ldc2` is already a wrapper
       # naming its own ldc2.conf, so the map is passed as flags, not as a
@@ -75,8 +82,13 @@
           # The linked module's name, the configuration's `targetName`.
           targetName,
           description,
+          # A reactor exporting TCM5's buffer (`spk_buf_cap`), which the WASI
+          # platform's emulator can initialize and call. The Nix module
+          # imports the evaluator's host functions instead, and runs only
+          # under `builtins.wasm`.
+          reactor ? true,
         }:
-        config.legacyPackages.buildSparklesApp (finalAttrs: {
+        config.legacyPackages.buildSparklesAppWith { stdenv = wasiPkgs.stdenvNoCC; } (finalAttrs: {
           inherit pname appDir;
           version = "0.1.0";
           compiler = wasiLdc;
@@ -98,10 +110,31 @@
           '';
 
           allowedReferences = [ ];
+          # A module, not an ELF: the cross environment's strip would look
+          # for a WASI binutils that does not exist.
+          dontStrip = true;
+
+          # The module in a second runtime besides node: the platform's
+          # emulator (wasmtime) validates it, exception handling included,
+          # runs `_initialize` (druntime's start-up) and calls `spk_buf_cap`,
+          # whose answer TCM5 bounds below. `doCheck` cannot do this: a cross
+          # build never runs its check phase.
+          passthru.tests =
+            lib.optionalAttrs (reactor && wasiPkgs.stdenv.hostPlatform.emulatorAvailable pkgs)
+              {
+                emulator = pkgs.runCommand "${pname}-emulator" { } ''
+                  # wasmtime keeps its compilation cache under $HOME.
+                  export HOME="$TMPDIR"
+                  cap="$(${wasiPkgs.stdenv.hostPlatform.emulator pkgs} run --invoke spk_buf_cap \
+                    ${finalAttrs.finalPackage}/${targetName}.wasm)"
+                  echo "spk_buf_cap: $cap" | tee "$out"
+                  [ "$cap" -ge 262144 ]
+                '';
+              };
 
           meta = {
             inherit description;
-            platforms = lib.platforms.linux ++ lib.platforms.darwin;
+            platforms = lib.platforms.wasi;
           };
         });
     in
@@ -120,8 +153,6 @@
         description = "drawTable as a WebAssembly module (the docs' table playground)";
       };
 
-      # Both modules, as the documentation site serves them (TCM3): `ci
-      # ci docs stage-wasm` copies them into docs/public/ before VitePress builds.
       packages.wired-wasm = buildWasmModule {
         pname = "wired-wasm";
         appDir = "libs/wired/wired-wasm";
@@ -131,55 +162,79 @@
 
       # The npm package `@sparkles-pkgs/wired` (docs/specs/wired/wasm WW13): its
       # sources with the site's module beside them, as `npm publish` takes it.
-      # The release workflow sets the version from the tag.
-      packages.npm-wired = pkgs.runCommand "npm-wired" { } ''
-        mkdir $out
-        cp ${../../libs/wired/wired-wasm/npm}/{package.json,index.js,index.d.ts,README.md} $out/
-        install -m644 ${config.packages.wired-wasm}/spk-wired.wasm $out/spk-wired.wasm
-      '';
-
-      # The package's tests under node, its one dependency (the WASI shim the
+      # The release workflow sets the version from the tag. Its test is the
+      # package's own suite under node, its one dependency (the WASI shim the
       # site uses) placed as npm would place it.
-      checks.npm-wired =
-        pkgs.runCommand "npm-wired-tests"
+      packages.npm-wired =
+        pkgs.runCommand "npm-wired"
           {
-            nativeBuildInputs = [ pkgs.nodejs ];
+            passthru.tests.node =
+              pkgs.runCommand "npm-wired-tests"
+                {
+                  nativeBuildInputs = [ pkgs.nodejs ];
+                }
+                ''
+                  cp -r ${config.packages.npm-wired} pkg
+                  chmod -R u+w pkg
+                  cp -r ${../../libs/wired/wired-wasm/npm/test} pkg/test
+                  mkdir -p pkg/node_modules/@bjorn3
+                  ln -s ${browserWasiShim} pkg/node_modules/@bjorn3/browser_wasi_shim
+                  cd pkg
+                  set -o pipefail
+                  node --test test/index.test.mjs | tee "$out"
+                '';
           }
           ''
-            cp -r ${config.packages.npm-wired} pkg
-            chmod -R u+w pkg
-            cp -r ${../../libs/wired/wired-wasm/npm/test} pkg/test
-            mkdir -p pkg/node_modules/@bjorn3
-            ln -s ${browserWasiShim} pkg/node_modules/@bjorn3/browser_wasi_shim
-            cd pkg
-            set -o pipefail
-            node --test test/index.test.mjs | tee "$out"
+            mkdir $out
+            cp ${../../libs/wired/wired-wasm/npm}/{package.json,index.js,index.d.ts,README.md} $out/
+            install -m644 ${config.packages.wired-wasm}/spk-wired.wasm $out/spk-wired.wasm
           '';
 
-      packages.docs-wasm = pkgs.runCommand "docs-wasm" { } ''
-        install -Dm644 ${config.packages.text-wasm}/spk-text.wasm $out/spk-text.wasm
-        install -Dm644 ${config.packages.table-wasm}/spk-table.wasm $out/spk-table.wasm
-        install -Dm644 ${config.packages.wired-wasm}/spk-wired.wasm $out/spk-wired.wasm
-      '';
-
-      # TCM9: each module, under node, agrees with the same functions run
-      # natively over a fixed corpus (apps/ci/src/wasm_modules_check.d), loaded
-      # through the site's own loader (TCM7).
-      checks.wasm-modules =
-        pkgs.runCommand "wasm-modules-agree"
+      # The site's three modules, as it serves them (TCM3): `ci docs
+      # stage-wasm` copies them into docs/public/ before VitePress builds.
+      #
+      # Its tests: TCM9's agreement, each module under node agreeing with the
+      # same functions run natively over a fixed corpus
+      # (apps/ci/src/wasm_modules_check.d), loaded through the site's own loader
+      # (TCM7); and each module's emulator test.
+      packages.docs-wasm =
+        pkgs.runCommand "docs-wasm"
           {
-            nativeBuildInputs = [ pkgs.nodejs ];
+            passthru.tests = {
+              agreement =
+                pkgs.runCommand "wasm-modules-agree"
+                  {
+                    nativeBuildInputs = [ pkgs.nodejs ];
+                  }
+                  ''
+                    set -o pipefail
+                    ${lib.getExe config.packages.ci-minimal} check wasm-modules \
+                      --text-module ${config.packages.text-wasm}/spk-text.wasm \
+                      --table-module ${config.packages.table-wasm}/spk-table.wasm \
+                      --wired-module ${config.packages.wired-wasm}/spk-wired.wasm \
+                      --wasi-loader ${../../docs/.vitepress/theme/wasi.ts} \
+                      --wasi-shim ${browserWasiShim} \
+                      | tee "$out"
+                  '';
+            }
+            // lib.concatMapAttrs (name: test: { "${name}-emulator" = test; }) (
+              lib.mapAttrs (_: p: p.tests.emulator) {
+                inherit (config.packages) text-wasm table-wasm wired-wasm;
+              }
+            );
           }
           ''
-            set -o pipefail
-            ${lib.getExe config.packages.ci-minimal} check wasm-modules \
-              --text-module ${config.packages.text-wasm}/spk-text.wasm \
-              --table-module ${config.packages.table-wasm}/spk-table.wasm \
-              --wired-module ${config.packages.wired-wasm}/spk-wired.wasm \
-              --wasi-loader ${../../docs/.vitepress/theme/wasi.ts} \
-              --wasi-shim ${browserWasiShim} \
-              | tee "$out"
+            install -Dm644 ${config.packages.text-wasm}/spk-text.wasm $out/spk-text.wasm
+            install -Dm644 ${config.packages.table-wasm}/spk-table.wasm $out/spk-table.wasm
+            install -Dm644 ${config.packages.wired-wasm}/spk-wired.wasm $out/spk-wired.wasm
           '';
+
+      # The flake checks are the packages' tests.
+      checks = {
+        wasm-modules = config.packages.docs-wasm.tests.agreement;
+        npm-wired = config.packages.npm-wired.tests.node;
+      }
+      // lib.filterAttrs (name: _: lib.hasSuffix "-emulator" name) config.packages.docs-wasm.tests;
 
       # The dub recipe schema for Nix's `builtins.wasm` (docs/specs/wired/wasm,
       # WW3): a WASI command module, not a reactor.
@@ -188,6 +243,7 @@
         appDir = "libs/dub-manifest/dub-manifest-nix-wasm";
         targetName = "spk-dub-manifest";
         description = "The dub recipe schema as a Nix builtins.wasm module";
+        reactor = false;
       };
 
       # The same answers computed natively, for the agreement check (WW10).

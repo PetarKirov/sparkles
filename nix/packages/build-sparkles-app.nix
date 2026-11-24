@@ -58,10 +58,16 @@
       # runs the caller's `postFixup` itself and is the package; its
       # `--version` reports the unstamped `dev`. `checkBuildInfo` adds
       # app-specific assertions to `assertBuildInfo`.
-      legacyPackages.buildSparklesApp =
+      #
+      # `buildSparklesAppWith { stdenv; }` is the same builder on another
+      # standard environment: the WebAssembly modules build on
+      # `pkgsCross.wasm32-wasip1.stdenvNoCC`, whose host platform is WASI
+      # (nix/packages/wasm-modules.nix), with this system's dub and compiler.
+      legacyPackages.buildSparklesAppWith =
+        { stdenv }:
         let
           unstampedSparklesApp = lib.extendMkDerivation {
-            constructDrv = pkgs.buildDubPackage;
+            constructDrv = pkgs.buildDubPackage.override { inherit stdenv; };
 
             # `sourceDirs`, `appDir` and `links` are consumed here, not mkDerivation
             # attributes.
@@ -292,6 +298,10 @@
           step1 = unstampedSparklesApp callerArgs;
         in
         if step1.passthru.stampBuildInfo then stampSparklesApp step1 else step1;
+
+      legacyPackages.buildSparklesApp = config.legacyPackages.buildSparklesAppWith {
+        inherit (pkgs) stdenv;
+      };
 
       # `legacyPackages.buildSparklesAndroidLib`: an app's `android` dub
       # configuration, built by dub for every ABI the NDK targets — the shared
