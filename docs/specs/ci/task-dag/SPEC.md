@@ -105,16 +105,16 @@ ci perf show|compare|history|fetch [options]
 
 Every command that executes a graph accepts:
 
-| Option              | Default               | Meaning                                                                                                                                            |
-| ------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--jobs N`          | host-derived capacity | Positive weighted capacity available to running tasks. It is not a count of OS threads.                                                            |
-| `--interlaced`      | off                   | Stream line-atomic, task-prefixed output as events arrive instead of replaying complete task blocks in presentation order.                         |
-| `--dry-run`         | off                   | Discover, select, plan, validate, and print the DAG without running task actions, making network requests, creating directories, or writing files. |
-| `--output MODE`     | `auto`                | `ci test` only: `auto` draws the live view (CIC18) on a terminal outside CI, `live` always, `plain` never.                                         |
-| `--no-timeline`     | timeline on           | `ci test` only: leave the timeline out of the live view.                                                                                           |
-| `--legs LEGS`       | `auto`                | `ci test` only: the ordinary tests' legs (CIC6). `auto` runs the placement's, or `-t N` alone; `parallel`, `serial` or `both` overrides.           |
-| `--fail-fast`       | off                   | On the first authoritative failure, stop admission and cancel the command scope.                                                                   |
-| `--log-level LEVEL` | `info`                | Standard Sparkles logger level.                                                                                                                    |
+| Option              | Default               | Meaning                                                                                                                                                                                       |
+| ------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--jobs N`          | host-derived capacity | Positive weighted capacity available to running tasks. It is not a count of OS threads.                                                                                                       |
+| `--interlaced`      | off                   | Stream line-atomic, task-prefixed output as events arrive instead of replaying complete task blocks in presentation order.                                                                    |
+| `--dry-run`         | off                   | Discover, select, plan, validate, and print the DAG without running task actions, making network requests, creating directories, or writing files.                                            |
+| `--output MODE`     | `auto`                | `ci test` only: status lines (CIC19), with the live view (CIC18) on a terminal outside CI (`auto`), always (`live`) or never (`lines`); `plain` writes the ordered transcript (TDO3) instead. |
+| `--no-timeline`     | timeline on           | `ci test` only: leave the timeline out of the live view.                                                                                                                                      |
+| `--legs LEGS`       | `auto`                | `ci test` only: the ordinary tests' legs (CIC6). `auto` runs the placement's, or `-t N` alone; `parallel`, `serial` or `both` overrides.                                                      |
+| `--fail-fast`       | off                   | On the first authoritative failure, stop admission and cancel the command scope.                                                                                                              |
+| `--log-level LEVEL` | `info`                | Standard Sparkles logger level.                                                                                                                                                               |
 
 **CIC1: Common options.** `--jobs 0` and negative values **must** be errors.
 `--dry-run --interlaced` **must** be rejected, because a dry run has no task
@@ -124,19 +124,45 @@ and an explicit `--jobs` wins over both. Both count weighted capacity units
 sets 4. Invalid combinations fail before any
 task runs. Repository workflows pass `--interlaced`.
 
-**CIC18: The live view.** On a terminal, `ci test` **must** keep the plain
-transcript and draw a live view beneath it (task-DAG TDO8), unless
-`--output plain` or a CI service says otherwise; `--output live` draws it
-anywhere. The view **must** show, from the top: the tasks still to finish as
-a tree, each under the task waiting on it, failures first, then the
-longest-running, fitted to its rows (`fitTree`); the failures, newest first,
+**CIC18: The live view.** On a terminal, `ci test` **must** keep its status
+lines (CIC19) and draw a live view beneath them (task-DAG TDO8, TDO9), unless
+`--output lines`, `--output plain` or a CI service says otherwise; `--output
+live` draws it anywhere. While the view is up, every line the console writes
+**must** print above it, never beneath it. The view **must** show, from the
+top: the tasks still to finish as a tree, each under the task waiting on it,
+the roots flush left, failures first, then the longest-running, fitted to its
+rows (`fitTree`), each named as the status lines name it; the failures, newest first,
 with the reason and the last lines of the newest; the slowest finished tasks
-and the running ones as a timeline, in the rows left, when the terminal is at
-least 50 columns wide, unless `--no-timeline`; and a tally of running,
+and the running ones as a timeline against a round axis that only grows (10s,
+20s, 30s, 1m, 2m … `roundAxis`), so a running bar grows to the right, in the
+rows left, when the terminal is at least 50 columns wide, unless
+`--no-timeline`; and a tally of running,
 executed, reused, pending and failed tasks with the elapsed time. It is drawn
 with `sparkles:ui` widgets in the terminal's own 16 colours and erased once
 the transcript's summary is above it, so the scrollback is the same with the
 view or without it. `--output live` with `--dry-run` **must** be rejected.
+
+**CIC19: Status lines.** Unless `--output plain`, `ci test` **must** report
+through `ci`'s console, in the one line form of `sparkles.base.status_line`
+(base CON1): a verb right-aligned in twelve columns and coloured by what
+happened, the subject, the details muted. Every log record `ci` writes takes
+the same form, its level as the verb. By default the console **must** show:
+
+- a heading naming the selected packages and the compiler;
+- each compile, link and test that ran, with its time, and why it ran when a
+  file changed; a test with its counts, failures first;
+- each failure, with the lines its child wrote that explain it (a test leg's
+  passing tests and summary left out), fenced and masked for the CI service
+  as the plain transcript is (task-DAG TDO7);
+- a summary: the packages, the time, how many results were reused and how
+  many tasks ran; then each package's coverage, past six packages the total
+  and the three lowest.
+
+What explains a run but asks nothing of anyone — each result reused from the
+store, the fallback variants a run did not need, archives and generated
+modules, tasks blocked behind a failure, the host and the run directory —
+**must** be reported at `LogLevel.trace`, shown by `--log-level trace`. A
+failed run says so in its lines and writes no further error message.
 
 **CIC2: One-node graphs.** A command that is a single check, such as
 `ci check sidebar`, **must** plan a one-node graph. It runs through the

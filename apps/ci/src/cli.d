@@ -17,7 +17,9 @@ module cli;
 import std.algorithm : canFind;
 import std.array : join;
 
-import sparkles.base.logger : initLogger, info, LogLevel;
+import sparkles.base.logger : LogLevel, trace;
+
+import console : installConsole;
 import sparkles.core_cli.args;
 import sparkles.wired : CaseStyle, WireCase;
 
@@ -273,9 +275,10 @@ void chooseLegs(TestLegs choice, bool placement, bool placementSerial, bool plac
 @WireCase(CaseStyle.kebabCase)
 enum TestOutput
 {
-    auto_, /// live on a terminal outside CI, else plain
-    live,  /// the live view beneath the transcript
-    plain, /// the transcript alone
+    auto_, /// status lines, with the live view on a terminal outside CI
+    live,  /// status lines and the live view beneath them
+    lines, /// status lines alone
+    plain, /// the build graph's plain transcript, ordered and deterministic, on stdout
 }
 
 /// `ci test --sanitize`.
@@ -375,10 +378,12 @@ struct TestCommand
     TestLegs legs;
 
     @(Option(`output`,
-        description: "How the run reports: auto (the default) draws a live view of the running "
-        ~ "tasks, the failures and the slowest tasks beneath the transcript when stdout is a "
-        ~ "terminal outside CI; live always does; plain writes the transcript alone. Either way "
-        ~ "the scrollback holds the same transcript."))
+        description: "How the run reports. auto (the default) writes a status line for each "
+        ~ "thing worth knowing, and on a terminal outside CI draws the running tasks, the "
+        ~ "failures and the slowest tasks beneath them; live always draws them; lines never "
+        ~ "does; plain writes the build graph's ordered transcript to stdout instead, the same "
+        ~ "bytes for the same outcomes. --log-level trace adds the details: results reused "
+        ~ "from the store, why each task ran, the host, the run directory."))
     TestOutput output;
 
     @(Option(`timeline`,
@@ -1485,12 +1490,12 @@ int ciMain(string[] args)
 {
     // Installed before parsing, so a slow parse still has a timestamped
     // breadcrumb; `--log-level` applies once the options are in.
-    initLogger(LogLevel.info);
+    installConsole(LogLevel.info);
     programArgs = args;
     return runCli!Ci(args, (ref parsed) {
         if (parsed.value.global.logLevel != LogLevel.info)
             applyLogLevel(parsed.value.global.logLevel);
-        info(i"ci $(args.length > 1 ? args[1 .. $].join(" ") : "")");
+        trace(i"ci $(args.length > 1 ? args[1 .. $].join(" ") : "")");
         logHostResources();
         return 0;
     });

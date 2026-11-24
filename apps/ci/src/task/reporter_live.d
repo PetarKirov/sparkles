@@ -49,8 +49,10 @@ import sparkles.ui_tui.inline_frame : inlineFrame;
 
 import sparkles.build_primitives.task.graph : TaskGraph;
 import sparkles.build_primitives.task.live_view : LiveView;
+import console : drainConsole, holdConsole, releaseConsole;
 import sparkles.build_primitives.task.model;
-import sparkles.build_primitives.task.reporter : displayName, writeOutcome;
+import sparkles.build_primitives.task.reporter : writeOutcome;
+import task.reporter_status : taskName;
 
 /// What the live view shows.
 struct LiveOptions
@@ -155,6 +157,8 @@ final class LiveReporter : LiveView
         if (ended)
             return;
         ended = true;
+        // The console writes for itself again once the block is gone.
+        releaseConsole((scope const(char)[] l) @safe { above ~= l.idup; });
         region.printLinesAbove(above);
         above = null;
         region.finish(keepFrame: false);
@@ -262,6 +266,8 @@ private:
 
     void paint()
     {
+        // The console's lines, held while the block is up (CIC19).
+        drainConsole((scope const(char)[] l) @safe { above ~= l.idup; });
         const width = max(20, terminal.width() - 1);
         const height = terminal.height();
         const rows = height > 0 ? max(6, height * 2 / 3) : 20;
@@ -390,7 +396,7 @@ private:
     Row row(size_t i, MonoTime now)
     {
         const t = &tasks[i];
-        const label = displayName(*graph, TaskIndex(cast(uint) i));
+        const label = taskName(*graph, TaskIndex(cast(uint) i));
         final switch (t.phase)
         {
             case Phase.running:
@@ -416,7 +422,11 @@ private:
                 node.value.label = ([node.value.label] ~ node.value.chain).join(" ─ ");
         auto glyphs = TreeGlyphs.init;
         glyphs.closed = glyphs.open = glyphs.leaf = "";
-        const tree = treeView(b, fitted.data, flatten(fitted.data, (uint _) @safe => true),
+        // Roots stand flush left: only a task waiting on another hangs from it.
+        auto flat = flatten(fitted.data, (uint _) @safe => true);
+        foreach (ref r; flat)
+            r.guides = r.guides[1 .. $];
+        const tree = treeView(b, fitted.data, flat,
             (uint _) @safe => true, uint.max, glyphs);
         if (!fitted.hidden)
             return tree;
@@ -463,7 +473,7 @@ private:
             const t = &tasks[i];
             lines ~= b.add(Widget(kind: WidgetKind.rich, spans: [
                 TextSpan(mark(Mark.fail), Slot.error),
-                TextSpan(displayName(*graph, TaskIndex(cast(uint) i)), Slot.inherit),
+                TextSpan(taskName(*graph, TaskIndex(cast(uint) i)), Slot.inherit),
                 TextSpan(": ", Slot.muted),
                 TextSpan(t.reason, Slot.muted),
             ]));
@@ -499,13 +509,13 @@ private:
         foreach (ref r; runs)
         {
             const t = &tasks[r.task];
-            bars ~= TimelineBar(displayName(*graph, TaskIndex(cast(uint) r.task)),
+            bars ~= TimelineBar(taskName(*graph, TaskIndex(cast(uint) r.task)),
                 t.started - runStart, t.ended - runStart,
                 t.phase == Phase.failed ? Slot.error : Slot.info);
         }
         foreach (i, ref t; tasks)
             if (t.phase == Phase.running && now - t.started >= options.shortest)
-                bars ~= TimelineBar(displayName(*graph, TaskIndex(cast(uint) i)),
+                bars ~= TimelineBar(taskName(*graph, TaskIndex(cast(uint) i)),
                     t.started - runStart, now - runStart, Slot.accentPrimary);
         bars.sort!((a, b) => a.start < b.start);
         return bars;
@@ -515,11 +525,14 @@ private:
     {
         if (bars.length > rows - 1)
             bars = bars[0 .. rows - 1];
+        // A round axis that grows in steps, so a running bar grows to the
+        // right and the scale moves only when the run passes a step.
+        const axis = roundAxis(now - runStart);
         auto header = appender!string;
-        header.put("Slowest, against ");
-        writeDuration(header, now - runStart);
+        header.put("Slowest tasks, from the start to ");
+        writeDuration(header, axis);
         const title = b.add(Widget(kind: WidgetKind.text, text: header[], slot: Slot.muted));
-        const view = timelineView(b, bars, now - runStart, min(32, width / 3));
+        const view = timelineView(b, bars, axis, min(32, width / 3));
         return b.add(Widget(kind: WidgetKind.column, width: SizeSpec.grow(), children: [title, view]));
     }
 
@@ -586,6 +599,7 @@ LiveView delegate(const(TaskGraph)*) stdoutLiveView(LiveOptions options)
         import sparkles.base.term_caps : detectTermCaps, terminalSize;
         import sparkles.ui.tokens : terminalCapabilities;
 
+        holdConsole();
         auto region = new LiveRegion((scope const(char)[] bytes) {
             stdout.rawWrite(bytes);
             stdout.flush();
@@ -594,6 +608,35 @@ LiveView delegate(const(TaskGraph)*) stdoutLiveView(LiveOptions options)
             () @safe => terminalSize().height, terminalCapabilities(detectTermCaps()));
         return cast(LiveView) new LiveReporter(region, graph, terminal, options);
     };
+}
+
+/**
+The timeline's axis for a run `elapsed` long: the first of 10s, 20s, 30s,
+1m, 2m, 3m, 5m, 10m, 15m, 20m, 30m, 1h, then whole hours, that is not
+shorter.
+*/
+Duration roundAxis(Duration elapsed) @safe pure nothrow @nogc
+{
+    import core.time : hours, minutes;
+
+    static immutable Duration[12] steps = [10.seconds, 20.seconds, 30.seconds, 1.minutes, 2.minutes,
+        3.minutes, 5.minutes, 10.minutes, 15.minutes, 20.minutes, 30.minutes, 1.hours];
+    foreach (s; steps)
+        if (elapsed <= s)
+            return s;
+    return (elapsed.total!"hours" + (elapsed > elapsed.total!"hours".hours ? 1 : 0)).hours;
+}
+
+/// The axis is the first round step the run has not passed.
+@("task.reporter_live.roundAxis.stepsTheRunHasNotPassed")
+@safe pure nothrow @nogc unittest
+{
+    import core.time : hours, minutes;
+
+    assert(roundAxis(Duration.zero) == 10.seconds);
+    assert(roundAxis(55.seconds) == 1.minutes);
+    assert(roundAxis(61.seconds) == 2.minutes);
+    assert(roundAxis(2.hours + 1.seconds) == 3.hours);
 }
 
 private string duration(Duration d)
@@ -695,10 +738,11 @@ version (unittest)
     const text = lines.join("\n");
     assert(lines.length >= 5, text);
     // The branch with the running task first, each task under the one
-    // waiting on it, the running one with its time at the right edge.
-    assert(lines[0] == "├─ ○ test" && lines[1] == "│  └─ ○ link", text);
-    assert(lines[2].startsWith("│     ├─ ◐ compile-a") && lines[2].endsWith("3.0s"), text);
-    assert(lines[3] == "│     └─ ○ compile-b" && lines[4] == "└─ ○ other", text);
+    // waiting on it, the running one with its time at the right edge; the
+    // roots flush left, hanging from nothing.
+    assert(lines[0] == "○ test" && lines[1] == "└─ ○ link", text);
+    assert(lines[2].startsWith("   ├─ ◐ compile-a") && lines[2].endsWith("3.0s"), text);
+    assert(lines[3] == "   └─ ○ compile-b" && lines[4] == "○ other", text);
     assert(lines[$ - 1].startsWith("◐ 1 running  ✔ 0 executed  • 0 from the store  ○ 4 pending  ✖ 0 failed"),
         lines[$ - 1]);
 
@@ -707,8 +751,8 @@ version (unittest)
     h.event(TaskEventPayload(TaskReused(h.at("compile-b"))));
     h.event(TaskEventPayload(TaskFinished(h.at("compile-b"), TaskOutcome(Succeeded()), 1.msecs)));
     const short_ = h.screen(4);
-    assert(short_[0] == "├─ ○ test ─ link", short_.join("\n"));
-    assert(short_[1].startsWith("│  └─ ◐ compile-a"), short_.join("\n"));
+    assert(short_[0] == "○ test ─ link", short_.join("\n"));
+    assert(short_[1].startsWith("└─ ◐ compile-a"), short_.join("\n"));
 }
 
 /// A failure gets a panel entry with its reason and last lines; a reused
