@@ -15,7 +15,7 @@ at runtime → hash a file set on a worker thread, a newer query cancelling the
 running hash → show the result. A toggle switches the whole pipeline on and off, and
 switching it off cancels a pending debounce and an in-flight hash.
 
-This survey answers seven questions:
+This survey answers ten questions:
 
 1. **What are the models, and what does each one optimise for?** — the
    [master catalog](#master-catalog) and the [taxonomy](#taxonomy).
@@ -33,6 +33,12 @@ This survey answers seven questions:
    later regret?** — [comparison § API structure and naming][cmp-api].
 9. **How do tests script inputs and assert outputs, cancellation included?** —
    [testing], with three theme pages behind it.
+
+10. **How do UI frameworks let components be written over their reactive core,
+    and what does keeping a retained tree in sync cost?** — [solid-components]
+    (JSX compiled to templates and holes, run-once components, the custom-renderer
+    contract) and [flutter] (immutable widgets rebuilt over retained element and
+    render trees, identity-based skipping).
 
 The shared vocabulary is defined once in [concepts]; the deep-dives use it.
 
@@ -161,6 +167,11 @@ The shared vocabulary is defined once in [concepts]; the deep-dives use it.
   naming regret), [pekko-streams] (blueprints and the cost of a second type
   channel), [clojure-transducers] (operators written once for every source) and
   [reflex] (affix families and capability tags).
+- **I am designing component authoring for `sparkles:ui`.** [solid-components]
+  (what a compiler can split into static template and dynamic holes, and what
+  run-once components cost), then [flutter] (rebuilding descriptions every frame,
+  keys, and layout and repaint boundaries), then [jetpack-compose] (positional
+  identity in a per-frame UI).
 - **I want FRP without a garbage collector.** [yampa] (signal functions as Mealy
   machines), [jane-street-incremental] (explicit stabilisation, a frame-shaped
   step), then [reflex] (what a GC-driven teardown costs).
@@ -207,6 +218,8 @@ the [master catalog](#master-catalog). The Sparkles side of the comparison cites
 [tc39-signals]: ./tc39-signals.md
 [angular-signals]: ./angular-signals.md
 [jetpack-compose]: ./jetpack-compose.md
+[solid-components]: ./solid-components.md
+[flutter]: ./flutter.md
 [sodium]: ./sodium.md
 [elm]: ./elm.md
 [synchronous-languages]: ./synchronous-languages.md

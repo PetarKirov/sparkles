@@ -3644,6 +3644,20 @@
                 "link": "/research/reactive-programming/testing-deterministic-simulation"
               }
             ]
+          },
+          {
+            "text": "Component authoring",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Solid 2.0 components",
+                "link": "/research/reactive-programming/solid-components"
+              },
+              {
+                "text": "Flutter",
+                "link": "/research/reactive-programming/flutter"
+              }
+            ]
           }
         ]
       },
