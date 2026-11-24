@@ -556,7 +556,7 @@ string count(size_t n, string what) @safe pure => text(n, " ", what, n == 1 ? ""
 
 /// A row's time: one decimal always, in ms below a second, then s, m, h —
 /// `423.0ms`, `8.9s`, `2.6m` — so the column's digits line up.
-string rowTime(Duration d) @safe
+public string rowTime(Duration d) @safe
 {
     import core.time : minutes, msecs, seconds, usecs;
 

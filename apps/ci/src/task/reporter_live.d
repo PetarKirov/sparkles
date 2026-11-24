@@ -44,7 +44,7 @@ import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.glyphs : Mark, markGlyph;
 import sparkles.ui.style : MarkCharset, Slot;
 import sparkles.ui.tokens : TargetCapabilities;
-import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
+import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui_tui.inline_frame : inlineFrame;
 
 import sparkles.build_primitives.task.graph : TaskGraph;
@@ -52,7 +52,7 @@ import sparkles.build_primitives.task.live_view : LiveView;
 import console : drainConsole, holdConsole, releaseConsole;
 import sparkles.build_primitives.task.model;
 import sparkles.build_primitives.task.reporter : writeOutcome;
-import task.reporter_status : taskName;
+import task.reporter_status : rowTime, taskName;
 
 /// What the live view shows.
 struct LiveOptions
@@ -187,7 +187,12 @@ final class LiveReporter : LiveView
             parts ~= failureRows(b, failures, h.failures);
         if (h.timeline > 0)
             parts ~= timelineRows(b, bars, h.timeline, width, now);
-        parts ~= b.add(Widget(kind: WidgetKind.rich, spans: tally(now)));
+        // The run's time ends the tally at the right edge, where every
+        // other duration in the block and in the lines above it ends.
+        const counts = b.add(Widget(kind: WidgetKind.rich, spans: tally(now), width: SizeSpec.grow()));
+        const elapsed = b.add(Widget(kind: WidgetKind.text, text: duration(now - runStart), slot: Slot.muted,
+            alignX: Alignment.end));
+        parts ~= b.add(Widget(kind: WidgetKind.row, gap: 2, width: SizeSpec.grow(), children: [counts, elapsed]));
         return b.finish(b.add(Widget(kind: WidgetKind.column, width: SizeSpec.grow(), children: parts)));
     }
 
@@ -511,12 +516,12 @@ private:
             const t = &tasks[r.task];
             bars ~= TimelineBar(taskName(*graph, TaskIndex(cast(uint) r.task)),
                 t.started - runStart, t.ended - runStart,
-                t.phase == Phase.failed ? Slot.error : Slot.info);
+                t.phase == Phase.failed ? Slot.error : Slot.info, duration(t.ended - t.started));
         }
         foreach (i, ref t; tasks)
             if (t.phase == Phase.running && now - t.started >= options.shortest)
                 bars ~= TimelineBar(taskName(*graph, TaskIndex(cast(uint) i)),
-                    t.started - runStart, now - runStart, Slot.accentPrimary);
+                    t.started - runStart, now - runStart, Slot.accentPrimary, duration(now - t.started));
         bars.sort!((a, b) => a.start < b.start);
         return bars;
     }
@@ -562,7 +567,6 @@ private:
         count(Mark.info, reused, "from the store", Slot.muted);
         count(Mark.pending, pending, "pending", Slot.muted);
         count(Mark.fail, failedCount, "failed", Slot.error);
-        spans ~= TextSpan("  " ~ duration(now - runStart), Slot.muted);
         return spans;
     }
 }
@@ -639,12 +643,9 @@ Duration roundAxis(Duration elapsed) @safe pure nothrow @nogc
     assert(roundAxis(2.hours + 1.seconds) == 3.hours);
 }
 
-private string duration(Duration d)
-{
-    auto w = appender!string;
-    writeDuration(w, d);
-    return w[];
-}
+// Every duration the block shows as the status lines show theirs: one
+// decimal, right-aligned (`task.reporter_status.rowTime`).
+private string duration(Duration d) => rowTime(d);
 
 private void writeDecimal(W)(ref W w, size_t n)
 {
@@ -817,6 +818,39 @@ version (unittest)
         assert(spansIn(h.view.frame(80, 6, h.now)) == 0, "too few rows for a timeline");
         assert(h.screen().join("\n").canFind("Slowest") == wanted);
     }
+}
+
+/// Every duration in the block ends in the same column: a running task's
+/// in the tree, each bar's on the timeline and the run's in the tally, as
+/// the status lines above end theirs.
+@("task.reporter_live.frame.durationsEndInOneColumn")
+@system unittest
+{
+    import std.algorithm.searching : canFind, endsWith;
+    import std.string : stripRight;
+    import sparkles.base.status_line : displayWidth;
+
+    auto h = Harness.make();
+    h.start();
+    h.event(TaskEventPayload(TaskStarted(h.at("other"))));
+    h.now += 4.seconds;
+    h.event(TaskEventPayload(TaskFinished(h.at("other"), TaskOutcome(Succeeded()), 4.seconds)));
+    h.event(TaskEventPayload(TaskStarted(h.at("compile-a"))));
+    h.now += 3.seconds;
+    size_t[] ends;
+    string[] seen;
+    foreach (l; h.screen())
+    {
+        const t = l.stripRight;
+        if (t.endsWith("3.0s") || t.endsWith("4.0s") || t.endsWith("7.0s"))
+        {
+            ends ~= displayWidth(t);
+            seen ~= l;
+        }
+    }
+    assert(ends.length >= 4, h.screen().join("\n")); // the tree, two bars, the tally
+    foreach (e; ends)
+        assert(e == ends[0], h.screen().join("\n"));
 }
 
 /// Transcript lines print above the block on the next repaint, and `finish`

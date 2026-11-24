@@ -138,7 +138,10 @@ and the running ones as a timeline against a round axis that only grows (10s,
 20s, 30s, 1m, 2m … `roundAxis`), so a running bar grows to the right, in the
 rows left, when the terminal is at least 50 columns wide, unless
 `--no-timeline`; and a tally of running,
-executed, reused, pending and failed tasks with the elapsed time. It is drawn
+executed, reused, pending and failed tasks with the elapsed time. Every
+duration it shows — a running task's, a bar's, the elapsed time — **must** be
+written and placed as the status lines write theirs: one decimal, ending at
+the terminal's right edge. It is drawn
 with `sparkles:ui` widgets in the terminal's own 16 colours and erased once
 the transcript's summary is above it, so the scrollback is the same with the
 view or without it. `--output live` with `--dry-run` **must** be rejected.
