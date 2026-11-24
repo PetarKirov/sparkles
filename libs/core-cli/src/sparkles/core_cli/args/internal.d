@@ -1523,7 +1523,9 @@ private int invokeReturning0(alias call)()
                     stdout.writeln("SKIP: ", res.error.message);
                     return 0;
                 }
-                stderr.writeln("Error: ", res.error.message);
+                // An empty message: the command has said what failed.
+                if (res.error.message.length)
+                    stderr.writeln("Error: ", res.error.message);
                 return res.error.exitCode;
             }
             else static if (is(E == string))
