@@ -94,6 +94,35 @@ struct LiveRegion
         _prevRows = _frame.length;
     }
 
+    /// Emit `lines` above the live block with one repaint: a burst of permanent
+    /// lines costs one redraw of the block, not one each. Non-interactive: just
+    /// appends them.
+    void printLinesAbove(scope const(char[])[] lines)
+    {
+        if (!lines.length)
+            return;
+        if (!_interactive)
+        {
+            foreach (line; lines)
+            {
+                _sink(line);
+                _sink("\n");
+            }
+            return;
+        }
+        _sink(CtlSeq.syncBegin);
+        moveToFrameTop();
+        _sink(CtlSeq.eraseBelow);
+        foreach (line; lines)
+        {
+            _sink(line);
+            _sink("\n");
+        }
+        paintLines(_frame);
+        _sink(CtlSeq.syncEnd);
+        _prevRows = _frame.length;
+    }
+
     /// End the region: restore the cursor and either keep the last frame as
     /// permanent output (default) or erase it. Idempotent; call it from a
     /// `scope (exit)` so exceptions can't leave the cursor hidden.
@@ -225,6 +254,25 @@ unittest
     assert(rec.bytes ==
         "\x1b[?2026h\x1b[1A\r\x1b[0J" ~
         "✔ step done\n" ~
+        "working\x1b[0K\n" ~
+        "\x1b[?2026l");
+
+    region.finish();
+}
+
+@("live.printLinesAbove.oneRepaintForABurst")
+@system
+unittest
+{
+    Recorder rec;
+    auto region = LiveRegion(rec.sink, () => ushort(80), true);
+    region.update(["working"]);
+
+    rec.bytes = null;
+    region.printLinesAbove(["one", "two"]);
+    assert(rec.bytes ==
+        "\x1b[?2026h\x1b[1A\r\x1b[0J" ~
+        "one\ntwo\n" ~
         "working\x1b[0K\n" ~
         "\x1b[?2026l");
 
