@@ -455,11 +455,16 @@ void writeSummary(Writer)(ref Writer w, const ref TaskGraph graph, const ref Run
     put(w, '\n');
 }
 
-/// Writes a line's prefix: `[<id> stdout] `.
+/// What a transcript calls task `t`: its label, or its id when it has none
+/// (TDO3). Ids stay in the summary, which names tasks to act on.
+string displayName(const ref TaskGraph graph, TaskIndex t) @safe pure nothrow
+    => graph[t].label.length ? graph[t].label : graph[t].id.text;
+
+/// Writes a line's prefix: `[<label> stdout] `.
 void writeLinePrefix(Writer)(ref Writer w, const ref TaskGraph graph, TaskIndex t, OutputStream stream)
 {
     put(w, '[');
-    put(w, graph[t].id.text);
+    put(w, displayName(graph, t));
     put(w, ' ');
     writeEnumMemberName!AnyFormat(w, stream);
     put(w, "] ");

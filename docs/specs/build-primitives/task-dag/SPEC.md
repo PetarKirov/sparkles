@@ -585,12 +585,21 @@ movement, spinner frames or rewritten lines, and no colour when terminal
 capabilities disable it. Each task's output is buffered or spooled and emitted
 as one block in `PresentationKey` order, once all earlier blocks are terminal.
 
-A block is the task's lines, each prefixed `[<id> <stream>] `, followed by
-exactly one `<id>: <outcome>` line. The node's output policy decides which lines
-the block holds: `replay` holds all of them, `tailOnFailure` only the bounded
-tail and only when the task did not succeed, and `none` holds none. Elapsed times are the only part that varies
-with execution, and they are optional. With them off, the transcript is
-byte-identical for the same graph and outcomes.
+A block is the task's lines, each prefixed `[<label> <stream>] `, followed by
+exactly one `<label>: <outcome>` line, where `<label>` is the node's label, or its
+id when it has none. A line holding line breaks is written as that many lines,
+each prefixed. The summary names failed tasks by id, which commands take. The
+node's output policy decides which lines the block holds:
+
+- `replay`: all of them.
+- `tailOnFailure`: the bounded tail, only when the task did not succeed.
+- `lastLineOnSuccess`: the bounded tail when the task did not succeed, and
+  its last line when it did, as a test run ends with its summary.
+- `none`: none.
+
+Elapsed times are the only part that varies with execution, and they are
+optional. With them off, the transcript is byte-identical for the same graph
+and outcomes.
 
 A heartbeat **may** report aggregate `completed/total` progress to stderr during
 a long silent run. It carries no task output, is disabled when stderr is not
@@ -599,7 +608,7 @@ independently writable, and is omitted from machine-readable output.
 ### 7.4 `--interlaced`
 
 **TDO4: Interlaced lines.** Interlaced mode **must** emit each assembled output
-line as soon as the reporter receives it:
+line of a `replay` node as soon as the reporter receives it:
 
 ```text
 [test:sparkles.base:unittest stdout] ...
@@ -611,9 +620,13 @@ line as soon as the reporter receives it:
   retained.
 - An unterminated final fragment is emitted once.
 - Ordering across tasks is nondeterministic.
+- A node of another policy (TDO3) streams nothing: the lines its policy shows
+  depend on how it ended, so they come with the terminal lines, a failure's in
+  the failure replay.
 
 The terminal lines, the failure replay and the summary are written together at
-the end, sorted in presentation order.
+the end, sorted in presentation order. With a provider's groups, the terminal
+lines are one collapsed group and the failure replay one expanded group.
 
 On a TTY, `--interlaced` disables per-task live tails and prints above a compact
 aggregate `TaskReporter` frame. With `--jobs 1` it still prefixes output.
