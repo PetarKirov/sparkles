@@ -252,6 +252,9 @@ uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
             if (v.icon.length)
             {
                 auto ic = TextSpan(v.icon, Slot.info);
+                // Optional icon slot (VMD6): a status mark coloured by its state.
+                static if (__traits(compiles, { Slot s = v.iconSlot; }))
+                    ic.slot = v.iconSlot;
                 // Optional per-node icon color (VMD6): a file-type brand hue
                 // rides the resolved-color channel, bypassing the slot.
                 static if (__traits(compiles,
@@ -673,4 +676,36 @@ unittest
     // The theme RGB overrides the role RGB, while the authored role opacity remains.
     assert(raster.cells[2 * raster.width].hasBg
         && raster.cells[2 * raster.width].bg == RgbColor(96, 80, 64));
+}
+
+/// A node with an `iconSlot` colours its icon by it (VMD6) — a status mark
+/// in its state's colour; without one the icon is `info`.
+@("ui.tree_widget.treeView.iconSlot")
+@safe unittest
+{
+    static struct Marked
+    {
+        string label;
+        string icon;
+        Slot iconSlot;
+    }
+
+    static struct Plain
+    {
+        string label;
+        string icon;
+    }
+
+    TreeData!Marked marked;
+    marked.add(Marked("build", "✖ ", Slot.error));
+    Builder b;
+    const col = treeView(b, marked, flatten(marked, (uint _) => true), (uint _) => true);
+    const row = b.nodes[b.nodes[col].children[0]];
+    assert(row.spans[$ - 2].text == "✖ " && row.spans[$ - 2].slot == Slot.error);
+
+    TreeData!Plain plain;
+    plain.add(Plain("build", "• "));
+    Builder c;
+    const col2 = treeView(c, plain, flatten(plain, (uint _) => true), (uint _) => true);
+    assert(c.nodes[c.nodes[col2].children[0]].spans[$ - 2].slot == Slot.info);
 }
