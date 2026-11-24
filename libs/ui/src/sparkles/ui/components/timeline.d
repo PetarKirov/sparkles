@@ -27,10 +27,13 @@ struct TimelineBar
     Duration start;        /// from the axis origin
     Duration end;          /// ditto; at least `start`
     Slot slot = Slot.info; /// the bar's colour role
+    /// The length as the caller writes it (one precision for every duration
+    /// it shows); empty writes `end - start` with `writeDuration`.
+    const(char)[] length;
 }
 
-/// The columns a bar's length takes at the end of its row.
-enum int lengthColumns = 6;
+/// The columns a bar's length takes at the end of its row: `999.9ms`.
+enum int lengthColumns = 7;
 
 /**
 The bar's extent as fractions of an axis from zero to `span`, clamped to
@@ -67,7 +70,10 @@ uint timelineView(ref Builder b, in TimelineBar[] bars, Duration span, int label
         float from, to;
         barFractions(bar, span, from, to);
         auto length = appender!string;
-        writeDuration(length, bar.end - bar.start);
+        if (bar.length.length)
+            length.put(bar.length);
+        else
+            writeDuration(length, bar.end - bar.start);
         const label = b.add(Widget(kind: WidgetKind.text, text: bar.label,
             width: SizeSpec.fixed(labelWidth)));
         const fill = b.add(Widget(kind: WidgetKind.fillSpan, slot: bar.slot,
