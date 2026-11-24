@@ -647,6 +647,14 @@ struct TaskStale
     StaleReason reason; ///
 }
 
+/// The running task's driver adopted a stored result instead of executing
+/// its action (TDM17). Its outcome follows; a reporter counts it apart from
+/// executed work.
+struct TaskReused
+{
+    TaskIndex task; ///
+}
+
 /// A resource-usage observation of a running task.
 struct TaskUsage
 {
@@ -688,7 +696,7 @@ struct RunFinished
 
 /// What happened ([SPEC TDM12, TDM13]).
 alias TaskEventPayload = SumType!(GraphPlanned, TaskReady, TaskStarted, TaskOutput,
-    TaskUsage, TaskFinished, CancellationRequested, RunFinished, TaskFresh, TaskStale);
+    TaskUsage, TaskFinished, CancellationRequested, RunFinished, TaskFresh, TaskStale, TaskReused);
 
 /**
 An event: a run-local sequence number and monotonic timestamp around its

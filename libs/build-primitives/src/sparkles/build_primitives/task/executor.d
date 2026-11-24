@@ -91,6 +91,7 @@ struct TaskContext(X)
 
     private void delegate(TaskIndex, OutputStream, scope const(char)[], bool) outputFn;
     private void delegate(TaskIndex, ulong, Duration) usageFn;
+    private void delegate(TaskIndex) reusedFn;
 
     /// Reports one assembled output line (without its terminator); the
     /// executor numbers it and forwards it as a `TaskOutput` event.
@@ -99,6 +100,10 @@ struct TaskContext(X)
 
     /// Reports a resource-usage sample.
     void usage(ulong rssBytes, Duration cpu) => usageFn(task, rssBytes, cpu);
+
+    /// Reports that the task adopts a stored result rather than executing
+    /// its action (TDM17); the executor forwards it as a `TaskReused` event.
+    void reused() => reusedFn(task);
 
     /// Whether the run asked this task to stop: a cancellation checkpoint
     /// for in-process actions.
@@ -496,7 +501,7 @@ private:
             fibers[t.value] = null;
             cast(void) protect!(() => completions.put(*exec, Completion(t, outcome)))(*exec);
         }
-        auto ctx = TaskContext!X(exec, t, &(*graph)[t], &onOutput, &onUsage);
+        auto ctx = TaskContext!X(exec, t, &(*graph)[t], &onOutput, &onUsage, &onReused);
         if (isCleanup(t))
             outcome = protect!(() => driveCatching(ctx))(*exec);
         else if (cancelling)
@@ -559,6 +564,11 @@ private:
     void onUsage(TaskIndex t, ulong rss, Duration cpu)
     {
         emit(TaskEventPayload(TaskUsage(t, rss, cpu)));
+    }
+
+    void onReused(TaskIndex t)
+    {
+        emit(TaskEventPayload(TaskReused(t)));
     }
 
     void finishBatch(Completion[] batch)
@@ -803,6 +813,27 @@ unittest
     assert(stale == ["c inputChanged libs/base/src/buffer.d", "d prerequisiteRan "], text(stale));
     assert(countOf!((TaskFresh f) => g[f.task].id.text == "e")(run.events) == 0,
         "an untracked task says nothing");
+}
+
+/// TDM17: a driver that adopts a stored result says so before the outcome,
+/// and the outcome is the one it reports.
+@("build_primitives.task.executor.reuse.reportedBeforeTheOutcome")
+@system
+unittest
+{
+    import std.array : join;
+
+    const g = graphOf([tnode("a"), tnode("b")], null);
+    auto run = runFake(g, ["a": Script(2.msecs, reused: true), "b": Script(2.msecs)],
+        ExecutorOptions(capacity: 2));
+    assert(run.result.exitCode == 0);
+    string[] seen;
+    foreach (e; run.events)
+        e.payload.match!(
+            (TaskReused r) { seen ~= "reused " ~ g[r.task].id.text; },
+            (TaskFinished f) { seen ~= "finished " ~ g[f.task].id.text; },
+            (_) {});
+    assert(seen == ["reused a", "finished a", "finished b"], seen.join(", "));
 }
 
 @("build_primitives.task.executor.failFast.simultaneousFailuresPickTheLowestKey")

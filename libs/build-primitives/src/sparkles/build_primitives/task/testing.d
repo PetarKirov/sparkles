@@ -46,6 +46,8 @@ struct Script
     bool ignoresCancel;
     /// What the driver says of the task before it runs.
     Freshness freshness;
+    /// Report, while running, that a stored result is adopted (TDM17).
+    bool reused;
 }
 
 /// Sleeps each task's scripted duration on the virtual clock, then
@@ -63,6 +65,8 @@ struct FakeDriver
         const id = ctx.node.id.text;
         const script = scripts.get(id, Script.init);
         startOrder ~= id;
+        if (script.reused)
+            ctx.reused();
         weight += ctx.node.resources.jobsWeight;
         if (weight > peakWeight)
             peakWeight = weight;

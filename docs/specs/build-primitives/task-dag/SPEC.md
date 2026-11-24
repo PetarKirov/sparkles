@@ -450,6 +450,13 @@ calls fresh. A node whose driver says nothing emits neither event. Reporters
 end the node's line with `, fresh` or `, ran:` and the reason, a path when
 there is one.
 
+**TDM17: Reuse.** A driver that decides while it runs, rather than before,
+to adopt a stored result instead of executing the node's action **may** say
+so through its context, which emits `TaskReused` before the node's outcome.
+The build graph's store hit is the case
+([BGK3](../build-graph/SPEC.md)). The event changes no outcome and no
+transcript; a live view counts the node as reused rather than executed.
+
 ## 4. Event Horizon-only execution
 
 **TDE1: One runtime.** `sparkles:event-horizon` **must** be the sole concurrency
