@@ -414,6 +414,18 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
                 offsetFrac: node.barOffsetFrac,
                 fadePercent: node.barFadePercent);
             break;
+        case fillSpan:
+            {
+                // `GLY8`: the fractions travel as given, clamped to the box;
+                // each target fills as finely as it can.
+                static float unit(float f) pure nothrow @nogc
+                    => f != f || f < 0 ? 0 : f > 1 ? 1 : f;
+                const from = unit(node.fillFrom), to = unit(node.fillTo);
+                if (to > from)
+                    ops.fillSpan(rect.deflate(node.padding), from, to, node.fillAxis,
+                        node.slot, vis);
+            }
+            break;
         case box:
             break; // background (if any) already emitted
         case row, column, stack, panel, popup:

@@ -164,6 +164,7 @@ struct FrameList
             case OpKind.line:
             case OpKind.rule:
             case OpKind.scrollbar:
+            case OpKind.fillSpan:
             case OpKind.image:
                 grow(_clipDepth ? op.rect.intersection(_clips[_clipDepth - 1])
                     : op.rect);

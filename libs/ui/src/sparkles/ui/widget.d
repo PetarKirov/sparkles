@@ -17,7 +17,7 @@ module sparkles.ui.widget;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.text.wrap : WhitespaceMode;
-import sparkles.ui.canvas : LineStyle, RuleEdge;
+import sparkles.ui.canvas : FillAxis, LineStyle, RuleEdge;
 import sparkles.ui.geometry : Insets, Point, Size, SizeSpec;
 import sparkles.ui.style : Decoration, Slot, StateSet, TextStyle;
 import sparkles.ui.wrap : TextWrap;
@@ -54,6 +54,7 @@ enum WidgetKind : ubyte
     image,  /// raster content addressed by handle (`IMG2`)
     line,   /// a stroked line (connector / underline)
     scrollbar, /// a semantic scrollbar leaf (content units + expansion)
+    fillSpan,  /// a fill of part of its box, between two fractions (`GLY8`)
     row,    /// horizontal container (children left→right, `gap` between)
     column, /// vertical container (children top→bottom, `gap` between)
     stack,  /// overlay container (children share the origin; z = order)
@@ -143,6 +144,14 @@ struct Widget
     ubyte barOffsetFrac;
     /// ditto
     ubyte barFadePercent = 100;
+    /// `fillSpan` payload: the filled part of the box, as fractions of its
+    /// extent along `fillAxis`, `0 <= fillFrom <= fillTo <= 1` (`GLY8`). The
+    /// colour is the slot's foreground.
+    float fillFrom = 0;
+    /// ditto
+    float fillTo = 0;
+    /// ditto
+    FillAxis fillAxis;
 
     /// The effect applied to this node and its subtree (`EFX4`), or the null
     /// id for none.

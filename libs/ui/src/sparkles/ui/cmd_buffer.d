@@ -31,7 +31,7 @@ import sparkles.base.term_color : RgbColor;
 import sparkles.ui.arena : FrameArena, GcArena, isArena;
 import sparkles.ui.canvas : boxChromeOf, DrawOp, FillRect, Glyph, ImageDraw,
     inkOf, Line, LineStyle, PopClip, PopEffect, PopShift, PushClip, PushEffect,
-    PushShift, Rule, RuleEdge, Scrollbar, TextRun;
+    PushShift, Rule, RuleEdge, Scrollbar, TextRun, FillAxis, FillSpan;
 import sparkles.ui.effect : EffectId;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.ui.geometry : Point, Rect, Size;
@@ -178,6 +178,15 @@ if (isArena!Arena)
     {
         _ops ~= DrawOp(Rule(rect: rect, ink: inkOf(visual), edge: edge,
             slot: slot));
+    }
+
+    /// ditto — the part of `rect` between `from` and `to`, fractions of its
+    /// extent along `axis`, at each target's own precision (`GLY8`).
+    void fillSpan(in Rect rect, float from, float to, FillAxis axis = FillAxis.across,
+        Slot slot = Slot.inherit, in Visual visual = Visual.init)
+    {
+        _ops ~= DrawOp(FillSpan(rect: rect, from: from, to: to, axis: axis,
+            fg: visual.fg, fgAlpha: visual.fgAlpha, slot: slot));
     }
 
     /// ditto — extents in content units, so a backend resolves the thumb at

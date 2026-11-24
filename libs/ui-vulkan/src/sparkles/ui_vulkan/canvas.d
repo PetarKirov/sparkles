@@ -1742,7 +1742,7 @@ struct VulkanCanvas(B)
     // -------------------------------------------------------------------
 
     static foreach (name; ["fillRect", "textRun", "textRunIn", "glyph", "line", "rule",
-            "scrollbar", "image", "pushClip", "popClip", "pushShift", "popShift", "pushEffect",
+            "scrollbar", "fillSpan", "image", "pushClip", "popClip", "pushShift", "popShift", "pushEffect",
             "popEffect", "fillPx", "outlinePx", "roundedPx", "shadowPx", "eraseOutsidePx", "clipPx",
             "unclipPx", "resetClips", "pushOffsetPx",
             "popOffsetPx", "imageQuadPx", "imageSourcePx", "clusterPx", "labelPx"])
@@ -2374,7 +2374,7 @@ private void readersOf(VkImageLayout layout, out VkPipelineStageFlags stage,
 // `UVK1`: a canvas, with every optional method, so the interpreter hands it
 // every operation.
 static assert(isCanvas!(VulkanCanvas!DeviceMemoryBackend));
-static foreach (method; ["textRunIn", "rule", "scrollbar", "image", "pushClip", "popClip",
+static foreach (method; ["textRunIn", "rule", "scrollbar", "fillSpan", "image", "pushClip", "popClip",
         "pushShift", "popShift", "pushEffect", "popEffect"])
     static assert(__traits(hasMember, VulkanCanvas!DeviceMemoryBackend, method));
 

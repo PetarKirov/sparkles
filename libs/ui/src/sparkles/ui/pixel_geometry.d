@@ -21,7 +21,7 @@ coverage, and only the shapes they bound come from here.
 */
 module sparkles.ui.pixel_geometry;
 
-import sparkles.ui.canvas : RuleEdge, Scrollbar;
+import sparkles.ui.canvas : FillAxis, RuleEdge, Scrollbar;
 import sparkles.ui.geometry : Insets, Rect;
 import sparkles.ui.state : scrollbarThumb;
 import sparkles.ui.style : BorderStyle, Shadow;
@@ -992,4 +992,50 @@ unittest
     assert(!scissorBoxOf(Rect(100, 100, 2, 2), 0, 0, 10, 24, 340, 96, box));
     assert(!scissorBoxOf(Rect(0, 0, 0, 0), 0, 0, 10, 24, 340, 96, box));
     assert(!scissorBoxOf(Rect(0, 0, 4, 4), 0, 0, 10, 24, 0, 0, box));
+}
+
+// ---------------------------------------------------------------------------
+// Fill spans
+// ---------------------------------------------------------------------------
+
+/**
+The pixels of a fill span (`GLY8`) in `box`, its rect in device pixels:
+along `axis` from `from` to `to`, each end rounded to the nearest pixel, and
+at least one pixel for a span that is not empty — the precision a cell
+target reaches in eighths, here to the pixel. `up` grows from the bottom.
+*/
+Rect fillSpanRect(in Rect box, float from, float to, FillAxis axis) @safe pure nothrow @nogc
+{
+    static int at(float f, int extent) pure nothrow @nogc
+    {
+        const v = cast(int)(f * extent + 0.5f);
+        return v < 0 ? 0 : v > extent ? extent : v;
+    }
+
+    const across = axis == FillAxis.across;
+    const extent = across ? box.width : box.height;
+    int a = at(from, extent), b = at(to, extent);
+    if (to > from && b <= a)
+    {
+        if (a < extent)
+            b = a + 1;
+        else if (extent > 0)
+            a = extent - 1;
+    }
+    if (b <= a)
+        return Rect(box.x, box.y, 0, 0);
+    return across ? Rect(box.x + a, box.y, b - a, box.height)
+        : Rect(box.x, box.y + box.height - b, box.width, b - a);
+}
+
+///
+@("pixelGeometry.fillSpanRect.toThePixel")
+@safe pure nothrow @nogc
+unittest
+{
+    const box = Rect(10, 20, 80, 16);
+    assert(fillSpanRect(box, 0.25f, 0.5f, FillAxis.across) == Rect(30, 20, 20, 16));
+    assert(fillSpanRect(box, 0.5f, 0.5f, FillAxis.across).empty, "an empty span is nothing");
+    assert(fillSpanRect(box, 0.5f, 0.501f, FillAxis.across) == Rect(50, 20, 1, 16), "one pixel at least");
+    assert(fillSpanRect(box, 0f, 0.25f, FillAxis.up) == Rect(10, 32, 80, 4), "up grows from the bottom");
 }

@@ -29,7 +29,7 @@ the owned Unicode segmentation, source ledgers or terminal cell advances.
 */
 module sparkles.ui.layout;
 
-import sparkles.ui.canvas : RuleEdge;
+import sparkles.ui.canvas : FillAxis, RuleEdge;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.base.text.width : codepointWidth;
 import sparkles.ui.geometry : Constraints, Insets, Point, Rect, Size, SizeSpec;
@@ -662,6 +662,11 @@ if (isTextMeasure!TM)
                         || node.barEdge == RuleEdge.right
                         || node.barEdge == RuleEdge.centerX ? 1 : 0;
                 break;
+            case fillSpan:
+                // `GLY8`: a span takes the width its parent gives it; one
+                // that fills upward is a column of one cell.
+                content = node.fillAxis == FillAxis.up ? 1 : 0;
+                break;
             case line:
                 content = absInt(node.lineTo.x);
                 break;
@@ -807,6 +812,9 @@ if (isTextMeasure!TM)
                         || node.barEdge == RuleEdge.bottom
                         || node.barEdge == RuleEdge.centerY ? 1 : 0;
                 break;
+            case fillSpan:
+                content = node.fillAxis == FillAxis.across ? 1 : 0;
+                break;
             case line:
                 content = node.lineTo.y == 0 ? 1 : absInt(node.lineTo.y);
                 break;
@@ -861,7 +869,7 @@ if (isTextMeasure!TM)
 
         final switch (node.kind) with (WidgetKind)
         {
-            case text, rich, glyph, line, scrollbar, box, image:
+            case text, rich, glyph, line, scrollbar, fillSpan, box, image:
                 break; // leaves (children.length == 0 already returned)
             case row:
             {

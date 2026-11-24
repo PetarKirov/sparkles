@@ -1,5 +1,5 @@
- sparkles:ui the twelve widget kinds                                                tokyo-night
-   Welcome           | Primitives * the twelve widget kinds                                    #
+ sparkles:ui the thirteen widget kinds                                              tokyo-night
+   Welcome           | Primitives * the thirteen widget kinds                                  #
  > Primitives        |                                                                         #
    Layout            |                                                                         #
    Tracks            | Every tree in this catalog is built from these and nothing else. A      #
@@ -21,12 +21,12 @@
                      | |                  ##                                                 | |
                      | |                  ||                                                 | |
                      | |                  ||                                                 | |
+                     | | fill span          ########                                         | |
                      | | image            [a colo]                                           | |
                      | |                                                                     | |
                      | +---------------------------------------------------------------------+ |
                      |                                                                         |
                      | +---------------------------------------------------------------------+ |
                      | | flow containers                                                     | |
-                     | | row               one   two   three                                 | |
                      |
  pages                                                                          ? keys   q quit

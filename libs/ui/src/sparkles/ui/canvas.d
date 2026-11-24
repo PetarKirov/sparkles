@@ -105,6 +105,15 @@ enum OpKind : ubyte
     popEffect,  /// undo the matching `pushEffect`
     pushShift,  /// move what follows by a fraction of a cell (`LAY7`)
     popShift,   /// undo the matching `pushShift`
+    fillSpan,   /// fill part of `rect`, between two fractions of it (`GLY8`)
+}
+
+/// The direction a $(LREF FillSpan) is measured in: its fractions run from
+/// the edge the eighth-block ladders are anchored to (`GLY2a`).
+enum FillAxis : ubyte
+{
+    across, /// left to right (`▏▎▍▌▋▊▉█`)
+    up,     /// bottom to top (`▁▂▃▄▅▆▇█`)
 }
 
 /**
@@ -259,6 +268,28 @@ struct Scrollbar
 }
 
 /**
+Fill the part of `rect` between `from` and `to`, fractions of its extent
+along `axis` (`GLY8`): a meter's level, a timeline's bar.
+
+$(B The fractions are the precision; the cells are only the frame.) Layout
+gives the span whole cells, and each target draws the fill as finely as it
+can: a pixel target to the pixel, a cell target in eighth-blocks where it has
+the half blocks, else in whole cells, reporting the fold
+($(REF degradationsOf, sparkles,ui,degradation)). A component never picks
+the glyphs (`GLY1`, D30).
+*/
+struct FillSpan
+{
+    Rect rect;
+    float from = 0; /// where the fill starts, `0 <= from <= to`
+    float to = 0;   /// where it ends, `to <= 1`
+    FillAxis axis;
+    RgbColor fg;    /// the fill's colour
+    ubyte fgAlpha = 0xFF;
+    Slot slot = Slot.inherit;
+}
+
+/**
 Draw the registered image `handle` into `rect` under `fit` (`IMG1`).
 
 $(B The pixels are not here, and neither is the registry.) The operation
@@ -367,7 +398,7 @@ private const(char)[] launder(scope const(char)[] s) @trusted pure nothrow @nogc
 
 /// The sum itself: exactly one of the payloads above.
 alias Payload = SumType!(FillRect, TextRun, Glyph, Line, Rule, Scrollbar,
-    ImageDraw, PushClip, PopClip, PushEffect, PopEffect, PushShift, PopShift);
+    ImageDraw, PushClip, PopClip, PushEffect, PopEffect, PushShift, PopShift, FillSpan);
 
 /**
 One reified drawing command in abstract cell space.
@@ -466,6 +497,7 @@ struct DrawOp
             (ref PopEffect _) {},
             (ref PushShift _) {},
             (ref PopShift _) {},
+            (ref FillSpan s) { s.rect = moved(s.rect, dx, dy); },
         );
     }
 
@@ -487,6 +519,7 @@ struct DrawOp
             (in PopEffect _) => OpKind.popEffect,
             (in PushShift _) => OpKind.pushShift,
             (in PopShift _) => OpKind.popShift,
+            (in FillSpan _) => OpKind.fillSpan,
         );
 
     /**
@@ -511,6 +544,7 @@ struct DrawOp
             (in PopEffect _) => Rect.init,
             (in PushShift _) => Rect.init,
             (in PopShift _) => Rect.init,
+            (in FillSpan s) => s.rect,
         );
 
     /**
@@ -558,6 +592,7 @@ struct DrawOp
             (in Rule r) => r.slot,
             (in Scrollbar s) => s.slot,
             (in ImageDraw i) => i.slot,
+            (in FillSpan s) => s.slot,
             _ => Slot.inherit,
         );
 
@@ -582,6 +617,14 @@ struct DrawOp
     /// ditto
     dchar barThumbGlyph()
         => payload.match!((in Scrollbar s) => s.thumbGlyph, _ => '\u2588');
+
+    /// A fill span's extent along its axis, as fractions of its rect, and
+    /// the axis (`GLY8`); `0`, `0` and `across` for every other kind.
+    float fillFrom() => payload.match!((in FillSpan s) => s.from, _ => 0f);
+    /// ditto
+    float fillTo() => payload.match!((in FillSpan s) => s.to, _ => 0f);
+    /// ditto
+    FillAxis fillAxis() => payload.match!((in FillSpan s) => s.axis, _ => FillAxis.across);
 
     /// The image this operation draws, or the null handle (`IMG1`).
     ImageHandle imageHandle()
@@ -627,6 +670,7 @@ struct DrawOp
             (in Rule r) => visualOf(r.ink),
             (in Scrollbar s) => visualOf(s),
             (in ImageDraw i) => visualOf(i),
+            (in FillSpan s) => visualOf(s),
             _ => Visual.init,
         );
 }
@@ -719,6 +763,15 @@ Visual visualOf(in ImageDraw i) @safe pure nothrow @nogc
 
 /// ditto
 Visual visualOf(in Scrollbar s) @safe pure nothrow @nogc
+{
+    Visual v;
+    v.fg = s.fg;
+    v.fgAlpha = s.fgAlpha;
+    return v;
+}
+
+/// ditto
+Visual visualOf(in FillSpan s) @safe pure nothrow @nogc
 {
     Visual v;
     v.fg = s.fg;
@@ -829,6 +882,12 @@ DrawOp pushShiftOp(float dx, float dy, size_t key = 0, ubyte axes = 3)
 
 /// ditto
 DrawOp popShiftOp() @safe pure nothrow @nogc => DrawOp(PopShift());
+
+/// ditto
+DrawOp fillSpanOp(in Rect rect, float from, float to, FillAxis axis = FillAxis.across,
+    Slot slot = Slot.inherit, in Visual visual = Visual.init) @safe pure nothrow @nogc
+    => DrawOp(FillSpan(rect: rect, from: from, to: to, axis: axis, fg: visual.fg,
+        fgAlpha: visual.fgAlpha, slot: slot));
 
 /**
 The endpoints of a $(LREF RuleEdge) within `rect`, in whole cells — the
@@ -1005,6 +1064,13 @@ struct RecordingCanvas
     void pushShift(float dx, float dy)
     {
         ops ~= pushShiftOp(dx, dy);
+    }
+
+    /// Records the span as given: the recorder keeps the fractions, which is
+    /// the precision a pixel canvas paints at (`GLY8`).
+    void fillSpan(in FillSpan s)
+    {
+        ops ~= DrawOp(s);
     }
 
     /// ditto

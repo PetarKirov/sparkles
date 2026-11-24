@@ -17,7 +17,7 @@ import std.math : abs, fabs, lround;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.test_runner.skip : skipTest;
-import sparkles.ui.canvas : LineStyle, RuleEdge, Scrollbar;
+import sparkles.ui.canvas : FillAxis, FillSpan, LineStyle, RuleEdge, Scrollbar;
 import sparkles.ui.geometry : Insets, Point, Rect, Size;
 import sparkles.ui.image : ImageData, ImageFit, ImageHandle, ImageRegistry;
 import sparkles.ui.pixel_geometry;
@@ -497,6 +497,15 @@ private ubyte[] solidImage(uint width, uint height, RgbColor c, ubyte alpha = 25
         {
             frame = rig.draw((ref Canvas c) { c.rule(cells, edge, Visual(fg: white)); }, m, black);
             assertExactly(frame, 160, 120, [ruleRect(box, edge)], format("a %s rule", edge));
+        }
+
+        // A fill span: one rectangle at its fractions, to the pixel (`GLY8`).
+        foreach (axis; [FillAxis.across, FillAxis.up])
+        {
+            const span = FillSpan(rect: cells, from: 0.25f, to: 0.6f, axis: axis, fg: white);
+            frame = rig.draw((ref Canvas c) { c.fillSpan(span); }, m, black);
+            assertExactly(frame, 160, 120, [fillSpanRect(box, 0.25f, 0.6f, axis)],
+                format("a fill span %s", axis));
         }
 
         // A scrollbar: its lit track in grey, its thumb in white.

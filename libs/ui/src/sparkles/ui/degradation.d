@@ -22,7 +22,7 @@ import std.traits : EnumMembers, getUDAs;
 import sparkles.base.term_color : ColorDepth, RgbColor;
 import sparkles.base.term_style : UnderlineStyle;
 import sparkles.ui.canvas : DrawOp, FillRect, Glyph, Ink, Line, LineStyle, match,
-    ImageDraw, PopClip, PopEffect, PopShift, PushClip, PushEffect, PushShift,
+    FillSpan, ImageDraw, PopClip, PopEffect, PopShift, PushClip, PushEffect, PushShift,
     Rule, RuleEdge, Scrollbar, TextRun;
 import sparkles.base.term_caps : BlockTier;
 import sparkles.ui.glyphs : admits, GlyphNeed, needOf;
@@ -336,6 +336,17 @@ DegradationReport degradationsOf(in DrawOp[] ops, in TargetCapabilities caps)
             (in PopEffect _) {},
             (in PushShift _) {},
             (in PopShift _) {},
+            // `GLY8`: eighth-blocks need the half blocks; without them a fill
+            // takes whole cells, and below Unicode it is ASCII.
+            (in FillSpan s) {
+                color();
+                if (!caps.unicode)
+                    r.note(Substitution.asciiGlyph);
+                else if (noBlocks)
+                    r.note(Substitution.blocksFolded);
+                if (!caps.alpha && s.fgAlpha != 0xFF)
+                    r.note(Substitution.alphaFlattened);
+            },
         );
     return r;
 }

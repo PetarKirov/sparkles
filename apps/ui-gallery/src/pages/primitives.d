@@ -58,6 +58,16 @@ uint view(ref Builder b, in GalleryState s)
         barTrackLit: true,
     )));
 
+    // `GLY8`: the part of a box between two fractions, which each target
+    // draws as finely as it can — eighth-blocks here, pixels in a window.
+    leaves ~= specimen(b, "fill span", b.add(Widget(
+        kind: WidgetKind.fillSpan,
+        width: SizeSpec.fixed(12),
+        slot: Slot.info,
+        fillFrom: 0.2f,
+        fillTo: 0.85f,
+    )));
+
     // `IMG1`/`IMG2`: raster content as an ordinary leaf. In a window the
     // handle resolves to pixels; in a terminal — and here, before the shell
     // has registered anything — it is `IMG4`'s placeholder, which is the
@@ -129,7 +139,7 @@ uint view(ref Builder b, in GalleryState s)
     )));
 
     uint[] body_;
-    body_ ~= heading(b, "Primitives · the twelve widget kinds");
+    body_ ~= heading(b, "Primitives · the thirteen widget kinds");
     body_ ~= spacer(b);
     body_ ~= para(b,
         "Every tree in this catalog is built from these and nothing else. A "
@@ -215,13 +225,13 @@ private uint tile(ref Builder b, string text)
 
     // The two places that say how many there are, said in prose and therefore
     // able to drift — as the nav subtitle had, reading "ten" against eleven
-    // kinds until an image made it twelve.
+    // kinds until an image made it twelve, and a fill span thirteen.
     import registry : pages;
     import std.algorithm : canFind, filter;
 
-    assert([__traits(allMembers, WidgetKind)].length == 12);
+    assert([__traits(allMembers, WidgetKind)].length == 13);
     const primitives = pages.filter!(p => p.title == "Primitives").front;
-    assert(primitives.blurb.canFind("twelve"), "the nav blurb counts them");
+    assert(primitives.blurb.canFind("thirteen"), "the nav blurb counts them");
 }
 
 @("ui_gallery.pages.primitivesStackChildrenShareAnOrigin")
