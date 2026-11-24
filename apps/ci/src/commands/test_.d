@@ -3,7 +3,8 @@
 /// variants, and the placement of a run's shard.
 module commands.test_;
 
-import cli : Sanitizer, SpecialModes, TestCommand, chooseLegs;
+import cli : Sanitizer, SpecialModes, TestCommand, TestOutput, chooseLegs;
+import sparkles.build_primitives.task.live_view : Transcript;
 import commands.files : detectRepoRoot;
 import commands.maintenance : seedDubHome;
 import commands.output :
@@ -24,7 +25,7 @@ import placements_run : chooseShard, loadPlacements, PlacementArgs, placementMat
 import slow_tests :
     exactNamesPattern, matrixJson, SlowTestJob, slowTestsInListing, slowTestsInSource;
 import sparkles.base.hw_caps : hwParallelism, describe;
-import sparkles.base.logger : error, info, LogDelta, warning;
+import sparkles.base.logger : error, info, LogDelta, trace, warning;
 import sparkles.base.styled_template : styledText;
 import sparkles.core_cli.args : failRun, ranOk, RunExpected;
 import sparkles.core_cli.process_utils :
@@ -219,7 +220,7 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
         placementSerial = p.serialLeg;
         placementParallel = p.parallelLeg;
         if (coverage && !p.coverage)
-            info(i"$(where.placement) collects no coverage; testing without -cov");
+            trace(i"$(where.placement) collects no coverage; testing without -cov");
         coverage = coverage && p.coverage;
     }
     bool serialLeg, parallelLeg;
@@ -253,7 +254,7 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
     const xdg = environment.get("XDG_CACHE_HOME", buildPath(environment.get("HOME", "/"), ".cache"));
     const cache = buildPath(xdg, "sparkles");
     const into = buildPath(cache, "runs", text("ci-test-", Clock.currTime.toUnixTime, "-", thisProcessID));
-    info(i"$(names.length) package(s) to $(buildOnly ? "build" : "test") through the build graph; run directory $(into)");
+    trace(i"$(names.length) package(s) to $(buildOnly ? "build" : "test") through the build graph; run directory $(into)");
 
     // A dry run records nothing either.
     auto recorder = RunRecorder.open(repoRoot, sanitize ? "test --sanitize address" : "test",
@@ -265,15 +266,23 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
 
     auto reporting = RunReporting(interlaced: cmd.interlaced, timings: true, dryRun: cmd.dryRun,
         ci: CiLog.detect(&systemEnvironment));
-    // TDO8: a live view beneath the transcript, on a terminal outside CI.
+    // CIC19: status lines through the console, and (TDO8) a live view
+    // beneath them on a terminal outside CI; or the plain transcript.
+    const statusLines = cmd.output != TestOutput.plain;
+    if (statusLines && !cmd.dryRun)
     {
-        import sparkles.base.term_caps : isTerminal;
+        import sparkles.base.term_caps : isTerminal, StdStream;
+        import sparkles.build_primitives.task.graph : TaskGraph;
         import sparkles.ci_provider : CiProvider;
-        import cli : TestOutput;
         import task.reporter_live : LiveOptions, liveViewWanted, stdoutLiveView;
+        import task.reporter_status : StatusOptions, StatusTranscript;
 
-        if (!cmd.dryRun && liveViewWanted(cmd.output == TestOutput.live, cmd.output == TestOutput.plain,
-                isTerminal(), reporting.ci.provider != CiProvider.none))
+        const ci = reporting.ci;
+        const verb = buildOnly ? "Building" : "Testing";
+        reporting.transcript = (const(TaskGraph)* graph) => cast(Transcript) new StatusTranscript(graph,
+            StatusOptions(verb: verb, packages: names.dup, ci: ci));
+        if (cmd.output != TestOutput.lines && liveViewWanted(cmd.output == TestOutput.live, false,
+                isTerminal() && isTerminal(StdStream.stderr), ci.provider != CiProvider.none))
             reporting.live = stdoutLiveView(LiveOptions(timeline: cmd.timeline));
     }
     // CIC12 under a dry run: the actions that would fail, from BGS8's
@@ -330,6 +339,9 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
 
         recordLastRun(cache, LastRun(names.dup, legs, coverage, buildOnly, g.stats.resultKeys.dup));
     }
+    // The status lines have said what failed.
+    if (g.exitCode != 0 && statusLines)
+        return failRun("");
     if (g.exitCode != 0)
         return failRun(failedPackages.length ? text(failedPackages.length, " test package(s) failed: ",
             failedPackages.join(", ")) : text("the build graph's run failed (exit ", g.exitCode, ")"));
@@ -366,7 +378,7 @@ private string focusedPackages(string repoRoot, in TestCommand cmd, out string[]
             directories ~= planned.value.graph.packages[p.graphIndex].path;
     if (!directories.length)
         return "the selection holds no package that runs on this host";
-    info(i"selected $(directories.length) package(s): $(directories.map!(d => d.baseName).join(", "))");
+    trace(i"selected $(directories.length) package(s): $(directories.map!(d => d.baseName).join(", "))");
     return null;
 }
 
@@ -413,6 +425,7 @@ private void mergeCoverage(string repoRoot, ref const GraphRun g, in string[] fa
         staging.rmdirRecurse;
     staging.mkdirRecurse;
     const outs = buildPath(g.into, "out");
+    size_t apart;
     if (outs.exists)
         foreach (e; dirEntries(outs, "*.lst", SpanMode.depth))
         {
@@ -426,8 +439,15 @@ private void mergeCoverage(string repoRoot, ref const GraphRun g, in string[] fa
             else if (const merged = mergeListings(readText(dest), listing))
                 write(dest, merged);
             else
-                warning(i"$(e.name): its source differs from $(dest)'s, kept apart");
+            {
+                // A listing of another build of the same source: one line
+                // says how many, trace names them (CIC19).
+                ++apart;
+                trace(i"$(e.name): its source differs from $(dest)'s, kept apart");
+            }
         }
+    if (apart)
+        warning(i"$(apart) coverage listing(s) differ from the merged source of the same name and were kept apart; --log-level trace names them");
     if (cov.dir.exists)
         cov.dir.rmdirRecurse;
     rename(staging, cov.dir);
@@ -460,8 +480,9 @@ private void reportCoverage(in string[] subPackages, in CoverageRun cov,
     in string[] failedPackages, in string[] uncovered)
 {
     import std.algorithm : sort;
-    import sparkles.base.text.writers : formatted;
-    import sparkles.ui.components.table : drawTable, TableBuilder, TableProps;
+    import std.format : format;
+    import sparkles.base.logger : status;
+    import sparkles.base.status_line : detail, plain, subject, Tone;
 
     if (!cov.enabled || !cov.dir.exists)
         return;
@@ -470,42 +491,36 @@ private void reportCoverage(in string[] subPackages, in CoverageRun cov,
     foreach (pkg; subPackages)
         results ~= collectCoverage(cov.dir, pkg.baseName, pkg, subPackages);
     results.sort!((a, b) => a.percent < b.percent);
-
-    static void writePercent(W)(ref W w, double p)
-    {
-        import std.format : formattedWrite;
-
-        w.formattedWrite("%.1f", p);
-    }
-
-    TableBuilder rows;
-    rows.row("package", "files", "covered", "coverable", "%");
     size_t totalCovered, totalCoverable;
     foreach (r; results)
     {
         totalCovered += r.covered;
         totalCoverable += r.coverable;
-        rows.row(r.name, r.files.length, r.covered, r.coverable);
-        if (r.coverable == 0)
-            rows.cell("—");
-        else
-            rows.cell!writePercent(r.percent);
     }
-    const total = totalCoverable == 0 ? 100.0 : (100.0 * totalCovered) / totalCoverable;
-    rows.row("TOTAL", "", totalCovered, totalCoverable).cell!writePercent(total);
 
-    writeln();
-    writeln(drawTable(rows, TableProps(headerRows: 1)));
-    styledText(i"{dim listings in} $(cov.dir) {dim — open one with} hue --cov").writeln;
+    // CIC19: a line a package, or past a handful the total and the lowest.
+    static string percent(size_t covered, size_t coverable)
+        => coverable == 0 ? "—" : format("%.1f%%", (100.0 * covered) / coverable);
+    static string lines(size_t covered, size_t coverable) => format("%s of %s lines", covered, coverable);
+    enum perPackage = 6;
+    if (results.length <= perPackage)
+        foreach (r; results)
+            status("Coverage", Tone.info, subject(r.name), plain(percent(r.covered, r.coverable)),
+                detail(lines(r.covered, r.coverable)));
+    if (results.length > 1)
+    {
+        string lowest;
+        if (results.length > perPackage)
+            foreach (i, r; results[0 .. 3])
+                lowest ~= (i ? ", " : "lowest: ") ~ r.name ~ " " ~ percent(r.covered, r.coverable);
+        status("Coverage", Tone.info, subject("all"), plain(percent(totalCovered, totalCoverable)),
+            detail(lines(totalCovered, totalCoverable)), detail(lowest));
+    }
+    import std.path : relativePath;
 
-    // The uncovered note goes to stderr; flush so it cannot land in the
-    // middle of the table stdout has not finished writing.
-    stdout.flush();
-
-    // A package that only builds without `-cov` is tested but unmeasured, and
-    // a row of zeroes would read as untested rather than as unmeasured.
+    status("", Tone.plain, detail("listings in " ~ relativePath(cov.dir) ~ "; open one with hue --cov"));
     if (uncovered.length)
-        warning(i"{yellow no coverage} for $(uncovered.length) package(s): $(uncovered.join(", ")) — they do not link under -cov, and were tested without it");
+        trace(i"no coverage for $(uncovered.length) package(s): $(uncovered.join(", ")) — they do not link under -cov, and were tested without it");
 }
 
 /**
