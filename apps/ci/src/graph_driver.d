@@ -925,7 +925,9 @@ PreparedRun prepareGraph(string root, string only, RunOptions o)
     // declared whole (BGX1): the driver's own, with a `dub` first on `PATH`
     // that records each call and fails (oracle 11 step 1).
     const trap = buildPath(o.into, "dub-trap");
-    const declared = dry ? null : declaredEnvironment(trap);
+    // An explanation keys each test and generator as a run would: the same
+    // environment, its trap named but not written.
+    const declared = dry && !o.explain ? null : declaredEnvironment(trap, !dry);
     auto layout = RunLayout(root, o.into, o.cache, g.toolchain.identity, o.check);
     layout.requireCached = o.requireCached.dup;
     layout.explain = o.explain;
@@ -1651,15 +1653,20 @@ string pathTools(out Tools tools, out Toolchain toolchain)
 /**
 The environment a run declares to its generators and tests (BGX1): the
 driver's own, with a `dub` first on `PATH` that records each call beside
-itself, in `trap`, and fails, so an action that runs dub is seen.
+itself, in `trap`, and fails, so an action that runs dub is seen. Without
+`write`, the trap is named and not made: what a run that writes nothing
+keys its actions with.
 */
-EnvEntry[] declaredEnvironment(string trap)
+EnvEntry[] declaredEnvironment(string trap, bool write = true)
 {
-    import std.file : mkdirRecurse, setAttributes, write;
+    import std.file : mkdirRecurse, setAttributes, writeFile = write;
 
-    mkdirRecurse(trap);
-    write(buildPath(trap, "dub"), "#!/bin/sh\necho \"$@\" >> '" ~ buildPath(trap, "calls") ~ "'\nexit 1\n");
-    setAttributes(buildPath(trap, "dub"), octal!755);
+    if (write)
+    {
+        mkdirRecurse(trap);
+        writeFile(buildPath(trap, "dub"), "#!/bin/sh\necho \"$@\" >> '" ~ buildPath(trap, "calls") ~ "'\nexit 1\n");
+        setAttributes(buildPath(trap, "dub"), octal!755);
+    }
     EnvEntry[] declared;
     foreach (name, value; environment.toAA)
         declared ~= EnvEntry(name, name == "PATH" ? trap ~ ":" ~ value : value);
@@ -1668,10 +1675,12 @@ EnvEntry[] declaredEnvironment(string trap)
 }
 
 /**
-`ci cache explain <task>` (BGS8): plans the repository's test
-selection with the tools a run would name, and looks `task` up, with each
-action it needs, as a run beneath `cache` would, executing nothing and
-publishing nothing. `task` is an id, or a prefix only one id has.
+`ci cache explain <task>` (BGS8): plans the selection the last `ci test`
+recorded beneath `cache` ($(LREF LastRun)) — its packages, legs, coverage —
+so that `task` names what that run's lines named, or, with no run recorded,
+every package; and looks `task` up, with each action it needs, as a run
+beneath `cache` would, executing nothing and publishing nothing. `task` is
+an id, or a prefix of one id or of one id's key ($(LREF uniqueTask)).
 
 Writes to `writer` what each action reached would do, in the order reached
 (a hit, a digest record serving it, a miss and its class with what
@@ -1682,79 +1691,37 @@ unknown or ambiguous, or the repository cannot be planned.
 int explainTask(W)(string root, string cache, string task, ref W writer)
 {
     import std.datetime.systime : Clock;
-    import std.file : exists, mkdirRecurse, rmdirRecurse;
     import std.process : thisProcessID;
-    import sparkles.build_graph.execute : RunLayout, RunStats, executionNodes, runActions;
+    import sparkles.base.logger : trace;
 
     void say(string line) { writer.put(line); writer.put("\n"); }
 
-    Tools tools;
-    Toolchain toolchain;
-    if (const why = pathTools(tools, toolchain))
+    string why;
+    const last = lastRun(cache, why);
+    auto o = RunOptions(into: buildPath(cache, "runs", text("explain-", Clock.currTime.toUnixTime, "-",
+        thisProcessID)), cache: cache, tasks: [task], explain: true);
+    if (why.length)
+        trace(i"explain: $(why); planning every package");
+    else
     {
-        say("explain: " ~ why);
+        trace(i"explain: planning the last `ci test`'s $(last.packages.length) package(s)");
+        o.packages = last.packages.dup;
+        o.legs = last.legs.dup;
+        o.coverage = last.coverage;
+        o.buildOnly = last.buildOnly;
+        o.runnerCore = true;
+    }
+    auto g = runGraph(root, null, o);
+    if (g.error.length)
+    {
+        say("explain: " ~ g.error);
         return 2;
     }
-    auto p = planRepository(root, false, null, tools, toolchain.identity);
-    if (p.error.length)
-    {
-        say("explain: " ~ p.error);
-        return 2;
-    }
-    string[] matches;
-    foreach (ref a; p.graph.actions)
-        if (a.id.text == task)
-        {
-            matches = [a.id.text];
-            break;
-        }
-        else if (a.id.text.startsWith(task))
-            matches ~= a.id.text;
-    if (matches.length != 1)
-    {
-        say(matches.length ? text("explain: ", matches.length, " tasks start with ", task, ": ",
-            matches[0 .. matches.length < 5 ? $ : 5].join(", "), matches.length > 5 ? ", …" : "")
-            : "explain: no task " ~ task);
-        return 2;
-    }
-    const target = matches[0];
-
-    // The task and every action it needs, through any edge.
-    bool[string] needed = [target: true];
-    for (bool grew = true; grew;)
-    {
-        grew = false;
-        foreach (ref e; p.graph.edges)
-            if (e.dependent.text in needed && e.prerequisite.text !in needed)
-            {
-                needed[e.prerequisite.text] = true;
-                grew = true;
-            }
-    }
-    ActionGraph sub;
-    sub.actions = p.graph.actions.filter!(a => (a.id.text in needed) !is null).array;
-    sub.edges = p.graph.edges.filter!(e => (e.prerequisite.text in needed) !is null
-        && (e.dependent.text in needed) !is null).array;
-
-    const runDir = buildPath(cache, "runs", text("explain-", Clock.currTime.toUnixTime, "-", thisProcessID));
-    mkdirRecurse(runDir);
-    scope (exit)
-        if (exists(runDir))
-            rmdirRecurse(runDir);
-    auto layout = RunLayout(root, runDir, cache, toolchain.identity);
-    layout.explain = true;
-    auto nodes = executionNodes(sub, layout, declaredEnvironment(buildPath(runDir, "dub-trap")));
-    static struct Discard
-    {
-        void put(T)(T) {}
-    }
-    Discard quiet;
-    RunStats stats;
-    cast(void) runActions(nodes, sub, layout, quiet, logicalProcessors, &stats);
+    const target = uniqueTask(g.plan.graph, task, why);
 
     string verdict;
     string[] misses;
-    foreach (line; stats.explained)
+    foreach (line; g.stats.explained)
     {
         say(line);
         if (line.startsWith(target ~ ": "))
@@ -1768,8 +1735,9 @@ int explainTask(W)(string root, string cache, string task, ref W writer)
 }
 
 /**
-The id of `g`'s task named `task`: that id, or the one id it is a prefix of.
-Null, with `why` saying so, when no id or several match.
+The id of `g`'s task named `task`: that id, or the one id it is a prefix of,
+or the one its handle names ($(LREF namesByHandle)), as `ci test`'s lines
+show it. Null, with `why` saying so, when no id or several match.
 */
 string uniqueTask(ref const ActionGraph g, string task, out string why)
 {
@@ -1777,7 +1745,7 @@ string uniqueTask(ref const ActionGraph g, string task, out string why)
     foreach (ref a; g.actions)
         if (a.id.text == task)
             return a.id.text;
-        else if (a.id.text.startsWith(task))
+        else if (a.id.text.startsWith(task) || namesByHandle(a.id.text, task))
             matches ~= a.id.text;
     if (matches.length == 1)
         return matches[0];
@@ -1785,6 +1753,46 @@ string uniqueTask(ref const ActionGraph g, string task, out string why)
         matches[0 .. matches.length < 5 ? $ : 5].join(", "), matches.length > 5 ? ", …" : "")
         : "no task " ~ task;
     return null;
+}
+
+/// Whether `query` names `id` by its key: a prefix of the key alone, or a
+/// handle, `kind:keyprefix[:leg]` (`compile:b70e70`, `task.reporter_status`'s
+/// `Parts.handle`).
+bool namesByHandle(string id, string query) @safe pure
+{
+    const s = id.split(":");
+    if (s.length < 5 || !query.length)
+        return false;
+    const q = query.split(":");
+    if (q.length == 1)
+        return s[4].startsWith(q[0]);
+    return q.length <= 3 && q[0] == s[0] && q[1].length && s[4].startsWith(q[1])
+        && (q.length == 2 || (s.length > 5 && s[5] == q[2]));
+}
+
+/// A task is named by its id, a prefix of it, or its handle.
+@("graph_driver.uniqueTask.byIdOrKey")
+@system unittest
+{
+    import sparkles.build_graph.actions : Action;
+    import sparkles.build_primitives.task.model : taskId;
+
+    ActionGraph g;
+    foreach (id; ["compile:sparkles.wired:library:ldc:b70e707f743f", "compile:sparkles.wired:library:ldc:d226c34a11e3",
+            "test:sparkles.wired:test-root:ldc:b70e7aaaaaaa:serial"])
+    {
+        Action a;
+        a.id = taskId(id.split(":")).value;
+        g.actions ~= a;
+    }
+    string why;
+    assert(uniqueTask(g, "b70e707", why) == "compile:sparkles.wired:library:ldc:b70e707f743f");
+    assert(uniqueTask(g, "compile:sparkles.wired:library:ldc:d2", why).endsWith("d226c34a11e3"));
+    assert(uniqueTask(g, "b70e7", why) is null && why.startsWith("2 tasks start with b70e7"));
+    assert(uniqueTask(g, "test:b70e7", why).endsWith(":serial"));
+    assert(uniqueTask(g, "test:b70e7a:serial", why).endsWith(":serial"));
+    assert(uniqueTask(g, "test:b70e7a:parallel", why) is null);
+    assert(uniqueTask(g, "zz", why) is null && why == "no task zz");
 }
 
 /// `g` cut to the tasks `targets` and every action they need, through any edge.

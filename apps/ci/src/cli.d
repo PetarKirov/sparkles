@@ -1222,7 +1222,8 @@ struct CacheCommand
     ))
     struct Explain
     {
-        @(Argument("task", description: "The task, by id or by a prefix only one id has."))
+        @(Argument("task", description: "The task: its id, a prefix of one, or its handle, a key prefix with the kind and leg "
+            ~ "(compile:b70e70, as `ci test` shows it). The last `ci test`'s selection is planned, else every package."))
         string task;
 
         RunExpected!void run()
