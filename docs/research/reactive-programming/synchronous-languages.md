@@ -7,7 +7,7 @@ The imperative synchronous languages: programs are sequential threads of control
 | Language          | Esterel (standalone, compiled to C or circuits); Céu (compiled to C via a Lua compiler); HipHop.js (a JavaScript DSL)                                                                     |
 | License           | Céu: MIT ([`LICENSE`][ceu-license]); Esterel v5: academic distribution (INRIA / Ecole des Mines); HipHop.js: license file present, GitHub reports `NOASSERTION`                           |
 | Repository        | [ceu-lang/ceu][ceu-repo] (surveyed at `5e0c8d3`, 2019-07-17); [manuel-serrano/hiphop][hh-repo] (at `7236e0a`, 2026-11-20); [atmos-lang/atmos][atmos-repo] (Céu's successor, at `a06998a`) |
-| Documentation     | [Esterel v5 Language Primer][primer] (v5.91, 2000-06-05); [Céu manual v0.30][ceu-manual]; [HipHop.js docs][hh-docs]                                                                       |
+| Documentation     | [Esterel v5 Language Primer][primer] (v5.91, 2000-06-05); [Céu manual v0.30][ceu-manual]; HipHop.js docs at `hop.inria.fr/hiphop` (unreachable)                                           |
 | Category          | Imperative synchronous language: control-flow reactivity, not dataflow                                                                                                                    |
 | Versions surveyed | Esterel v5.91; Céu v0.30 (manual) at the repository head; HipHop.js at master                                                                                                             |
 | Core abstraction  | The **instant** (Esterel) / **reaction chain** (Céu): one atomic, run-to-completion step of all awakened **trails** in response to one input event                                        |
@@ -341,7 +341,7 @@ end loop
 - Gérard Berry, [_The Esterel v5 Language Primer_, v5.91, 2000-06-05][primer] (read in full; quotes above are verbatim from this copy).
 - Gérard Berry & Georges Gonthier, ["The Esterel synchronous programming language: design, semantics, implementation", _Science of Computer Programming_ 19(2):87–152, 1992][berry-gonthier] (bibliographic details confirmed; publisher page returned HTTP 403, full text not read).
 - Gérard Berry & Manuel Serrano, ["HipHop.js: (A)Synchronous Reactive Web Programming", PLDI 2020][hh-pldi] (abstract read).
-- HipHop.js sources: [`README.md`][hh-readme], [`doc/lang/async.md`][hh-async], [`doc/lang/flow.md`][hh-flow], [`test/loopeach.hh.js`][hh-test-each], [`test/exec-susp-res.hh.js`][hh-test-susp]; HTML docs at [hop.inria.fr/hiphop][hh-docs] (unreachable on 2026-11-22).
+- HipHop.js sources: [`README.md`][hh-readme], [`doc/lang/async.md`][hh-async], [`doc/lang/flow.md`][hh-flow], [`test/loopeach.hh.js`][hh-test-each], [`test/exec-susp-res.hh.js`][hh-test-susp]; HTML docs at `hop.inria.fr/hiphop` (unreachable on 2026-11-22 and 2026-11-24, with no archived copy).
 - Francisco Sant'Anna, Noemi Rodriguez, Roberto Ierusalimschy, Olaf Landsiedel, Philippas Tsigas, ["Safe System-level Concurrency on Resource-Constrained Nodes", SenSys 2013][sensys13] ([copy read][sensys13-pdf]).
 - Francisco Sant'Anna, Roberto Ierusalimschy, Noemi Rodriguez, ["Structured Synchronous Reactive Programming with Céu", Modularity 2015][modularity15] (bibliographic details via DBLP/Wikipedia; full text not read).
 - Céu manual v0.30: [overview][ceu-overview], [synchronous execution model][ceu-sync], [parallel compositions and abortion][ceu-par-abort], [bounded execution][ceu-bounded], [internal reactions][ceu-internal], [parallel compositions][ceu-par], [event handling][ceu-events], [loops][ceu-loops], [asynchronous execution][ceu-async], [C integration / finalization][ceu-cint], [blocks][ceu-blocks], [synchronous control statements][ceu-sync-ctl], [exceptions][ceu-exceptions], [C API][ceu-capi].
@@ -354,7 +354,6 @@ end loop
 [primer]: https://www.rw.cdl.uni-saarland.de/people/kaestner/private/es0203/esterel_primer.pdf
 [berry-gonthier]: https://doi.org/10.1016/0167-6423(92)90005-V
 [hh-pldi]: https://pldi20.sigplan.org/details/pldi-2020-papers/24/HipHop-js-A-Synchronous-Reactive-Web-Programming
-[hh-docs]: http://hop.inria.fr/hiphop
 [hh-repo]: https://github.com/manuel-serrano/hiphop/tree/7236e0a1508bf9dc2ec1ad822169d73937e8ecba
 [hh-readme]: https://github.com/manuel-serrano/hiphop/blob/7236e0a1508bf9dc2ec1ad822169d73937e8ecba/README.md
 [hh-async]: https://github.com/manuel-serrano/hiphop/blob/7236e0a1508bf9dc2ec1ad822169d73937e8ecba/doc/lang/async.md
