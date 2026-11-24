@@ -51,8 +51,9 @@ auto error(T = void)(CliError e)
 How a command's `run()` reports what is not success: a failure, or a skip —
 the environment lacks what the program needs (no display, no GPU driver),
 which is not the program's fault. `runCli` writes a skip as `SKIP: …` on
-standard output and exits 0, and a failure as `Error: …` on standard error,
-exiting 1.
+standard output and exits 0, and a failure as `Error: …` on standard error
+(nothing, when the message is empty: the command has reported the failure
+itself), exiting 1.
 */
 struct RunError
 {
