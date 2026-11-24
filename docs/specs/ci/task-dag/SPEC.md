@@ -111,6 +111,7 @@ Every command that executes a graph accepts:
 | `--interlaced`      | off                   | Stream line-atomic, task-prefixed output as events arrive instead of replaying complete task blocks in presentation order.                                                                    |
 | `--dry-run`         | off                   | Discover, select, plan, validate, and print the DAG without running task actions, making network requests, creating directories, or writing files.                                            |
 | `--output MODE`     | `auto`                | `ci test` only: status lines (CIC19), with the live view (CIC18) on a terminal outside CI (`auto`), always (`live`) or never (`lines`); `plain` writes the ordered transcript (TDO3) instead. |
+| `--table STYLE`     | `clean`               | `ci test` only: the status lines' task rows in aligned columns (`clean`), or framed, separated and headed as well (`boxed`) (CIC19).                                                          |
 | `--no-timeline`     | timeline on           | `ci test` only: leave the timeline out of the live view.                                                                                                                                      |
 | `--legs LEGS`       | `auto`                | `ci test` only: the ordinary tests' legs (CIC6). `auto` runs the placement's, or `-t N` alone; `parallel`, `serial` or `both` overrides.                                                      |
 | `--fail-fast`       | off                   | On the first authoritative failure, stop admission and cancel the command scope.                                                                                                              |
@@ -146,7 +147,18 @@ view or without it. `--output live` with `--dry-run` **must** be rejected.
 through `ci`'s console, in the one line form of `sparkles.base.status_line`
 (base CON1): a verb right-aligned in twelve columns and coloured by what
 happened, the subject, the details muted. Every log record `ci` writes takes
-the same form, its level as the verb. By default the console **must** show:
+the same form, its level as the verb. Each task's line is a row of columns —
+the verb, the package, the variant (a test's leg, another task's role), the
+task's handle, a note and the time — each column as wide as its widest
+entry in the planned graph, so every row lines up with the first. The time
+is always the last column, right-aligned to the terminal's right edge as
+the live view's durations are, and always has one decimal (`423.0ms`,
+`8.9s`, `2.6m`). The handle, `kind:key[:leg]` with the key
+cut to six digits, names the task to `ci cache explain`. The rows are laid
+out by the table component (`sparkles.ui.components.table`): `--table clean`
+aligns them alone, `--table boxed` frames them under a header, with a
+failure's lines spanning the columns beneath its row. By default the console
+**must** show:
 
 - a heading naming the selected packages and the compiler;
 - each compile, link and test that ran, with its time, and why it ran when a

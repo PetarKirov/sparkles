@@ -33,12 +33,22 @@ import std.conv : text;
 import std.sumtype : match;
 
 import sparkles.base.logger : LogLevel, status;
-import sparkles.base.status_line : detail, plain, StatusSpan, subject, tag, Tone;
+import sparkles.base.status_line : detail, plain, StatusLine, StatusSpan, subject, tag, Tone, writeSpan,
+    writeStatusLine, writeVerb;
 import sparkles.base.text.writers : writeDuration;
 import sparkles.build_primitives.task.graph : TaskGraph;
 import sparkles.build_primitives.task.live_view : Transcript;
 import sparkles.build_primitives.task.model;
 import sparkles.ci_provider : CiLog;
+import sparkles.base.text.width : Align;
+import sparkles.ui.components.table : drawTableLines, TableBuilder, TableProps;
+
+/// How the transcript lays its rows out: in columns either way.
+enum TableStyle : ubyte
+{
+    clean, /// aligned columns, no rules and no header
+    boxed, /// the columns framed, separated and headed
+}
 
 /// What the transcript says before the first task.
 struct StatusOptions
@@ -51,6 +61,12 @@ struct StatusOptions
     CiLog ci;
     /// Lines a failure quotes at most: its last ones.
     size_t tailLines = 200;
+    /// Whether rows are coloured, as the console's lines are.
+    bool colour;
+    /// The rows' frame.
+    TableStyle table;
+    /// The columns a boxed table may take; 0 for 100.
+    size_t width;
 }
 
 /// The transcript, as a `Transcript` for the build graph's run.
@@ -79,12 +95,7 @@ final class StatusTranscript : Transcript
         parts = new Parts[n];
         foreach (i; 0 .. n)
             parts[i] = Parts.of((*graph)[TaskIndex(cast(uint) i)].id.text);
-        foreach (ref p; parts)
-        {
-            if (p.kind == "test" && p.leg.length && !legsOf.get(p.pkg, null).canFind(p.leg))
-                legsOf[p.pkg] ~= p.leg;
-            variantsOf[p.kind ~ " " ~ p.pkg ~ " " ~ p.role] ~= p.key;
-        }
+        widths = columnWidths(parts, options);
     }
 
     override void onEvent(const ref TaskEvent e) @safe
@@ -112,6 +123,8 @@ final class StatusTranscript : Transcript
         if (done)
             return;
         done = true;
+        if (started && boxed)
+            line(LogLevel.info, bottomRule);
         if (blocked)
             say("Skipped", Tone.warning, subject(count(blocked, "task")),
                 plain("whose prerequisites failed"));
@@ -145,19 +158,72 @@ private:
     string[] why;
     bool[] reused;
     Parts[] parts;
-    string[][string] legsOf;
-    string[][string] variantsOf;
+    size_t[columns] widths;
+    string bottomRule;
     string[] failedPackages;
     size_t reusedTasks, ranTasks, blocked, cancelledTasks;
     int exitCode;
     bool started, done, masked;
     MonoTime firstAt, lastAt;
 
+    bool boxed() const @safe => options.table == TableStyle.boxed;
+
     void say(const(char)[] verb, Tone tone, scope const(StatusSpan)[] spans...) @safe
         => emit(LogLevel.info, verb, tone, spans);
 
-    void note(const(char)[] verb, Tone tone, scope const(StatusSpan)[] spans...) @safe
-        => emit(LogLevel.trace, verb, tone, spans);
+    // A line already laid out, bare.
+    void line(LogLevel level, const(char)[] text) @safe
+    {
+        const StatusSpan[1] s = [plain(text)];
+        emit(level, null, Tone.plain, s[]);
+    }
+
+    // One task's row, in the columns.
+    void row(LogLevel level, const(char)[] verb, Tone tone, string pkg, string variant, string time,
+        string handle, const(StatusSpan)[] note = null) @safe
+    {
+        TableBuilder b;
+        b.row.cell!writeVerb(verb, tone, options.colour)
+            .cell!writeSpan(subject(pkg), options.colour)
+            .cell!writeSpan(tag(variant), options.colour)
+            .cell!writeSpan(detail(handle), options.colour)
+            .cell!writeNote(note, options.colour)
+            .cell!writeSpan(detail(time), options.colour);
+        rows(level, b);
+    }
+
+    // A line about no one task in the middle of the run: a status line, or
+    // with the columns boxed, a row whose text spans them.
+    void message(const(char)[] verb, Tone tone, scope const(StatusSpan)[] spans...) @safe
+    {
+        if (!boxed)
+            return say(verb, tone, spans);
+        TableBuilder b;
+        b.row.cell!writeVerb(verb is null ? "" : verb, tone, options.colour)
+            .cell!writeNote(spans.dup, options.colour).span(columns - 1);
+        rows(LogLevel.info, b);
+    }
+
+    void rows(LogLevel level, ref TableBuilder b) @safe
+    {
+        import std.array : array;
+        import std.string : stripRight;
+
+        auto all = drawTableLines(b, props()).array;
+        // A boxed row is the table's body between its rules; a clean one has
+        // no frame, and the verb column's left gutter would set it a column
+        // right of the status lines.
+        foreach (l; boxed ? all[1 .. $ - 1] : all)
+            line(level, boxed ? l : l.stripRight[l.length ? 1 : 0 .. $]);
+    }
+
+    TableProps props() const @safe
+    {
+        static immutable Align[columns] aligns = [Align.right, Align.left, Align.left, Align.left, Align.left,
+            Align.right];
+        return TableProps(border: boxed, columnSeparators: boxed, columnMinWidths: widths[].dup,
+            columnMaxWidths: widths[].dup, columnAligns: aligns[]);
+    }
 
     void header() @safe
     {
@@ -172,6 +238,23 @@ private:
             : options.packages[0 .. 5].join(", ") ~ text(" and ", options.packages.length - 5, " more");
         say(options.verb, Tone.info, subject(names), plain(compiler.length ? "with " ~ compiler : ""));
         writeMasks();
+        if (!boxed)
+            return;
+        // The top rule, the headings and the rule beneath them; the bottom
+        // rule waits for the end.
+        import std.array : array;
+
+        TableBuilder b;
+        b.row;
+        foreach (h; headings)
+            b.cell!writeSpan(subject(h), options.colour);
+        b.row("", "", "", "", "", "");
+        auto p = props();
+        p.headerRows = 1;
+        auto all = drawTableLines(b, p).array;
+        foreach (l; all[0 .. $ - 2])
+            line(LogLevel.info, l);
+        bottomRule = all[$ - 1];
     }
 
     void keep(TaskIndex t, string line) @safe
@@ -188,13 +271,14 @@ private:
     {
         const p = parts[t.value];
         const label = (*graph)[t].label.length ? (*graph)[t].label : (*graph)[t].id.text;
-        const time = duration(took);
+        const name = p.pkg.length ? p.pkg : label;
+        const time = rowTime(took);
         outcome.match!(
             (const Succeeded _) {
                 if (reused[t.value])
                 {
                     ++reusedTasks;
-                    note("Reused", Tone.muted, subject(p.name(label)), tag(roleTag(p)));
+                    row(LogLevel.trace, "Reused", Tone.muted, name, p.variant, null, p.handle);
                     return;
                 }
                 ++ranTasks;
@@ -207,25 +291,26 @@ private:
             (const Degraded d) {
                 ++ranTasks;
                 if (d.reason == DegradedReason.noCoverage)
-                    say("Warning", Tone.warning, subject(p.pkg), plain("tested without coverage:"),
-                        plain("it does not link under -cov"));
+                    row(LogLevel.info, "Warning", Tone.warning, name, p.variant, time, p.handle,
+                        [plain("tested without coverage: it does not link under -cov")]);
                 else
-                    say("Degraded", Tone.warning, subject(p.name(label)), tag(roleTag(p)),
-                        detail(reasonText(d.reason)));
+                    row(LogLevel.info, "Degraded", Tone.warning, name, p.variant, time, p.handle,
+                        [detail(reasonText(d.reason))]);
             },
             (const Blocked b) {
                 // The fallback a run did not need is no news.
                 if (b.reason == BlockReason.conditionUnmet)
-                    note("Unneeded", Tone.muted, subject(p.name(label)), tag(roleTag(p)));
+                    row(LogLevel.trace, "Unneeded", Tone.muted, name, p.variant, null, p.handle);
                 else
                 {
                     ++blocked;
-                    note("Blocked", Tone.muted, subject(p.name(label)), tag(roleTag(p)),
-                        detail("by " ~ displayOf(b.root)));
+                    row(LogLevel.trace, "Blocked", Tone.muted, name, p.variant, null, p.handle,
+                        [detail(p.kind ~ ", by " ~ displayOf(b.root))]);
                 }
             },
             (const Skipped s) {
-                note("Skipped", Tone.muted, subject(p.name(label)), detail(reasonText(s.reason)));
+                row(LogLevel.trace, "Skipped", Tone.muted, name, p.variant, null, p.handle,
+                    [detail(reasonText(s.reason))]);
             },
             (const Cancelled _) { ++cancelledTasks; },
         );
@@ -237,22 +322,21 @@ private:
         switch (p.kind)
         {
             case "compile":
-                say("Compiled", Tone.success, subject(p.pkg), tag(roleTag(p)), detail(time), detail(because));
+                row(LogLevel.info, "Compiled", Tone.success, p.pkg, p.variant, time, p.handle, [detail(because)]);
                 break;
             case "link":
-                say("Linked", Tone.success, subject(p.pkg), tag(roleTag(p)), detail(time), detail(because));
+                row(LogLevel.info, "Linked", Tone.success, p.pkg, p.variant, time, p.handle, [detail(because)]);
                 break;
             case "test":
-                const counts = testCounts(tails[t.value]);
-                say("Tested", Tone.success, subject(p.pkg), tag(legTag(p)), plain(counts.length ? counts : ""),
-                    detail(time));
+                row(LogLevel.info, "Tested", Tone.success, p.pkg, p.variant, time, p.handle,
+                    [plain(testCounts(tails[t.value]))]);
                 break;
             case "archive", "generate":
-                note(p.kind == "archive" ? "Archived" : "Generated", Tone.muted,
-                    subject(p.pkg), tag(roleTag(p)), detail(time));
+                row(LogLevel.trace, p.kind == "archive" ? "Archived" : "Generated", Tone.muted, p.pkg, p.variant,
+                    time, p.handle);
                 break;
             default:
-                say("Ran", Tone.success, subject(label), detail(time), detail(because));
+                row(LogLevel.info, "Ran", Tone.success, label, null, time, null, [detail(because)]);
         }
     }
 
@@ -260,15 +344,12 @@ private:
     {
         if (p.pkg.length && !failedPackages.canFind(p.pkg))
             failedPackages ~= p.pkg;
-        if (p.kind == "test")
-        {
-            const counts = testCounts(tails[t.value]);
-            say("Failed", Tone.failure, subject(p.pkg), tag(legTag(p)),
-                plain(counts.length ? counts : failureText(f)), detail(time));
-        }
-        else
-            say("Failed", Tone.failure, subject(p.kind.length ? p.kind ~ " " ~ p.pkg : label), tag(roleTag(p)),
-                plain(failureText(f)), detail(time));
+        const counts = p.kind == "test" ? testCounts(tails[t.value]) : null;
+        // A build failure names its kind: the row's verb says only that it failed.
+        const note = counts.length ? counts : p.kind.length && p.kind != "test"
+            ? p.kind ~ ": " ~ failureText(f) : failureText(f);
+        row(LogLevel.info, "Failed", Tone.failure, p.pkg.length ? p.pkg : label, p.variant, time, p.handle,
+            [plain(note)]);
         quote(t);
     }
 
@@ -277,20 +358,20 @@ private:
         final switch (c.cause)
         {
             case CancelCause.failFast:
-                say("Stopping", Tone.warning, plain("after the first failure (--fail-fast)"));
+                message("Stopping", Tone.warning, plain("after the first failure (--fail-fast)"));
                 break;
             case CancelCause.interrupt:
-                say("Stopping", Tone.warning, plain("interrupted"));
+                message("Stopping", Tone.warning, plain("interrupted"));
                 break;
             case CancelCause.terminate:
-                say("Stopping", Tone.warning, plain("terminated"));
+                message("Stopping", Tone.warning, plain("terminated"));
                 break;
         }
     }
 
     // A failure's lines, as its child wrote them (a test leg's passing tests
-    // left out), fenced from the CI
-    // service: bare lines, beneath the line that reports it.
+    // left out), fenced from the CI service: bare lines beneath the row that
+    // reports it, or with the columns boxed, rows spanning them.
     void quote(TaskIndex t) @safe
     {
         import std.algorithm.iteration : filter;
@@ -301,7 +382,7 @@ private:
             ? tails[t.value].filter!(l => !l.startsWith("✓ ") && !l.startsWith("Summary: ")).array : tails[t.value];
         if (lines.length > options.tailLines)
         {
-            say(null, Tone.plain, detail(text("… ", lines.length - options.tailLines, " earlier lines")));
+            message(null, Tone.plain, detail(text("… ", lines.length - options.tailLines, " earlier lines")));
             lines = lines[$ - options.tailLines .. $];
         }
         bare((ref w) => options.ci.beginUntrusted(w));
@@ -309,7 +390,7 @@ private:
         {
             auto w = appender!string;
             options.ci.writeUntrusted(w, l);
-            say(null, Tone.plain, plain(w[]));
+            message(null, Tone.plain, plain(w[]));
         }
         bare((ref w) => options.ci.endUntrusted(w));
     }
@@ -343,24 +424,64 @@ private:
             );
     }
 
-    string legTag(const Parts p) @safe => legsOf.get(p.pkg, null).length > 1 ? "[" ~ p.leg ~ "]" : null;
-
-    // `[role]`, and the variant's key when the role has more than one: two
-    // builds of one library, say, with and without `-cov`.
-    string roleTag(const Parts p) @safe
-    {
-        if (!p.role.length)
-            return null;
-        const variants = variantsOf.get(p.kind ~ " " ~ p.pkg ~ " " ~ p.role, null);
-        return variants.length > 1 && p.key.length >= 6 ? "[" ~ p.role ~ " " ~ p.key[0 .. 6] ~ "]"
-            : "[" ~ p.role ~ "]";
-    }
-
     string displayOf(TaskIndex t) @safe
     {
         const p = parts[t.value];
         return p.kind.length ? p.kind ~ " " ~ p.pkg : (*graph)[t].id.text;
     }
+}
+
+// The row's columns: verb, package, variant, task, note, time.
+enum columns = 6;
+static immutable string[columns] headings = ["", "Package", "Variant", "Task", "Note", "Time"];
+
+/*
+Each column as wide as the plan's widest entry in it, so that every row
+lines up with the first: the verbs' column as wide as the status lines' (or
+the longest verb, boxed), the time's as $(LREF rowTime)'s widest. The note
+takes what the width leaves, so the time, right-aligned, ends each row at
+the terminal's right edge, as the live view's durations do.
+*/
+size_t[columns] columnWidths(const Parts[] parts, const StatusOptions options) @safe
+{
+    import std.algorithm.comparison : max;
+    import sparkles.base.status_line : displayWidth, verbColumns;
+
+    const boxed = options.table == TableStyle.boxed;
+    size_t[columns] w;
+    w[0] = boxed ? "Generated".length : verbColumns;
+    w[5] = "999.9ms".length;
+    foreach (c; 1 .. columns)
+        if (boxed)
+            w[c] = max(w[c], headings[c].length);
+    foreach (ref p; parts)
+    {
+        w[1] = max(w[1], displayWidth(p.pkg));
+        w[2] = max(w[2], p.variant.length);
+        w[3] = max(w[3], p.handle.length);
+    }
+    // A row is its columns and two gutters each; boxed, also the separators
+    // and the borders; clean, without the gutters at either end. It stops a
+    // column short of the edge, where a terminal would wrap.
+    const others = w[0 .. 4].sum + w[5];
+    const frame = boxed ? 2 * columns + columns + 1 : 2 * columns - 2;
+    const width = (options.width ? options.width : 100) - 1;
+    w[4] = width > others + frame + 16 ? width - others - frame : 16;
+    return w;
+}
+
+size_t sum(const size_t[] xs) @safe pure nothrow @nogc
+{
+    size_t n;
+    foreach (x; xs)
+        n += x;
+    return n;
+}
+
+// A row's note: its spans as a bare line, which spaces them.
+void writeNote(W)(ref W w, const(StatusSpan)[] spans, bool colour)
+{
+    writeStatusLine(w, StatusLine(null, Tone.plain, spans), colour);
 }
 
 /// A build-graph task id's parts: `kind:package:role:compiler:key[:leg]`.
@@ -381,8 +502,16 @@ struct Parts
     /// The task as a line's subject: its package, or its label.
     string name(string label) const @safe pure => pkg.length ? kind ~ " " ~ pkg : label;
 
-    /// `[role]`, or nothing.
-    string roleTag() const @safe pure => role.length ? "[" ~ role ~ "]" : null;
+    /// What the variant is: a test's leg, another task's role.
+    string variant() const @safe pure => kind == "test" && leg.length ? leg : role;
+
+    /**
+    The task's short handle, `kind:key[:leg]` (`compile:b70e70`), which `ci
+    cache explain` takes: the key cut to six digits. The key is the
+    variant's, so the kind and the leg tell its tasks apart.
+    */
+    string handle() const @safe pure => kind.length
+        ? kind ~ ":" ~ (key.length > 6 ? key[0 .. 6] : key) ~ (leg.length ? ":" ~ leg : "") : null;
 }
 
 /**
@@ -424,6 +553,39 @@ string testCounts(const(string)[] lines) @safe pure
 private:
 
 string count(size_t n, string what) @safe pure => text(n, " ", what, n == 1 ? "" : "s");
+
+/// A row's time: one decimal always, in ms below a second, then s, m, h —
+/// `423.0ms`, `8.9s`, `2.6m` — so the column's digits line up.
+string rowTime(Duration d) @safe
+{
+    import core.time : minutes, msecs, seconds, usecs;
+
+    auto w = appender!string;
+    // A unit is kept while the value rounds below its next one.
+    if (d < 999_950.usecs)
+        writeDuration!"msecs"(w, d, 1);
+    else if (d < 59_950.msecs)
+        writeDuration!"seconds"(w, d, 1);
+    else if (d < 59.minutes + 57.seconds)
+        writeDuration!"minutes"(w, d, 1);
+    else
+        writeDuration!"hours"(w, d, 1);
+    return w[];
+}
+
+/// The units step up where a value would round to the next one.
+@("task.reporter_status.rowTime.oneDecimal")
+@safe unittest
+{
+    import core.time : msecs, minutes, seconds, usecs;
+
+    assert(rowTime(2.msecs) == "2.0ms");
+    assert(rowTime(423.msecs) == "423.0ms");
+    assert(rowTime(999_960.usecs) == "1.0s");
+    assert(rowTime(8_940.msecs) == "8.9s");
+    assert(rowTime(156.seconds) == "2.6m");
+    assert(rowTime(90.minutes) == "1.5h");
+}
 
 string duration(Duration d) @safe
 {
@@ -491,6 +653,8 @@ string reasonText(E)(E reason) @safe
 {
     const p = Parts.of("test:sparkles.base:test-root:ldc:4da63ee800ca:serial");
     assert(p.kind == "test" && p.pkg == "base" && p.role == "test-root" && p.leg == "serial");
+    assert(p.variant == "serial" && p.handle == "test:4da63e:serial");
+    assert(Parts.of("compile:sparkles.wired:library:ldc:b70e707f743f").handle == "compile:b70e70");
     assert(Parts.of("check-sidebar").kind is null);
 }
 
@@ -510,59 +674,106 @@ public string taskName(const ref TaskGraph graph, TaskIndex t) @safe pure
     return p.kind ~ " " ~ p.pkg ~ (p.role.length ? " [" ~ p.role ~ "]" : "");
 }
 
-/// A scripted run reads as its status lines: what ran, a failure with the
-/// lines that explain it, the summary; the reused results and the fallback a
-/// run did not need only at trace (CIC19).
+/// A scripted run reads as its rows: what ran, a failure with the lines that
+/// explain it, the summary; the reused results and the fallback a run did
+/// not need only at trace (CIC19). Every row's columns line up, sized from
+/// the plan.
 @("task.reporter_status.StatusTranscript.aRunAsStatusLines")
 @system unittest
 {
-    import core.time : msecs;
-    import sparkles.base.status_line : StatusLine, writeStatusLine;
-    import sparkles.build_primitives.task.action : InertAction, TaskAction;
-    import sparkles.build_primitives.task.executor : ExecutorOptions;
-    import sparkles.build_primitives.task.testing : graphOf, runFake, Script;
-    import sparkles.test_runner.render : summaryLine;
+    const run = scriptedRun(TableStyle.clean);
+    assert(run.info[0 .. 5] == [
+        "     Testing base, ui with ldc2",
+        "    Compiled  ui    test-root  compile:5b1166        layout.d changed                         2.0ms",
+        "      Tested  base  parallel   test:6c2277:parallel  1078 passed, 4 skipped                   3.0ms",
+        "      Failed  ui    parallel   test:7d3388:parallel  1 failed, 311 passed                     4.0ms",
+        "✗ ui.broken",
+    ], run.info.join("\n"));
+    assert(run.info[5] == "    AssertError: no", "only what explains the failure");
+    assert(run.info[$ - 1].startsWith("      Failed ui (1 of 2 packages) in "), run.info[$ - 1]);
+    assert(run.info[$ - 1].endsWith("1 reused, 3 ran"), run.info[$ - 1]);
+    assert(run.trace == [
+        "      Reused  base  library    compile:4a0065",
+        "    Unneeded  ui    test-root  link:8e4499",
+    ], run.trace.join("\n"));
+}
 
-    enum lib = "compile:sparkles.base:library:ldc:4a0065aaaaaa";
-    enum cov = "compile:sparkles.ui:test-root:ldc:5b1166bbbbbb";
-    enum test = "test:sparkles.base:test-root:ldc:6c2277cccccc:parallel";
-    enum broken = "test:sparkles.ui:test-root:ldc:7d3388dddddd:parallel";
-    enum fallback = "link:sparkles.ui:test-root:ldc:8e4499eeeeee";
-    static TaskNode node(string id)
+/// Boxed, the same rows are framed and headed, and a failure's lines span
+/// the columns beneath its row.
+@("task.reporter_status.StatusTranscript.boxed")
+@system unittest
+{
+    import sparkles.base.text.grapheme : visibleWidth;
+
+    const run = scriptedRun(TableStyle.boxed, 96);
+    assert(run.info[0 .. $ - 1] == [
+        "     Testing base, ui with ldc2",
+        "╭───────────┬─────────┬───────────┬──────────────────────┬──────────────────────────┬─────────╮",
+        "│           │ Package │ Variant   │ Task                 │ Note                     │    Time │",
+        "┝━━━━━━━━━━━┿━━━━━━━━━┿━━━━━━━━━━━┿━━━━━━━━━━━━━━━━━━━━━━┿━━━━━━━━━━━━━━━━━━━━━━━━━━┿━━━━━━━━━┥",
+        "│  Compiled │ ui      │ test-root │ compile:5b1166       │ layout.d changed         │   2.0ms │",
+        "│    Tested │ base    │ parallel  │ test:6c2277:parallel │ 1078 passed, 4 skipped   │   3.0ms │",
+        "│    Failed │ ui      │ parallel  │ test:7d3388:parallel │ 1 failed, 311 passed     │   4.0ms │",
+        "│           │ ✗ ui.broken                                                                     │",
+        "│           │     AssertError: no                                                             │",
+        "╰───────────┴─────────┴───────────┴──────────────────────┴──────────────────────────┴─────────╯",
+    ], run.info.join("\n"));
+    assert(run.info[$ - 1].startsWith("      Failed ui (1 of 2 packages) in "), run.info[$ - 1]);
+    foreach (l; run.info[1 .. $ - 1])
+        assert(visibleWidth(l) == 95, l);
+}
+
+version (unittest)
+{
+    struct ScriptedLines
     {
-        const parts = id.split(":");
-        return TaskNode(taskId(parts).value, TaskKind.build, null, PresentationKey(0, id), ResourceClaim(1),
-            TaskAction(InertAction(id)));
+        string[] info, trace;
     }
 
-    auto g = graphOf([node(lib), node(cov), node(test), node(broken), node(fallback)], null);
-    auto run = runFake(g, [
-        lib: Script(1.msecs, reused: true),
-        cov: Script(2.msecs, freshness: Freshness(Freshness.Kind.stale, reason: StaleReason.inputChanged,
-            path: "libs/ui/src/sparkles/ui/layout.d")),
-        test: Script(3.msecs, lines: ["✓ base.one", summaryLine(1078, 0, 4)]),
-        broken: Script(4.msecs, TaskOutcome(Failed(FailureReason.exitStatus, 1)),
-            ["✓ ui.fine", "✗ ui.broken", "    AssertError: no", summaryLine(311, 1, 0)]),
-        fallback: Script(5.msecs, TaskOutcome(Blocked(BlockReason.conditionUnmet))),
-    ], ExecutorOptions(capacity: 1));
+    // `aRunAsStatusLines`'s run, as the lines the transcript writes.
+    ScriptedLines scriptedRun(TableStyle table, size_t width = 0)
+    {
+        import core.time : msecs;
+        import sparkles.base.status_line : StatusLine, writeStatusLine;
+        import sparkles.build_primitives.task.action : InertAction, TaskAction;
+        import sparkles.build_primitives.task.executor : ExecutorOptions;
+        import sparkles.build_primitives.task.testing : graphOf, runFake, Script;
+        import sparkles.test_runner.render : summaryLine;
 
-    string[] info, trace;
-    auto transcript = new StatusTranscript(&g, StatusOptions(packages: ["base", "ui"]),
-        (LogLevel level, const(char)[] verb, Tone tone, scope const(StatusSpan)[] spans) @safe {
-            auto w = appender!string;
-            writeStatusLine(w, StatusLine(verb, tone, spans), false);
-            (level == LogLevel.trace ? trace : info) ~= w[];
-        });
-    foreach (ref e; run.events)
-        transcript.onEvent(e);
-    transcript.finish();
+        enum lib = "compile:sparkles.base:library:ldc:4a0065aaaaaa";
+        enum cov = "compile:sparkles.ui:test-root:ldc:5b1166bbbbbb";
+        enum test = "test:sparkles.base:test-root:ldc:6c2277cccccc:parallel";
+        enum broken = "test:sparkles.ui:test-root:ldc:7d3388dddddd:parallel";
+        enum fallback = "link:sparkles.ui:test-root:ldc:8e4499eeeeee";
+        static TaskNode node(string id)
+        {
+            const parts = id.split(":");
+            return TaskNode(taskId(parts).value, TaskKind.build, null, PresentationKey(0, id), ResourceClaim(1),
+                TaskAction(InertAction(id)));
+        }
 
-    assert(info[0] == "     Testing base, ui with ldc2", info[0]);
-    assert(info[1] == "    Compiled ui [test-root]  2.0ms  layout.d changed", info[1]);
-    assert(info[2] == "      Tested base 1078 passed, 4 skipped  3.0ms", info[2]);
-    assert(info[3] == "      Failed ui 1 failed, 311 passed  4.0ms", info[3]);
-    assert(info[4 .. 6] == ["✗ ui.broken", "    AssertError: no"], "only what explains the failure");
-    assert(info[$ - 1].startsWith("      Failed ui (1 of 2 packages) in "), info[$ - 1]);
-    assert(info[$ - 1].endsWith("1 reused, 3 ran"), info[$ - 1]);
-    assert(trace == ["      Reused compile base [library]", "    Unneeded link ui [test-root]"]);
+        auto g = new TaskGraph;
+        *g = graphOf([node(lib), node(cov), node(test), node(broken), node(fallback)], null);
+        auto run = runFake(*g, [
+            lib: Script(1.msecs, reused: true),
+            cov: Script(2.msecs, freshness: Freshness(Freshness.Kind.stale, reason: StaleReason.inputChanged,
+                path: "libs/ui/src/sparkles/ui/layout.d")),
+            test: Script(3.msecs, lines: ["✓ base.one", summaryLine(1078, 0, 4)]),
+            broken: Script(4.msecs, TaskOutcome(Failed(FailureReason.exitStatus, 1)),
+                ["✓ ui.fine", "✗ ui.broken", "    AssertError: no", summaryLine(311, 1, 0)]),
+            fallback: Script(5.msecs, TaskOutcome(Blocked(BlockReason.conditionUnmet))),
+        ], ExecutorOptions(capacity: 1));
+
+        ScriptedLines lines;
+        auto transcript = new StatusTranscript(g, StatusOptions(packages: ["base", "ui"], table: table,
+            width: width), (LogLevel level, const(char)[] verb, Tone tone, scope const(StatusSpan)[] spans) @safe {
+                auto w = appender!string;
+                writeStatusLine(w, StatusLine(verb, tone, spans), false);
+                (level == LogLevel.trace ? lines.trace : lines.info) ~= w[];
+            });
+        foreach (ref e; run.events)
+            transcript.onEvent(e);
+        transcript.finish();
+        return lines;
+    }
 }

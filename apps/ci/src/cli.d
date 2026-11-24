@@ -271,6 +271,8 @@ void chooseLegs(TestLegs choice, bool placement, bool placementSerial, bool plac
     assert(s && !p, "--legs overrides the placement");
 }
 
+public import task.reporter_status : TableStyle;
+
 /// `ci test --output`: how a run on the build graph reports (TDO8).
 @WireCase(CaseStyle.kebabCase)
 enum TestOutput
@@ -386,6 +388,11 @@ struct TestCommand
         ~ "from the store, why each task ran, the host, the run directory."))
     TestOutput output;
 
+    @(Option(`table`,
+        description: "How the status lines' columns are drawn: clean aligns them, boxed frames, "
+        ~ "separates and heads them too."))
+    TableStyle table;
+
     @(Option(`timeline`,
         description: "In the live view, show the slowest tasks as a timeline when the terminal "
         ~ "has the room. On by default; --no-timeline turns it off."))
@@ -454,8 +461,8 @@ struct TestCommand
                 ~ "tests or --build-only";
         if (legs != TestLegs.auto_ && (sanitize != Sanitizer.off || slow || specialModes != SpecialModes.off))
             return "--legs chooses the ordinary tests' legs: a sanitized, slow or special-mode run has its own";
-        if (output != TestOutput.auto_ && (slow || specialModes != SpecialModes.off || watch))
-            return "--output chooses how the build graph reports: the ordinary or sanitized tests or "
+        if ((output != TestOutput.auto_ || table != TableStyle.clean) && (slow || specialModes != SpecialModes.off || watch))
+            return "--output and --table choose how the build graph reports: the ordinary or sanitized tests or "
                 ~ "--build-only";
         return null;
     }

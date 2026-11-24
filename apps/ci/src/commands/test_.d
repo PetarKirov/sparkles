@@ -271,7 +271,8 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
     const statusLines = cmd.output != TestOutput.plain;
     if (statusLines && !cmd.dryRun)
     {
-        import sparkles.base.term_caps : isTerminal, StdStream;
+        import console : consoleColour;
+        import sparkles.base.term_caps : isTerminal, StdStream, terminalSize;
         import sparkles.build_primitives.task.graph : TaskGraph;
         import sparkles.ci_provider : CiProvider;
         import task.reporter_live : LiveOptions, liveViewWanted, stdoutLiveView;
@@ -279,8 +280,10 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
 
         const ci = reporting.ci;
         const verb = buildOnly ? "Building" : "Testing";
+        const colour = consoleColour();
         reporting.transcript = (const(TaskGraph)* graph) => cast(Transcript) new StatusTranscript(graph,
-            StatusOptions(verb: verb, packages: names.dup, ci: ci));
+            StatusOptions(verb: verb, packages: names.dup, ci: ci, colour: colour, table: cmd.table,
+            width: terminalSize(StdStream.stderr).width));
         if (cmd.output != TestOutput.lines && liveViewWanted(cmd.output == TestOutput.live, false,
                 isTerminal() && isTerminal(StdStream.stderr), ci.provider != CiProvider.none))
             reporting.live = stdoutLiveView(LiveOptions(timeline: cmd.timeline));
