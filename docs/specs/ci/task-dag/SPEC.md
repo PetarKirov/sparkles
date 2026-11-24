@@ -110,6 +110,8 @@ Every command that executes a graph accepts:
 | `--jobs N`          | host-derived capacity | Positive weighted capacity available to running tasks. It is not a count of OS threads.                                                            |
 | `--interlaced`      | off                   | Stream line-atomic, task-prefixed output as events arrive instead of replaying complete task blocks in presentation order.                         |
 | `--dry-run`         | off                   | Discover, select, plan, validate, and print the DAG without running task actions, making network requests, creating directories, or writing files. |
+| `--output MODE`     | `auto`                | `ci test` only: `auto` draws the live view (CIC18) on a terminal outside CI, `live` always, `plain` never.                                         |
+| `--no-timeline`     | timeline on           | `ci test` only: leave the timeline out of the live view.                                                                                           |
 | `--fail-fast`       | off                   | On the first authoritative failure, stop admission and cancel the command scope.                                                                   |
 | `--log-level LEVEL` | `info`                | Standard Sparkles logger level.                                                                                                                    |
 
@@ -120,6 +122,20 @@ and an explicit `--jobs` wins over both. Both count weighted capacity units
 (TDM7), not concurrent tasks, so a workflow that meant two concurrent builds
 sets 4. Invalid combinations fail before any
 task runs. Repository workflows pass `--interlaced`.
+
+**CIC18: The live view.** On a terminal, `ci test` **must** keep the plain
+transcript and draw a live view beneath it (task-DAG TDO8), unless
+`--output plain` or a CI service says otherwise; `--output live` draws it
+anywhere. The view **must** show, from the top: the tasks still to finish as
+a tree, each under the task waiting on it, failures first, then the
+longest-running, fitted to its rows (`fitTree`); the failures, newest first,
+with the reason and the last lines of the newest; the slowest finished tasks
+and the running ones as a timeline, in the rows left, when the terminal is at
+least 50 columns wide, unless `--no-timeline`; and a tally of running,
+executed, reused, pending and failed tasks with the elapsed time. It is drawn
+with `sparkles:ui` widgets in the terminal's own 16 colours and erased once
+the transcript's summary is above it, so the scrollback is the same with the
+view or without it. `--output live` with `--dry-run` **must** be rejected.
 
 **CIC2: One-node graphs.** A command that is a single check, such as
 `ci check sidebar`, **must** plan a one-node graph. It runs through the
