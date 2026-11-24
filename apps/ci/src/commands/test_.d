@@ -259,8 +259,19 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
             if (const degradation = recorder.finish())
                 warning(i"$(degradation)");
 
-    const reporting = RunReporting(interlaced: cmd.interlaced, timings: true, dryRun: cmd.dryRun,
+    auto reporting = RunReporting(interlaced: cmd.interlaced, timings: true, dryRun: cmd.dryRun,
         ci: CiLog.detect(&systemEnvironment));
+    // TDO8: a live view beneath the transcript, on a terminal outside CI.
+    {
+        import sparkles.base.term_caps : isTerminal;
+        import sparkles.ci_provider : CiProvider;
+        import cli : TestOutput;
+        import task.reporter_live : LiveOptions, liveViewWanted, stdoutLiveView;
+
+        if (!cmd.dryRun && liveViewWanted(cmd.output == TestOutput.live, cmd.output == TestOutput.plain,
+                isTerminal(), reporting.ci.provider != CiProvider.none))
+            reporting.live = stdoutLiveView(LiveOptions(timeline: cmd.timeline));
+    }
     // CIC12 under a dry run: the actions that would fail, from BGS8's
     // explain, which executes and writes nothing.
     if (cmd.dryRun && cmd.requireCached.length)

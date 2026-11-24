@@ -19,6 +19,7 @@ import std.array : join;
 
 import sparkles.base.logger : initLogger, info, LogLevel;
 import sparkles.core_cli.args;
+import sparkles.wired : CaseStyle, WireCase;
 
 import app : applyLogLevel, logHostResources;
 import commands.check : runCheckAdHocSdl, runCheckBlobPathsCommand, runCheckCommitScope, runCheckCredits,
@@ -214,6 +215,15 @@ enum SpecialModes
     all,     /// both
 }
 
+/// `ci test --output`: how a run on the build graph reports (TDO8).
+@WireCase(CaseStyle.kebabCase)
+enum TestOutput
+{
+    auto_, /// live on a terminal outside CI, else plain
+    live,  /// the live view beneath the transcript
+    plain, /// the transcript alone
+}
+
 /// `ci test --sanitize`.
 enum Sanitizer
 {
@@ -304,6 +314,18 @@ struct TestCommand
         ~ "replaying whole task blocks in order."))
     bool interlaced;
 
+    @(Option(`output`,
+        description: "How the run reports: auto (the default) draws a live view of the running "
+        ~ "tasks, the failures and the slowest tasks beneath the transcript when stdout is a "
+        ~ "terminal outside CI; live always does; plain writes the transcript alone. Either way "
+        ~ "the scrollback holds the same transcript."))
+    TestOutput output;
+
+    @(Option(`timeline`,
+        description: "In the live view, show the slowest tasks as a timeline when the terminal "
+        ~ "has the room. On by default; --no-timeline turns it off."))
+    bool timeline = true;
+
     @(Option(`require-cached`,
         description: "Fail each build action of these kinds (compile, archive, link, generate) that "
         ~ "would execute instead of reusing a stored result, with why it missed. With --dry-run, "
@@ -360,9 +382,14 @@ struct TestCommand
             return "--jobs takes a positive capacity";
         if (dryRun && interlaced)
             return "--dry-run has no task output to interlace";
+        if (dryRun && output == TestOutput.live)
+            return "--dry-run runs nothing to draw live";
         if ((dryRun || interlaced || jobs.length) && (slow || specialModes != SpecialModes.off || watch))
             return "--jobs, --interlaced and --dry-run run on the build graph: the ordinary or sanitized "
                 ~ "tests or --build-only";
+        if (output != TestOutput.auto_ && (slow || specialModes != SpecialModes.off || watch))
+            return "--output chooses how the build graph reports: the ordinary or sanitized tests or "
+                ~ "--build-only";
         return null;
     }
 }
@@ -416,6 +443,9 @@ unittest
     assert(TestCommand(jobs: "-2").conflict == "--jobs takes a positive capacity");
     assert(TestCommand(jobs: "4").conflict is null);
     assert(TestCommand(dryRun: true, interlaced: true).conflict == "--dry-run has no task output to interlace");
+    assert(TestCommand(dryRun: true, output: TestOutput.live).conflict !is null);
+    assert(TestCommand(slow: true, output: TestOutput.plain).conflict !is null);
+    assert(TestCommand(output: TestOutput.live, timeline: false).conflict is null);
     assert(TestCommand(dryRun: true, buildOnly: true).conflict is null);
     assert(TestCommand(slow: true, interlaced: true).conflict !is null);
     // §4: focused selection runs on the graph, without a placement.
