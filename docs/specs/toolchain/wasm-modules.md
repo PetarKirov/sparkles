@@ -40,7 +40,10 @@ any library it uses rebuilds or fails it like any other dub program.
 
 **TCM2: Checked like other programs.** _(Owner: `sparkles:ci`.)_ The modules
 **must** be built by `ci commits build-each` and by the flake's aggregate
-build on every supported host of [TC21](./SPEC.md#_8-platforms-tests-and-caches).
+build on every supported host of [TC21](./SPEC.md#_8-platforms-tests-and-caches),
+and each module **must** be the same bytes on every one of those hosts. A
+module is built for the WASI host platform, so its package **must** declare
+that platform, not the hosts that build it.
 
 **TCM3: Built, not committed.** _(Owner: `sparkles:docs`.)_ The site build
 **must** build every module from the tree it publishes; no module binary
