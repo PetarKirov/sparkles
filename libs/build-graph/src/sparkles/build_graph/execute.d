@@ -1188,8 +1188,10 @@ struct ActionDriver
                 }
                 foreach (e; env)
                     s ~= envLine(e.name, e.value, e.redacted);
-                // D61: a test names the programs it runs by their outputs digests.
-                if (a.kind == ActionKind.test)
+                // D61: a test names the programs it runs by their outputs
+                // digests; a build action keys what it adds to the fixed
+                // environment (DMD's `$CC`, a Darwin link's `ZERO_AR_DATE`).
+                if (env !is p.envDelta)
                     foreach (e; p.envDelta)
                         s ~= envLine(e.name, normalized(e.value), e.redacted);
                 s ~= "cwd " ~ p.cwd ~ "\n";
