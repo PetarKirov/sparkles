@@ -112,6 +112,7 @@ Every command that executes a graph accepts:
 | `--dry-run`         | off                   | Discover, select, plan, validate, and print the DAG without running task actions, making network requests, creating directories, or writing files. |
 | `--output MODE`     | `auto`                | `ci test` only: `auto` draws the live view (CIC18) on a terminal outside CI, `live` always, `plain` never.                                         |
 | `--no-timeline`     | timeline on           | `ci test` only: leave the timeline out of the live view.                                                                                           |
+| `--legs LEGS`       | `auto`                | `ci test` only: the ordinary tests' legs (CIC6). `auto` runs the placement's, or `-t N` alone; `parallel`, `serial` or `both` overrides.           |
 | `--fail-fast`       | off                   | On the first authoritative failure, stop admission and cancel the command scope.                                                                   |
 | `--log-level LEVEL` | `info`                | Standard Sparkles logger level.                                                                                                                    |
 
@@ -460,8 +461,9 @@ leg runs tests on worker threads under the stack watermark, so a test that
 overflows a worker's stack cannot hide on the main thread, and a test that
 needs the main thread is marked `@serial(threadAffinity: mainThread)` and runs
 there in the same leg (TRS2). A sanitizer test runs one `-t N` leg on 4 MiB
-workers. Without a placement, as on a developer's machine, both legs run
-([OD22](../../build-primitives/observability/decisions.md#od22-one-placement-runs-the-serial-leg-and-collects-coverage-accepted)).
+workers. Without a placement, as on a developer's machine, the `-t N` leg runs
+alone; `--legs parallel|serial|both` names the legs instead, with or without a
+placement ([OD22](../../build-primitives/observability/decisions.md#od22-one-placement-runs-the-serial-leg-and-collects-coverage-accepted)).
 
 **CIC11: Tests through the runner core.** ci **must** run a test binary through
 the test runner's core library, never through the standalone runner or dub
