@@ -174,7 +174,7 @@ void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
                 canvas.fillRect(op.rect, op.visual);
                 break;
             case textRun:
-                canvas.textRun(op.rect.origin, op.text, op.visual);
+                canvas.textRun(runOrigin(op), op.text, op.visual);
                 break;
             case glyph:
                 canvas.glyph(op.rect.origin, op.glyph, op.visual);
@@ -1405,6 +1405,47 @@ static assert(isCanvas!GridCanvas);
                             "the two semantic-scrollbar cell fallbacks disagree");
                     }
             }
+}
+
+/*
+Where a text run starts: a run narrower than the cells its widget gave it
+sits where the widget aligns its text (`Visual.textAlign`), as a backend
+that draws proportional text places it — a duration right-aligned in its
+column ends at the column's edge, not two cells short.
+*/
+private Point runOrigin(in DrawOp op) @safe
+{
+    import sparkles.base.text.grapheme : visibleWidth;
+    import sparkles.ui.widget : Alignment;
+
+    const slack = op.rect.width - cast(int) visibleWidth(op.text);
+    if (slack <= 0)
+        return op.rect.origin;
+    const align_ = cast(Alignment) op.visual.textAlign;
+    const dx = align_ == Alignment.end ? slack : align_ == Alignment.center ? slack / 2 : 0;
+    return Point(op.rect.x + dx, op.rect.y);
+}
+
+/// A run aligned to the end of a wider rect ends at its right edge; one
+/// centred sits in the middle; a start-aligned one stays where it was.
+@("ui_tui.grid_canvas.aRunSitsWhereItsWidgetAlignsIt")
+@safe unittest
+{
+    import sparkles.ui.canvas : textRunOp;
+    import sparkles.ui.style : Slot;
+    import sparkles.ui.widget : Alignment;
+
+    foreach (align_, x; [Alignment.start: ushort(0), Alignment.center: ushort(1), Alignment.end: ushort(2)])
+    {
+        Grid g;
+        g.resize(8, 1);
+        Visual v;
+        v.textAlign = align_;
+        const DrawOp[1] ops = [textRunOp(Rect(0, 0, 6, 1), "4.0s", Slot.inherit, v)];
+        paintGrid(g, RgbColor(0, 0, 0), ops[]);
+        assert(g[x, 0].grapheme == "4" && g[cast(ushort)(x + 3), 0].grapheme == "s",
+            "the run starts where it is aligned");
+    }
 }
 
 @("ui_tui.grid_canvas.anOpaqueSurfaceHidesTheDecorationBeneathIt")
