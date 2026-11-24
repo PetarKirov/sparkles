@@ -410,6 +410,9 @@ requests them as variant options. The declared environment **must**:
 - set `TMPDIR` to the action's own measurement directory, since the C driver
   an LDC link runs writes temporary files there
   ([D39](./decisions.md#d39-a-spike-on-write-and-network-isolation-accepted)).
+- set `ZERO_AR_DATE=1` for a Darwin link, since ld64 otherwise records each
+  object file's modification time in the debug map (its `N_OSO` entries),
+  and an object written again with the same bytes would change the binary.
 
 A compile or link **must** name its C compiler driver and its linker by
 absolute path (`-gcc=` and `--linker=` on LDC). They are the files toolchain
