@@ -876,7 +876,11 @@ it as one of:
 3. **evicted:** a manifest matches, but its result is gone and no record
    serves the lookup.
 
-Each miss is reported with its class. `ci cache explain <task>` plans the task
+Each miss is reported with its class. `ci cache explain <task>` plans the
+selection the last `ci test` beneath the store recorded (its packages, legs
+and coverage, so that its task ids and keys are that run's), or every
+package when none is recorded; it takes an id, a prefix of one, or a task's
+handle (`compile:b70e70`, a key prefix with the kind and leg); and it plans the task
 and prints the classification of its lookup against the current tree and
 store, executing nothing. A value marked redacted (TDM4) **must** appear in a
 preimage only as a digest keyed with a secret private to the store, so that
