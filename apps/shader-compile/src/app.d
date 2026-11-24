@@ -45,7 +45,7 @@ import std.algorithm : all, any, canFind, endsWith, filter, find, map, sort, spl
 import std.ascii : isDigit;
 import std.array : array, join, replace, split;
 import std.conv : text, to;
-import std.file : DirEntry, dirEntries, exists, FileException, isFile, mkdirRecurse, read, readText,
+import std.file : DirEntry, dirEntries, exists, FileException, getcwd, isFile, mkdirRecurse, read, readText,
     remove, rmdirRecurse, SpanMode, tempDir, write;
 import std.format : format;
 import std.json : JSONValue, parseJSON;
@@ -170,6 +170,28 @@ private string[] dedup(string[] items)
     const unit = unitOf(DeviceBuild(sources: [entries, host, shared_, root.buildPath("gone.d")]));
     assert(unit.deviceOnly == [entries]);
     assert(unit.sources == [entries, shared_]);
+}
+
+/**
+A device description with `$ROOT` (a build graph's, the same in every worktree,
+build-graph BGG3) resolved to `root`, the repository root the tool runs in.
+The path is written as a JSON string's contents.
+*/
+string withRoot(string description, string root) @safe
+{
+    const quoted = JSONValue(root).toString;
+    return description.replace("$ROOT", quoted[1 .. $ - 1]);
+}
+
+///
+@("shaderCompile.withRoot.resolvesTheRootPlaceholder")
+@safe unittest
+{
+    assert(parseJSON(withRoot(`{"path":"$ROOT/libs/ui"}`, "/w/sparkles"))["path"].str == "/w/sparkles/libs/ui");
+    // A root that needs escaping in JSON stays one string.
+    assert(parseJSON(withRoot(`{"path":"$ROOT/libs/ui"}`, `/w/a"b`))["path"].str == `/w/a"b/libs/ui`);
+    // A description without the placeholder is left as it is.
+    assert(withRoot(`{"path":"/abs/ui"}`, "/w") == `{"path":"/abs/ui"}`);
 }
 
 @("shaderCompile.parseDescribe.rootSettingsAndEverySource")
@@ -318,7 +340,7 @@ int main(string[] args)
         // A build graph's direct invocation: it resolved the configuration
         // itself, and the tool reads no recipe.
         try
-            description = readText(described);
+            description = withRoot(readText(described), getcwd());
         catch (FileException e)
         {
             stderr.writefln("shader-compile: cannot read --described=%s: %s", described, e.msg);

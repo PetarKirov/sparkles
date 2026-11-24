@@ -152,9 +152,15 @@ TaskNode[] executionNodes(ref const ActionGraph g, const RunLayout layout, const
                 return TaskAction(q);
             },
             (ref const InProcessAction i) {
+                // `generate:file` writes its contents as given: they are keyed
+                // as written, placeholders and all (`$ROOT` in a device
+                // description), so a result one worktree publishes holds no
+                // path of that worktree, and the tool that reads the file
+                // resolves them. Only the file's own path is expanded.
+                const verbatimFrom = i.handler == "generate:file" ? 1 : size_t.max;
                 string[] arguments;
-                foreach (arg; i.arguments)
-                    arguments ~= expand(arg, layout, id);
+                foreach (n, arg; i.arguments)
+                    arguments ~= n >= verbatimFrom ? arg : expand(arg, layout, id);
                 return TaskAction(InProcessAction(i.handler, arguments));
             },
             (ref const InertAction x) => TaskAction(InertAction(x.note)));
@@ -1190,6 +1196,10 @@ struct ActionDriver
             },
             (ref const InProcessAction i) {
                 s ~= "handler " ~ i.handler ~ "\n";
+                // Results from before its contents were written as given hold
+                // the publishing worktree's paths: this line keys them apart.
+                if (i.handler == "generate:file")
+                    s ~= "contents as-given\n";
                 foreach (arg; i.arguments)
                     s ~= "arg " ~ normalized(arg) ~ "\n";
                 // The test-root module reads the tested sources it names.
