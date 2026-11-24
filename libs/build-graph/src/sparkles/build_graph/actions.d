@@ -656,9 +656,21 @@ bool archivesItself(ref const Variant v) @safe pure nothrow @nogc
 string archiveName(ref const Variant v) @safe pure nothrow => "lib" ~ baseName(v) ~ ".a";
 
 /// A link's planned environment: DMD finds its C driver only through `$CC`,
+/// a Darwin link records no object's time (`ZERO_AR_DATE`),
 /// and a build action's `PATH` is empty (BGA4).
 EnvEntry[] linkEnvironment(ref const Variant v, const Tools tools) @safe pure nothrow
-    => v.platform.compiler != "ldc" && tools.cc.length ? [EnvEntry("CC", tools.cc)] : null;
+{
+    EnvEntry[] env;
+    if (v.platform.compiler != "ldc" && tools.cc.length)
+        env ~= EnvEntry("CC", tools.cc);
+    // ld64 records each loose object's modification time in the debug map
+    // (its `N_OSO` entries), so a link of the same objects written at another
+    // time differs: `ZERO_AR_DATE=1` records 0, as it already does for an
+    // archive's members, and `dsymutil` then checks no time.
+    if (darwinLink(v))
+        env ~= EnvEntry("ZERO_AR_DATE", "1");
+    return env;
+}
 string binaryName(ref const Variant v) @safe pure nothrow => baseName(v);
 
 string inputPath(TaskId producer, string path) @safe pure nothrow => "$IN(" ~ producer.text ~ ")/" ~ path;
@@ -1299,7 +1311,8 @@ version (unittest)
 @safe unittest
 {
     // A Darwin link runs in its run directory and names its debug map's
-    // objects and its binary from there; elsewhere a link runs in the root, unchanged.
+    // objects and its binary from there, with no object's time in the map;
+    // elsewhere a link runs in the root, unchanged.
     foreach (darwin; [false, true])
     {
         const g = graphWith([[":t1", "unittest"]], null, Tools.init, null,
@@ -1312,6 +1325,8 @@ version (unittest)
                     assert(p.cwd == (darwin ? "$RUN" : null), p.cwd);
                     assert(p.argv.canFind("-L-oso_prefix") == darwin, text(p.argv));
                     assert(p.argv.canFind!(x => x.startsWith("-of=$OUTREL/")) == darwin, text(p.argv));
+                    assert(p.envDelta.canFind!(e => e.name == "ZERO_AR_DATE" && e.value == "1") == darwin,
+                        text(p.envDelta));
                 }, (_) {});
         assert(links);
     }
