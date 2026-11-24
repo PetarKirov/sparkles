@@ -103,6 +103,33 @@ void writeStatusLine(Writer)(ref Writer w, in StatusLine line, bool colour)
     }
 }
 
+/**
+Writes one span, or one verb, alone: styled as a line would style it, with
+no padding and no spacing. What a caller that lays a line's parts out
+itself (in a table's columns) writes each part with.
+*/
+void writeSpan(Writer)(ref Writer w, in StatusSpan span, bool colour)
+{
+    writeStyled(w, span.text, roleStyle(span.role), colour);
+}
+
+/// ditto
+void writeVerb(Writer)(ref Writer w, scope const(char)[] verb, Tone tone, bool colour)
+{
+    writeStyled(w, verb, toneStyle(tone), colour);
+}
+
+/// A part alone is styled as in a line, and nothing more.
+@("base.status_line.writeSpan.alone")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.base.buffer : checkWriter;
+
+    checkWriter!((ref b) => writeSpan(b, tag("library"), true))("\x1b[34mlibrary\x1b[0m");
+    checkWriter!((ref b) => writeSpan(b, tag("library"), false))("library");
+    checkWriter!((ref b) => writeVerb(b, "Compiled", Tone.success, true))("\x1b[1;32mCompiled\x1b[0m");
+}
+
 /// The display columns of `text`: its code points, which is exact for the
 /// verbs and labels a line carries (no wide or combining characters).
 size_t displayWidth(scope const(char)[] text) pure nothrow @nogc

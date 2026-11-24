@@ -43,6 +43,9 @@ its tone's colour and each span in its role's, each run followed by a reset;
 the colours are the terminal's sixteen (green success, red failure, yellow
 warning, blue information, bright black muted), so a line reads the same on a
 light terminal and a dark one. Without colour the line is its text alone.
+`writeSpan` and `writeVerb` **must** write one span or one verb styled the
+same way, with no padding or spacing, for a caller that lays a line's parts
+out in columns itself.
 
 **CON2: Status through the logger.** `status(verb, tone, spans…)` **must**
 report a line through the installed logger at a level, `info` by default: a
@@ -58,8 +61,8 @@ never a colour or an escape sequence.
 
 ## 3. Traceability
 
-| ID   | Status | Evidence                                                                                 |
-| ---- | ------ | ---------------------------------------------------------------------------------------- |
-| CON1 | full   | `base.status_line.writeStatusLine.plain`, `base.status_line.writeStatusLine.colour`      |
-| CON2 | full   | `log_sinks.status.plainTextElsewhere`; `ci`'s sink: `console.writeRecord.levelAsTheVerb` |
-| CON3 | full   | `sparkles.base.status_line` exports no colour: `Tone`, `SpanRole`                        |
+| ID   | Status | Evidence                                                                                                                |
+| ---- | ------ | ----------------------------------------------------------------------------------------------------------------------- |
+| CON1 | full   | `base.status_line.writeStatusLine.plain`, `base.status_line.writeStatusLine.colour`, `base.status_line.writeSpan.alone` |
+| CON2 | full   | `log_sinks.status.plainTextElsewhere`; `ci`'s sink: `console.writeRecord.levelAsTheVerb`                                |
+| CON3 | full   | `sparkles.base.status_line` exports no colour: `Tone`, `SpanRole`                                                       |
