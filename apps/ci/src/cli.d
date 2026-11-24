@@ -215,6 +215,60 @@ enum SpecialModes
     all,     /// both
 }
 
+/// `ci test --legs`: which legs an ordinary test runs (CIC6).
+@WireCase(CaseStyle.kebabCase)
+enum TestLegs
+{
+    auto_,    /// the placement's legs; without a placement, `-t N` alone
+    parallel, /// `-t N` alone
+    serial,   /// `-t 1` alone, each test on its worker's main thread
+    both,     /// `-t 1`, then `-t N`
+}
+
+/**
+Whether a run of ordinary tests runs the `-t 1` leg and the `-t N` one: what
+`choice` names, or under `auto` what the placement names (`placement` false:
+none was given, and the parallel leg runs alone).
+*/
+void chooseLegs(TestLegs choice, bool placement, bool placementSerial, bool placementParallel,
+    out bool serial, out bool parallel) @safe pure nothrow @nogc
+{
+    final switch (choice)
+    {
+    case TestLegs.auto_:
+        serial = placement && placementSerial;
+        parallel = placement ? placementParallel : true;
+        break;
+    case TestLegs.parallel:
+        parallel = true;
+        break;
+    case TestLegs.serial:
+        serial = true;
+        break;
+    case TestLegs.both:
+        serial = parallel = true;
+        break;
+    }
+}
+
+/// Locally the parallel leg runs alone; a placement keeps its own legs unless
+/// `--legs` names others.
+@("cli.chooseLegs.placementOrParallel")
+@safe pure nothrow @nogc unittest
+{
+    bool s, p;
+    chooseLegs(TestLegs.auto_, false, false, false, s, p);
+    assert(!s && p, "no placement: -t N alone");
+    chooseLegs(TestLegs.auto_, true, true, true, s, p);
+    assert(s && p, "the placement's legs");
+    chooseLegs(TestLegs.auto_, true, false, true, s, p);
+    assert(!s && p);
+    chooseLegs(TestLegs.both, false, false, false, s, p);
+    assert(s && p);
+    chooseLegs(TestLegs.serial, true, true, true, s, p);
+    assert(s && !p, "--legs overrides the placement");
+}
+
 /// `ci test --output`: how a run on the build graph reports (TDO8).
 @WireCase(CaseStyle.kebabCase)
 enum TestOutput
@@ -314,6 +368,12 @@ struct TestCommand
         ~ "replaying whole task blocks in order."))
     bool interlaced;
 
+    @(Option(`legs`,
+        description: "Which legs the ordinary tests run: auto (the default) runs the --placement's "
+        ~ "legs, or -t N alone without one; parallel runs -t N alone; serial runs -t 1, each test "
+        ~ "on its worker's main thread; both runs -t 1 and then -t N."))
+    TestLegs legs;
+
     @(Option(`output`,
         description: "How the run reports: auto (the default) draws a live view of the running "
         ~ "tasks, the failures and the slowest tasks beneath the transcript when stdout is a "
@@ -387,6 +447,8 @@ struct TestCommand
         if ((dryRun || interlaced || jobs.length) && (slow || specialModes != SpecialModes.off || watch))
             return "--jobs, --interlaced and --dry-run run on the build graph: the ordinary or sanitized "
                 ~ "tests or --build-only";
+        if (legs != TestLegs.auto_ && (sanitize != Sanitizer.off || slow || specialModes != SpecialModes.off))
+            return "--legs chooses the ordinary tests' legs: a sanitized, slow or special-mode run has its own";
         if (output != TestOutput.auto_ && (slow || specialModes != SpecialModes.off || watch))
             return "--output chooses how the build graph reports: the ordinary or sanitized tests or "
                 ~ "--build-only";
@@ -446,6 +508,9 @@ unittest
     assert(TestCommand(dryRun: true, output: TestOutput.live).conflict !is null);
     assert(TestCommand(slow: true, output: TestOutput.plain).conflict !is null);
     assert(TestCommand(output: TestOutput.live, timeline: false).conflict is null);
+    assert(TestCommand(legs: TestLegs.both, sanitize: Sanitizer.address).conflict !is null);
+    assert(TestCommand(legs: TestLegs.serial, slow: true).conflict !is null);
+    assert(TestCommand(legs: TestLegs.both).conflict is null);
     assert(TestCommand(dryRun: true, buildOnly: true).conflict is null);
     assert(TestCommand(slow: true, interlaced: true).conflict !is null);
     // §4: focused selection runs on the graph, without a placement.

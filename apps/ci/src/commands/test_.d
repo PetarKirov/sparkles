@@ -3,7 +3,7 @@
 /// variants, and the placement of a run's shard.
 module commands.test_;
 
-import cli : Sanitizer, SpecialModes, TestCommand;
+import cli : Sanitizer, SpecialModes, TestCommand, chooseLegs;
 import commands.files : detectRepoRoot;
 import commands.maintenance : seedDubHome;
 import commands.output :
@@ -207,20 +207,24 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
         return failRun("could not resolve the requested sub-packages");
     if (where.shard.length && !narrowToShard(repoRoot, requested, where, subPackages))
         return failRun("could not narrow the sub-packages to shard " ~ where.shard);
-    // A placement chooses its legs and whether it collects coverage (OD22).
-    bool serialLeg = true, parallelLeg = true;
+    // A placement chooses its legs and whether it collects coverage (OD22);
+    // `--legs` overrides the legs, and without either `-t N` runs alone.
+    bool placementSerial, placementParallel;
     if (where.placement.length && !sanitize)
     {
         auto loaded = loadPlacements(repoRoot);
         const p = loaded.hasError ? null : loaded.value.find(where.placement);
         if (p is null)
             return failRun(text(i"$(loaded.hasError ? loaded.error : "ci/placements.json has no placement " ~ where.placement)"));
-        serialLeg = p.serialLeg;
-        parallelLeg = p.parallelLeg;
+        placementSerial = p.serialLeg;
+        placementParallel = p.parallelLeg;
         if (coverage && !p.coverage)
             info(i"$(where.placement) collects no coverage; testing without -cov");
         coverage = coverage && p.coverage;
     }
+    bool serialLeg, parallelLeg;
+    chooseLegs(cmd.legs, where.placement.length && !sanitize, placementSerial, placementParallel,
+        serialLeg, parallelLeg);
     coverage = coverage && !buildOnly;
     // CIC1: the capacity in weighted units: `--jobs`, `$SPARKLES_CI_JOBS`,
     // the host's processors.

@@ -508,6 +508,9 @@ passes only on the main thread's larger stack, in one process.
 - `ci/placements.json` states both per placement, as `legs` and `coverage`. A
   placement that names no legs runs the parallel one alone, and one that does
   not ask for coverage collects none.
+- A run without a placement, as on a developer's machine, runs the parallel
+  leg alone too (amended by the owner on 2026-11-24); `ci test --legs` names
+  other legs for any run.
 
 **Trade-offs.** A defect that only the main thread's stack hides now shows on
 one placement, not on four. On the coverage placement the `-t N` leg's
