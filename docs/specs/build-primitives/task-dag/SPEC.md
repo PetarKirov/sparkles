@@ -564,6 +564,8 @@ shortest discovered cycle, with ids ordered from its lowest member.
 user-facing stdout and stderr streams. Logger records that are part of task
 presentation enter the event channel rather than being written from workers.
 So every emitted line is atomic, and terminal control sequences have one owner.
+A live view's redraw between events (TDO8) runs on a fiber of the reporter's
+scheduler, so it never overlaps the handling of an event.
 
 ### 7.2 Interactive TTY
 
@@ -584,6 +586,21 @@ library this package does not import. `apps/ci`'s reporter adapts
   cleanup.
 
 It **may** collapse pending tasks past a height limit, with visible counts.
+
+**TDO8: A live view beside the transcript.** A command writing to a terminal
+**may** keep the plain transcript (TDO3, TDO4) and add a live view beneath it,
+instead of a TTY reporter of its own. Then:
+
+- the transcript's lines **must** print above the view as the plain reporter
+  releases them, unchanged, so the scrollback holds exactly what a run without
+  a terminal writes;
+- the view sees every event after the transcript has, and redraws between
+  events at most every 100 ms, so running times move;
+- `finish` ends the transcript first, then the view, which restores the
+  terminal as protected cleanup.
+
+The view is the consumer's, like the TTY reporter; this package defines only
+the seam (`LiveView`) and the reporter that drives both.
 
 ### 7.3 Non-TTY default
 

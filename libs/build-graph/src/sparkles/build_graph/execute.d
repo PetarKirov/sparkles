@@ -340,8 +340,9 @@ string moduleNameOf(string relativePath, const(char)[] source, scope const(strin
 version (Posix):
 
 import sparkles.build_primitives.task.executor : RunResult, TaskContext;
+import sparkles.build_primitives.task.live_view : LiveView, TranscriptLines, WithLiveView;
 import sparkles.build_primitives.task.model : TaskOutcome;
-import sparkles.build_primitives.task.process : InProcessHandler, ProcessDriver, ProcessDriverOptions;
+import sparkles.build_primitives.task.process : EventChannel, InProcessHandler, ProcessDriver, ProcessDriverOptions;
 import sparkles.event_horizon.sched : Sched;
 import sparkles.build_graph.store : Manifest, ManifestEntry, OutputRecord, ResultRecord, Store,
     preimageDifferences, differences,
@@ -734,6 +735,7 @@ struct ActionDriver
             if (auto hit = lookup(**a, declared))
                 if (adopt(id, *hit))
                 {
+                    ctx.reused();
                     stats.count(kind, true);
                     stats.resultKeys[id.text] = hit.resultKey;
                     if (hit.status == 0)
@@ -754,6 +756,7 @@ struct ActionDriver
             // them.
             if (auto r = recordedResult(**a, declared))
             {
+                ctx.reused();
                 recorded[id.text] = Recorded(declared, preimage);
                 outputsDigestOf[id.text] = r.outputsDigest;
                 stats.count(kind, true);
@@ -1909,12 +1912,18 @@ struct ActionDriver
 /// all. The default is a deterministic transcript without timings.
 struct RunReporting
 {
+    import sparkles.build_primitives.task.graph : TaskGraph;
+    import sparkles.build_primitives.task.live_view : LiveView;
     import sparkles.ci_provider : CiLog;
 
     bool interlaced; /// lines as they arrive, not ordered blocks
     bool timings;    /// elapsed times per task and for the run
     bool dryRun;     /// print the plan; run nothing
     CiLog ci;        /// the CI provider's groups and masks
+    /// A view redrawn beneath the transcript (TDO2), made once the graph is
+    /// built; the transcript's lines then go to it instead of the writer.
+    /// `null` writes the transcript alone.
+    LiveView delegate(const(TaskGraph)*) live;
 }
 
 /**
@@ -1931,12 +1940,10 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
 {
     import sparkles.build_primitives.task.executor : ExecutorOptions, runGraph;
     import sparkles.build_primitives.task.graph : TaskGraphBuilder;
-    import sparkles.build_primitives.task.process : EventChannel, MonotonicClock;
-    import sparkles.build_primitives.task.reporter : consumeEvents;
+    import sparkles.build_primitives.task.process : MonotonicClock;
     import sparkles.build_primitives.task.reporter_plain : PlainOptions, PlainReporter;
     import sparkles.event_horizon.loop : LoopConfig;
     import sparkles.event_horizon.sched : SchedOptions;
-    import sparkles.event_horizon.scope_ : withScope;
 
     TaskGraphBuilder builder;
     foreach (n; nodes)
@@ -1974,24 +1981,73 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
     // The client's own in-process actions: ci's test actions (CIC11).
     foreach (name, handler; handlers)
         driver.processes.register(name, handler);
-    auto reporter = PlainReporter!W(&writer, &graph,
-        PlainOptions(interlaced: reporting.interlaced, timings: reporting.timings, ci: reporting.ci));
+    const options = PlainOptions(interlaced: reporting.interlaced, timings: reporting.timings, ci: reporting.ci);
     auto sink = new EventChannel;
     MonotonicClock clock;
     RunResult result;
+    void work()
+    {
+        result = runGraph(s, clock, graph, *driver, *sink, ExecutorOptions(capacity: capacity, failFast: failFast));
+        driver.finish();
+    }
+    bool ran;
+    if (reporting.live is null)
+    {
+        auto reporter = PlainReporter!W(&writer, &graph, options);
+        ran = runReported(s, reporter, sink, null, &work);
+    }
+    else
+    {
+        auto view = reporting.live(&graph);
+        auto lines = TranscriptLines(view);
+        auto transcript = PlainReporter!TranscriptLines(&lines, &graph, options);
+        auto reporter = WithLiveView!(typeof(transcript))(&transcript, &lines, view);
+        ran = runReported(s, reporter, sink, view, &work);
+    }
+    if (stats !is null)
+        *stats = driver.stats;
+    if (!ran)
+        return RunResult(exitCode: 2);
+    return result;
+}
+
+/// Runs `work` on `s` beside the fiber that hands the run's events to
+/// `reporter`, and, with a live `view`, one that redraws it between events.
+/// `false` when the scheduler failed.
+private bool runReported(R)(ref Sched s, ref R reporter, EventChannel* sink, LiveView view,
+    scope void delegate() work)
+{
+    import sparkles.build_primitives.task.reporter : consumeEvents;
+    import sparkles.event_horizon.scope_ : withScope;
+
+    bool working = true;
     auto ran = s.run(() {
         cast(void) withScope!((ref sc) {
             sc.spawn(() { consumeEvents(s, *sink, reporter); });
-            result = runGraph(s, clock, graph, *driver, *sink, ExecutorOptions(capacity: capacity, failFast: failFast));
-            driver.finish();
+            if (view !is null)
+                sc.spawn(() { tickLiveView(s, view, &working); });
+            work();
+            working = false;
             sink.close();
         })(s);
     });
-    if (stats !is null)
-        *stats = driver.stats;
-    if (ran.hasError)
-        return RunResult(exitCode: 2);
-    return result;
+    return !ran.hasError;
+}
+
+/// Redraws `view` every 100 ms while `*working`, so running times move when
+/// no event arrives; a cancellation ends the sleep, and with it the ticking.
+private void tickLiveView(ref Sched s, LiveView view, const(bool)* working)
+{
+    import core.time : msecs;
+    import sparkles.event_horizon.io : sleep;
+
+    while (*working)
+    {
+        if (sleep(s, 100.msecs).hasError)
+            return;
+        if (*working)
+            view.tick();
+    }
 }
 
 @("build_graph.execute.expand.outRelative")
