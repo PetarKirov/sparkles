@@ -53,6 +53,8 @@ fresh parse of the host.
 
 module sparkles.wired_bench.sdl;
 
+import core.lifetime : move;
+
 import std.algorithm.iteration : map;
 import std.algorithm.sorting : sort;
 import std.array : array;
@@ -439,6 +441,14 @@ private void skipIfEmpty(size_t registered, string operation)
 
 // ── Rows ─────────────────────────────────────────────────────────────────────
 
+/// Registers one row over `corpus`, its throughput counted over `bytes`.
+private void register(C)(C aCase, in SdlCorpus corpus, string operation, size_t bytes,
+    string name = "wired")
+{
+    benchCase(move(aCase), name: name, labels: labelsFor(corpus, operation),
+        metrics: [inputBytes(bytes)]);
+}
+
 @("sdl.parse")
 @benchmark
 @system
@@ -449,13 +459,14 @@ unittest
     {
         if (sdlEngineEnabled("wired"))
         {
-            registerParse(corpus);
+            register(ParseCase(corpus), corpus, "parse", corpus.bytes);
             registered++;
         }
         version (BenchDubSdlang)
             if (corpus.dubReadable && sdlEngineEnabled("dub-sdlang"))
             {
-                registerDubParse(corpus);
+                register(DubParseCase(corpus), corpus, "parse", corpus.bytes,
+                    name: "dub-sdlang");
                 registered++;
             }
     }
@@ -472,9 +483,9 @@ unittest
         foreach (corpus; selectedCorpora)
         {
             if (corpus.kind == SdlDatasetKind.recipes)
-                registerDecode!decodeRecipe(corpus);
+                register(DecodeCase!decodeRecipe(corpus), corpus, "decode", corpus.bytes);
             else if (corpus.kind == SdlDatasetKind.recipeSet)
-                registerDecode!decodeRecipeSet(corpus);
+                register(DecodeCase!decodeRecipeSet(corpus), corpus, "decode", corpus.bytes);
             else
                 continue;
             registered++;
@@ -491,7 +502,7 @@ unittest
     if (sdlEngineEnabled("wired"))
         foreach (corpus; selectedCorpora)
         {
-            registerEdit(corpus);
+            register(EditCase(corpus), corpus, "edit", corpus.bytes);
             registered++;
         }
     skipIfEmpty(registered, "edit");
@@ -543,15 +554,9 @@ unittest
         foreach (corpus; selectedCorpora)
         {
             if (corpus.kind == SdlDatasetKind.document)
-            {
-                registerWalk!sdlFull(corpus, false);
-                registerWalk!sdlFull(corpus, true);
-            }
+                registerWalks!sdlFull(corpus);
             else
-            {
-                registerWalk!sdlDubRecipe(corpus, false);
-                registerWalk!sdlDubRecipe(corpus, true);
-            }
+                registerWalks!sdlDubRecipe(corpus);
             registered++;
         }
     skipIfEmpty(registered, "walk");
@@ -566,125 +571,172 @@ unittest
     if (sdlEngineEnabled("wired"))
         foreach (corpus; selectedCorpora)
         {
-            registerEncode(corpus);
+            register(EncodeCase(corpus), corpus, "encode", corpus.bytes);
             registered++;
         }
     skipIfEmpty(registered, "encode");
 }
 
-// Each row is registered from its own helper, so its closures capture their
-// own corpus copy and state, never a shared loop variable.
+/// The `commit` row under the parser profile `config`: its throughput counts
+/// the input bytes once per commit.
+private void registerCommit(SdlParserConfig config)(SdlCorpus corpus)
+{
+    auto row = CommitCase!config(corpus);
+    const bytes = row.committedBytes;
+    register(move(row), corpus, "commit", bytes);
+}
+
+/// The `commit-unchanged` row under the parser profile `config`, counted as
+/// `commit` counts.
+private void registerUnchangedCommit(SdlParserConfig config)(SdlCorpus corpus)
+{
+    size_t committedBytes;
+    foreach (text; corpus.texts)
+        committedBytes += text.length * commitsPerDocument;
+    register(UnchangedCommitCase!config(corpus), corpus, "commit-unchanged", committedBytes);
+}
+
+/// The `walk` and `walk-edited` rows under the parser profile `config`.
+private void registerWalks(SdlParserConfig config)(SdlCorpus corpus)
+{
+    register(WalkCase!config(corpus, false), corpus, "walk", corpus.bytes);
+    register(WalkCase!config(corpus, true), corpus, "walk-edited", corpus.bytes);
+}
+
+/// Parses every document of `corpus` into `docs` (untimed), noting a failure.
+private void parseAll(in SdlCorpus corpus, Doc[] docs, ref bool failed)
+{
+    foreach (i, text; corpus.texts)
+    {
+        docs[i] = parseFor(corpus.kind, text);
+        if (docs[i].hasError)
+            failed = true;
+    }
+}
 
 /// parse — every document of the dataset, held until the untimed `after`,
 /// which verifies the first iteration's documents and releases them.
-private void registerParse(SdlCorpus corpus)
+private struct ParseCase
 {
-    auto docs = new Doc[corpus.texts.length];
+    SdlCorpus corpus;
+    Doc[] docs;
     bool verified;
-    benchCase(
-        name: "wired",
-        timed: () {
-            foreach (i, text; corpus.texts)
-                docs[i] = parseFor(corpus.kind, text);
-        },
-        after: () {
-            string error;
-            if (!verified)
-            {
-                verified = true;
-                const actual = fingerprintDocs(corpus, docs);
-                error = diffSdl(corpus.expected, actual, true, true, false);
-                if (error.length)
-                    error = "parse fingerprint mismatch:" ~ error;
-            }
-            foreach (ref doc; docs)
-                doc = Doc.init;
-            return verdict(error);
-        },
-        metrics: [inputBytes(corpus.bytes)],
-        labels: labelsFor(corpus, "parse"),
-    );
+
+    this(SdlCorpus corpus)
+    {
+        this.corpus = corpus;
+        docs = new Doc[corpus.texts.length];
+    }
+
+    void timed()
+    {
+        foreach (i, text; corpus.texts)
+            docs[i] = parseFor(corpus.kind, text);
+    }
+
+    auto after()
+    {
+        string error;
+        if (!verified)
+        {
+            verified = true;
+            const actual = fingerprintDocs(corpus, docs);
+            error = diffSdl(corpus.expected, actual, true, true, false);
+            if (error.length)
+                error = "parse fingerprint mismatch:" ~ error;
+        }
+        foreach (ref doc; docs)
+            doc = Doc.init;
+        return verdict(error);
+    }
 }
 
 /// decode — bytes → the dataset's schema; the first iteration's values,
 /// written back, must hash to the committed typed fingerprint.
-private void registerDecode(alias decode)(SdlCorpus corpus)
+private struct DecodeCase(alias decode)
 {
-    alias T = DecodedOf!decode;
-    auto values = new T[corpus.texts.length];
+    SdlCorpus corpus;
+    DecodedOf!decode[] values;
     string failure;
     bool verified;
-    benchCase(
-        name: "wired",
-        timed: () { failure = decodeAll!decode(corpus, values); },
-        after: () {
-            string error;
-            if (!verified)
-            {
-                verified = true;
-                SdlFingerprint actual;
-                actual.typed = failure.length ? failure : typedHash(corpus, values);
-                error = diffSdl(corpus.expected, actual, false, false, true);
-                if (error.length)
-                    error = "decode fingerprint mismatch:" ~ error;
-            }
-            return verdict(error);
-        },
-        metrics: [inputBytes(corpus.bytes)],
-        labels: labelsFor(corpus, "decode"),
-    );
+
+    this(SdlCorpus corpus)
+    {
+        this.corpus = corpus;
+        values = new DecodedOf!decode[corpus.texts.length];
+    }
+
+    void timed() { failure = decodeAll!decode(corpus, values); }
+
+    auto after()
+    {
+        string error;
+        if (!verified)
+        {
+            verified = true;
+            SdlFingerprint actual;
+            actual.typed = failure.length ? failure : typedHash(corpus, values);
+            error = diffSdl(corpus.expected, actual, false, false, true);
+            if (error.length)
+                error = "decode fingerprint mismatch:" ~ error;
+        }
+        return verdict(error);
+    }
 }
 
 /// encode — parsed documents (untimed `setup`) → canonical text, into one
 /// retained buffer per document; the first iteration's output must hash to
 /// the committed canonical fingerprint.
-private void registerEncode(SdlCorpus corpus)
+private struct EncodeCase
 {
-    auto docs = new Doc[corpus.texts.length];
-    auto outputs = new SdlString[corpus.texts.length];
+    SdlCorpus corpus;
+    Doc[] docs;
+    SdlString[] outputs;
     bool verified, failed;
-    benchCase(
-        name: "wired",
-        timed: () {
-            foreach (i, ref doc; docs)
-            {
-                outputs[i].clear(releaseStorage: false);
-                if (writeSdlDocument(doc.document, outputs[i]).hasError)
-                    failed = true;
-            }
-        },
-        after: () {
-            string error;
-            if (!verified)
-            {
-                verified = true;
-                SHA256 sha;
-                sha.start();
-                foreach (i, ref text; outputs)
-                    putDocument(sha, corpus.files[i], text[]);
-                SdlFingerprint actual;
-                actual.canonical = failed ? "a parse or write failed" : hexOf(sha);
-                error = diffSdl(corpus.expected, actual, false, true, false);
-                if (error.length)
-                    error = "encode fingerprint mismatch:" ~ error;
-            }
-            return verdict(error);
-        },
-        metrics: [inputBytes(corpus.bytes)],
-        labels: labelsFor(corpus, "encode"),
-        setup: () {
-            foreach (i, text; corpus.texts)
-            {
-                docs[i] = parseFor(corpus.kind, text);
-                if (docs[i].hasError)
-                    failed = true;
-            }
-        },
-        teardown: () {
-            foreach (ref doc; docs)
-                doc = Doc.init;
-        },
-    );
+
+    this(SdlCorpus corpus)
+    {
+        this.corpus = corpus;
+        docs = new Doc[corpus.texts.length];
+        outputs = new SdlString[corpus.texts.length];
+    }
+
+    void setup() { parseAll(corpus, docs, failed); }
+
+    void timed()
+    {
+        foreach (i, ref doc; docs)
+        {
+            outputs[i].clear(releaseStorage: false);
+            if (writeSdlDocument(doc.document, outputs[i]).hasError)
+                failed = true;
+        }
+    }
+
+    auto after()
+    {
+        string error;
+        if (!verified)
+        {
+            verified = true;
+            SHA256 sha;
+            sha.start();
+            foreach (i, ref text; outputs)
+                putDocument(sha, corpus.files[i], text[]);
+            SdlFingerprint actual;
+            actual.canonical = failed ? "a parse or write failed" : hexOf(sha);
+            error = diffSdl(corpus.expected, actual, false, true, false);
+            if (error.length)
+                error = "encode fingerprint mismatch:" ~ error;
+        }
+        return verdict(error);
+    }
+
+    void teardown()
+    {
+        foreach (ref doc; docs)
+            doc = Doc.init;
+    }
 }
 
 /// The `edit` row's change to one document, written into `output`.
@@ -705,56 +757,59 @@ private bool editOnce(SdlDatasetKind kind)(ref Doc doc, scope const(char)[] text
 /// edit — parsed documents (untimed `setup`) → one lossless change each,
 /// resolved, re-parsed and written; the first iteration's output must hash
 /// to the committed edited fingerprint.
-private void registerEdit(SdlCorpus corpus)
+private struct EditCase
 {
-    auto docs = new Doc[corpus.texts.length];
-    auto outputs = new SdlString[corpus.texts.length];
+    SdlCorpus corpus;
+    Doc[] docs;
+    SdlString[] outputs;
     bool verified, failed;
-    benchCase(
-        name: "wired",
-        timed: () {
-            foreach (i, ref doc; docs)
-            {
-                outputs[i].clear(releaseStorage: false);
-                const done = corpus.kind == SdlDatasetKind.document
-                    ? editOnce!(SdlDatasetKind.document)(doc, corpus.texts[i], outputs[i])
-                    : editOnce!(SdlDatasetKind.recipes)(doc, corpus.texts[i], outputs[i]);
-                if (!done)
-                    failed = true;
-            }
-        },
-        after: () {
-            string error;
-            if (!verified)
-            {
-                verified = true;
-                SHA256 sha;
-                sha.start();
-                foreach (i, ref text; outputs)
-                    putDocument(sha, corpus.files[i], text[]);
-                SdlFingerprint actual;
-                actual.edited = failed ? "a parse or edit failed" : hexOf(sha);
-                error = diffSdl(corpus.expected, actual, false, false, false);
-                if (error.length)
-                    error = "edit fingerprint mismatch:" ~ error;
-            }
-            return verdict(error);
-        },
-        metrics: [inputBytes(corpus.bytes)],
-        labels: labelsFor(corpus, "edit"),
-        setup: () {
-            foreach (i, text; corpus.texts)
-            {
-                docs[i] = parseFor(corpus.kind, text);
-                if (docs[i].hasError)
-                    failed = true;
-            }
-        },
-        teardown: () {
-            foreach (ref doc; docs)
-                doc = Doc.init;
-        },
-    );
+
+    this(SdlCorpus corpus)
+    {
+        this.corpus = corpus;
+        docs = new Doc[corpus.texts.length];
+        outputs = new SdlString[corpus.texts.length];
+    }
+
+    void setup() { parseAll(corpus, docs, failed); }
+
+    void timed()
+    {
+        foreach (i, ref doc; docs)
+        {
+            outputs[i].clear(releaseStorage: false);
+            const done = corpus.kind == SdlDatasetKind.document
+                ? editOnce!(SdlDatasetKind.document)(doc, corpus.texts[i], outputs[i])
+                : editOnce!(SdlDatasetKind.recipes)(doc, corpus.texts[i], outputs[i]);
+            if (!done)
+                failed = true;
+        }
+    }
+
+    auto after()
+    {
+        string error;
+        if (!verified)
+        {
+            verified = true;
+            SHA256 sha;
+            sha.start();
+            foreach (i, ref text; outputs)
+                putDocument(sha, corpus.files[i], text[]);
+            SdlFingerprint actual;
+            actual.edited = failed ? "a parse or edit failed" : hexOf(sha);
+            error = diffSdl(corpus.expected, actual, false, false, false);
+            if (error.length)
+                error = "edit fingerprint mismatch:" ~ error;
+        }
+        return verdict(error);
+    }
+
+    void teardown()
+    {
+        foreach (ref doc; docs)
+            doc = Doc.init;
+    }
 }
 
 /// The `commit` row's commits per document; a document with fewer nodes
@@ -785,6 +840,13 @@ private size_t nodeCount(SdlNode root)
     return n;
 }
 
+/// Releases every open document of a case (its `teardown`).
+private void closeAll(Open)(Open[] docs)
+{
+    foreach (ref open; docs)
+        open = Open.init;
+}
+
 /**
 commit — open documents (untimed `setup`) → `commitsPerDocument` commits each,
 one `probe` attribute set per commit on nodes spread over the document in
@@ -795,79 +857,89 @@ hosts must hash to the committed fingerprint. Iterations alternate the
 attribute's value, so every commit changes its host: a commit that changes
 nothing has no edits and nothing to localize.
 */
-private void registerCommit(SdlParserConfig config)(SdlCorpus corpus)
+private struct CommitCase(SdlParserConfig config)
 {
     alias Open = SdlOpenDocument!config;
-    auto docs = new Open[corpus.texts.length];
-    // The nodes each document's commits edit, as handles, so the timed part
-    // finds them without a walk.
-    auto targets = new SdlNodeHandle[][corpus.texts.length];
+
+    SdlCorpus corpus;
+    Open[] docs;
+    /// The nodes each document's commits edit, as handles, so the timed part
+    /// finds them without a walk.
+    SdlNodeHandle[][] targets;
+    /// The input bytes once per commit: the row's throughput amount.
     size_t committedBytes;
-    foreach (i, text; corpus.texts)
-    {
-        auto parsed = parseFor(corpus.kind, text);
-        const n = parsed.hasValue ? nodeCount(parsed.document.root) : 0;
-        const commits = n < commitsPerDocument ? n : commitsPerDocument;
-        targets[i] = new SdlNodeHandle[commits];
-        committedBytes += text.length * commits;
-    }
     bool verified, failed;
     size_t round;
-    benchCase(
-        name: "wired",
-        timed: () {
-            // Alternate the value, so no commit is a no-op the editor drops.
-            foreach (i, ref open; docs)
-                foreach (target; targets[i])
-                {
-                    auto editor = open.editor;
-                    editor.setAttribute(open.node(target).value,
-                        SdlQualifiedName(null, "probe"), SdlScalar(round % 2 ? "commat" : "commit"));
-                    if (open.commit(editor).hasError)
-                        failed = true;
-                }
-            round++;
-        },
-        after: () {
-            string error;
-            if (!verified)
+
+    /// Sizes the targets by a parse of each document (at registration).
+    this(SdlCorpus corpus)
+    {
+        this.corpus = corpus;
+        docs = new Open[corpus.texts.length];
+        targets = new SdlNodeHandle[][corpus.texts.length];
+        foreach (i, text; corpus.texts)
+        {
+            auto parsed = parseFor(corpus.kind, text);
+            const n = parsed.hasValue ? nodeCount(parsed.document.root) : 0;
+            const commits = n < commitsPerDocument ? n : commitsPerDocument;
+            targets[i] = new SdlNodeHandle[commits];
+            committedBytes += text.length * commits;
+        }
+    }
+
+    void setup()
+    {
+        foreach (i, text; corpus.texts)
+        {
+            if (docs[i].open(text).hasError)
             {
-                verified = true;
-                SHA256 sha;
-                sha.start();
-                foreach (i, ref open; docs)
-                    putDocument(sha, corpus.files[i], open.host);
-                SdlFingerprint actual;
-                actual.committed = failed ? "a parse or commit failed" : hexOf(sha);
-                error = diffSdl(corpus.expected, actual, false, false, false);
-                if (error.length)
-                    error = "commit fingerprint mismatch:" ~ error;
+                failed = true;
+                continue;
             }
-            return verdict(error);
-        },
-        metrics: [inputBytes(committedBytes)],
-        labels: labelsFor(corpus, "commit"),
-        setup: () {
-            foreach (i, text; corpus.texts)
+            const n = nodeCount(docs[i].document.root);
+            foreach (k, ref target; targets[i])
             {
-                if (docs[i].open(text).hasError)
-                {
+                size_t at = k * n / targets[i].length;
+                target = docs[i].handleOf(nodeAt(docs[i].document.root, at)).value;
+            }
+        }
+    }
+
+    void timed()
+    {
+        // Alternate the value, so no commit is a no-op the editor drops.
+        foreach (i, ref open; docs)
+            foreach (target; targets[i])
+            {
+                auto editor = open.editor;
+                editor.setAttribute(open.node(target).value,
+                    SdlQualifiedName(null, "probe"), SdlScalar(round % 2 ? "commat" : "commit"));
+                if (open.commit(editor).hasError)
                     failed = true;
-                    continue;
-                }
-                const n = nodeCount(docs[i].document.root);
-                foreach (k, ref target; targets[i])
-                {
-                    size_t at = k * n / targets[i].length;
-                    target = docs[i].handleOf(nodeAt(docs[i].document.root, at)).value;
-                }
             }
-        },
-        teardown: () {
-            foreach (ref open; docs)
-                open = Open.init;
-        },
-    );
+        round++;
+    }
+
+    auto after()
+    {
+        string error;
+        if (!verified)
+        {
+            verified = true;
+            SHA256 sha;
+            sha.start();
+            foreach (i, ref open; docs)
+                putDocument(sha, corpus.files[i], open.host);
+            SdlFingerprint actual;
+            actual.committed = failed ? "a parse or commit failed" : hexOf(sha);
+            error = diffSdl(corpus.expected, actual, false, false, false);
+            if (error.length)
+                error = "commit fingerprint mismatch:" ~ error;
+        }
+        return verdict(error);
+    }
+
+    void teardown() { closeAll(docs); }
 }
 
 /// Every name, span, value and attribute below and at `node`, read through
@@ -893,108 +965,120 @@ each document's first node, so nearly every cell is read from a shared,
 shifted run (editing §10.1). Each walk counts the input bytes once, and must
 equal the same walk of a fresh parse of the host.
 */
-private void registerWalk(SdlParserConfig config)(SdlCorpus corpus, bool edited)
+private struct WalkCase(SdlParserConfig config)
 {
     alias Open = SdlOpenDocument!config;
-    auto docs = new Open[corpus.texts.length];
+
+    SdlCorpus corpus;
+    bool edited;
+    Open[] docs;
     ulong total;
     bool verified, failed;
-    benchCase(
-        name: "wired",
-        timed: () {
-            ulong sum;
-            foreach (ref open; docs)
-                sum += walkSum(open.document.root);
-            total = sum;
-        },
-        after: () {
-            string error;
-            if (!verified)
+
+    this(SdlCorpus corpus, bool edited)
+    {
+        this.corpus = corpus;
+        this.edited = edited;
+        docs = new Open[corpus.texts.length];
+    }
+
+    void setup()
+    {
+        foreach (i, text; corpus.texts)
+        {
+            if (docs[i].open(text).hasError)
             {
-                verified = true;
-                ulong expected;
-                foreach (ref open; docs)
-                {
-                    auto fresh = parseFor(corpus.kind, open.host);
-                    if (fresh.hasValue)
-                        expected += walkSum(fresh.document.root);
-                }
-                if (failed || total != expected)
-                    error = "walk differs from a fresh parse's";
+                failed = true;
+                continue;
             }
-            return verdict(error);
-        },
-        metrics: [inputBytes(corpus.bytes)],
-        labels: labelsFor(corpus, edited ? "walk-edited" : "walk"),
-        setup: () {
-            foreach (i, text; corpus.texts)
-            {
-                if (docs[i].open(text).hasError)
-                {
-                    failed = true;
-                    continue;
-                }
-                if (!edited || !docs[i].document.root.childCount)
-                    continue;
-                auto editor = docs[i].editor;
-                editor.setAttribute(docs[i].document.root.byChild.front,
-                    SdlQualifiedName(null, "probe"), SdlScalar("walk"));
-                if (docs[i].commit(editor).hasError)
-                    failed = true;
-            }
-        },
-        teardown: () {
+            if (!edited || !docs[i].document.root.childCount)
+                continue;
+            auto editor = docs[i].editor;
+            editor.setAttribute(docs[i].document.root.byChild.front,
+                SdlQualifiedName(null, "probe"), SdlScalar("walk"));
+            if (docs[i].commit(editor).hasError)
+                failed = true;
+        }
+    }
+
+    void timed()
+    {
+        ulong sum;
+        foreach (ref open; docs)
+            sum += walkSum(open.document.root);
+        total = sum;
+    }
+
+    auto after()
+    {
+        string error;
+        if (!verified)
+        {
+            verified = true;
+            ulong expected;
             foreach (ref open; docs)
-                open = Open.init;
-        },
-    );
+            {
+                auto fresh = parseFor(corpus.kind, open.host);
+                if (fresh.hasValue)
+                    expected += walkSum(fresh.document.root);
+            }
+            if (failed || total != expected)
+                error = "walk differs from a fresh parse's";
+        }
+        return verdict(error);
+    }
+
+    void teardown() { closeAll(docs); }
 }
 
 /**
 commit-unchanged — open documents (untimed `setup`) → `commitsPerDocument`
-
 commits each of an editor with no edits. The throughput counts the input
 bytes once per commit, as `commit` does; every host must still equal its
 text afterwards.
 */
-private void registerUnchangedCommit(SdlParserConfig config)(SdlCorpus corpus)
+private struct UnchangedCommitCase(SdlParserConfig config)
 {
     alias Open = SdlOpenDocument!config;
-    auto docs = new Open[corpus.texts.length];
-    size_t committedBytes;
-    foreach (text; corpus.texts)
-        committedBytes += text.length * commitsPerDocument;
+
+    SdlCorpus corpus;
+    Open[] docs;
     bool failed;
-    benchCase(
-        name: "wired",
-        timed: () {
-            foreach (ref open; docs)
-                foreach (_; 0 .. commitsPerDocument)
-                {
-                    auto editor = open.editor;
-                    if (open.commit(editor).hasError)
-                        failed = true;
-                }
-        },
-        after: () {
-            string error = failed ? "a parse or commit failed" : null;
-            foreach (i, ref open; docs)
-                if (!error.length && open.host != corpus.texts[i])
-                    error = "a commit with no edits changed " ~ corpus.files[i];
-            return verdict(error);
-        },
-        metrics: [inputBytes(committedBytes)],
-        labels: labelsFor(corpus, "commit-unchanged"),
-        setup: () {
-            foreach (i, text; corpus.texts)
-                if (docs[i].open(text).hasError)
+
+    this(SdlCorpus corpus)
+    {
+        this.corpus = corpus;
+        docs = new Open[corpus.texts.length];
+    }
+
+    void setup()
+    {
+        foreach (i, text; corpus.texts)
+            if (docs[i].open(text).hasError)
+                failed = true;
+    }
+
+    void timed()
+    {
+        foreach (ref open; docs)
+            foreach (_; 0 .. commitsPerDocument)
+            {
+                auto editor = open.editor;
+                if (open.commit(editor).hasError)
                     failed = true;
-        },
-        teardown: () {
-            foreach (ref open; docs)
-                open = Open.init;
-        },
-    );
+            }
+    }
+
+    auto after()
+    {
+        string error = failed ? "a parse or commit failed" : null;
+        foreach (i, ref open; docs)
+            if (!error.length && open.host != corpus.texts[i])
+                error = "a commit with no edits changed " ~ corpus.files[i];
+        return verdict(error);
+    }
+
+    void teardown() { closeAll(docs); }
 }
 
 version (BenchDubSdlang)
@@ -1017,34 +1101,40 @@ version (BenchDubSdlang)
     /// parse, by DUB's pinned SDLang parser — held to the committed tag,
     /// value and attribute counts, since its tree has no canonical writer
     /// of ours to hash.
-    private void registerDubParse(SdlCorpus corpus)
+    private struct DubParseCase
     {
-        auto tags = new Tag[corpus.texts.length];
+        SdlCorpus corpus;
+        Tag[] tags;
         bool verified;
-        benchCase(
-            name: "dub-sdlang",
-            timed: () {
-                foreach (i, text; corpus.texts)
-                    tags[i] = parseSource(text, corpus.files[i]);
-            },
-            after: () {
-                string error;
-                if (!verified)
-                {
-                    verified = true;
-                    SdlFingerprint actual;
-                    foreach (tag; tags)
-                        countDub(tag, actual);
-                    error = diffSdl(corpus.expected, actual, true, false, false);
-                    if (error.length)
-                        error = "DUB parse structure mismatch:" ~ error;
-                }
-                tags[] = null;
-                return verdict(error);
-            },
-            metrics: [inputBytes(corpus.bytes)],
-            labels: labelsFor(corpus, "parse"),
-        );
+
+        this(SdlCorpus corpus)
+        {
+            this.corpus = corpus;
+            tags = new Tag[corpus.texts.length];
+        }
+
+        void timed()
+        {
+            foreach (i, text; corpus.texts)
+                tags[i] = parseSource(text, corpus.files[i]);
+        }
+
+        auto after()
+        {
+            string error;
+            if (!verified)
+            {
+                verified = true;
+                SdlFingerprint actual;
+                foreach (tag; tags)
+                    countDub(tag, actual);
+                error = diffSdl(corpus.expected, actual, true, false, false);
+                if (error.length)
+                    error = "DUB parse structure mismatch:" ~ error;
+            }
+            tags[] = null;
+            return verdict(error);
+        }
     }
 }
 

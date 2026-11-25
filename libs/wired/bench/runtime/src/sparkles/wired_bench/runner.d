@@ -21,6 +21,8 @@ $(MREF sparkles,wired_bench,data)).
 */
 module sparkles.wired_bench.runner;
 
+import core.lifetime : move;
+
 import sparkles.base.expected : err, ok;
 import std.conv : to;
 
@@ -40,7 +42,6 @@ import sparkles.wired_bench.twitter : diffTwitterStats, referenceTwitterStats,
 /// A `B/s` throughput metric for `n` input/output bytes per iteration.
 private Metric bytes(size_t n) @safe pure nothrow
     => Metric(unit: Unit("B"), amount: double(n), mode: Metric.Mode.rate);
-
 
 /// Releases the engine's held document when it exposes the primitive.
 private void freeDocOf(E)(ref E e)
@@ -138,23 +139,48 @@ private void markFilteredOut(string operation)
     skipTest("no matching datasets or engines enabled for " ~ operation);
 }
 
-/// Registers one engine × dataset op through `reg`, isolating a
-/// registration-time throw (an engine crashing in its constructor, the
-/// serialize sizing probe, a reference computation) into a soft error row —
-/// a throw escaping the `@benchmark` body would otherwise abort registration
-/// of every case after it in this op's matrix.
-private void isolated(string engineName, Dataset ds, string operation,
-    scope void delegate() reg)
+/// The labels every row of an op over `ds` carries.
+private string[string] labelsFor(in Dataset ds, string operation)
+    => ["dataset": ds.name, "tier": ds.tier.to!string, "operation": operation];
+
+/// An `after` verdict: `error` as an error row, or none when it is empty.
+private auto verdict(string error)
+    => error.length ? err!bool(error) : ok!string(true);
+
+/// Registers one engine × dataset case, isolating a registration-time throw
+/// (outside `--bench` the case runs right here) into a soft error row — a
+/// throw escaping the `@benchmark` body would otherwise abort registration of
+/// every case after it in this op's matrix.
+private void register(C)(C aCase, string engineName, Dataset ds, string operation)
 {
     try
-        reg();
+        benchCase(move(aCase), name: engineName, labels: labelsFor(ds, operation),
+            metrics: [bytes(ds.byteSize)]);
     catch (Exception e)
-    {
-        const string msg = e.msg;
-        benchCase(name: engineName, timed: () {},
-            after: () => err!bool("registration failed: " ~ msg),
-            labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": operation]);
-    }
+        benchCase(RegistrationFailed(e.msg), name: engineName,
+            labels: labelsFor(ds, operation));
+}
+
+/// The error row standing in for a case whose registration threw.
+private struct RegistrationFailed
+{
+    string msg;
+
+    void timed() {}
+
+    auto after() => err!bool("registration failed: " ~ msg);
+}
+
+/// The engine's own untimed `setup`/`teardown`, when it has them. Document
+/// release is the timed op's per-call `after` (parse/-insitu) or the serialize
+/// case's own teardown — not here.
+private mixin template EngineLifecycle(E)
+{
+    static if (hasSetup!E)
+        void setup() { engine.setup(); }
+
+    static if (hasTeardown!E)
+        void teardown() { engine.teardown(); }
 }
 
 /// Whether any compiled-in engine supports the op (gates the op's unittest).
@@ -183,12 +209,6 @@ private enum bool anyDecode = () {
             any = true;
     return any;
 }();
-
-// Each op is registered from its own helper (a fresh frame per call), so its
-// closures capture their own engine and `ds` copy — never a shared loop
-// variable. Under `--bench` the cases run later, in a schedule the runner
-// picks, so each is self-contained: every case owns a heap engine, and all
-// untimed setup/release lives in `setup`/`teardown`.
 
 /// Lazy reference fingerprint wrapper that evaluates std.json only when verification runs.
 private final class LazyFingerprint
@@ -263,11 +283,10 @@ unittest
             static if (isJsonEngine!E)
                 if (engineEnabled(E.name))
                 {
-                    isolated(E.name, ds, "parse",
-                        () { registerParse!E(ds, reference); });
+                    register(ParseCase!E(ds, reference, new E), E.name, ds, "parse");
                     static if (hasParseInsitu!E)
-                        isolated(E.name, ds, "parse-insitu",
-                            () { registerParseInsitu!E(ds, reference); });
+                        register(ParseCase!(E, Insitu.yes)(ds, reference, new E), E.name, ds,
+                            "parse-insitu");
                     registered++;
                 }
     }
@@ -289,8 +308,7 @@ unittest
                 static if (isJsonEngine!E)
                     if (engineEnabled(E.name))
                     {
-                        isolated(E.name, ds, "parse-stream",
-                            () { registerParseStream!E(ds, reference); });
+                        register(ParseStreamCase!E(ds, reference, new E), E.name, ds, "parse-stream");
                         registered++;
                     }
         }
@@ -310,8 +328,7 @@ unittest
             static if (isJsonEngine!E && hasValidate!E)
                 if (engineEnabled(E.name))
                 {
-                    isolated(E.name, ds, "validate",
-                        () { registerValidate!E(ds); });
+                    register(ValidateCase!E(ds, new E), E.name, ds, "validate");
                     registered++;
                 }
     if (!registered)
@@ -332,8 +349,7 @@ unittest
             static if (isJsonEngine!E && hasSerialize!E)
                 if (engineEnabled(E.name))
                 {
-                    isolated(E.name, ds, "serialize",
-                        () { registerSerialize!E(ds, reference); });
+                    register(SerializeCase!E(ds, reference, new E), E.name, ds, "serialize");
                     registered++;
                 }
     }
@@ -356,8 +372,7 @@ unittest
                 static if (canDecodeTwitter!E)
                     if (engineEnabled(E.name))
                     {
-                        isolated(E.name, ds, "decode",
-                            () { registerDecode!E(ds, expected); });
+                        register(DecodeCase!E(ds, expected, new E), E.name, ds, "decode");
                         registered++;
                     }
         }
@@ -365,73 +380,202 @@ unittest
         markFilteredOut("decode");
 }
 
-// Each op is registered from its own helper (a fresh frame per call), so its
-// closures capture their own engine and `ds` copy — never a shared loop variable.
+// Each case owns its engine and its copy of `ds`; the lazy references are
+// shared by every engine's case over the same dataset, computed once.
 
-/// parse — the fingerprint check rides the (untimed) `after`, verified once; a
-/// mismatch turns this into an isolated error row. Each timed parse allocates a
-/// document that `after` releases.
-private void registerParse(E)(Dataset ds, LazyFingerprint reference)
-{
-    auto e = new E;
-    bool verified;
-    benchCase(
-        name: E.name,
-        timed: () { e.parse(ds.text); },
-        after: () {
-            string error;
-            if (!verified)
-            {
-                verified = true;
-                const fp = e.fingerprint();
-                const refFp = reference.get();
-                if (!refFp.matches(fp))
-                    error = "fingerprint mismatch vs std.json:"
-                        ~ diffFingerprints(refFp, fp);
-            }
-            freeDocOf(*e);
-            return error.length ? err!bool(error) : ok!string(true);
-        },
-        metrics: [bytes(ds.byteSize)],
-        labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "parse"],
-        setup: engineSetup(e),
-        teardown: engineTeardown(e),
-    );
-}
+/// Whether a parse case parses in place (`parseInsitu`).
+private enum Insitu : bool { no, yes }
 
-/// parse-insitu — verified like `parse`: the in-place parse must still produce
-/// the reference document (a wrong-parsing engine must never "look faster").
-private void registerParseInsitu(E)(Dataset ds, LazyFingerprint reference)
+/**
+parse / parse-insitu — the fingerprint check rides the (untimed) `after`,
+verified once; a mismatch turns this into an isolated error row. Each timed
+parse allocates a document that `after` releases. The in-place parse is held
+to the same reference document: a wrong-parsing engine must never "look
+faster".
+*/
+private struct ParseCase(E, Insitu insitu = Insitu.no)
 {
-    auto e = new E;
+    Dataset ds;
+    LazyFingerprint reference;
+    E* engine; // its own allocation, as the engines were always measured
     bool verified;
-    benchCase(
-        name: E.name,
-        timed: () { e.parseInsitu(ds.text); },
-        after: () {
-            string error;
-            if (!verified)
-            {
-                verified = true;
-                const fp = e.fingerprint();
-                const refFp = reference.get();
-                if (!refFp.matches(fp))
-                    error = "in-situ fingerprint mismatch vs std.json:"
-                        ~ diffFingerprints(refFp, fp);
-            }
-            freeDocOf(*e);
-            return error.length ? err!bool(error) : ok!string(true);
-        },
-        metrics: [bytes(ds.byteSize)],
-        labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "parse-insitu"],
-        setup: engineSetup(e),
-        teardown: engineTeardown(e),
-    );
+
+    mixin EngineLifecycle!E;
+
+    void timed()
+    {
+        static if (insitu)
+            engine.parseInsitu(ds.text);
+        else
+            engine.parse(ds.text);
+    }
+
+    auto after()
+    {
+        enum what = insitu ? "in-situ fingerprint" : "fingerprint";
+        string error;
+        if (!verified)
+        {
+            verified = true;
+            const fp = engine.fingerprint();
+            const refFp = reference.get();
+            if (!refFp.matches(fp))
+                error = what ~ " mismatch vs std.json:" ~ diffFingerprints(refFp, fp);
+        }
+        freeDocOf(*engine);
+        return verdict(error);
+    }
 }
 
 /// parse-stream — parse and release every record in an NDJSON corpus or in a
 /// line-oriented top-level array. Framing and record parsing are both timed;
 /// structural parity against `std.json` is checked once outside the clock.
+private struct ParseStreamCase(E)
+{
+    Dataset ds;
+    LazyStreamFingerprint reference;
+    E* engine; // its own allocation, as the engines were always measured
+    bool verified;
+
+    mixin EngineLifecycle!E;
+
+    void timed()
+    {
+        foreach (record; ds.records)
+        {
+            engine.parse(record);
+            freeDocOf(*engine);
+        }
+    }
+
+    auto after()
+    {
+        string error;
+        if (!verified)
+        {
+            verified = true;
+            Fingerprint actual;
+            foreach (record; ds.records)
+            {
+                engine.parse(record);
+                actual.add(engine.fingerprint());
+                freeDocOf(*engine);
+            }
+            const refFp = reference.get();
+            if (!refFp.matches(actual))
+                error = "stream fingerprint mismatch vs std.json:"
+                    ~ diffFingerprints(refFp, actual);
+        }
+        return verdict(error);
+    }
+}
+
+/// validate — the corpora are valid JSON, so an engine rejecting one is wrong;
+/// a bool-returning validate is checked once in the untimed `after` (one extra
+/// validate per case). A void validate signals rejection by throwing, which
+/// the runner already surfaces as an error row from the timed body itself.
+private struct ValidateCase(E)
+{
+    Dataset ds;
+    E* engine; // its own allocation, as the engines were always measured
+    bool verified;
+
+    mixin EngineLifecycle!E;
+
+    void timed() { cast(void) engine.validate(ds.text); }
+
+    auto after()
+    {
+        string error;
+        if (!verified)
+        {
+            verified = true;
+            static if (is(typeof(engine.validate(ds.text)) == bool))
+                if (!engine.validate(ds.text))
+                    error = "engine rejects a valid corpus";
+        }
+        return verdict(error);
+    }
+}
+
+/// serialize — the output must still fingerprint to the reference document
+/// (structural check via std.json, format-independent); verified once in the
+/// untimed `after`, so a wrong serialization can't post a competitive B/s row.
+/// One parsed document is held across the whole case (untimed).
+private struct SerializeCase(E)
+{
+    Dataset ds;
+    LazyFingerprint reference;
+    E* engine; // its own allocation, as the engines were always measured
+    bool verified;
+
+    void setup()
+    {
+        static if (hasSetup!E)
+            engine.setup();
+        engine.parse(ds.text);
+    }
+
+    void timed() { cast(void) engine.serialize(); }
+
+    auto after()
+    {
+        string error;
+        if (!verified)
+        {
+            verified = true;
+            try
+            {
+                const fp = referenceFingerprint(engine.serialize());
+                const refFp = reference.get();
+                if (!refFp.matches(fp))
+                    error = "serialize output mismatch vs std.json:"
+                        ~ diffFingerprints(refFp, fp);
+            }
+            catch (Exception ex)
+                error = "serialize output is not valid JSON: " ~ ex.msg;
+        }
+        return verdict(error);
+    }
+
+    void teardown()
+    {
+        freeDocOf(*engine);
+        static if (hasTeardown!E)
+            engine.teardown();
+    }
+}
+
+/// decode — typed decode of the twitter corpus, held once (untimed) to the
+/// `std.json` reference's `TwitterStats`.
+private struct DecodeCase(E)
+{
+    Dataset ds;
+    LazyTwitterStats expected;
+    E* engine; // its own allocation, as the engines were always measured
+    bool verified;
+
+    mixin EngineLifecycle!E;
+
+    void timed() { engine.decodeTwitter(ds.text); }
+
+    auto after()
+    {
+        string error;
+        if (!verified)
+        {
+            verified = true;
+            const actual = engine.twitterStats();
+            const exp = expected.get();
+            if (actual != exp)
+                error = "twitter stats mismatch vs std.json:"
+                    ~ diffTwitterStats(exp, actual);
+        }
+        return verdict(error);
+    }
+}
+
+/// The `std.json` reference of a line-oriented corpus.
 private struct StreamReference
 {
     Fingerprint fingerprint;
@@ -460,165 +604,4 @@ private StreamReference referenceStream(in Dataset ds)
             GC.collect();
     }
     return result;
-}
-
-private void registerParseStream(E)(Dataset ds, LazyStreamFingerprint reference)
-{
-    auto e = new E;
-    bool verified;
-    benchCase(
-        name: E.name,
-        timed: () {
-            foreach (record; ds.records)
-            {
-                e.parse(record);
-                freeDocOf(*e);
-            }
-        },
-        after: () {
-            string error;
-            if (!verified)
-            {
-                verified = true;
-                Fingerprint actual;
-                foreach (record; ds.records)
-                {
-                    e.parse(record);
-                    actual.add(e.fingerprint());
-                    freeDocOf(*e);
-                }
-                const refFp = reference.get();
-                if (!refFp.matches(actual))
-                    error = "stream fingerprint mismatch vs std.json:"
-                        ~ diffFingerprints(refFp, actual);
-            }
-            return error.length ? err!bool(error) : ok!string(true);
-        },
-        metrics: [bytes(ds.byteSize)],
-        labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "parse-stream"],
-        setup: engineSetup(e),
-        teardown: engineTeardown(e),
-    );
-}
-
-/// validate — the corpora are valid JSON, so an engine rejecting one is wrong;
-/// a bool-returning validate is checked once in the untimed `after` (one extra
-/// validate per case). A void validate signals rejection by throwing, which
-/// the runner already surfaces as an error row from the timed body itself.
-private void registerValidate(E)(Dataset ds)
-{
-    auto e = new E;
-    bool verified;
-    benchCase(
-        name: E.name,
-        timed: () { cast(void) e.validate(ds.text); },
-        after: () {
-            string error;
-            if (!verified)
-            {
-                verified = true;
-                static if (is(typeof(e.validate(ds.text)) == bool))
-                    if (!e.validate(ds.text))
-                        error = "engine rejects a valid corpus";
-            }
-            return error.length ? err!bool(error) : ok!string(true);
-        },
-        metrics: [bytes(ds.byteSize)],
-        labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "validate"],
-        setup: engineSetup(e),
-        teardown: engineTeardown(e),
-    );
-}
-
-/// serialize — the output must still fingerprint to the reference document
-/// (structural check via std.json, format-independent); verified once in the
-/// untimed `after`, so a wrong serialization can't post a competitive B/s row.
-private void registerSerialize(E)(Dataset ds, LazyFingerprint reference)
-{
-    auto e = new E;
-    bool verified;
-    benchCase(
-        name: E.name,
-        timed: () { cast(void) e.serialize(); },
-        after: () {
-            string error;
-            if (!verified)
-            {
-                verified = true;
-                try
-                {
-                    const fp = referenceFingerprint(e.serialize());
-                    const refFp = reference.get();
-                    if (!refFp.matches(fp))
-                        error = "serialize output mismatch vs std.json:"
-                            ~ diffFingerprints(refFp, fp);
-                }
-                catch (Exception ex)
-                    error = "serialize output is not valid JSON: " ~ ex.msg;
-            }
-            return error.length ? err!bool(error) : ok!string(true);
-        },
-        metrics: [bytes(ds.byteSize)],
-        labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "serialize"],
-        // Hold one parsed document across the whole case (untimed).
-        setup: () {
-            static if (hasSetup!E)
-                e.setup();
-            e.parse(ds.text);
-        },
-        teardown: () {
-            freeDocOf(*e);
-            static if (hasTeardown!E)
-                e.teardown();
-        },
-    );
-}
-
-private void registerDecode(E)(Dataset ds, LazyTwitterStats expected)
-{
-    auto e = new E;
-    bool verified;
-    benchCase(
-        name: E.name,
-        timed: () { e.decodeTwitter(ds.text); },
-        after: () {
-            string error;
-            if (!verified)
-            {
-                verified = true;
-                const actual = e.twitterStats();
-                const exp = expected.get();
-                if (actual != exp)
-                    error = "twitter stats mismatch vs std.json:"
-                        ~ diffTwitterStats(exp, actual);
-            }
-            return error.length ? err!bool(error) : ok!string(true);
-        },
-        metrics: [bytes(ds.byteSize)],
-        labels: ["dataset": ds.name, "tier": ds.tier.to!string, "operation": "decode"],
-        setup: engineSetup(e),
-        teardown: engineTeardown(e),
-    );
-}
-
-/// A case `setup` that initializes the engine `*e` (untimed), or `null` when the
-/// engine needs no setup. Takes the heap engine by pointer so the returned closure
-/// shares the case's engine instance.
-private void delegate() engineSetup(E)(E* e)
-{
-    static if (hasSetup!E)
-        return () { e.setup(); };
-    else
-        return null;
-}
-
-/// A case `teardown` that tears the engine down (untimed), or `null` when the
-/// engine needs none. Document release is the timed op's per-iteration `after`
-/// (parse/-insitu) or the serialize case's own teardown — not here.
-private void delegate() engineTeardown(E)(E* e)
-{
-    static if (hasTeardown!E)
-        return () { e.teardown(); };
-    else
-        return null;
 }
