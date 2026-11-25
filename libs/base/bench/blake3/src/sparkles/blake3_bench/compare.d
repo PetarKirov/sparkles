@@ -93,8 +93,8 @@ enum backendNames = [__traits(allMembers, Blake3Backend)][1 .. $];
     }
 }
 
-// Each case's state lives on the heap: cases run after the test body returns.
-final class Row
+// One row: the input and the C digest it must reproduce, held by value.
+struct Row
 {
     Blake3Backend backend;
     bool reference; // the C implementation instead of `backend`
@@ -124,12 +124,9 @@ final class Row
 void register(string name, Blake3Backend backend, bool reference, string sizeLabel, size_t size)
     @system
 {
-    auto row = new Row(backend, reference, size);
-    benchCase(
+    benchCase(Row(backend, reference, size),
         name: name,
         labels: ["size": sizeLabel],
-        timed: &row.timed,
-        after: &row.after,
         metrics: [Metric(Unit("B"), size, Metric.Mode.rate)]);
 }
 
