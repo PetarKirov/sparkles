@@ -5,6 +5,7 @@
     "**/research/full-text-search/PLAN.md",
     "**/research/build-systems/PLAN.md",
     "**/research/iroh/prompt.md",
+    "**/research/ui-authoring/experiments/**",
     "**/guidelines/d-language-features/AGENTS.md",
     "**/guidelines/d-language-features/grounding/**",
     "**/specs/fuzzy/adversarial-review.md",

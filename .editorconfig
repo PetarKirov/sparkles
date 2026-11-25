@@ -171,3 +171,9 @@ indent_style = unset
 # literal tabs — keep the quotes byte-exact rather than reformatting the evidence.
 [docs/research/fine-grained-locking/{go-sync,nsync,linux-futex}.md]
 indent_style = unset
+
+# The UI-authoring experiments' captured compiler output (stock compilers
+# rejecting the lazy-variadic port) is kept verbatim, carets aligned.
+[docs/research/ui-authoring/experiments/**/out/*.txt]
+indent_style = unset
+indent_size = unset
