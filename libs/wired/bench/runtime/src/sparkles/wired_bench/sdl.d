@@ -69,7 +69,7 @@ import sparkles.build_primitives.dub_manifest : DubManifest, parseDubManifest;
 import sparkles.test_runner.attributes : benchmark;
 import sparkles.test_runner.bench : benchCase, Metric, Unit;
 import sparkles.wired : WireName, WireOptional;
-import sparkles.wired.sdl : fromSDL, parseSdlDocument, Sdl, sdlEditor, SdlExpected, SdlNode,
+import sparkles.wired.sdl : fromSDL, OwnedSdlExtras, parseSdlDocument, Sdl, sdlEditor, SdlExpected, SdlNode,
     SdlNodeHandle, SdlOpenDocument, SdlParserConfig,
     SdlParseResult, SdlQualifiedName, SdlScalar, SdlString, sdlDubRecipe, sdlFull,
     writeSdlDocument;
@@ -319,6 +319,14 @@ private void digestValue(T)(ref SHA256 sha, scope const ref T value)
         sha.put(nativeToLittleEndian(ulong(value.length))[]);
         foreach (ref element; value)
             digestValue(sha, element);
+    }
+    else static if (is(T == OwnedSdlExtras))
+    {
+        // What the schema does not name, which a recipe must leave empty: an
+        // empty capture feeds nothing (the committed digests predate the
+        // field), a non-empty one its count, so the row fails.
+        if (!value.empty)
+            sha.put(nativeToLittleEndian(ulong(value.length))[]);
     }
     else static if (is(T == struct))
     {
