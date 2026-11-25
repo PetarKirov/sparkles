@@ -21,7 +21,7 @@ import std.conv : to;
 import std.typecons : No;
 
 import sparkles.base.sync : ManualResetEvent, Mutex, NativePlatform, Semaphore, WaitStatus;
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 import sparkles.test_runner.bench : benchCase, Metric, Unit;
 import sparkles.test_runner.skip : skipTest;
 
@@ -182,7 +182,7 @@ void registerHandoff(string bench, FiberPark path, bool cross, bool timed)
 }
 
 @("fiberPark.FB1.sameWorkerHandoff")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -192,7 +192,7 @@ unittest
 }
 
 @("fiberPark.FB2.crossWorkerHandoff")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -202,7 +202,7 @@ unittest
 }
 
 @("fiberPark.FB7.timedHandoffs")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -271,7 +271,7 @@ Duration ticksToDuration(long ticks)
 }
 
 @("fiberPark.FB3.unregisteredThreadWake")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -348,7 +348,7 @@ struct FanOutCase
 }
 
 @("fiberPark.FB4.eventFanOut")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -413,7 +413,7 @@ struct CancelCase
 }
 
 @("fiberPark.FB5.scopeCancellation")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -532,7 +532,7 @@ struct ContentionCase
 }
 
 @("fiberPark.FB6.sharedBucketContention")
-@benchmark
+@benchCases
 @system
 unittest
 {

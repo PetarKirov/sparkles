@@ -28,7 +28,7 @@ version (linux)  :  // the uring backend's numbers; the peers have their own hos
 
 import core.lifetime : move;
 
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases, benchmark;
 import sparkles.test_runner.bench : benchCase, benchIter, blackBox, Metric, Unit;
 import sparkles.test_runner.skip : skipTest;
 
@@ -285,7 +285,7 @@ unittest
 }
 
 @("loop.read.registeredVsPlain")
-@benchmark
+@benchCases
 @system
 unittest
 {
