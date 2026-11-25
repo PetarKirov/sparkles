@@ -1047,43 +1047,6 @@ private void runOrRegister(C)(C bench, string name, string[string] labels,
     context.cases ~= eraseCase(move(bench), name, labels, metrics, perCall: true);
 }
 
-/**
-The delegate form of $(LREF benchCase), kept only until every caller has moved
-to case structs. Its closures run after the registering body returns, which is
-the trap the struct form removes.
-*/
-void benchCase(Timed, After, Setup = typeof(null), Teardown = typeof(null))(
-    string name, Timed timed, After after, Metric[] metrics = null,
-    string[string] labels = null, Setup setup = null, Teardown teardown = null)
-{
-    static struct Legacy
-    {
-        Timed timedFn;
-        After afterFn;
-        Setup setupFn;
-        Teardown teardownFn;
-
-        auto timed() => timedFn();
-        auto after(Args...)(ref Args args) => afterFn(args);
-
-        void setup()
-        {
-            static if (!is(Setup == typeof(null)))
-                if (setupFn !is null)
-                    setupFn();
-        }
-
-        void teardown()
-        {
-            static if (!is(Teardown == typeof(null)))
-                if (teardownFn !is null)
-                    teardownFn();
-        }
-    }
-
-    runOrRegister(Legacy(timed, after, setup, teardown), name, labels, metrics);
-}
-
 /// Measures one registered case into a `BenchStats` row. `setup`/`teardown` bracket
 /// the whole measurement (untimed); a `runAfter`-reported soft error or a probe
 /// failure yields an error row. `null` `runAfter` selects batched timing (a tight
