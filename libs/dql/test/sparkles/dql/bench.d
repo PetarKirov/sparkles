@@ -41,7 +41,9 @@ unittest
 {
     import sparkles.test_runner.bench : benchIter, blackBox;
 
-    DqlEngine engine;
+    // On the heap: `benchIter` runs its closure after this body returns, and a
+    // local engine would be destroyed by then.
+    auto engine = new DqlEngine;
     auto ring = makeRing();
 
     // Parsed once, outside the measured loop — exactly a consumer's shape.
@@ -56,7 +58,7 @@ unittest
     {
         import core.lifetime : move;
 
-        auto parsed = parseDql!InputSchema(engine, source);
+        auto parsed = parseDql!InputSchema(*engine, source);
         assert(parsed.hasValue, parsed.error.message);
         // DqlFilter is move-only (its node arena is a unique SmallBuffer);
         // move it onto the heap so the measured closure owns it.
@@ -64,7 +66,7 @@ unittest
         *filter = parsed.value.move;
         benchIter({
             foreach (ref event; ring)
-                blackBox(evalDql!InputSchema(engine, *filter, event));
+                blackBox(evalDql!InputSchema(*engine, *filter, event));
         }, ["op": "evalDql", "filter": label]);
     }
 }
@@ -95,11 +97,13 @@ unittest
 {
     import sparkles.test_runner.bench : benchIter, blackBox;
 
-    DqlEngine engine;
+    // On the heap: `benchIter` runs its closure after this body returns, and a
+    // local engine would be destroyed by then.
+    auto engine = new DqlEngine;
     benchIter({
-        blackBox(compareValues(engine, DqlValue(9_007_199_254_740_993L),
+        blackBox(compareValues(*engine, DqlValue(9_007_199_254_740_993L),
             DqlOp.eq, DqlValue(9_007_199_254_740_992.0)));
-        blackBox(compareValues(engine, DqlValue(ulong.max), DqlOp.gt,
+        blackBox(compareValues(*engine, DqlValue(ulong.max), DqlOp.gt,
             DqlValue(long.max)));
     }, ["op": "compareValues"]);
 }
