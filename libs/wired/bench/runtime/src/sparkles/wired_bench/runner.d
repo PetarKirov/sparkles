@@ -8,7 +8,7 @@ returns an `Expected` error, so a wrong engine becomes an isolated error row
 instead of aborting the matrix. Hardware counters come from the runner's
 `--perf`; there is no private perf backend any more.
 
-The benchmark is one `@benchmark unittest` per op (`wired.parse`,
+The benchmark is one `@benchCases unittest` per op (`wired.parse`,
 `wired.parse-stream`, `wired.validate`, `wired.serialize`, `wired.decode`):
 skipped by a normal `dub test`, measured by `dub test -b bench -- --bench`
 (add `--perf` for counters) — so `-i 'wired\.serialize'` measures one op, and
@@ -26,7 +26,7 @@ import core.lifetime : move;
 import sparkles.base.expected : err, ok;
 import std.conv : to;
 
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 import sparkles.test_runner.bench : benchCase, Metric, Unit;
 
 import sparkles.wired_bench.allocator : allocatorLevelled;
@@ -271,7 +271,7 @@ private final class LazyTwitterStats
 }
 
 @("wired.parse")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -295,7 +295,7 @@ unittest
 }
 
 @("wired.parse-stream")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -318,7 +318,7 @@ unittest
 
 static if (anyValidate)
 @("wired.validate")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -337,7 +337,7 @@ unittest
 
 static if (anySerialize)
 @("wired.serialize")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -359,7 +359,7 @@ unittest
 
 static if (anyDecode)
 @("wired.decode")
-@benchmark
+@benchCases
 @system
 unittest
 {

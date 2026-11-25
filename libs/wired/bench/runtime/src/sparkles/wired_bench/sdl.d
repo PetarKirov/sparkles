@@ -68,7 +68,7 @@ import std.path : buildPath, relativePath;
 import sparkles.base.expected : err, ok;
 
 import sparkles.build_primitives.dub_manifest : DubManifest, parseDubManifest;
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 import sparkles.test_runner.bench : benchCase, Metric, Unit;
 import sparkles.wired : WireName, WireOptional;
 import sparkles.wired.sdl : fromSDL, OwnedSdlExtras, parseSdlDocument, Sdl, sdlEditor, SdlExpected, SdlNode,
@@ -450,7 +450,7 @@ private void register(C)(C aCase, in SdlCorpus corpus, string operation, size_t 
 }
 
 @("sdl.parse")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -474,7 +474,7 @@ unittest
 }
 
 @("sdl.decode")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -494,7 +494,7 @@ unittest
 }
 
 @("sdl.edit")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -509,7 +509,7 @@ unittest
 }
 
 @("sdl.commit")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -527,7 +527,7 @@ unittest
 }
 
 @("sdl.commit-unchanged")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -545,7 +545,7 @@ unittest
 }
 
 @("sdl.walk")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -563,7 +563,7 @@ unittest
 }
 
 @("sdl.encode")
-@benchmark
+@benchCases
 @system
 unittest
 {

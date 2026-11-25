@@ -1,7 +1,7 @@
 /** Focused SDL writer regression benchmark; assertions remain enabled. */
 module sparkles.wired.sdl.bench;
 
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 
 version (unittest):
 
@@ -9,7 +9,7 @@ import sparkles.base.buffer : UniqueBuffer;
 import sparkles.wired.sdl.document : SdlScalar;
 
 /// Exponent expansion, UTF-8, integer, and temporal formatting share this workload.
-@("wired.sdl.writeScalars") @benchmark @system unittest
+@("wired.sdl.writeScalars") @benchCases @system unittest
 {
     import std.datetime : Date;
     import sparkles.test_runner.bench : benchCase;
