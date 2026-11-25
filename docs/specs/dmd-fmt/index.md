@@ -436,7 +436,7 @@ terminates its statements with one has no use for a comma that also does.
 (BOM), directive gaps (`#line` — consumed tokenlessly, newline included —
 and the constructor-consumed shebang line) and the `__EOF__` tail all
 explicit, so nothing is silently lost. Along the way S1 forced two fork fixes
-(both upstreamable, tracked in the fork's [PLAN-UPSTREAMING.md][plan]): the
+(both upstreamable, tracked in the toolchain's [upstreaming plan][plan]): the
 DMDLIB scanner desync on U+2028/U+2029-terminated `//` comments, and
 `dmd:lexer` not linking standalone. The lexer-only dependency for the spine —
 the fork-treadmill mitigation — is now real.
@@ -558,7 +558,7 @@ regression-pinned here).
 for promoting M9 — measured from M2 onward per D6; the fork treadmill —
 mitigated, not gone: the pin-bump procedure is exercised and the spine's hot
 dependency is lexer-only, but every language-version chase still rebases the
-fork (upstreaming the fixes, tracked in [PLAN-UPSTREAMING.md][plan], is the
+fork (upstreaming the fixes, tracked in the [upstreaming plan][plan], is the
 real reduction and is scheduled after this branch ships).
 
 ## Traceability
@@ -573,11 +573,11 @@ real reduction and is scheduled after this branch ships).
   `oracle.d` + `groups.d` (S2), `loc_inventory.d` (S4), `bench.d` (D3)
 - Consumers: hue's [format preview](../hue/format-preview.md) (`FPR2`/`FPR7`)
   drives `formatText`/`configFor` interactively from a draggable column ruler
-- Fork: [PLAN-UPSTREAMING.md][plan] on `dmdserver-dub` tracks the
+- Fork: the toolchain's [upstreaming plan][plan] tracks the
   upstreamable fixes and library-quality findings this work produced
 
 [decisions]: ../../research/code-formatting/prettier-decisions.md
 [codemods]: ./codemods.md
 [testing]: ./testing.md
 [dstyle]: ../../guidelines/dstyle.md
-[plan]: https://github.com/PetarKirov/dmd/blob/c562711dbd4685c4e4f7bd5ff46e1a306c932259/PLAN-UPSTREAMING.md
+[plan]: ../toolchain/upstreaming.md#_3-dmd-dmdserver-dub
