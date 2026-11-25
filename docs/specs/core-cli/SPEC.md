@@ -55,7 +55,9 @@ take the whole tree as a template parameter and read any level of it.
 This page specifies command declaration, child discovery, the parse tree,
 handler dispatch, and the compatibility between the explicit and the
 graph-based models. It does not define the syntax of options and
-arguments, value conversion, or help layout beyond the order of children.
+arguments, value conversion, or help layout beyond the order of children;
+[environment fallback](./environment-fallback.md) specifies how an option
+reads a variable the command line leaves out.
 The package's table renderer and terminal components have their own
 specifications, [table.md](./table.md) and [the TUI component
 suite](./tui-components/index.md). Rendering a declaration back into an
@@ -363,7 +365,9 @@ A `CommandNode` exposes these members:
 - `seenOptions`: the dotted field paths (`"treeWidth"`, `"sink.backend"` for
   a `@Flatten`ed group) that an argument explicitly set at this level, named
   options and positionals alike, so a caller can layer the command line
-  over configuration and override only what the user typed;
+  over configuration and override only what the user typed; an option
+  filled from its [environment fallback](./environment-fallback.md) counts
+  as typed (CLE3);
 - `command`: the selected child node, present only for a command group;
 - `commandSelected`: whether `command` holds a parsed child, present only
   for a command group.

@@ -1414,6 +1414,10 @@
             "link": "/specs/core-cli/SPEC"
           },
           {
+            "text": "Environment fallback spec",
+            "link": "/specs/core-cli/environment-fallback"
+          },
+          {
             "text": "drawTable spec",
             "link": "/specs/core-cli/table"
           },
