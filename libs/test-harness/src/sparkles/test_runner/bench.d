@@ -3,17 +3,27 @@
  * statistics, and an optimizer barrier.
  *
  * `@benchmark unittest` blocks are executed by the runner's `--bench` mode.
- * By default the whole test body is the measured unit. To time only part of
- * the body (excluding setup), call $(LREF benchIter) inside the test:
+ * The whole test body is the measured unit. To keep setup out of the timing,
+ * register the measured part as a case of a `@benchCases` test, with
+ * $(LREF benchCase); a `BenchTiming.batched` case is timed the way a
+ * whole body is:
  * ---
+ * import sparkles.test_runner.attributes : benchCases;
+ * import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
+ *
+ * static struct SortCopy
+ * {
+ *     enum timing = BenchTiming.batched;
+ *     int[] data;
+ *
+ *     void timed() @safe { blackBox(data.dup.sort()); } // measured
+ * }
+ *
  * @("sort.bench")
- * @benchmark @safe
+ * @benchCases @safe
  * unittest
  * {
- *     import sparkles.test_runner.bench : benchIter, blackBox;
- *
- *     auto data = makeInput();          // setup — not measured
- *     benchIter({ blackBox(data.dup.sort()); });  // measured
+ *     benchCase(SortCopy(makeInput())); // setup — not measured
  * }
  * ---
  *
@@ -109,8 +119,8 @@ struct BenchConfig
     /// spans about `perfBatchTargetNs`. The bracket itself costs ~2.2 µs (an
     /// ioctl ENABLE/DISABLE pair) and the tier-0 equivalent two `/proc` reads,
     /// so without batching a nanosecond-scale body's counters report the
-    /// apparatus rather than the body. Applies to batched
-    /// (`benchIter`/whole-body) rows only — per-call `benchCase` rows must
+    /// apparatus rather than the body. Applies to batched rows (a whole body,
+    /// a `BenchTiming.batched` case) only — per-call `benchCase` rows must
     /// keep their release interleaved and always use 1.
     uint perfBatch = 0;
 }
@@ -433,15 +443,15 @@ unittest
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// In-test measurement API (`benchIter`) and the runner-side driver
+// Registered cases and the runner-side driver
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
-One benchmark case, captured by `benchCase`/`benchIter` and measured later by
-`measureCase`. Every case is erased to the same shape — a block of state the
-case owns and function pointers over it (TRB1) — so a heterogeneous matrix
-collapses to a flat list the runner can freely filter, group, sort, and
-schedule before executing.
+One benchmark case, registered by `benchCase` (or a whole body) and measured
+later by `measureCase`. Every case is erased to the same shape — a block of
+state the case owns and function pointers over it (TRB1) — so a heterogeneous
+matrix collapses to a flat list the runner can freely filter, group, sort,
+and schedule before executing.
 
 The hooks are `function` pointers, not delegates: a function pointer cannot
 close over the registering frame, so nothing a case needs can die with the body
@@ -457,7 +467,8 @@ struct RegisteredCase
     void function(void*) setup;    /// untimed, once before measurement (null = none)
     void function(void*) runTimed; /// the measured body (a result is kept in `state`)
     /// Untimed, after each measured call; `null`/`""` = ok, else an error message.
-    /// `null` selects batched timing (`benchIter` / whole-body — no per-call release).
+    /// `null` selects batched timing (a batched case or a whole body — no
+    /// per-call release).
     string function(void*) runAfter;
     void function(void*) teardown; /// untimed, once after measurement (null = none)
     /// Destroys the case — its destructor runs — at most once, however often it
@@ -598,9 +609,9 @@ unittest
 private struct BenchContext
 {
     BenchConfig config;
-    string testName;         /// row name for benchIter / whole-body measurement
+    string testName;         /// row name of a whole body and of an unnamed case
     bool registersCases;     /// the body is `@benchCases` (else `@benchmark`)
-    RegisteredCase[] cases;  /// registration output (the body's benchCase/benchIter calls)
+    RegisteredCase[] cases;  /// registration output (the body's benchCase calls)
     CounterGroups* counters; /// null = no counting passes
 }
 
@@ -670,44 +681,11 @@ unittest
     assert(perfIters(0, BenchConfig()) == 1, "at least one iteration");
 }
 
-/// Registers a batched-timing case that measures `run` (excluding surrounding
-/// setup from the timing), named after the test. Under `--bench` the case is
-/// recorded and measured later; outside a `--bench` run (e.g. another runner
-/// executes the test) `run` runs once, for correctness.
-void benchIter(DG)(DG run, string[string] labels = null)
-if (is(typeof(run()) == void))
+/// The case a `@benchmark` test is: its own body, measured batched.
+private struct WholeBody
 {
-    auto context = activeBenchContext;
-    if (context is null)
-    {
-        run();
-        return;
-    }
-    if (context.registersCases)
-        throw new Exception("benchIter: `" ~ context.testName ~ "` is `@benchCases`, whose"
-            ~ " body only registers cases; time part of a body with `benchIter` in a"
-            ~ " `@benchmark` test");
-    // Batched measurement (a tight loop, no per-call release).
-    context.cases ~= eraseCase(Batched!DG(run), context.testName, labels, null,
-        perCall: false);
-}
-
-/// The state of a batched case: a callable `benchIter` or a whole-body
-/// benchmark was handed. It holds a delegate, which is why `benchIter` keeps
-/// the closure discipline `benchCase` does away with.
-private struct Batched(DG)
-{
-    DG run;
-    void timed() { run(); }
-}
-
-@("benchIter.inertOutsideBenchRuns")
-@safe
-unittest
-{
-    int calls;
-    benchIter({ ++calls; });
-    assert(calls == 1);
+    void function() body_;
+    void timed() { body_(); }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1104,7 +1082,7 @@ private void runOrRegister(C)(C bench, string name, string[string] labels,
 /// Measures one registered case into a `BenchStats` row. `setup`/`teardown` bracket
 /// the whole measurement (untimed); a `runAfter`-reported soft error or a probe
 /// failure yields an error row. `null` `runAfter` selects batched timing (a tight
-/// `measure` loop, for `benchIter`/whole-body); otherwise per-call timing releases
+/// `measure` loop, for a batched case or a whole body); otherwise per-call timing releases
 /// the result between calls. A thrown `runTimed`/`runAfter` propagates to the caller.
 package(sparkles.test_runner)
 BenchStats measureCase(RegisteredCase c, in BenchConfig config,
@@ -1133,7 +1111,7 @@ BenchStats measureCase(BenchContext* context, RegisteredCase c) @system
             c.teardown(c.state);
 
     auto runTimed = () { c.runTimed(c.state); };
-    if (c.runAfter is null) // batched: benchIter / whole-body
+    if (c.runAfter is null) // batched: a batched case or a whole body
     {
         auto m = measure(runTimed, context.config);
         auto row = computeStats(c.name, m.iterations, m.nsPerIter);
@@ -1192,7 +1170,7 @@ BenchStats measureCase(BenchContext* context, RegisteredCase c) @system
 }
 
 /// The outcome of one `@benchmark` execution: the rows it emitted (one per
-/// `benchIter`/`benchCase`, or one for a whole-body benchmark) and the test's
+/// `benchCase`, or one for a whole-body benchmark) and the test's
 /// pass/fail `TestResult` (a thrown body fails; its rows may be partial).
 struct BenchOutcome
 {
@@ -1210,10 +1188,10 @@ struct Registration
     TestResult result;
 }
 
-/// Runs one `@benchmark` test body to *register* its cases (via `benchIter`/
-/// `benchCase`), without measuring them. A body that registers none is treated as
-/// a single whole-body case named after the test (the body itself is the measured
-/// unit). Registration-time throws are caught into `result`.
+/// Runs one benchmark test body to *register* its cases, without measuring
+/// them: a `@benchCases` body's `benchCase` calls, or for a `@benchmark` one a
+/// single whole-body case named after the test (the body itself is the
+/// measured unit). Registration-time throws are caught into `result`.
 package(sparkles.test_runner)
 Registration registerBenchmark(Test test, in BenchConfig config) @system
 {
@@ -1237,9 +1215,9 @@ Registration registerBenchmark(Test test, in BenchConfig config) @system
             result.thrown = toThrown(
                 new Exception("`" ~ test.name ~ "` registered no cases"));
         }
-        else // `@benchmark` without `benchIter`: the body is the measured unit
-            context.cases ~= eraseCase(Batched!(typeof(test.ptr))(test.ptr), test.name,
-                null, null, perCall: false);
+        else // `@benchmark`: the body is the measured unit
+            context.cases ~= eraseCase(WholeBody(test.ptr), test.name, null, null,
+                perCall: false);
     }
     return Registration(context.cases, result);
 }
@@ -1308,22 +1286,29 @@ unittest
     assert(outcome.rows[0].perf.isNull); // no counters requested
 }
 
-@("runBenchmark.benchIterBody")
+@("runBenchmark.batchedCase")
 @system
 unittest
 {
     import core.time : usecs;
 
+    static struct Side
+    {
+        enum timing = BenchTiming.batched;
+        int side;
+        void timed() { blackBox(side += 1); }
+    }
+
     static void body_()
     {
-        int side; // setup that must run exactly once per probe call
-        benchIter({ blackBox(side += 1); });
+        benchCase(Side());
     }
 
     const config = BenchConfig(iterations: 8, sampleCount: 2, minSampleTime: 1.usecs);
     auto counters = CounterGroups.none;
-    auto outcome = runBenchmark(Test(fullName: "m.bi", name: "bi", ptr: &body_), config, counters);
+    auto outcome = runBenchmark(casesTest("bi", &body_), config, counters);
     assert(outcome.result.succeeded);
+    assert(outcome.rows[0].name == "bi", "an unnamed case is named after its test");
     assert(outcome.rows[0].iterations == 8);
     assert(outcome.rows[0].samples == 2);
 }
@@ -1357,7 +1342,8 @@ unittest
         // residue — a ~1k body sits below the calibrated proc_pid_rusage
         // syscall cost and intermittently nets (clamps) to exactly 0 there.
         // This test is about the perf CAPTURE plumbing, not precision.
-        benchIter({ foreach (i; 0 .. 100_000) sink += i * i; });
+        foreach (i; 0 .. 100_000)
+            sink += i * i;
     }
 
     auto counters = CounterGroups.open(true, false, false, null);
@@ -1406,7 +1392,7 @@ unittest
     // Skipped by default; measured under --bench.
     import core.sys.posix.unistd : getpid;
 
-    benchIter({ () @trusted { blackBox(getpid()); }(); });
+    () @trusted { blackBox(getpid()); }();
 }
 
 @("benchCase.emitsRowsWithMetrics")
@@ -1442,7 +1428,7 @@ unittest
 unittest
 {
     // Registration collects a matrix body's cases without measuring; a body that
-    // calls neither benchCase nor benchIter registers a single whole-body case.
+    // `@benchmark` registers a single whole-body case.
     static void matrix()
     {
         foreach (i; 0 .. 3)

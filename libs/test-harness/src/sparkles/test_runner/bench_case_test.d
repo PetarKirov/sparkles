@@ -16,7 +16,7 @@ module sparkles.test_runner.bench_case_test;
 import core.time : usecs;
 
 import sparkles.test_runner.bench : BenchConfig, BenchTiming, CounterGroups, RegisteredCase,
-    benchCase, benchIter, blackBox, casesTest, disposeCases, measureCase, registerBenchmark;
+    benchCase, blackBox, casesTest, disposeCases, measureCase, registerBenchmark;
 import sparkles.test_runner.model : Test, TestTraits;
 
 private:
@@ -114,34 +114,6 @@ unittest
     // Each case saw its own loop value (TRB3), once per measured call.
     assert(journal.length == 3 * config.iterations);
     assert(journal[0] == "0" && journal[$ - 1] == "2");
-}
-
-// `benchIter` keeps its closure: the frame it closes over must still be
-// heap-allocated (one registration per helper, so nothing else forces it).
-void registerIter(int k)
-{
-    auto cells = new long[](8);
-    cells[] = 1000 + k;
-    benchIter({
-        if (cells.length != 8 || cells[7] != 1000 + k)
-            throw new Exception("benchIter: the registering frame is gone");
-    });
-}
-
-@("benchIter.frameOutlivesTheBody")
-@system
-unittest
-{
-    static void body_()
-    {
-        foreach (k; 0 .. 3)
-            registerIter(k);
-    }
-
-    auto cases = register(&body_, cases: false);
-    overwriteStackAndRecycleHeap();
-    foreach (error; measureAll(cases))
-        assert(error.length == 0, error);
 }
 
 // Logs every hook, and its destructor only for the live instance (a moved-from
@@ -352,45 +324,20 @@ unittest
     assert(registered.cases.length == 0);
 }
 
-@("benchCases.benchIterIsAnError")
+@("benchmark.wholeBody")
 @system
 unittest
 {
-    import std.algorithm.searching : canFind;
-
-    static void body_()
-    {
-        benchIter({ blackBox(1); });
-    }
-
-    auto registered = registerBenchmark(casesTest("mixed", &body_), BenchConfig());
-    assert(!registered.result.succeeded);
-    assert(registered.result.thrown[0].message.canFind("`mixed` is `@benchCases`"),
-        registered.result.thrown[0].message);
-}
-
-@("benchmark.benchIterAndWholeBody")
-@system
-unittest
-{
-    // `benchIter` keeps working in a `@benchmark` body, any number of times
-    // (one row each); a body without it is measured whole.
-    static void twoParts()
-    {
-        benchIter({ blackBox(1); }, ["part": "a"]);
-        benchIter({ blackBox(2); }, ["part": "b"]);
-    }
-
+    // A `@benchmark` body is one row, named after the test, measured whole.
     static void whole()
     {
         blackBox(3);
     }
 
-    auto parts = register(&twoParts, cases: false);
-    assert(parts.length == 2 && parts[1].labels["part"] == "b");
     auto body_ = register(&whole, cases: false);
     assert(body_.length == 1 && body_[0].name == "b");
-    foreach (error; measureAll(parts ~ body_))
+    assert(body_[0].runAfter is null, "a whole body is timed batched");
+    foreach (error; measureAll(body_))
         assert(error.length == 0, error);
 }
 

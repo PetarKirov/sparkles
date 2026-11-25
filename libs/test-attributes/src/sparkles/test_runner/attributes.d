@@ -16,7 +16,7 @@
  *
  * @("json.parse")
  * @benchmark @safe
- * unittest { /+ the body (or a `benchIter` part of it) timed via `--bench` +/ }
+ * unittest { /+ the body timed via `--bench` +/ }
  *
  * @("json.parse.matrix")
  * @benchCases @safe
@@ -85,10 +85,10 @@ struct wasm
 /// Benchmarks are skipped in normal test runs and executed by `--bench`,
 /// which times the test body with an auto-scaling iteration count
 /// (libtest-style) and reports ns/iter statistics. Use
-/// $(REF benchIter, sparkles,test_runner,bench) inside the test to time only a
-/// part of the body, and $(REF blackBox, sparkles,test_runner,bench) to keep
-/// results alive. A body that registers a matrix of cases is
-/// $(LREF benchCases) instead; calling `benchCase` here is an error.
+/// $(REF blackBox, sparkles,test_runner,bench) to keep results alive. A body
+/// that registers cases — a matrix, or one case that keeps setup out of the
+/// timing — is $(LREF benchCases) instead; calling `benchCase` here is an
+/// error.
 struct benchmark
 {
     /// Fixed iteration count per sample; `0` (the default) auto-scales the
@@ -96,16 +96,17 @@ struct benchmark
     uint iterations = 0;
 }
 
-/// Marks a `unittest` as a benchmark matrix: the body registers its rows with
-/// $(REF benchCase, sparkles,test_runner,bench), and only those are measured —
+/// Marks a `unittest` as a benchmark that registers its rows with
+/// $(REF benchCase, sparkles,test_runner,bench) — a matrix, or one case that
+/// keeps setup out of the timing — and only those are measured:
 /// the body itself never is. Skipped in normal test runs and measured by
 /// `--bench`, like $(LREF benchmark). A body that registers no case is an
-/// error unless it skipped (`skipTest`), and `benchIter` belongs to
-/// `@benchmark` bodies.
+/// error unless it skipped (`skipTest`).
 struct benchCases
 {
-    /// Exactly this many timed calls per case, one sample each; `0` (the
-    /// default) samples until the time budget is met.
+    /// Exactly this many timed calls per per-call case, one sample each (per
+    /// sample for a `BenchTiming.batched` case); `0` (the default) samples
+    /// until the time budget is met.
     uint iterations = 0;
 }
 

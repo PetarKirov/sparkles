@@ -70,10 +70,10 @@ version (linux)
     total number of `timed()` calls is exactly `iters` either way.
 
     `batch > 1` reorders `between()` to *after* its batch's `timed()` calls, so
-    it is only sound when `between` is a no-op — i.e. the batched
-    (`benchIter`/whole-body) rows, which is precisely the regime where the
-    floor bites. Per-call `benchCase` rows keep `batch == 1`, where this is
-    byte-for-byte the original per-iteration bracket.
+    it is only sound when `between` is a no-op — i.e. the batched rows (a
+    whole body or a `BenchTiming.batched` case), which is precisely the regime
+    where the floor bites. Per-call `benchCase` rows keep `batch == 1`, where
+    this is byte-for-byte the original per-iteration bracket.
     */
     package GroupTimeBase bracketCountingPass(Timed, Between)(int leaderFd,
         scope Timed timed, scope Between between, uint iters, uint batch = 1)
