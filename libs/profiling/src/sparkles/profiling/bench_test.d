@@ -4,29 +4,51 @@ history and noting it in the statistics.
 */
 module sparkles.profiling.bench_test;
 
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 
 @("profiling.recordOneFrame")
-@benchmark @system
+@benchCases @system
 unittest
 {
     import sparkles.profiling;
-    import sparkles.test_runner.bench : benchIter, blackBox;
+    import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
 
-    // Static: a benchmark body runs after the unittest returns.
-    static FrameTimer timer;
-    static FrameHistory!256 history;
-    static FrameStats stats;
-    timer.clock = FrameClock.monotonic;
-    benchIter({
-        timer.begin();
-        timer.lap(FramePhase.build);
-        timer.lap(FramePhase.acquire);
-        timer.lap(FramePhase.record);
-        timer.lap(FramePhase.present);
-        const f = timer.end();
-        history.add(f);
-        stats.note(f);
-        blackBox(stats.frames);
-    }, ["record": "timer+history+stats"]);
+    // The recorder's parts, on the heap: the history is ~190 KiB, and the
+    // timer's clock holds a delegate, which a case may not hold itself.
+    static struct Recorder
+    {
+        FrameTimer timer;
+        FrameHistory!256 history;
+        FrameStats stats;
+    }
+
+    static struct RecordOneFrame
+    {
+        enum timing = BenchTiming.batched;
+        Recorder* recorder;
+
+        void setup()
+        {
+            recorder = new Recorder;
+            recorder.timer.clock = FrameClock.monotonic;
+        }
+
+        void timed()
+        {
+            with (recorder)
+            {
+                timer.begin();
+                timer.lap(FramePhase.build);
+                timer.lap(FramePhase.acquire);
+                timer.lap(FramePhase.record);
+                timer.lap(FramePhase.present);
+                const f = timer.end();
+                history.add(f);
+                stats.note(f);
+                blackBox(stats.frames);
+            }
+        }
+    }
+
+    benchCase(RecordOneFrame(), labels: ["record": "timer+history+stats"]);
 }
