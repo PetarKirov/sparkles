@@ -1837,11 +1837,6 @@ unittest
     // with no match at all — the common case, since most files do not
     // contain the needle, so the miss path is where a whole-tree scan
     // actually spends itself.
-    //
-    // Each case is registered from its own function because `benchCase`
-    // runs AFTER this body returns: closures sharing this frame read it
-    // once it is gone, which segfaults inside the scan rather than
-    // reporting anything useful.
     registerScanCase("many-lines", "wrapped", wrappedCorpus(), "ab", true);
     registerScanCase("one-long-line", "minified", minifiedCorpus(), "ab", true);
     registerScanCase("no-match", "wrapped", wrappedCorpus(), "zzzz", false);
@@ -1881,17 +1876,9 @@ version (unittest)
         return text;
     }
 
-    /**
-    One registered case, owning everything it touches.
-
-    A class rather than a lambda on purpose: `benchCase` runs the case after
-    the registering function has returned, so a closure over that frame reads
-    a frame that is gone — which shows up as a segfault inside the scan
-    rather than as anything that names the real problem. Binding `timed` and
-    `after` to a heap object (`&c.run`) is the pattern the other benchmarks
-    in this repo use, for this reason.
-    */
-    private final class ScanCase
+    /// One registered case, owning everything it touches: its corpus, its
+    /// result bank and its prepared engine.
+    private static struct ScanCase
     {
         char[] text;
         string needle;
@@ -1914,26 +1901,24 @@ version (unittest)
 
         Unique!GrepEngine engine;
 
-        size_t run() @safe
+        size_t timed() @safe
             => scanText(text, needle, AnalysisCase.sensitive, mode,
                 DocHandle(1, 1), hits, ctx, engine.get);
 
-        void check(ref size_t n) @safe
+        void after(ref size_t n) @safe
         {
             assert(expectHits == (n != 0),
                 "the measured scan did not do the work it claims");
         }
     }
 
-    /// Register one case, owning its own corpus and result bank.
+    /// Register one case; its labels and throughput metric follow from the
+    /// arguments.
     private void registerScanCase(string name, string shape, char[] text,
         string needle, bool expectHits, GrepMode mode = GrepMode.plain) @safe
     {
-        auto c = new ScanCase(text, needle, expectHits, mode);
-        benchCase(name: name,
+        benchCase(ScanCase(text, needle, expectHits, mode), name: name,
             labels: ["shape": shape, "outcome": expectHits ? "hits" : "miss"],
-            timed: &c.run,
-            after: &c.check,
             metrics: [Metric(Unit("B"), text.length, Metric.Mode.rate)]);
     }
 }
