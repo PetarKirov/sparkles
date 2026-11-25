@@ -1,0 +1,9 @@
+perf counters open: 5
+# list N=998 depth=5 maxFan=248 events=1250
+# list N=9998 depth=5 maxFan=2498 events=12500
+# list N=99998 depth=5 maxFan=24998 events=125000
+# list N=999998 depth=5 maxFan=249998 events=1250000
+# panels N=1000 depth=11 maxFan=8 events=1265
+# panels N=10000 depth=11 maxFan=872 events=12304
+# panels N=100000 depth=11 maxFan=769 events=119570
+# panels N=1000000 depth=11 maxFan=998 events=1179983

@@ -7064,6 +7064,16 @@
         ]
       },
       {
+        "text": "UI Component Authoring",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Study",
+            "link": "/research/ui-authoring/"
+          }
+        ]
+      },
+      {
         "text": "UI Layout",
         "collapsed": true,
         "items": [

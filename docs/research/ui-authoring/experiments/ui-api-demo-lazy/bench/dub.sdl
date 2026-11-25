@@ -1,0 +1,111 @@
+name "ui-build-bench"
+description "Build cost per node: inside-out vs lazy-variadic vs scoped `with` UI builders"
+targetType "library"
+targetPath "build"
+
+importPaths "src" ".."
+sourcePaths "src"
+sourceFiles "../ui_sketch.d" "../treehash.d" "../benchtext.d"
+// Clay (C, by ImportC) and its builder: see clay/clay_impl.c and ../README.md
+// "Clay (ImportC)". `clay/clay.h` is not committed: fetch it first (README).
+importPaths "clay"
+sourceFiles "clay/clay_impl.c" "clay/clayui.d" "clay/views_clay.d" "clay/bench_clay.d"
+versions "Bench"
+
+dflags "-preview=in" "-preview=dip1000"
+// The views live in their own modules, as an app's would; LDC inlines the
+// primitives into them only with cross-module inlining (paired with
+// `-linkonce-templates`, see docs/libs/test-runner/how-to/benchmark.md).
+dflags "-enable-cross-module-inlining" "-linkonce-templates" platform="ldc"
+
+dependency "sparkles:base" path="../../../../../.."
+
+configuration "unittest" {
+    dependency "sparkles:test-runner" path="../../../../../.."
+    dependency "sparkles:base" path="../../../../../.."
+
+    dflags "-checkaction=context" "-allinst" platform="ldc"
+    // DMD 2.115 leaves `_d_assert_fail!(int)` / `!(const ulong)` unemitted with
+    // `-checkaction=context` here (undefined symbol at link), so plain asserts.
+    dflags "-allinst" platform="dmd"
+}
+// All three builders on a bare malloc'd array instead of `HeapBuffer` (see `benchtext.d`).
+configuration "unittest-rawbuf" {
+    dependency "sparkles:test-runner" path="../../../../../.."
+    dependency "sparkles:base" path="../../../../../.."
+    versions "RawBuf"
+
+    dflags "-checkaction=context" "-allinst" platform="ldc"
+    // DMD 2.115 leaves `_d_assert_fail!(int)` / `!(const ulong)` unemitted with
+    // `-checkaction=context` here (undefined symbol at link), so plain asserts.
+    dflags "-allinst" platform="dmd"
+}
+// The scoped prototype's per-node `fnv(__FILE__)`, uncached.
+configuration "unittest-nocache" {
+    dependency "sparkles:test-runner" path="../../../../../.."
+    dependency "sparkles:base" path="../../../../../.."
+    versions "ScopedNoFileHashCache"
+
+    dflags "-checkaction=context" "-allinst" platform="ldc"
+    // DMD 2.115 leaves `_d_assert_fail!(int)` / `!(const ulong)` unemitted with
+    // `-checkaction=context` here (undefined symbol at link), so plain asserts.
+    dflags "-allinst" platform="dmd"
+}
+
+
+// BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
+dflags "--linker=lld" platform="linux-ldc"
+dflags "-L-fuse-ld=lld" platform="linux-dmd"
+
+buildType "unittest" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-debug" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov" {
+    buildOptions "unittests" "coverage" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov-ctfe" {
+    buildOptions "unittests" "coverageCTFE" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
+buildType "bench" {
+    buildOptions "unittests" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-unchecked" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-static" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "--link-defaultlib-shared=false" platform="linux-ldc"
+    dflags "-defaultlib=libphobos2.a" platform="linux-dmd"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+// END managed build types
