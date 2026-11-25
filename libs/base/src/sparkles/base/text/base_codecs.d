@@ -18,7 +18,7 @@ import sparkles.base.text.errors :
 
 // Unconditional import (phobos-style, cf. std.internal.attributes): unittest
 // UDAs are resolved even in builds where the unittest bodies are not compiled.
-import sparkles.test_runner.attributes : benchCases, benchmark, betterC;
+import sparkles.test_runner.attributes : benchCases, betterC;
 
 /**
 A positional digit vocabulary: `digits[i]` is the character for symbol
@@ -1182,14 +1182,27 @@ unittest
     registerStreamingBench!base64("base64", "64KiB", 1 << 16);
 }
 
-/// The fixed-length encoders are tens of nanoseconds — measure them with
-/// `benchIter` (batched timing), not per-call `benchCase` rows.
+/// The fixed-length encoders are tens of nanoseconds — measure them as
+/// batched cases (`BenchTiming.batched`), not per-call rows.
 @("text.base_codecs.bench.fixed32")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
     import std.meta : AliasSeq;
-    import sparkles.test_runner.bench : benchIter, blackBox;
+    import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
+
+    static struct Fixed32(alias a)
+    {
+        enum timing = BenchTiming.batched;
+        ubyte[32] src;
+        char[encodedLen(a, 32)] dst = void;
+
+        void timed() @safe
+        {
+            encodeBase!a(blackBox(src), dst);
+            blackBox(dst);
+        }
+    }
 
     ubyte[32] src = void;
     uint x = 0xDEADBEEF;
@@ -1202,10 +1215,7 @@ unittest
     static foreach (i, a; AliasSeq!(base16, base32, base64))
     {{
         enum names = ["base16", "base32", "base64"];
-        char[encodedLen(a, 32)] dst = void;
-        benchIter({
-            encodeBase!a(blackBox(src), dst);
-            blackBox(dst);
-        }, ["preset": names[i], "op": "encode", "size": "32B-fixed"]);
+        benchCase(Fixed32!a(src),
+            labels: ["preset": names[i], "op": "encode", "size": "32B-fixed"]);
     }}
 }

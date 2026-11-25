@@ -1,7 +1,7 @@
 /** Observable owned wrapping regressions and a tiny independent exhaustive oracle. */
 module sparkles.base.text.wrap_solver_test;
 
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 
 version (unittest)
 {
@@ -927,34 +927,34 @@ version (unittest)
     }
 
     @("text.wrap.bench.cellWrapPlan")
-    @benchmark @safe
+    @benchCases @safe
     unittest
     {
-        import sparkles.test_runner.bench : benchIter, blackBox;
+        import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
         import std.array : replicate;
 
-        const options = WrapOptions(width: CellWidth.bounded(80),
+        // Static: `WrapOptions` has a (here unset) delegate field, which a
+        // case may not hold.
+        static immutable options = WrapOptions(width: CellWidth.bounded(80),
             whitespace: WhitespaceMode.collapse);
-        // One block per case: the runner measures the delegates after this
-        // body returns, so each must capture its own source variable.
+
+        static struct CellWrapPlan
         {
-            const source = replicate("word ", 7)[0 .. 32];
-            benchIter({
+            enum timing = BenchTiming.batched;
+            string source;
+
+            void timed() @safe
+            {
                 blackBox(cellWrapPlan(blackBox(source), options).lines.length);
-            }, ["op": "cellWrapPlan", "size": "32"]);
+            }
         }
-        {
-            const source = replicate("word ", 205)[0 .. 1024];
-            benchIter({
-                blackBox(cellWrapPlan(blackBox(source), options).lines.length);
-            }, ["op": "cellWrapPlan", "size": "1024"]);
-        }
-        {
-            const source = replicate("word ", 820)[0 .. 4096];
-            benchIter({
-                blackBox(cellWrapPlan(blackBox(source), options).lines.length);
-            }, ["op": "cellWrapPlan", "size": "4096"]);
-        }
+
+        benchCase(CellWrapPlan(replicate("word ", 7)[0 .. 32]),
+            labels: ["op": "cellWrapPlan", "size": "32"]);
+        benchCase(CellWrapPlan(replicate("word ", 205)[0 .. 1024]),
+            labels: ["op": "cellWrapPlan", "size": "1024"]);
+        benchCase(CellWrapPlan(replicate("word ", 820)[0 .. 4096]),
+            labels: ["op": "cellWrapPlan", "size": "4096"]);
     }
 }
 version (OwnedWrapSmoke)

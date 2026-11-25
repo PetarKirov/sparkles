@@ -19,7 +19,7 @@ import std.traits : hasElaborateAssign, hasElaborateDestructor,
 import std.experimental.allocator.building_blocks.affix_allocator : AffixAllocator;
 import std.experimental.allocator.common : platformAlignment;
 
-import sparkles.test_runner.attributes : benchmark, betterC;
+import sparkles.test_runner.attributes : benchCases, betterC;
 
 version (unittest) import std.range : iota;
 
@@ -2292,53 +2292,94 @@ unittest
 /// buffer of known size either grows it a step at a time — every step a
 /// realloc that may move and copy everything written so far — or does not.
 @("Buffer.bench.reserveVsGrow")
-@benchmark @system
+@benchCases @system
 unittest
 {
-    import sparkles.test_runner.bench : benchIter, blackBox;
+    import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
 
     enum n = 1 << 16;
 
-    benchIter({
-        Buffer!(int, 16) buf;
-        foreach (i; 0 .. n)
-            buf ~= cast(int) i;
-        blackBox(buf.length);
-    }, ["fill": "grown", "elements": "65536"]);
+    static struct Grown
+    {
+        enum timing = BenchTiming.batched;
 
-    benchIter({
-        Buffer!(int, 16) buf;
-        buf.reserve(n);
-        foreach (i; 0 .. n)
-            buf ~= cast(int) i;
-        blackBox(buf.length);
-    }, ["fill": "reserved", "elements": "65536"]);
+        void timed()
+        {
+            Buffer!(int, 16) buf;
+            foreach (i; 0 .. n)
+                buf ~= cast(int) i;
+            blackBox(buf.length);
+        }
+    }
+
+    benchCase(Grown(), labels: ["fill": "grown", "elements": "65536"]);
+
+    static struct Reserved
+    {
+        enum timing = BenchTiming.batched;
+
+        void timed()
+        {
+            Buffer!(int, 16) buf;
+            buf.reserve(n);
+            foreach (i; 0 .. n)
+                buf ~= cast(int) i;
+            blackBox(buf.length);
+        }
+    }
+
+    benchCase(Reserved(), labels: ["fill": "reserved", "elements": "65536"]);
 
     // The reuse the reservation is really for: one allocation, many fills.
-    Buffer!(int, 16) reused;
-    reused.reserve(n);
-    benchIter({
-        reused.clear(releaseStorage: false);
-        foreach (i; 0 .. n)
-            reused ~= cast(int) i;
-        blackBox(reused.length);
-    }, ["fill": "reserved+reused", "elements": "65536"]);
+    static struct Reused
+    {
+        enum timing = BenchTiming.batched;
+        Buffer!(int, 16) reused;
+
+        void setup() { reused.reserve(n); }
+
+        void timed()
+        {
+            reused.clear(releaseStorage: false);
+            foreach (i; 0 .. n)
+                reused ~= cast(int) i;
+            blackBox(reused.length);
+        }
+    }
+
+    benchCase(Reused(), labels: ["fill": "reserved+reused", "elements": "65536"]);
 
     // The reservation on its own, at a size where what it does to the pages
     // matters: 8M ints is 32 MB of address space, and writing `T.init` over
     // all of it before the caller has stored anything is both a memset and
     // 8k first-touch faults for capacity that is not part of the value.
-    benchIter({
-        Buffer!(int, 16) buf;
-        buf.reserve(8_000_000);
-        blackBox(buf.capacity);
-    }, ["fill": "reserve-only", "elements": "8M-reserved-untouched"]);
+    static struct ReserveOnly
+    {
+        enum timing = BenchTiming.batched;
 
-    benchIter({
-        Buffer!(string, 4) buf;
-        buf.reserve(8_000_000);
-        blackBox(buf.capacity);
-    }, ["fill": "reserve-only", "elements": "8M-reserved-untouched-with-references"]);
+        void timed()
+        {
+            Buffer!(int, 16) buf;
+            buf.reserve(8_000_000);
+            blackBox(buf.capacity);
+        }
+    }
+
+    benchCase(ReserveOnly(), labels: ["fill": "reserve-only", "elements": "8M-reserved-untouched"]);
+
+    static struct ReserveOnlyReferences
+    {
+        enum timing = BenchTiming.batched;
+
+        void timed()
+        {
+            Buffer!(string, 4) buf;
+            buf.reserve(8_000_000);
+            blackBox(buf.capacity);
+        }
+    }
+
+    benchCase(ReserveOnlyReferences(), labels: ["fill": "reserve-only", "elements": "8M-reserved-untouched-with-references"]);
 
     // An element type carrying a reference cannot grow in place: the block is
     // not GC-scanned, so `realloc` would move the elements into memory the
@@ -2347,20 +2388,36 @@ unittest
     // that is where not growing pays.
     static immutable string[4] words = ["alpha", "beta", "gamma", "delta"];
 
-    benchIter({
-        Buffer!(string, 4) buf;
-        foreach (i; 0 .. n)
-            buf ~= words[i & 3];
-        blackBox(buf.length);
-    }, ["fill": "grown", "elements": "65536-with-references"]);
+    static struct GrownReferences
+    {
+        enum timing = BenchTiming.batched;
 
-    benchIter({
-        Buffer!(string, 4) buf;
-        buf.reserve(n);
-        foreach (i; 0 .. n)
-            buf ~= words[i & 3];
-        blackBox(buf.length);
-    }, ["fill": "reserved", "elements": "65536-with-references"]);
+        void timed()
+        {
+            Buffer!(string, 4) buf;
+            foreach (i; 0 .. n)
+                buf ~= words[i & 3];
+            blackBox(buf.length);
+        }
+    }
+
+    benchCase(GrownReferences(), labels: ["fill": "grown", "elements": "65536-with-references"]);
+
+    static struct ReservedReferences
+    {
+        enum timing = BenchTiming.batched;
+
+        void timed()
+        {
+            Buffer!(string, 4) buf;
+            buf.reserve(n);
+            foreach (i; 0 .. n)
+                buf ~= words[i & 3];
+            blackBox(buf.length);
+        }
+    }
+
+    benchCase(ReservedReferences(), labels: ["fill": "reserved", "elements": "65536-with-references"]);
 }
 
 /// Mutable element access in a hot loop: what a write through `buf[i]` costs
@@ -2369,36 +2426,40 @@ unittest
 /// meet. A copy-on-write buffer additionally tests its reference count, inline,
 /// and calls out only to clone a shared block.
 @("Buffer.bench.mutableIndex")
-@benchmark @system
+@benchCases @system
 unittest
 {
-    import sparkles.test_runner.bench : benchIter, blackBox;
+    import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
 
     enum n = 4096;
 
     // A prefix sum: two mutable `opIndex` calls per element, a dependent
     // chain the optimizer cannot vectorize away.
-    static void prefixSum(B)(ref B buf)
+    static struct PrefixSum(B)
     {
-        foreach (i; 1 .. blackBox(n))
-            buf[i] += buf[i - 1];
+        enum timing = BenchTiming.batched;
+        B buf;
+
+        void setup()
+        {
+            static if (is(B : int[]))
+                buf = new int[n];
+            else
+                foreach (i; 0 .. n)
+                    buf ~= 1;
+        }
+
+        void timed()
+        {
+            foreach (i; 1 .. blackBox(n))
+                buf[i] += buf[i - 1];
+            blackBox(buf[n - 1]);
+        }
     }
 
-    // The buffer lives on the GC heap, not in this frame: the case runs after
-    // `measure` returns, and a frame-local buffer would be destroyed (its
-    // block freed) at the closing brace even though the closure still holds it.
     static void measure(B)(string policy)
     {
-        B* buf = &(new B[1])[0];
-        static if (is(B : int[]))
-            *buf = new int[n];
-        else
-            foreach (i; 0 .. n)
-                *buf ~= 1;
-        benchIter({
-            prefixSum(*buf);
-            blackBox((*buf)[n - 1]);
-        }, ["policy": policy, "elements": "4096"]);
+        benchCase(PrefixSum!B(), labels: ["policy": policy, "elements": "4096"]);
     }
 
     measure!(int[])("int[] (floor)");

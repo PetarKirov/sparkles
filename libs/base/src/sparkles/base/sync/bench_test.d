@@ -19,7 +19,7 @@ import core.time : MonoTime, msecs;
 import sparkles.base.sync;
 import sparkles.base.sync.parking_lot : bucketIndex;
 import sparkles.base.sync.seam : hasNativeSeam, seamFaults;
-import sparkles.test_runner.attributes : benchmark, workload;
+import sparkles.test_runner.attributes : benchCases, workload;
 
 version (linux)
     private enum bool haveFutex3 = hasNativeSeam;
@@ -104,20 +104,33 @@ private struct InterruptibleLock
 // B1: uncontended lock/unlock, one thread.
 
 @("sync.bench.B1.uncontended")
-@benchmark
+@benchCases
 @system unittest
 {
-    import sparkles.test_runner.bench : benchIter;
+    import sparkles.test_runner.bench : BenchTiming, benchCase;
 
-    __gshared Mutex m;
-    __gshared InterruptibleMutex im;
-    benchIter(() { m.lock(); m.unlock(); }, ["lock": "Mutex"]);
-    benchIter(() { auto a = im.lock(); }, ["lock": "InterruptibleMutex"]);
-    static if (haveFutex3)
+    // One lock, owned by its case, locked and unlocked per iteration.
+    static struct Uncontended(L)
     {
-        __gshared Futex3 f;
-        benchIter(() { f.lock(); f.unlock(); }, ["lock": "futex3"]);
+        enum timing = BenchTiming.batched;
+        L lock;
+
+        void timed() @system
+        {
+            static if (is(L == InterruptibleMutex))
+                auto a = lock.lock();
+            else
+            {
+                lock.lock();
+                lock.unlock();
+            }
+        }
     }
+
+    benchCase(Uncontended!Mutex(), labels: ["lock": "Mutex"]);
+    benchCase(Uncontended!InterruptibleMutex(), labels: ["lock": "InterruptibleMutex"]);
+    static if (haveFutex3)
+        benchCase(Uncontended!Futex3(), labels: ["lock": "futex3"]);
 }
 
 // ---------------------------------------------------------------------------
