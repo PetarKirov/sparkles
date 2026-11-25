@@ -19,7 +19,7 @@ import core.lifetime : move;
 
 import sparkles.base.term_control : writeCursorTo;
 
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 import sparkles.test_runner.bench : benchCase, blackBox, Metric, Unit;
 
 import sparkles.tui_render_bench.cell : calibFillStyle, encodeUtf8, Grid;
@@ -271,7 +271,7 @@ unittest
 }
 
 @("render-calibration")
-@benchmark
+@benchCases
 @system
 unittest
 {

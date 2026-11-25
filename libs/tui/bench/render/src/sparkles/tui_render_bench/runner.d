@@ -1,5 +1,5 @@
 /++
-The `@benchmark` matrix: renderer × profile × terminal-size.
+The `@benchCases` matrix: renderer × profile × terminal-size.
 
 `name` is the renderer (the varying dimension compared per row); `profile` and
 `size` are labels (`--group-by=profile,size` gives one table per group). Each case
@@ -20,7 +20,8 @@ module sparkles.tui_render_bench.runner;
 import core.lifetime : move;
 import std.meta : AliasSeq;
 
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
+import sparkles.test_runner.skip : skipTest;
 import sparkles.test_runner.bench : benchCase, blackBox, Metric, Unit;
 
 import sparkles.tui_render_bench.cell : Grid;
@@ -56,7 +57,7 @@ private immutable SizeSpec[] sizes = [
 ];
 
 @("render")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -72,14 +73,7 @@ unittest
                             any = true;
                         }
     if (!any)
-        benchCase(FilteredOut(), name: "(filtered out)");
-}
-
-/// The row registered when the env filters remove every case, so the body is
-/// not measured as a whole-body case.
-private struct FilteredOut
-{
-    void timed() {}
+        skipTest("TUI_BENCH_POCS/TUI_BENCH_PROFILES/TUI_BENCH_SIZES removed every case");
 }
 
 /// One scenario replay through renderer `R`.
