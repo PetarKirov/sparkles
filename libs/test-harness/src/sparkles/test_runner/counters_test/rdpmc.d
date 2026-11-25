@@ -15,7 +15,7 @@ version (linux) version (X86_64)
 }
 
 import sparkles.profiling.counters.rdpmc;
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 
 version (sparklesRdpmc)
 {
@@ -164,7 +164,7 @@ version (sparklesRdpmc)
     // vs one read(2), on this host, under `--bench` — the numbers that decide
     // whether the counting pass switches brackets (open-issue O2).
     @("rdpmc.bracketCost")
-    @benchmark @system
+    @benchCases @system
     unittest
     {
         import core.sys.posix.unistd : close;

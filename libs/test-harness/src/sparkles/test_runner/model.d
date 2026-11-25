@@ -27,7 +27,11 @@ struct TestTraits
     bool isBetterC;
     bool isCtfe;
     bool isWasm;
+    /// Measured by `--bench`: the test is `@benchmark` or `@benchCases`.
     bool isBenchmark;
+    /// The test is `@benchCases`: its body registers cases and is never
+    /// measured itself. In-binary only; the runner sees `isBenchmark`.
+    bool registersCases;
     bool isWorkload;
 
     /// The test is `@slow`: `--skip-slow` leaves it out, `--only-slow` keeps

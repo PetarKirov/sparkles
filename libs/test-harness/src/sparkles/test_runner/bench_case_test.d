@@ -16,8 +16,8 @@ module sparkles.test_runner.bench_case_test;
 import core.time : usecs;
 
 import sparkles.test_runner.bench : BenchConfig, CounterGroups, RegisteredCase,
-    benchCase, benchIter, blackBox, disposeCases, measureCase, registerBenchmark;
-import sparkles.test_runner.model : Test;
+    benchCase, benchIter, blackBox, casesTest, disposeCases, measureCase, registerBenchmark;
+import sparkles.test_runner.model : Test, TestTraits;
 
 private:
 
@@ -25,13 +25,18 @@ __gshared string[] journal;
 
 const config = BenchConfig(iterations: 4, sampleCount: 2, minSampleTime: 1.usecs);
 
-RegisteredCase[] register(void function() body_)
+// Registers `body_` as a `@benchCases` test (or, with `cases: false`, a
+// `@benchmark` one) and checks that registration succeeded.
+RegisteredCase[] register(void function() body_, bool cases = true)
 {
-    auto registered = registerBenchmark(Test(fullName: "m.t", name: "t", ptr: body_),
+    auto registered = registerBenchmark(cases ? casesTest("t", body_) : benchmarkTest(body_),
         BenchConfig());
     assert(registered.result.succeeded);
     return registered.cases;
 }
+
+Test benchmarkTest(void function() body_)
+    => Test(fullName: "m.b", name: "b", ptr: body_, traits: TestTraits(isBenchmark: true));
 
 // What the rest of a run does between registration and measurement.
 void overwriteStackAndRecycleHeap()
@@ -133,7 +138,7 @@ unittest
             registerIter(k);
     }
 
-    auto cases = register(&body_);
+    auto cases = register(&body_, cases: false);
     overwriteStackAndRecycleHeap();
     foreach (error; measureAll(cases))
         assert(error.length == 0, error);
@@ -291,4 +296,100 @@ unittest
     static assert(!__traits(compiles, benchCase(Deep(), name: "x")));
     static assert(!__traits(compiles, benchCase(NoTimed(), name: "x")));
     static assert(__traits(compiles, benchCase(Fine(), name: "x")));
+}
+
+// ─── the two roles: `@benchmark` measures the body, `@benchCases` registers ─
+
+@("benchmark.benchCaseIsAnError")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // A `@benchmark` body is the measured unit; registering cases from one
+    // is a mistake reported at registration, naming the test.
+    static void body_()
+    {
+        benchCase(Sentinel(1), name: "stray");
+    }
+
+    auto registered = registerBenchmark(benchmarkTest(&body_), BenchConfig());
+    assert(!registered.result.succeeded);
+    assert(registered.result.thrown[0].message.canFind("`b` is a `@benchmark`"),
+        registered.result.thrown[0].message);
+}
+
+@("benchCases.zeroCasesIsAnError")
+@system
+unittest
+{
+    // An empty matrix (a filter, a loop bound) is an error, never a
+    // measurement of the body.
+    static void body_() {}
+
+    auto registered = registerBenchmark(casesTest("empty", &body_), BenchConfig());
+    assert(!registered.result.succeeded && !registered.result.skipped);
+    assert(registered.cases.length == 0);
+    assert(registered.result.thrown[0].message == "`empty` registered no cases",
+        registered.result.thrown[0].message);
+}
+
+@("benchCases.zeroCasesAfterSkipSkips")
+@system
+unittest
+{
+    import sparkles.test_runner.skip : skipTest;
+
+    // The way to say "nothing to measure here": skip.
+    static void body_()
+    {
+        skipTest("TUI_BENCH_POCS removed every case");
+    }
+
+    auto registered = registerBenchmark(casesTest("filtered", &body_), BenchConfig());
+    assert(registered.result.skipped);
+    assert(registered.result.skipReason == "TUI_BENCH_POCS removed every case");
+    assert(registered.cases.length == 0);
+}
+
+@("benchCases.benchIterIsAnError")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    static void body_()
+    {
+        benchIter({ blackBox(1); });
+    }
+
+    auto registered = registerBenchmark(casesTest("mixed", &body_), BenchConfig());
+    assert(!registered.result.succeeded);
+    assert(registered.result.thrown[0].message.canFind("`mixed` is `@benchCases`"),
+        registered.result.thrown[0].message);
+}
+
+@("benchmark.benchIterAndWholeBody")
+@system
+unittest
+{
+    // `benchIter` keeps working in a `@benchmark` body, any number of times
+    // (one row each); a body without it is measured whole.
+    static void twoParts()
+    {
+        benchIter({ blackBox(1); }, ["part": "a"]);
+        benchIter({ blackBox(2); }, ["part": "b"]);
+    }
+
+    static void whole()
+    {
+        blackBox(3);
+    }
+
+    auto parts = register(&twoParts, cases: false);
+    assert(parts.length == 2 && parts[1].labels["part"] == "b");
+    auto body_ = register(&whole, cases: false);
+    assert(body_.length == 1 && body_[0].name == "b");
+    foreach (error; measureAll(parts ~ body_))
+        assert(error.length == 0, error);
 }

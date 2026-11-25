@@ -29,9 +29,9 @@ import core.time : Duration, MonoTime, msecs;
 
 import std.typecons : Nullable;
 
-import sparkles.test_runner.attributes : benchmark, ctfe;
+import sparkles.test_runner.attributes : benchCases, benchmark, ctfe;
 import sparkles.profiling.counters.capability : BackendCapabilities, harnessPendingCapabilities;
-import sparkles.test_runner.model : Test, TestResult, Thrown;
+import sparkles.test_runner.model : Test, TestResult, TestTraits, Thrown;
 import sparkles.test_runner.skip : TestSkipped;
 import sparkles.profiling.counters.perf : PerfGroup, PerfStats;
 import sparkles.profiling.counters.raw : RawEvent, RawGroup, RawStats;
@@ -318,6 +318,13 @@ unittest
     assert(errorCell("") == "");
 }
 
+/// A `@benchCases` test named `name`, as discovery describes one — for the
+/// harness's tests, here and in `bench_case_test` (which a dependent package's
+/// test build compiles without this module's `version (unittest)`).
+package Test casesTest(string name, void function() body_)
+    => Test(fullName: "m." ~ name, name: name, ptr: body_,
+        traits: TestTraits(isBenchmark: true, registersCases: true));
+
 version (unittest)
 {
     /// An `Expected`-shaped result for the tests: `benchCase` finds a soft
@@ -592,6 +599,7 @@ private struct BenchContext
 {
     BenchConfig config;
     string testName;         /// row name for benchIter / whole-body measurement
+    bool registersCases;     /// the body is `@benchCases` (else `@benchmark`)
     RegisteredCase[] cases;  /// registration output (the body's benchCase/benchIter calls)
     CounterGroups* counters; /// null = no counting passes
 }
@@ -675,6 +683,10 @@ if (is(typeof(run()) == void))
         run();
         return;
     }
+    if (context.registersCases)
+        throw new Exception("benchIter: `" ~ context.testName ~ "` is `@benchCases`, whose"
+            ~ " body only registers cases; time part of a body with `benchIter` in a"
+            ~ " `@benchmark` test");
     // Batched measurement (a tight loop, no per-call release).
     context.cases ~= eraseCase(Batched!DG(run), context.testName, labels, null,
         perCall: false);
@@ -1044,6 +1056,9 @@ private void runOrRegister(C)(C bench, string name, string[string] labels,
             throw new Exception("benchCase '" ~ name ~ "': " ~ error);
         return;
     }
+    if (!context.registersCases)
+        throw new Exception("benchCase: `" ~ context.testName ~ "` is a `@benchmark`, whose"
+            ~ " body is the measured unit; a body that registers cases is `@benchCases`");
     context.cases ~= eraseCase(move(bench), name, labels, metrics, perCall: true);
 }
 
@@ -1163,17 +1178,30 @@ struct Registration
 package(sparkles.test_runner)
 Registration registerBenchmark(Test test, in BenchConfig config) @system
 {
-    import sparkles.test_runner.execution : executeTest;
+    import sparkles.test_runner.execution : executeTest, toThrown;
 
-    auto context = BenchContext(config: config, testName: test.name);
+    auto context = BenchContext(config: config, testName: test.name,
+        registersCases: test.traits.registersCases);
     activeBenchContext = &context;
     scope (exit)
         activeBenchContext = null;
 
     auto result = executeTest(test);
     if (result.succeeded && context.cases.length == 0)
-        context.cases ~= eraseCase(Batched!(typeof(test.ptr))(test.ptr), test.name, null,
-            null, perCall: false);
+    {
+        if (context.registersCases)
+        {
+            // A matrix that came out empty is a bug (a filter, a typo in a
+            // loop bound), not a benchmark of the body: say so, unless the
+            // body skipped (then `result` already says skipped).
+            result.succeeded = false;
+            result.thrown = toThrown(
+                new Exception("`" ~ test.name ~ "` registered no cases"));
+        }
+        else // `@benchmark` without `benchIter`: the body is the measured unit
+            context.cases ~= eraseCase(Batched!(typeof(test.ptr))(test.ptr), test.name,
+                null, null, perCall: false);
+    }
     return Registration(context.cases, result);
 }
 
@@ -1309,7 +1337,7 @@ unittest
 }
 
 @("benchCase.demo")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
     // Dogfoods benchCase: one @benchmark emits a row per size, each with an
@@ -1361,7 +1389,7 @@ unittest
 
     auto counters = CounterGroups.none;
     const config = BenchConfig(sampleCount: 2, minSampleTime: 1.usecs);
-    auto outcome = runBenchmark(Test(fullName: "m.mc", name: "mc", ptr: &body_), config, counters);
+    auto outcome = runBenchmark(casesTest("mc", &body_), config, counters);
     assert(outcome.result.succeeded);
     assert(outcome.rows.length == 3);
     assert(outcome.rows[0].name == "case0" && outcome.rows[0].error.length == 0);
@@ -1390,7 +1418,7 @@ unittest
         blackBox(s);
     }
 
-    assert(registerBenchmark(Test(fullName: "m.matrix", name: "matrix", ptr: &matrix),
+    assert(registerBenchmark(casesTest("matrix", &matrix),
             BenchConfig()).cases.length == 3);
     auto wb = registerBenchmark(Test(fullName: "m.whole", name: "whole", ptr: &whole), BenchConfig());
     assert(wb.cases.length == 1 && wb.cases[0].name == "whole");
@@ -1422,7 +1450,7 @@ unittest
     Rec rec;
     auto counters = CounterGroups.none;
     const config = BenchConfig(sampleCount: 1, minSampleTime: 1.usecs);
-    auto outcome = runBenchmark(Test(fullName: "m.b", name: "b", ptr: &body_),
+    auto outcome = runBenchmark(casesTest("b", &body_),
         config, counters, &rec.tick);
     assert(outcome.result.succeeded);
     assert(rec.n == 3); // exactly one tick per case
@@ -1450,7 +1478,7 @@ unittest
 
     auto counters = CounterGroups.none;
     const config = BenchConfig(sampleCount: 1, minSampleTime: 1.usecs);
-    auto outcome = runBenchmark(Test(fullName: "m.er", name: "er", ptr: &body_), config, counters);
+    auto outcome = runBenchmark(casesTest("er", &body_), config, counters);
     assert(outcome.result.succeeded);
     assert(outcome.rows.length == 2);
     assert(outcome.rows[0].name == "bad" && outcome.rows[0].error == "expected 5");
@@ -1479,7 +1507,7 @@ unittest
     }
 
     auto counters = CounterGroups.none;
-    auto outcome = runBenchmark(Test(fullName: "m.bt", name: "bt", ptr: &body_),
+    auto outcome = runBenchmark(casesTest("bt", &body_),
         BenchConfig(sampleCount: 1, minSampleTime: 1.usecs), counters);
     assert(!outcome.result.succeeded);
     assert(outcome.result.thrown.length == 1);
@@ -1510,7 +1538,7 @@ unittest
     }
 
     auto counters = CounterGroups.none;
-    auto outcome = runBenchmark(Test(fullName: "m.st", name: "st", ptr: &body_),
+    auto outcome = runBenchmark(casesTest("st", &body_),
         BenchConfig(sampleCount: 3, minSampleTime: 1.usecs), counters);
     assert(outcome.result.succeeded);
     assert(setups == 1, "setup runs exactly once, not per iteration");
@@ -1542,7 +1570,7 @@ unittest
     }
 
     auto counters = CounterGroups.none;
-    auto outcome = runBenchmark(Test(fullName: "m.te", name: "te", ptr: &body_),
+    auto outcome = runBenchmark(casesTest("te", &body_),
         BenchConfig(sampleCount: 1, minSampleTime: 1.usecs), counters);
     assert(outcome.result.succeeded);
     assert(outcome.rows.length == 1 && outcome.rows[0].error == "boom");
@@ -1593,7 +1621,7 @@ unittest
     }
 
     auto counters = CounterGroups.none;
-    auto outcome = runBenchmark(Test(fullName: "m.skm", name: "skm", ptr: &body_),
+    auto outcome = runBenchmark(casesTest("skm", &body_),
         BenchConfig(sampleCount: 1, minSampleTime: 1.usecs), counters);
     assert(outcome.result.succeeded, "a case-level skip does not fail the test");
     assert(outcome.rows.length == 2);
@@ -1621,7 +1649,7 @@ unittest
     }
 
     auto counters = CounterGroups.none;
-    auto outcome = runBenchmark(Test(fullName: "m.pin", name: "pin", ptr: &body_),
+    auto outcome = runBenchmark(casesTest("pin", &body_),
         BenchConfig(iterations: 7), counters);
     assert(outcome.result.succeeded);
     assert(timeds == 7, "exactly the pinned number of timed calls");

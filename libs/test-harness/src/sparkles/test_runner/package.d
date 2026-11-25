@@ -9,6 +9,6 @@
  */
 module sparkles.test_runner;
 
-public import sparkles.test_runner.attributes : benchmark, betterC, ctfe, wasm;
+public import sparkles.test_runner.attributes : benchCases, benchmark, betterC, ctfe, wasm;
 public import sparkles.test_runner.bench : benchIter, blackBox;
 public import sparkles.test_runner.skip : skipTest, TestSkipped;

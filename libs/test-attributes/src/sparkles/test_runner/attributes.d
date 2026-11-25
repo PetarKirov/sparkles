@@ -4,7 +4,7 @@
  *
  * Attach these to `unittest` blocks to opt into special handling:
  * ---
- * import sparkles.test_runner.attributes : benchmark, betterC, ctfe;
+ * import sparkles.test_runner.attributes : benchCases, benchmark, betterC, ctfe;
  *
  * @("SharedBuffer.append")
  * @betterC @safe pure nothrow @nogc
@@ -14,9 +14,13 @@
  * @ctfe @safe pure nothrow
  * unittest { /+ evaluated during compilation, not at runtime +/ }
  *
- * @("SharedBuffer.append.bench")
+ * @("json.parse")
  * @benchmark @safe
- * unittest { /+ timed with auto-scaling iterations via `--bench` +/ }
+ * unittest { /+ the body (or a `benchIter` part of it) timed via `--bench` +/ }
+ *
+ * @("json.parse.matrix")
+ * @benchCases @safe
+ * unittest { /+ registers `benchCase` rows; only they are measured +/ }
  *
  * @("oracle.raster.freeType")
  * @slow @system
@@ -77,16 +81,31 @@ struct wasm
     bool selfContained = false;
 }
 
-/// Marks a `unittest` as a benchmark. Benchmarks are skipped in normal test
-/// runs and executed by `--bench`, which times the test body with an
-/// auto-scaling iteration count (libtest-style) and reports ns/iter
-/// statistics. Use $(REF benchIter, sparkles,test_runner,bench) inside the
-/// test to time only a part of the body, and
-/// $(REF blackBox, sparkles,test_runner,bench) to keep results alive.
+/// Marks a `unittest` as a benchmark whose body is the measured unit.
+/// Benchmarks are skipped in normal test runs and executed by `--bench`,
+/// which times the test body with an auto-scaling iteration count
+/// (libtest-style) and reports ns/iter statistics. Use
+/// $(REF benchIter, sparkles,test_runner,bench) inside the test to time only a
+/// part of the body, and $(REF blackBox, sparkles,test_runner,bench) to keep
+/// results alive. A body that registers a matrix of cases is
+/// $(LREF benchCases) instead; calling `benchCase` here is an error.
 struct benchmark
 {
     /// Fixed iteration count per sample; `0` (the default) auto-scales the
     /// count until one sample takes long enough to time reliably.
+    uint iterations = 0;
+}
+
+/// Marks a `unittest` as a benchmark matrix: the body registers its rows with
+/// $(REF benchCase, sparkles,test_runner,bench), and only those are measured —
+/// the body itself never is. Skipped in normal test runs and measured by
+/// `--bench`, like $(LREF benchmark). A body that registers no case is an
+/// error unless it skipped (`skipTest`), and `benchIter` belongs to
+/// `@benchmark` bodies.
+struct benchCases
+{
+    /// Exactly this many timed calls per case, one sample each; `0` (the
+    /// default) samples until the time budget is met.
     uint iterations = 0;
 }
 

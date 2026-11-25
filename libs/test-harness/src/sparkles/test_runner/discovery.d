@@ -11,7 +11,7 @@ module sparkles.test_runner.discovery;
 import std.meta : Alias, AliasSeq, staticMap;
 import std.traits : fullyQualifiedName, getUDAs, hasUDA;
 
-import sparkles.test_runner.attributes : benchmark, betterC, CacheRegime, ctfe,
+import sparkles.test_runner.attributes : benchCases, benchmark, betterC, CacheRegime, ctfe,
     serial, slow, ThreadAffinity, wasm, workload;
 import sparkles.test_runner.model : Test, TestLocation, TestTraits;
 
@@ -87,18 +87,24 @@ TestTraits testTraits(alias test)()
                     traits.selfContained |= uda.selfContained;
             }}
     }
-    static if (hasUDA!(test, benchmark))
-    {
-        traits.isBenchmark = true;
-        alias uda = Alias!(getUDAs!(test, benchmark)[0]);
-        // `@benchmark` attaches the type; `@benchmark(...)` attaches a value.
-        static if (!is(uda))
-            traits.benchIterations = uda.iterations;
-    }
+    static assert(!(hasUDA!(test, benchmark) && hasUDA!(test, benchCases)),
+        "`@benchmark` (the body is measured) and `@benchCases` (the body registers"
+        ~ " cases) are exclusive: " ~ fullyQualifiedName!test);
+    // Both are measured by `--bench`; only the harness tells them apart.
+    static foreach (marker; AliasSeq!(benchmark, benchCases))
+        static if (hasUDA!(test, marker))
+        {{
+            traits.isBenchmark = true;
+            traits.registersCases = is(marker == benchCases);
+            alias uda = Alias!(getUDAs!(test, marker)[0]);
+            // `@benchmark` attaches the type; `@benchmark(...)` attaches a value.
+            static if (!is(uda))
+                traits.benchIterations = uda.iterations;
+        }}
     static if (hasUDA!(test, workload))
     {
-        static assert(!hasUDA!(test, benchmark),
-            "`@benchmark` and `@workload` are exclusive measurement models: "
+        static assert(!hasUDA!(test, benchmark) && !hasUDA!(test, benchCases),
+            "`@benchmark`/`@benchCases` and `@workload` are exclusive measurement models: "
             ~ fullyQualifiedName!test);
         traits.isWorkload = true;
         traits.workloadReps = 1;
@@ -214,6 +220,25 @@ version (unittest)
     @serial private void serialFixture() {}
     @serial(threadAffinity: ThreadAffinity.mainThread) private void mainThreadFixture() {}
     @benchmark @workload private void benchmarkWorkloadClashFixture() {}
+    @benchmark(iterations: 7) private void benchmarkFixture() {}
+    @benchCases(iterations: 5) private void benchCasesFixture() {}
+    @benchCases private void benchCasesBareFixture() {}
+    @benchmark @benchCases private void benchRolesClashFixture() {}
+}
+
+@("discovery.benchmarkRoles")
+@safe pure nothrow @nogc
+unittest
+{
+    // Both markers are measured by `--bench` (`isBenchmark`, all the runner
+    // sees); only `@benchCases` registers cases. They are exclusive.
+    enum body_ = testTraits!benchmarkFixture();
+    static assert(body_.isBenchmark && !body_.registersCases && body_.benchIterations == 7);
+    enum cases = testTraits!benchCasesFixture();
+    static assert(cases.isBenchmark && cases.registersCases && cases.benchIterations == 5);
+    enum bare = testTraits!benchCasesBareFixture();
+    static assert(bare.isBenchmark && bare.registersCases && bare.benchIterations == 0);
+    static assert(!__traits(compiles, testTraits!benchRolesClashFixture()));
 }
 
 @("discovery.workloadTraits")
