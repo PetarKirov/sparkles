@@ -125,6 +125,8 @@ models) — none of which covers the viewport-versus-data-size axis.
 [egui](./egui-show-rows.md) → [Gio](./gio-list.md) →
 [sparkles baseline](./sparkles-baseline.md) →
 [immediate mode at scale](./immediate-mode-large-views.md) → [comparison](./comparison.md).
+The authoring surface those views are written in, and the builder under it,
+is the [UI component authoring](../ui-authoring/index.md) study.
 
 **"I want to know whether to recycle."** →
 [Qt Quick](./qt-quick-listview.md) (the hazards, stated by the vendor) →
