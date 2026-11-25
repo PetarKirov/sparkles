@@ -223,12 +223,15 @@ unconditionally (not under `version (unittest)`).
   measures **must** still be destroyed once, when the worker shuts down.
   Registration runs no hook. Outside `--bench` the same sequence runs once.
 
-  _Rationale:_ the delegate form this replaces registered closures. Every way
-  a closure's captured state can be gone by measurement time happened: a
-  `foreach` variable shared by every case, state released by `scope (exit)`
-  or a destructor around the call, and a frame the compiler kept on the stack
-  because it inferred the parameters `scope`
-  ([O14](./open-issues.md#o14--deferred-bench-closures-are-a-pit-of-failure)).
+  _Rationale:_ the delegate form this replaces registered closures, and every
+  way a closure's captured state can be gone by measurement time happened, to
+  authors who had read the warning: a `foreach` variable shared by every case;
+  an fd a `scope (exit)` closed, so the loop wedged in `io_cqring_wait`; a
+  `Sched` destroyed under a pending case (SIGSEGV); a dangling `RootScope`
+  that produced plausible numbers, which were committed; and a helper's frame
+  LDC 1.43 kept on the stack because it inferred the parameters `scope`, so
+  every case crashed. None showed outside `--bench`, where the case runs
+  inline. A value the runner owns has no frame to lose.
 
 - **`blackBox(x)`** — identity the optimizer cannot see through; route
   measured inputs and results through it.

@@ -41,7 +41,8 @@ Summary: 12 passed, 0 failed, 1 skipped in 4.1ms
   by other means.
 - **`@benchmark` bodies: prefer skipping at registration.** `skipTest` at the
   top of the body marks the whole benchmark skipped (a `⊘` line, no rows).
-  Inside a deferred `benchIter`/`benchCase` closure it skips only that case —
+  Inside a deferred `benchIter` closure or a `benchCase` case's members it
+  skips only that case —
   a yellow row in its table — while the rest of the matrix measures and the
   run stays green.
 - The mode-level toolchain skips (`--better-c`/`--wasm`/`@ctfe` with no

@@ -112,29 +112,35 @@ invokes the closure exactly once, so the test still works as a plain test.
 `benchIter` measures one thing. To benchmark a **matrix** — several
 implementations across several inputs — call `benchCase` repeatedly; each call
 emits its own row, so ordinary D loops (and a `static foreach` over a
-compile-time list) build the table:
+compile-time list) build the table. The case is a struct: its fields are what
+the case needs, and its members are what the runner calls.
 
 ```d
 import sparkles.test_runner.bench : benchCase, Metric, Unit;
+
+static struct Parse(Engine)
+{
+    Dataset ds;
+    Engine e;                                        // a class
+
+    void setup() { e = new Engine; }                 // untimed, once
+    auto timed() => e.parse(ds.text);                // measured; the result flows to `after`
+    void after(ref Doc doc)                          // untimed, after every call
+    {
+        enforce(doc.matches(reference), "mismatch");
+        e.free(doc);
+    }
+}
 
 @("json.parse") @benchmark
 unittest
 {
     static foreach (Engine; Engines)
         foreach (ds; datasets)
-            registerParse!Engine(ds);   // ds by value → each case captures its own copy
-}
-
-void registerParse(Engine)(Dataset ds)
-{
-    auto e = new Engine;   // heap: this case owns it, kept alive until it runs
-    benchCase(
-        name:    Engine.name,              // the varying dimension (the implementation)
-        labels:  ["dataset": ds.name, "operation": "parse"],  // group/filter dimensions
-        timed:   () => e.parse(ds.text),   // measured; its result flows to `after`
-        after:   (ref doc) { enforce(doc.matches(reference), "mismatch"); e.free(doc); },
-        metrics: [Metric(Unit("B"), ds.text.length, Metric.Mode.rate)],  // a B/s column
-    );
+            benchCase(Parse!Engine(ds),
+                name:    Engine.name,                // the varying dimension (the implementation)
+                labels:  ["dataset": ds.name, "operation": "parse"],  // group/filter dimensions
+                metrics: [Metric(Unit("B"), ds.text.length, Metric.Mode.rate)]);  // a B/s column
 }
 ```
 
@@ -153,21 +159,28 @@ in the table's top border:
 ```
 
 - Under `--bench`, `benchCase` **registers** the case; the runner measures it
-  later (grouped, so each table streams as its group finishes). The closures run
-  after the body returns, so register each case from a helper taking its varying
-  state **by value** (a `foreach` variable is one shared slot under deferred
-  execution), give it its own state, and put untimed per-case setup/release in the
-  optional **`setup`/`teardown`** (which bracket the case's measurement) — not
-  around the call. Outside `--bench` the case runs once immediately.
-- **`timed`** returns a result that flows to **`after`**, which runs _untimed_
-  after each iteration to verify and release it. `after` may **throw** — under
-  `--bench` the case becomes an in-table error row with its trace printed, the
-  matrix continues, and the run reports failure — or return an
+  later (grouped, so each table streams as its group finishes). It **moves the
+  case into memory it owns**, so a case built from a loop value keeps that
+  value, and nothing around the call needs to outlive the body. In that memory
+  it calls the optional **`setup()`** once, **`timed()`** and the optional
+  **`after`** once per measured call, the optional **`teardown()`** once, and
+  then destroys the case: its destructor runs once, after `teardown`, even when
+  a member throws. A case a filter keeps from being measured is destroyed when
+  the worker shuts down. Outside `--bench` the same sequence runs once,
+  immediately.
+- A case must be a `static struct` (a nested one could reach the registering
+  frame, which is gone when the case runs) and hold no delegate; either is a
+  compile error. Classes, pointers, slices and move-only fields are fine.
+- **`timed`** may return a result, which flows to **`after(ref result)`**; an
+  `after()` without a parameter is fine too. `after` verifies and releases,
+  _untimed_. It reports a failure by **throwing** — under `--bench` the case
+  becomes an in-table error row with its trace printed, the matrix continues,
+  and the run reports failure — or by returning an
   [`Expected`](../../../guidelines/idioms/expected/index.md) error (the same
-  isolated error row, without a trace). A case with nothing to release/verify
-  passes a no-op `after` (`() {}` for a `void` body). Error rows sort last in
-  their table under every `--sort-by` order.
-- **`metrics`** add throughput columns: `Metric(unit, amount, mode)` with `mode`
+  isolated error row, without a trace). A throw from `setup`, `timed` or
+  `teardown` makes the same error row. Outside `--bench` both kinds of failure
+  throw from `benchCase`. A case with nothing to verify omits `after`. Error
+  rows sort last in their table under every `--sort-by` order.
   `rate` (`amount ÷ iteration-time` → `<unit>/s`) or `level` (as-is). Units are
   open-basis names (`"B"`, `"req"`, `"tweet"`, …), vocabulary aligned to the
   forthcoming `sparkles:quantities` library.

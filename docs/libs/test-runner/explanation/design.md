@@ -112,7 +112,10 @@ volatile store elsewhere).
 
 `benchCase` extends this to a **matrix**: one `@benchmark` body calls it per
 (engine, dataset, …) and each call becomes its own row, so the combinatorics
-stay in plain-D loops rather than in the runner. It times each call individually
+stay in plain-D loops rather than in the runner. Each case is a struct the
+runner takes ownership of — its state travels with it, and a case type that
+could reach the registering frame does not compile — because the case runs
+after that frame is gone. It times each call individually
 — the price of letting an untimed `after` release the timed body's result
 before the next iteration — and a failing `after` (a `throw`, trace printed,
 or an `Expected` error, silent) isolates into a single error row while the

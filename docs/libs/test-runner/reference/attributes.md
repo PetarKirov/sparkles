@@ -56,7 +56,8 @@ The test is a benchmark.
   `benchCase` runs exactly N timed calls, one sample each.
 - The whole body is the measured unit by default. From
   `sparkles.test_runner.bench`: `benchIter` measures a sub-section, `benchCase`
-  emits many rows from one test (a matrix, with `Metric` throughput columns),
+  emits many rows from one test (a matrix of case structs the runner owns,
+  with `Metric` throughput columns),
   and `blackBox` is the optimizer barrier.
 - `--perf` adds hardware-counter columns to the `--bench` table: Linux
   `perf_event` (IPC, instructions/iter, cache/branch miss rates) or macOS

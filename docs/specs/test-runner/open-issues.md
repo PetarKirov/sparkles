@@ -26,6 +26,18 @@ deleted per the lifecycle. It also closes O2's option (C): that entry keeps its
 `Update` note, since the rdpmc switch remains worthwhile and composes with
 batching._
 
+_The later O14 (deferred bench closures are a pit of failure) is **resolved**:
+`benchCase` takes its case as a struct the runner moves into memory it owns,
+with optional `setup`/`after`/`teardown` members and its destructor run after
+the measurement, and a case type that could reach the registering frame does
+not compile (SPEC §3, TRB1–TRB4). Internally every case is the decided
+erasure — a state block and `function` pointers over it. Its record, four
+ways a closure's state was gone by measurement time (a closed fd, a destroyed
+`Sched`, a dangling `RootScope` that published plausible numbers, and a frame
+LDC kept on the stack because it inferred the parameters `scope`), is in SPEC
+§3's rationale. Every caller was migrated and the delegate form deleted, so
+the entry is deleted per the lifecycle._
+
 ## O1 — The paranoid degradation matrix is unprobed
 
 **Where:** SPEC §9.
@@ -204,98 +216,6 @@ summary set but warn when a `--metrics` selector names a column outside it;
 **Leaning:** (B) soon (cheap, honest), (A) when a real consumer needs
 window column control. (M5 and M6 confirmed the prediction that the
 window column set grows — `io-stall`, then `regime`.)
-
-## O14 — Deferred bench closures are a pit of failure
-
-**Where:** SPEC §2 (`benchIter`/`benchCase` registration); the
-[benchmark how-to](../../libs/test-runner/how-to/benchmark.md).
-
-Under `--bench`, **both** `benchIter` and `benchCase` only _register_ their
-closures; the runner measures them after the test body returns. Anything the
-closure captures must therefore outlive the body — but the body's natural
-shape (`scope (exit)`, RAII handles, a `ref` scope object) tears state down at
-exactly the wrong moment, and nothing at the call site says so. The failure is
-silent-to-violent and never names its cause.
-
-Three instances hit while porting `sparkles:event-horizon`, all by authors who
-had read the how-to's warning:
-
-| written                                           | happens                                                            |
-| ------------------------------------------------- | ------------------------------------------------------------------ |
-| fixture `fd` opened in body, `scope (exit)` close | every case reads a closed fd → loop wedges in `io_cqring_wait`     |
-| `benchIter` called inside `sched.run(…)`          | closure awaits a destroyed `Sched` → SIGSEGV                       |
-| `benchIter` inside `withScope!((ref sc) …)`       | closure uses a dangling `RootScope` → silent UB, plausible numbers |
-
-The third is the dangerous one: it _produced numbers_, they were committed, and
-only a later crash in the sibling row prompted re-measurement. A benchmark
-harness whose failure mode is "publishes a wrong number quietly" is the wrong
-default. Note also that the trap is invisible outside `--bench`: with no active
-context both helpers run inline, so a plain `dub test` passes.
-
-A fourth, from a UI-builder benchmark outside the repository, needed no
-mistake by the author: a `benchCase` registered from a helper, closing over
-the helper's locals (the documented discipline), crashed every case with
-SIGSEGV. The frontend LDC 1.43 uses inferred `timed`/`after` `scope` (their
-escape into `makeCase`'s closures went unseen), so the helper's frame stayed
-on the stack and was dead by measurement time; DMD 2.115 allocated it. (Its
-author read it as a collector bug and rooted the context pointers in a
-global, which also escapes them.) Fixed in the harness — `makeCase`
-stores the callables into a GC block, an escape every analysis sees
-(test `benchCase.frameClosuresOutliveTheBody`) — but it is one more way a
-delegate's captured state goes wrong that a function pointer cannot.
-
-The docs already warn ("register each case from a helper taking its varying
-state **by value**", "put per-case setup/release in `setup`/`teardown`"). That
-the same team tripped three times anyway is the argument that documentation is
-not the fix — the API should make the wrong thing hard to write.
-
-**Decided: (A) + function-pointer hooks.** Every `RegisteredCase` hook —
-`setup`, `runTimed`, `runAfter`, `teardown` — becomes a `function` over an
-explicit per-case state block, never a `delegate`. A function pointer _cannot_
-close over anything, so the whole bug class stops being expressible rather than
-merely documented; state a hook needs travels in the block, whose lifetime the
-case owns.
-
-```d
-struct RegisteredCase
-{
-    string name; string[string] labels; Metric[] metrics;
-    void* state;                         // heap-allocated; outlives the body
-    void   function(void*) setup;
-    void   function(void*) runTimed;
-    string function(void*) runAfter;     // null = batched row
-    void   function(void*) teardown;
-}
-```
-
-Public surface: `benchCase!State(name, state, timed, after, …)` with hooks
-typed `void function(ref State)`, plus stateless overloads over an empty
-`NoState` for hooks that genuinely need nothing. The typed→erased bridge is a
-`static` nested function per instantiation (a function pointer, so the
-apparatus obeys its own rule) over a heap `CaseCell` holding the state and the
-hook pointers.
-
-One simplification falls out and should be taken: today `timed` _returns_ a
-result that the runner stashes and threads into `after`. With an explicit state
-block that plumbing is redundant — `timed` writes its result into the state,
-`after` reads it — which deletes the `last`-value machinery in `makeCase`.
-
-**Migration.** D converts a **non-capturing** lambda to a function pointer
-implicitly, so declaring the parameters as `function` leaves every
-non-capturing call site compiling untouched and rejects exactly the capturing
-ones — the change is self-targeting. Scope at time of writing: 28 call sites
-outside the runner (`wired` bench ×7, `tui` bench ×5, `base` ×4, `hue`,
-`core-cli` example, `event-horizon` suite) plus 17 inside it. Sequence: land
-the core with both shapes, migrate package by package (each independently
-green), then remove the delegate path so the rule is enforced rather than
-advisory.
-
-**Not done yet** — the core redesign plus a 45-site migration is a larger
-change than the batching fix it rode in with, and a partially-migrated
-monorepo does not compile. Specified here so it can be executed in one clean
-pass.
-
-**Raised by:** `sparkles:event-horizon`'s bench port.
 
 ## O15 — Start-up cost paid once per worker
 
