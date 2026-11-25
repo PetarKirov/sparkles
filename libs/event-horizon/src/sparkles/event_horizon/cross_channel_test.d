@@ -35,7 +35,7 @@ import sparkles.event_horizon.testing : TestSched;
 // A test that bounds a run's wall-clock time is `@serial`, as the supervise
 // tests are: beside the other parallel tests the bound would measure the
 // host's load, not the channel.
-import sparkles.test_runner.attributes : benchmark, serial;
+import sparkles.test_runner.attributes : benchCases, serial;
 
 private:
 
@@ -754,8 +754,7 @@ unittest
 
 // ── contention benchmark ────────────────────────────────────────────────────
 
-/// The benchmark's fixture, on the heap: `benchIter` runs its body after the
-/// unittest returns, when a stack fixture would be gone.
+/// The benchmark's fixture: one group and channel, shared by every shape.
 final class ContentionBench
 {
     enum uint batch = 65_536;
@@ -786,21 +785,39 @@ void transfer(ContentionBench b, uint[2] producers, uint[2] consumers) @system
 }
 
 @("crossChannel.bench.contention")
-@benchmark
+@benchCases
 @system
 unittest
 {
-    import sparkles.test_runner.bench : benchIter;
+    import sparkles.test_runner.bench : BenchTiming, benchCase;
+
+    // One shape: a `transfer` over the shared fixture, or (`runEachOnly`)
+    // the `runEach` every transfer pays.
+    static struct Contention
+    {
+        enum timing = BenchTiming.batched;
+        ContentionBench b;
+        uint[2] producers;
+        uint[2] consumers;
+        bool runEachOnly;
+
+        void timed() @system
+        {
+            if (runEachOnly)
+                b.group.runEach((uint id, ref RootScope root, ref env) {});
+            else
+                transfer(b, producers, consumers);
+        }
+    }
 
     // Each iteration moves 65 536 items through a 16-slot channel on the
     // default park path and pays one `runEach` (a worker thread's start and
     // join), which the first row measures alone.
     auto b = new ContentionBench;
     startGroup(b.group, FiberPark.auto_);
-    benchIter(() { b.group.runEach((uint id, ref RootScope root, ref env) {}); },
-        ["shape": "runEach alone"]);
-    benchIter(() => transfer(b, [1, 0], [1, 0]), ["shape": "1 → 1, same worker"]);
-    benchIter(() => transfer(b, [1, 0], [0, 1]), ["shape": "1 → 1, across workers"]);
-    benchIter(() => transfer(b, [2, 2], [2, 2]), ["shape": "4 → 4, both workers"]);
-    benchIter(() => transfer(b, [4, 0], [0, 4]), ["shape": "4 → 4, across workers"]);
+    benchCase(Contention(b, runEachOnly: true), labels: ["shape": "runEach alone"]);
+    benchCase(Contention(b, [1, 0], [1, 0]), labels: ["shape": "1 → 1, same worker"]);
+    benchCase(Contention(b, [1, 0], [0, 1]), labels: ["shape": "1 → 1, across workers"]);
+    benchCase(Contention(b, [2, 2], [2, 2]), labels: ["shape": "4 → 4, both workers"]);
+    benchCase(Contention(b, [4, 0], [0, 4]), labels: ["shape": "4 → 4, across workers"]);
 }
