@@ -90,18 +90,27 @@ _additional_ environment, not a replacement. The same applies to `@wasm`
 
 ## 5. Benchmark something
 
-`@benchmark` tests are skipped by `dub test` and measured by `--bench`:
+`@benchmark` tests are skipped by `dub test` and measured by `--bench`. A
+`@benchmark` body is measured whole; to keep setup out of the timing, make the
+measured part a case struct and register it from a `@benchCases` body:
 
 ```d
-import sparkles.test_runner.attributes : benchmark;
-import sparkles.test_runner.bench : benchIter, blackBox;
+import sparkles.test_runner.attributes : benchCases;
+import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
+
+static struct Area
+{
+    enum timing = BenchTiming.batched; // calls run back to back
+    Polygon vertices;
+
+    void timed() @safe { blackBox(area(blackBox(vertices))); } // measured
+}
 
 @("area.polygon.bench")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
-    auto vertices = makePolygon(1000); // setup — not measured
-    benchIter({ blackBox(area(blackBox(vertices))); }); // measured
+    benchCase(Area(makePolygon(1000))); // setup — not measured
 }
 ```
 

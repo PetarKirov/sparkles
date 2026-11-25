@@ -103,23 +103,29 @@ test binary at runtime) plus a best-effort `dub describe`.
 
 `--bench` measures each benchmark with Rust libtest's approach: double the
 per-sample iteration count until a sample is long enough to time (5 ms),
-collect 32 samples, report median/MAD/min/max ns-per-iteration. `benchIter`
-mirrors `Bencher::iter` — the runner calls the test once and the closure
-passed to `benchIter` becomes the measured unit, excluding setup — via a
-thread-local context, so the same test degrades to a single invocation under
-any other runner. `blackBox` is the optimizer barrier (empty asm under LDC,
-volatile store elsewhere).
+collect 32 samples, report median/MAD/min/max ns-per-iteration. A
+`@benchmark` body is the measured unit. `blackBox` is the optimizer barrier
+(empty asm under LDC, volatile store elsewhere).
 
-`benchCase` extends this to a **matrix**: one `@benchCases` body calls it per
+`benchCase` extends this to **rows**: one `@benchCases` body calls it per
 (engine, dataset, …) and each call becomes its own row, so the combinatorics
-stay in plain-D loops rather than in the runner. Each case is a struct the
-runner takes ownership of — its state travels with it, and a case type that
-could reach the registering frame does not compile — because the case runs
-after that frame is gone. It times each call individually
-— the price of letting an untimed `after` release the timed body's result
-before the next iteration — and a failing `after` (a `throw`, trace printed,
-or an `Expected` error, silent) isolates into a single error row while the
-rest of the matrix continues; the run still reports failure.
+stay in plain-D loops rather than in the runner — and a single call is how a
+test keeps its setup out of the timing, the role `Bencher::iter` plays in
+libtest. Each case is a struct the runner takes ownership of — its state
+travels with it, and a case type that could reach the registering frame does
+not compile — because the case runs after that frame is gone. A closure
+handed to the runner could not promise that: a local it captured is still
+destroyed when the body returns, before the closure runs, so the case API
+takes no closures at all. Outside `--bench` a case runs once, so the same
+test degrades to a plain test under any other runner.
+
+A case is timed one of two ways. By default each call is timed alone — the
+price of letting an untimed `after` release the timed body's result before
+the next iteration — and a failing `after` (a `throw`, trace printed, or an
+`Expected` error, silent) isolates into a single error row while the rest of
+the matrix continues; the run still reports failure. A case that declares
+`BenchTiming.batched` runs its calls back to back, as a whole body is, which
+a nanosecond-scale operation needs and which leaves no room for an `after`.
 `Metric` columns report throughput as `amount ÷ time`, with a vocabulary (a
 named `Unit`; rate = quantity ÷ time) aligned to the forthcoming
 `sparkles:quantities` library.

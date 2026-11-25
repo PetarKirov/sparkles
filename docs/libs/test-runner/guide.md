@@ -85,14 +85,14 @@ compiler resolves unittest UDAs even in builds that skip the bodies. All are
 plain marker types, so annotated tests remain ordinary `unittest` blocks for
 any other runner. Full details: [Attributes reference](./reference/attributes.md).
 
-| Attribute    | Runs where                          | Trigger      |
-| ------------ | ----------------------------------- | ------------ |
-| _(none)_     | at runtime, in parallel             | `dub test`   |
-| `@ctfe`      | at compile time (CTFE)              | `dub test`   |
-| `@betterC`   | runtime **and** druntime-free       | `--better-c` |
-| `@wasm`      | runtime **and** cross-compiled wasm | `--wasm`     |
-| `@benchmark` | timed, skipped by normal runs       | `--bench`    |
-| `@benchCases` | registers timed cases, skipped by normal runs | `--bench` |
+| Attribute     | Runs where                                    | Trigger      |
+| ------------- | --------------------------------------------- | ------------ |
+| _(none)_      | at runtime, in parallel                       | `dub test`   |
+| `@ctfe`       | at compile time (CTFE)                        | `dub test`   |
+| `@betterC`    | runtime **and** druntime-free                 | `--better-c` |
+| `@wasm`       | runtime **and** cross-compiled wasm           | `--wasm`     |
+| `@benchmark`  | timed, skipped by normal runs                 | `--bench`    |
+| `@benchCases` | registers timed cases, skipped by normal runs | `--bench`    |
 
 ### `@ctfe` — verify at compile time
 
@@ -143,20 +143,29 @@ bare `-betterC` mode. See
 
 `@benchmark` tests are skipped by normal runs and measured by `--bench`, which
 auto-scales the iteration count (Rust libtest's protocol) and reports
-ns/iter statistics. Time only part of a body with `benchIter`, and route
-inputs and results through `blackBox` so the optimizer can't fold the work
-away. See [Benchmark with `@benchmark`](./how-to/benchmark.md).
+ns/iter statistics. Route inputs and results through `blackBox` so the
+optimizer can't fold the work away. To keep setup out of the timing, make the
+measured part a case struct and register it from a `@benchCases` test (below);
+`BenchTiming.batched` times its calls back to back, as a whole body is. See
+[Benchmark with `@benchmark`](./how-to/benchmark.md).
 
 ```d
-import sparkles.test_runner.attributes : benchmark;
-import sparkles.test_runner.bench : benchIter, blackBox;
+import sparkles.test_runner.attributes : benchCases;
+import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
+
+static struct SortCopy
+{
+    enum timing = BenchTiming.batched;
+    int[] data;
+
+    void timed() @safe { blackBox(sortCopy(blackBox(data))); } // measured
+}
 
 @("sort.bench")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
-    auto data = makeInput(10_000);                       // setup — not measured
-    benchIter({ blackBox(sortCopy(blackBox(data))); });  // measured
+    benchCase(SortCopy(makeInput(10_000))); // setup — not measured
 }
 ```
 
@@ -221,7 +230,7 @@ the run still passes.
 
 #### `benchCase` — matrix benchmarks (many rows from one test)
 
-`benchIter` measures one thing. To benchmark a **matrix** — several
+One `benchCase` call is one row. To benchmark a **matrix** — several
 implementations across several inputs — call `benchCase` repeatedly inside one
 `@benchCases` body; each call emits its own row. The plain-D loop (and a
 `static foreach` over a compile-time engine list) _is_ the matrix — the runner
@@ -285,8 +294,8 @@ Piped output skips all animation and stays byte-stable.
 > The marker says what the body is: a `@benchCases` body only registers, and
 > is never measured itself. One that registers no case fails ("`<test>`
 > registered no cases"); when an environment filter can leave nothing, call
-> `skipTest` instead. `benchCase` in a `@benchmark` body, or `benchIter` in a
-> `@benchCases` one, fails its registration too.
+> `skipTest` instead. `benchCase` in a `@benchmark` body fails its
+> registration too.
 
 - **`timed()`** is the measured call; its return value flows to
   **`after(ref result)`** (or `after()`), which runs _untimed_ after every call
@@ -309,10 +318,11 @@ Piped output skips all animation and stays byte-stable.
   Units are open-basis names — `"B"`, `"req"`, `"tweet"`, `"frame"` — vocabulary
   aligned to the forthcoming `sparkles:quantities` library.
 
-`benchCase` times each call individually (so the result can be released between
-iterations), which suits µs-and-up operations; keep `benchIter` for the finest
-micro-benchmarks. One `@benchCases` test can emit many rows, and `--perf` adds its
-counter columns to each:
+By default `benchCase` times each call individually (so the result can be
+released between iterations), which suits µs-and-up operations; a case that
+declares `enum timing = BenchTiming.batched;` is timed in back-to-back batches,
+for the finest micro-benchmarks, and has no `after`. One `@benchCases` test can
+emit many rows, and `--perf` adds its counter columns to each:
 
 ```console
 $ dub test -- --bench --perf

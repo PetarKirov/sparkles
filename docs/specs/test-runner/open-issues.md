@@ -36,7 +36,9 @@ ways a closure's state was gone by measurement time (a closed fd, a destroyed
 `Sched`, a dangling `RootScope` that published plausible numbers, and a frame
 LDC kept on the stack because it inferred the parameters `scope`), is in SPEC
 §3's rationale. Every caller was migrated and the delegate form deleted, so
-the entry is deleted per the lifecycle._
+the entry is deleted per the lifecycle. `benchIter`, which kept a closure
+for batched timing, went the same way: batched timing is now a property of
+the case (TRB6)._
 
 ## O1 — The paranoid degradation matrix is unprobed
 

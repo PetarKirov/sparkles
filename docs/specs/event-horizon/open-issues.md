@@ -477,7 +477,8 @@ Two cautions for whoever picks this up:
   published number here. Resolved by
   test-runner SPEC §3 ([TRB1–TRB4](../test-runner/SPEC.md)):
   a `benchCase` case is now a struct the runner owns, with its own
-  `setup`/`teardown`; `benchIter` closures still run deferred.
+  `setup`/`teardown`, and a batched row is such a case too (TRB6), so no
+  benchmark closure runs deferred any more.
 
 **Options:** (A) retire `loop-bench.d` + `bench/perf/` after a confirmation run
 (the intent); (B) keep `loop-bench.d` indefinitely as an independent

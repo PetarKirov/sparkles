@@ -1,8 +1,8 @@
 # Benchmark with `@benchmark`
 
 `@benchmark` tests are skipped by normal `dub test` runs and measured by
-`--bench`; the test body (or a part of it handed to `benchIter`) is what is
-measured. A test that registers a matrix of rows instead is
+`--bench`; the whole test body is what is measured. A test that registers its
+rows instead — to keep setup out of the timing, or to build a matrix — is
 [`@benchCases`](#many-rows-from-one-test-benchcases-and-benchcase):
 
 ```bash
@@ -57,9 +57,9 @@ count doubles until one sample takes at least 5 ms (so fast operations are
 timed over millions of iterations), then 32 samples are collected and
 summarized as median, median-absolute-deviation, min, and max
 nanoseconds-per-iteration. `@benchmark(iterations: 1000)` pins the count
-instead of auto-scaling — per sample for batched (`benchIter`/whole-body)
-timing; under `@benchCases(iterations: N)` each per-call `benchCase` runs
-exactly N timed calls, one sample each.
+instead of auto-scaling — per sample for batched (whole-body or
+`BenchTiming.batched`) timing; under `@benchCases(iterations: N)` each
+per-call `benchCase` runs exactly N timed calls, one sample each.
 `--bench-min-time=MS` overrides the 5 ms budget: for per-call cases it is
 the minimum total measured time per case (samples keep accumulating past 32
 until it is met), for batched ones the per-sample auto-scale target.
@@ -89,39 +89,53 @@ configuration; select it with
 selections apply only to direct dependencies. The
 [UTF matrix](https://github.com/PetarKirov/sparkles/blob/878ee7e3ce1b8586d3dbf08d0132cfe568016ac6/libs/base/bench/utf/README.md) exercises this route.
 
-## Excluding setup: `benchIter`
+## Excluding setup: a batched case
 
-To time only part of the body, call `benchIter` — the runner invokes the
-test once, and `benchIter` runs the measurement loop over just the closure:
+To keep setup out of the timing, move the measured part into a case struct
+and register it from a `@benchCases` test. The body builds the case — setup,
+not measured — and the runner times the case's `timed()`:
 
 ```d
-import sparkles.test_runner.attributes : benchmark;
-import sparkles.test_runner.bench : benchIter, blackBox;
+import sparkles.test_runner.attributes : benchCases;
+import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
+
+static struct SortCopy
+{
+    enum timing = BenchTiming.batched; // calls run back to back
+    int[] data;
+
+    void timed() @safe { blackBox(sortCopy(blackBox(data))); } // measured
+}
 
 @("sort.bench")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
-    auto data = makeInput(10_000);              // setup — not measured
-    benchIter({ blackBox(sortCopy(blackBox(data))); }); // measured
+    benchCase(SortCopy(makeInput(10_000))); // setup — not measured
 }
 ```
 
-Outside `--bench` (e.g. when another runner executes the test), `benchIter`
-invokes the closure exactly once, so the test still works as a plain test.
+The case owns what it reads, so nothing it needs can be destroyed with the
+body that built it. Without a `name`, the row is named after the test, as a
+whole-body row is. `BenchTiming.batched` times the calls the way a whole body
+is timed — back to back, the count per sample auto-scaled — which a
+nanosecond-scale operation needs; without it each call is timed alone
+([below](#many-rows-from-one-test-benchcases-and-benchcase)). Outside
+`--bench` (e.g. when another runner executes the test) the case runs once, so
+the test still works as a plain test.
 
 ## Many rows from one test: `@benchCases` and `benchCase`
 
-`benchIter` measures one thing. To benchmark a **matrix** — several
+One `benchCase` call is one row. To benchmark a **matrix** — several
 implementations across several inputs — mark the test **`@benchCases`** and
 call `benchCase` repeatedly; each call emits its own row, so ordinary D loops
 (and a `static foreach` over a compile-time list) build the table. The case is
 a struct: its fields are what the case needs, and its members are what the
 runner calls. A `@benchCases` body only registers: it is never measured
-itself, and `benchIter` belongs in a `@benchmark` test. A body that registers
-no case fails with "`<test>` registered no cases" — when an environment
-filter can leave nothing to measure, say so with `skipTest`, which leaves the
-test skipped. Calling `benchCase` from a `@benchmark` body fails too.
+itself. A body that registers no case fails with "`<test>` registered no
+cases" — when an environment filter can leave nothing to measure, say so with
+`skipTest`, which leaves the test skipped. Calling `benchCase` from a
+`@benchmark` body fails too.
 
 ```d
 import sparkles.test_runner.bench : benchCase, Metric, Unit;
@@ -189,13 +203,16 @@ in the table's top border:
   `teardown` makes the same error row. Outside `--bench` both kinds of failure
   throw from `benchCase`. A case with nothing to verify omits `after`. Error
   rows sort last in their table under every `--sort-by` order.
+- **`metrics`** add throughput columns: `Metric(unit, amount, mode)` with `mode`
   `rate` (`amount ÷ iteration-time` → `<unit>/s`) or `level` (as-is). Units are
   open-basis names (`"B"`, `"req"`, `"tweet"`, …), vocabulary aligned to the
   forthcoming `sparkles:quantities` library.
 
-`benchCase` times each call individually so the result can be released between
-iterations — suited to µs-and-up work; keep `benchIter` for the finest
-micro-benchmarks.
+By default `benchCase` times each call individually, so the result can be
+released between iterations — suited to µs-and-up work. A case that declares
+`enum timing = BenchTiming.batched;` is timed in back-to-back batches instead,
+as a whole body is — the choice for nanosecond-scale work. A batched case has
+no `after` (nothing runs between its calls; a compile error otherwise).
 
 ## Defeating the optimizer: `blackBox`
 

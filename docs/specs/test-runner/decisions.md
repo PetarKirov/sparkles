@@ -54,8 +54,8 @@ Which process measures?
   on the worker's thread, and wall time from the frames.
 - The binary measures and reports rows over the protocol.
 
-**Choice.** The binary measures. `benchIter`, `benchCase` and
-`workloadWindow` mark regions inside a body, and a timing loop that crossed a
+**Choice.** The binary measures. `benchCase` cases and `workloadWindow`
+regions are timed inside the test process, and a timing loop that crossed a
 pipe on every sample would time the pipe. The measurement layer moves into
 the harness, which depends on no other repository package (TRP1), and the runner
 receives finished rows.
