@@ -70,6 +70,7 @@ nor verified; removing the directive makes the example required again:
 
 module commands.examples;
 
+import cache_home : sparklesCache;
 import cli : ExampleAction, FileSelection;
 import commands.files : InputFiles, collectInputFiles, detectRepoRoot;
 import commands.maintenance : seedDubHome;
@@ -329,11 +330,10 @@ private ExecutionResult[] executeExamplesOnGraph(Example[] examples, string repo
     return results;
 }
 
-/// The directory holding the build graph's store: `$XDG_CACHE_HOME/sparkles`.
+/// The directory holding the build graph's store: `<cache home>/sparkles` (see `cache_home`).
 private string graphStore()
 {
-    const xdg = environment.get("XDG_CACHE_HOME", buildPath(environment.get("HOME", "/"), ".cache"));
-    return buildPath(xdg, "sparkles");
+    return sparklesCache();
 }
 
 /// Number of example builds to run concurrently. Honors `SPARKLES_CI_JOBS`,

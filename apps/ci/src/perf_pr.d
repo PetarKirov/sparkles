@@ -8,6 +8,7 @@ it when read ($(LREF figuresOf), OBJ5), so a new view needs no new record.
 +/
 module perf_pr;
 
+import cache_home : cacheHome;
 import std.algorithm.iteration : filter, map, sum, uniq;
 import std.algorithm.searching : any, canFind, maxElement, minElement, startsWith;
 import std.algorithm.sorting : sort;
@@ -722,7 +723,7 @@ string localPrRoot() @safe
     import std.path : buildPath, expandTilde;
     import std.process : environment;
 
-    const cache = environment.get("XDG_CACHE_HOME", expandTilde("~/.cache"));
+    const cache = cacheHome();
     return buildPath(cache, "sparkles", "perf", "prs");
 }
 

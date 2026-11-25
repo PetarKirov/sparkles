@@ -11,13 +11,14 @@ retrying on a rejected push (OBH3). Every commit carries the fixed identity
 the runs added by a commit signed with a key that `nix/perf-data-signers`
 lists (OBH8).
 
-Readers go through a bare partial clone in `$XDG_CACHE_HOME/sparkles/perf/`
+Readers go through a bare partial clone in `<cache home>/sparkles/perf/` (see `cache_home`)
 that fetches only the ref, without blobs, and fetches the blobs a command reads
 in one batch (OBH9). When the remote cannot be reached, the cached clone is
 used and its age reported (OBH10).
 +/
 module perf_history;
 
+import cache_home : cacheHome;
 import std.algorithm.iteration : filter, map;
 import std.algorithm.searching : canFind, endsWith, startsWith;
 import std.algorithm.sorting : sort;
@@ -108,7 +109,7 @@ string historyCacheDir(string remote = canonicalRemote) @safe
     import std.path : expandTilde;
     import perf_record : sha256Hex;
 
-    const cache = environment.get("XDG_CACHE_HOME", expandTilde("~/.cache"));
+    const cache = cacheHome();
     const name = remote == canonicalRemote ? "cache.git" : "cache-" ~ sha256Hex(remote)[0 .. 12] ~ ".git";
     return buildPath(cache, "sparkles", "perf", name);
 }

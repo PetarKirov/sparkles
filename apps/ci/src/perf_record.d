@@ -15,6 +15,7 @@ facts and writing the directory are the small impure half at the end.
 +/
 module perf_record;
 
+import cache_home : cacheHome;
 import std.algorithm.iteration : map;
 import std.algorithm.searching : canFind, startsWith;
 import std.algorithm.sorting : sort;
@@ -468,13 +469,13 @@ unittest
 
 // ── the impure half ───────────────────────────────────────────────────────
 
-/// The local records directory (OBD12): `$XDG_CACHE_HOME/sparkles/perf/runs`.
+/// The local records directory (OBD12): `<cache home>/sparkles/perf/runs`.
 string localRecordsRoot() @safe
 {
     import std.path : buildPath, expandTilde;
     import std.process : environment;
 
-    const cache = environment.get("XDG_CACHE_HOME", expandTilde("~/.cache"));
+    const cache = cacheHome();
     return buildPath(cache, "sparkles", "perf", "runs");
 }
 

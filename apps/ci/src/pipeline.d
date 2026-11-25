@@ -22,6 +22,7 @@ sanitized tests, or its extracted modes), and every other task is
 */
 module pipeline;
 
+import cache_home : sparklesCache;
 import core.time : Duration;
 
 import std.algorithm : any, canFind, filter, map, sort, startsWith;
@@ -82,8 +83,7 @@ RunExpected!void runPipeline(in PipelineRequest r)
     const root = detectRepoRoot();
     if (root is null)
         return failRun("ci pipeline: not inside the repository");
-    const xdg = environment.get("XDG_CACHE_HOME", buildPath(environment.get("HOME", "/"), ".cache"));
-    const cache = buildPath(xdg, "sparkles");
+    const cache = sparklesCache();
     JobVerdict[] verdicts;
     bool anyFailed;
     void record(string job, RunExpected!void outcome)

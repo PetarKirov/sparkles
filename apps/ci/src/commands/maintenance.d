@@ -2,6 +2,7 @@
 /// costing and collecting the caches.
 module commands.maintenance;
 
+import cache_home : sparklesCache;
 import commands.files : detectRepoRoot;
 import commands.output : flushStdout, uiWidth;
 import commands.toolchain : dubBuildCommand, findWasiCompiler, withLdcDflags;
@@ -72,8 +73,7 @@ RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool fa
         reuseEdges, selectPackages, targetBuildArgs, wasiPackages;
 
     // The build graph's store, shared by every commit's builds.
-    const graphCache = buildPath(environment.get("XDG_CACHE_HOME",
-        buildPath(environment.get("HOME", "/"), ".cache")), "sparkles");
+    const graphCache = sparklesCache();
 
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
