@@ -232,6 +232,18 @@ harness whose failure mode is "publishes a wrong number quietly" is the wrong
 default. Note also that the trap is invisible outside `--bench`: with no active
 context both helpers run inline, so a plain `dub test` passes.
 
+A fourth, from a UI-builder benchmark outside the repository, needed no
+mistake by the author: a `benchCase` registered from a helper, closing over
+the helper's locals (the documented discipline), crashed every case with
+SIGSEGV. The frontend LDC 1.43 uses inferred `timed`/`after` `scope` (their
+escape into `makeCase`'s closures went unseen), so the helper's frame stayed
+on the stack and was dead by measurement time; DMD 2.115 allocated it. (Its
+author read it as a collector bug and rooted the context pointers in a
+global, which also escapes them.) Fixed in the harness — `makeCase`
+stores the callables into a GC block, an escape every analysis sees
+(test `benchCase.frameClosuresOutliveTheBody`) — but it is one more way a
+delegate's captured state goes wrong that a function pointer cannot.
+
 The docs already warn ("register each case from a helper taking its varying
 state **by value**", "put per-case setup/release in `setup`/`teardown`"). That
 the same team tripped three times anyway is the argument that documentation is

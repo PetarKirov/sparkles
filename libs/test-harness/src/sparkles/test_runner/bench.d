@@ -859,16 +859,34 @@ private RegisteredCase makeCase(Timed, After)(string name, string[string] labels
     c.metrics = metrics;
     c.setup = setup;
     c.teardown = teardown;
+
+    // `timed` and `after` run after the registering body returns, so they
+    // must not be `scope`: a `scope` delegate argument lets the caller keep the
+    // frame it closes over on the stack, and the case then reads a dead frame.
+    // Capturing them in the closures below is an escape, but not one every
+    // frontend sees (LDC 1.43 inferred both `scope` and the registering frame
+    // stayed on the stack), so they are stored into a GC block first: an
+    // assignment through a heap pointer is an escape any escape analysis sees.
+    static struct Callables
+    {
+        Timed timed;
+        After after;
+        static if (!is(typeof(timed()) == void))
+            typeof(timed()) last; // the result, carried from `runTimed` to `runAfter`
+    }
+
+    auto callables = new Callables;
+    callables.timed = timed;
+    callables.after = after;
     static if (is(typeof(timed()) == void))
     {
-        c.runTimed = () { timed(); };
-        c.runAfter = () => invokeAfter(after);
+        c.runTimed = () { callables.timed(); };
+        c.runAfter = () => invokeAfter(callables.after);
     }
     else
     {
-        typeof(timed()) last; // shared by both closures via the promoted frame
-        c.runTimed = () { last = timed(); };
-        c.runAfter = () => invokeAfter(after, last);
+        c.runTimed = () { callables.last = callables.timed(); };
+        c.runAfter = () => invokeAfter(callables.after, callables.last);
     }
     return c;
 }
