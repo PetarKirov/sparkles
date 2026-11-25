@@ -3,6 +3,7 @@
 /// variants, and the placement of a run's shard.
 module commands.test_;
 
+import cache_home : sparklesCache;
 import cli : Sanitizer, SpecialModes, TestCommand, TestOutput, chooseLegs;
 import sparkles.build_primitives.task.live_view : Transcript;
 import commands.files : detectRepoRoot;
@@ -251,8 +252,7 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
     }
 
     const names = subPackages.map!(p => p.baseName).array;
-    const xdg = environment.get("XDG_CACHE_HOME", buildPath(environment.get("HOME", "/"), ".cache"));
-    const cache = buildPath(xdg, "sparkles");
+    const cache = sparklesCache();
     const into = buildPath(cache, "runs", text("ci-test-", Clock.currTime.toUnixTime, "-", thisProcessID));
     trace(i"$(names.length) package(s) to $(buildOnly ? "build" : "test") through the build graph; run directory $(into)");
 
@@ -747,8 +747,7 @@ private RunExpected!void runExtractedTestsMode(bool failFast, in string[] reques
     scope (exit)
         if (const degradation = recorder.finish())
             warning(i"$(degradation)");
-    const xdg = environment.get("XDG_CACHE_HOME", buildPath(environment.get("HOME", "/"), ".cache"));
-    const cache = buildPath(xdg, "sparkles");
+    const cache = sparklesCache();
     auto g = runGraph(repoRoot, null, RunOptions(into: buildPath(cache, "runs",
         text("ci-test-special-", Clock.currTime.toUnixTime, "-", thisProcessID)), cache: cache, runnerCore: true,
         packages: packages, legs: [TestLeg(1, false, "special")], testArguments: arguments,
@@ -881,8 +880,7 @@ private RunExpected!void runSlowTestsMode(in string[] packageNames, in string[] 
         arguments["sparkles:" ~ job.packageName] = ["--only-slow", "-i", exactNamesPattern(selected)];
     }
     info(i"the slow tests of $(packages.length) package(s): $(packages.join(", "))");
-    const xdg = environment.get("XDG_CACHE_HOME", buildPath(environment.get("HOME", "/"), ".cache"));
-    const cache = buildPath(xdg, "sparkles");
+    const cache = sparklesCache();
     const threads = cast(uint) parallelTestThreads(hwParallelism());
     auto g = runGraph(repoRoot, null, RunOptions(into: buildPath(cache, "runs",
         text("ci-test-slow-", Clock.currTime.toUnixTime, "-", thisProcessID)), cache: cache, runnerCore: true,

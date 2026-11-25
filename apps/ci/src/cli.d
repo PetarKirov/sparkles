@@ -14,6 +14,7 @@ modules it calls.
 */
 module cli;
 
+import cache_home : setCacheHome, sparklesCache;
 import std.algorithm : canFind;
 import std.array : join;
 
@@ -48,6 +49,14 @@ struct GlobalOptions
 {
     @(Option(`L|log-level`, description: "Set the log level (trace, info, warning, error). Default: info."))
     LogLevel logLevel = LogLevel.info;
+
+    @(Option(`cache-dir`, placeholder: "DIR", envFallback: "XDG_CACHE_HOME",
+        description: "The cache home: ci keeps the build graph's store, the run directories and "
+        ~ "the perf history beneath DIR/sparkles, shared by every worktree and every run. "
+        ~ "Default: ~/.cache. To run with nothing cached, name an empty directory: "
+        ~ "--cache-dir \"$(mktemp -d)\" builds and tests everything from scratch, "
+        ~ "and leaves the usual cache as it was."))
+    string cacheDir;
 }
 
 /// Which files a command reads, besides its tracked defaults.
@@ -1054,13 +1063,13 @@ struct CommitsCommand
     }
 }
 
-/// The directory holding the build graph's store: `$XDG_CACHE_HOME/sparkles`.
+/// The directory holding the build graph's store: `<cache home>/sparkles` (see `cache_home`).
 string storeDirectory() @safe
 {
     import std.path : buildPath;
     import std.process : environment;
 
-    return buildPath(environment.get("XDG_CACHE_HOME", buildPath(environment.get("HOME", "/"), ".cache")), "sparkles");
+    return sparklesCache();
 }
 
 /// Standard output as a writer of the store's lines.
@@ -1093,7 +1102,7 @@ struct CacheCommand
         RunExpected!void run() => runOneNode("cache-seed-dub", TaskKind.rewrite, () => runSeedDubCache());
     }
 
-    // The build graph's store (build graph §6) beneath $XDG_CACHE_HOME/sparkles.
+    // The build graph's store (build graph §6) beneath <cache home>/sparkles.
 
     @(Command("stats", shortDescription: "The build graph's store: its results and their bytes"))
     struct Stats
@@ -1501,6 +1510,7 @@ int ciMain(string[] args)
     installConsole(LogLevel.info);
     programArgs = args;
     return runCli!Ci(args, (ref parsed) {
+        setCacheHome(parsed.value.global.cacheDir);
         if (parsed.value.global.logLevel != LogLevel.info)
             applyLogLevel(parsed.value.global.logLevel);
         trace(i"ci $(args.length > 1 ? args[1 .. $].join(" ") : "")");

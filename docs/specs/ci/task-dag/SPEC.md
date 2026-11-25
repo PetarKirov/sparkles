@@ -105,17 +105,27 @@ ci perf show|compare|history|fetch [options]
 
 Every command that executes a graph accepts:
 
-| Option              | Default               | Meaning                                                                                                                                                                                       |
-| ------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--jobs N`          | host-derived capacity | Positive weighted capacity available to running tasks. It is not a count of OS threads.                                                                                                       |
-| `--interlaced`      | off                   | Stream line-atomic, task-prefixed output as events arrive instead of replaying complete task blocks in presentation order.                                                                    |
-| `--dry-run`         | off                   | Discover, select, plan, validate, and print the DAG without running task actions, making network requests, creating directories, or writing files.                                            |
-| `--output MODE`     | `auto`                | `ci test` only: status lines (CIC19), with the live view (CIC18) on a terminal outside CI (`auto`), always (`live`) or never (`lines`); `plain` writes the ordered transcript (TDO3) instead. |
-| `--table STYLE`     | `clean`               | `ci test` only: the status lines' task rows in aligned columns (`clean`), or framed, separated and headed as well (`boxed`) (CIC19).                                                          |
-| `--no-timeline`     | timeline on           | `ci test` only: leave the timeline out of the live view.                                                                                                                                      |
-| `--legs LEGS`       | `auto`                | `ci test` only: the ordinary tests' legs (CIC6). `auto` runs the placement's, or `-t N` alone; `parallel`, `serial` or `both` overrides.                                                      |
-| `--fail-fast`       | off                   | On the first authoritative failure, stop admission and cancel the command scope.                                                                                                              |
-| `--log-level LEVEL` | `info`                | Standard Sparkles logger level.                                                                                                                                                               |
+| Option              | Default                            | Meaning                                                                                                                                                                                       |
+| ------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--jobs N`          | host-derived capacity              | Positive weighted capacity available to running tasks. It is not a count of OS threads.                                                                                                       |
+| `--interlaced`      | off                                | Stream line-atomic, task-prefixed output as events arrive instead of replaying complete task blocks in presentation order.                                                                    |
+| `--dry-run`         | off                                | Discover, select, plan, validate, and print the DAG without running task actions, making network requests, creating directories, or writing files.                                            |
+| `--output MODE`     | `auto`                             | `ci test` only: status lines (CIC19), with the live view (CIC18) on a terminal outside CI (`auto`), always (`live`) or never (`lines`); `plain` writes the ordered transcript (TDO3) instead. |
+| `--table STYLE`     | `clean`                            | `ci test` only: the status lines' task rows in aligned columns (`clean`), or framed, separated and headed as well (`boxed`) (CIC19).                                                          |
+| `--no-timeline`     | timeline on                        | `ci test` only: leave the timeline out of the live view.                                                                                                                                      |
+| `--legs LEGS`       | `auto`                             | `ci test` only: the ordinary tests' legs (CIC6). `auto` runs the placement's, or `-t N` alone; `parallel`, `serial` or `both` overrides.                                                      |
+| `--fail-fast`       | off                                | On the first authoritative failure, stop admission and cancel the command scope.                                                                                                              |
+| `--log-level LEVEL` | `info`                             | Standard Sparkles logger level.                                                                                                                                                               |
+| `--cache-dir DIR`   | `$XDG_CACHE_HOME`, else `~/.cache` | The cache home: the store, the run directories and the perf history live beneath `DIR/sparkles`. An empty directory runs with nothing cached (CIC20).                                         |
+
+**CIC20: The cache home is an option.** Every `ci` command **must** accept
+`--cache-dir DIR`, before or after its name, and keep what it caches beneath
+`DIR/sparkles`. Without it, `ci` **must** read `XDG_CACHE_HOME` as the
+option's [environment fallback](../../core-cli/environment-fallback.md), and
+then use `~/.cache`; every command's `--help` names the option and the
+variable. Pointing it at an empty directory, `--cache-dir "$(mktemp -d)"`, is
+how a run builds and tests everything from scratch without disturbing the
+shared store.
 
 **CIC1: Common options.** `--jobs 0` and negative values **must** be errors.
 `--dry-run --interlaced` **must** be rejected, because a dry run has no task
@@ -699,7 +709,7 @@ behaviour.
 Compiled output lives in the build graph's shared store, never in a package's
 checked-in `build/` directory, the repository root or a private `DUB_HOME`.
 Each task that writes anything else gets a task directory under
-`$XDG_CACHE_HOME/sparkles/ci/runs/<run-id>/<task-key>/`, outside the worktree. The printable task id stays stable, and
+`<cache home>/sparkles/ci/runs/<run-id>/<task-key>/` (`--cache-dir`, CIC20), outside the worktree. The printable task id stays stable, and
 `run-id` is a filesystem name only, never an ordering input. A task directory
 holds:
 
