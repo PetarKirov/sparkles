@@ -60,7 +60,7 @@ module ratatui_colors_rgb_example;
 // width) and the row builders are `@nogc`, so the compiler proves the hot loop
 // performs no GC allocation.
 //
-// The bottom of this file also carries a `@benchmark` (under `version (unittest)`)
+// The bottom of this file also carries a `@benchCases` (under `version (unittest)`)
 // that measures the uncapped frame-render fps at several terminal sizes — see it
 // for the `dub test … -b bench` invocation.
 //
@@ -341,7 +341,8 @@ void hsvToRgb(double h, double s, double v, out ubyte r, out ubyte g, out ubyte 
 // ─────────────────────────────────────────────────────────────────────────────
 version (unittest)
 {
-    import sparkles.test_runner.attributes : benchmark;
+    import sparkles.test_runner.attributes : benchCases;
+    import sparkles.test_runner.skip : skipTest;
     import sparkles.test_runner.bench : benchCase, blackBox, Metric, Unit;
     import core.lifetime : move;
     import std.stdio : File;
@@ -418,15 +419,8 @@ version (unittest)
         }
     }
 
-    /// The row registered when the env filters remove every case, so the body
-    /// is not measured as a whole-body case.
-    private struct FilteredOut
-    {
-        void timed() {}
-    }
-
     @("colors-rgb.render")
-    @benchmark
+    @benchCases
     @system
     unittest
     {
@@ -444,7 +438,7 @@ version (unittest)
             }
         }
         if (!any)
-            benchCase(FilteredOut(), name: "(filtered out)");
+            skipTest("RGB_BENCH_SIZES/RGB_BENCH_SINKS removed every case");
     }
 
     private void registerFrame(BenchSize sz, bool toFd)
