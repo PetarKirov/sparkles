@@ -966,7 +966,7 @@ private RegisteredCase eraseCase(C)(C bench, string name, string[string] labels,
 }
 
 /**
-Registers one benchmark case inside a `@benchmark` body; call it repeatedly
+Registers one benchmark case inside a `@benchCases` body; call it repeatedly
 (over engines × datasets, say) to emit a matrix, one row per call (TRB1–TRB4).
 
 The case is a struct. The runner moves it into memory it owns and calls its
@@ -980,6 +980,7 @@ $(LI `after(ref R result)` or `after()` — untimed, after every measured call,
     returning an `Expected` error; either way this case becomes an error row and
     the rest of the matrix still runs.)
 $(LI `teardown()` — untimed, once after the measurement.)
+$(LI `timing` — an `enum` naming the case's $(LREF BenchTiming).)
 )
 
 The case's destructor runs after `teardown`, once; a case the run never
@@ -1002,11 +1003,17 @@ Outside a `--bench` run the case runs once immediately — `setup`, one `timed`,
 `after`, `teardown` — and an `after` error throws, so a plain `dub test` still
 checks it.
 
-Each `timed()` is timed alone, with `after` between calls, so a result can be
-released before the next iteration: suited to µs-and-up operations. Keep
-$(LREF benchIter) for the finest micro-benchmarks.
+By default each `timed()` is timed alone, with `after` between calls, so a
+result can be released before the next iteration: suited to µs-and-up
+operations. A case that declares `enum timing = BenchTiming.batched;` is timed
+in back-to-back batches instead (see $(LREF BenchTiming)) — the choice for
+nanosecond-scale micro-benchmarks, which a per-call clock read would swamp. A
+batched case has no `after`: nothing runs between its calls.
+
+`name` defaults to the test's name — the row a whole-body `@benchmark` would
+produce — so a test that times a single operation needs none.
 */
-void benchCase(C)(C bench, string name, string[string] labels = null,
+void benchCase(C)(C bench, string name = null, string[string] labels = null,
     Metric[] metrics = null)
 if (is(C == struct))
 {
@@ -1018,7 +1025,38 @@ if (is(C == struct))
         "benchCase: `" ~ C.stringof ~ "` can reach the frame that registers it"
         ~ " (a nested struct, or a delegate field), which is gone when the case runs:"
         ~ " make it a `static struct` and pass what it needs to its constructor");
+    static assert(timingOf!C == BenchTiming.perCall || !__traits(hasMember, C, "after"),
+        "benchCase: `" ~ C.stringof ~ "` is `BenchTiming.batched`, whose calls run back"
+        ~ " to back, so it cannot have an `after`: verify in `teardown`, or time it"
+        ~ " per call");
     runOrRegister(move(bench), name, labels, metrics);
+}
+
+/**
+How a $(LREF benchCase) case's `timed()` calls are timed. A case selects one by
+declaring `enum timing = BenchTiming.batched;`; without one it is `perCall`.
+*/
+enum BenchTiming
+{
+    /// Each call timed alone, `after` between calls (one call per sample).
+    perCall,
+    /// Calls run back to back, the count per sample doubled until a sample
+    /// takes `BenchConfig.minSampleTime` (libtest's `Bencher`), and the
+    /// counting pass brackets many calls at once (`BenchConfig.perfBatch`).
+    batched,
+}
+
+/// The `BenchTiming` a case type `C` declares (`perCall` when it declares none).
+private template timingOf(C)
+{
+    static if (__traits(hasMember, C, "timing"))
+    {
+        static assert(is(typeof(C.timing) : BenchTiming),
+            "benchCase: `" ~ C.stringof ~ ".timing` must be a `BenchTiming`");
+        enum BenchTiming timingOf = C.timing;
+    }
+    else
+        enum BenchTiming timingOf = BenchTiming.perCall;
 }
 
 // `benchCase` past its compile-time checks: runs the case now outside `--bench`,
@@ -1059,7 +1097,8 @@ private void runOrRegister(C)(C bench, string name, string[string] labels,
     if (!context.registersCases)
         throw new Exception("benchCase: `" ~ context.testName ~ "` is a `@benchmark`, whose"
             ~ " body is the measured unit; a body that registers cases is `@benchCases`");
-    context.cases ~= eraseCase(move(bench), name, labels, metrics, perCall: true);
+    context.cases ~= eraseCase(move(bench), name is null ? context.testName : name,
+        labels, metrics, perCall: timingOf!C == BenchTiming.perCall);
 }
 
 /// Measures one registered case into a `BenchStats` row. `setup`/`teardown` bracket

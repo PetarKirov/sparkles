@@ -15,7 +15,7 @@ module sparkles.test_runner.bench_case_test;
 
 import core.time : usecs;
 
-import sparkles.test_runner.bench : BenchConfig, CounterGroups, RegisteredCase,
+import sparkles.test_runner.bench : BenchConfig, BenchTiming, CounterGroups, RegisteredCase,
     benchCase, benchIter, blackBox, casesTest, disposeCases, measureCase, registerBenchmark;
 import sparkles.test_runner.model : Test, TestTraits;
 
@@ -392,4 +392,86 @@ unittest
     assert(body_.length == 1 && body_[0].name == "b");
     foreach (error; measureAll(parts ~ body_))
         assert(error.length == 0, error);
+}
+
+// ─── batched timing: back-to-back calls, for nanosecond-scale cases ─
+
+// Counts its calls; `setup` and `teardown` bracket the measurement.
+struct Batched
+{
+    enum timing = BenchTiming.batched;
+    long[] cells; // reachable only through the case
+
+    this(int k)
+    {
+        cells = new long[](8);
+        cells[] = k;
+    }
+
+    void setup() { journal ~= "setup"; }
+    long timed() => blackBox(++cells[0]);
+    void teardown()
+    {
+        if (cells.length != 8)
+            throw new Exception("the case's state is gone");
+        journal ~= "teardown";
+    }
+}
+
+@("benchCase.batchedRunsBackToBack")
+@system
+unittest
+{
+    import std.algorithm.searching : count;
+
+    static void body_()
+    {
+        benchCase(Batched(0)); // named after the test
+        benchCase(Batched(1), name: "named", labels: ["part": "b"]);
+    }
+
+    journal = null;
+    auto cases = register(&body_);
+    assert(cases.length == 2);
+    assert(cases[0].name == "t" && cases[1].name == "named");
+    assert(cases[0].runAfter is null, "a batched case runs nothing between calls");
+    overwriteStackAndRecycleHeap();
+
+    auto counters = CounterGroups.none;
+    auto row = measureCase(cases[0], config, counters);
+    assert(row.error.length == 0, row.error);
+    // A pinned count is the iterations per sample, as for a whole body.
+    assert(row.iterations == config.iterations && row.samples == config.sampleCount);
+    assert(journal == ["setup", "teardown"]);
+    disposeCases(cases);
+}
+
+@("benchCase.batchedInertOutsideBench")
+@system
+unittest
+{
+    journal = null;
+    benchCase(Batched(0));
+    assert(journal == ["setup", "teardown"]);
+}
+
+@("benchCase.batchedRejectsAfter")
+@safe
+unittest
+{
+    static struct WithAfter
+    {
+        enum timing = BenchTiming.batched;
+        int timed() => 1;
+        void after(ref int) {}
+    }
+
+    static struct BadTiming
+    {
+        enum timing = 1;
+        void timed() {}
+    }
+
+    static assert(!__traits(compiles, benchCase(WithAfter(), name: "x")));
+    static assert(!__traits(compiles, benchCase(BadTiming(), name: "x")));
 }
