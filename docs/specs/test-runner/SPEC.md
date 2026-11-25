@@ -186,16 +186,50 @@ unconditionally (not under `version (unittest)`).
   exactly N timed calls, one sample each.
 - **`benchIter(scope void delegate())`** — measure only the closure; the rest
   of the body is setup. Outside `--bench` the closure runs exactly once.
-- **`benchCase(name:, labels:, timed:, after:, setup:, teardown:, metrics:)`**
-  — register one row of a matrix benchmark. Under `--bench` the case is
-  _registered_ and measured after the body returns (deferred execution:
-  varying state must be captured by value); outside `--bench` it runs once
-  immediately. `timed`'s result flows to `after`, which runs untimed to
-  verify/release it; a throwing `after` or an `Expected` error isolates into
-  a single in-table error row while the rest of the matrix measures. A soft
+- **`benchCase(aCase, name:, labels:, metrics:)`** — register one row of a
+  matrix benchmark. The case is a struct: `timed()` is the measured call, and
+  the optional `setup()`, `after(ref result)` (or `after()`) and `teardown()`
+  run untimed around it. Under `--bench` the case is _registered_ and
+  measured after the body returns; outside `--bench` it runs once
+  immediately. `timed`'s result flows to `after`, which verifies/releases it;
+  a throw from any hook, or an `Expected` error from `after`, isolates into a
+  single in-table error row while the rest of the matrix measures. A soft
   error returned on the inert (non-`--bench`) path is re-raised as an
   exception. Label keys/values and `name` must not contain `\x1f` (the group
   separator) — violation is a registration-time error.
+
+  Deferred execution is what makes a case's state outlive the body that
+  registered it, so the API leaves the state nowhere else to live:
+
+  **TRB1: The runner owns the case.** `benchCase` **must** move the case into
+  memory the runner owns (a GC block, so the references it holds stay alive)
+  and erase it to a block of state plus `function` pointers over it. No part of
+  a registered case, the apparatus included, is a delegate over the
+  registering frame.
+
+  **TRB2: A case cannot reach the registering frame.** A case type that is a
+  nested (non-`static`) struct, or holds a delegate directly or through a
+  struct, union or static-array field, **must** be rejected at compile time.
+  A case type without `timed` **must** be rejected too.
+
+  **TRB3: Every registration is its own value.** What a case needs is a field,
+  set when the case is built, so each `benchCase` call in a loop **must**
+  measure the values it was given, whatever the loop does after it.
+
+  **TRB4: The lifecycle brackets the measurement.** For each measured case
+  the runner **must** call `setup` once, then `timed` per call with `after`
+  after each, then `teardown` once, and then destroy the case — its
+  destructor runs once, even when a hook throws. A case the run never
+  measures **must** still be destroyed once, when the worker shuts down.
+  Registration runs no hook. Outside `--bench` the same sequence runs once.
+
+  _Rationale:_ the delegate form this replaces registered closures. Every way
+  a closure's captured state can be gone by measurement time happened: a
+  `foreach` variable shared by every case, state released by `scope (exit)`
+  or a destructor around the call, and a frame the compiler kept on the stack
+  because it inferred the parameters `scope`
+  ([O14](./open-issues.md#o14--deferred-bench-closures-are-a-pit-of-failure)).
+
 - **`blackBox(x)`** — identity the optimizer cannot see through; route
   measured inputs and results through it.
 - **`@wasm`** ([W1](./PLAN.md#w1--wasm-on-wasi)) — the test also

@@ -73,84 +73,120 @@ version (sparklesRdpmc)
     // price of the current ioctl ENABLE/DISABLE pair vs one rdpmc seqlock read
     // vs one read(2), on this host, under `--bench` — the numbers that decide
     // whether the counting pass switches brackets (open-issue O2).
-    @("rdpmc.bracketCost")
-    @benchmark @system
-    unittest
+    // One bracket per case. Each case opens its own counting event in `setup`
+    // and closes it in `teardown`, so the rows share no state and any subset,
+    // in any order, measures what it says.
+    private struct BracketCost
     {
         import core.stdc.config : c_ulong;
         import core.sys.linux.perf_event : PERF_EVENT_IOC_DISABLE,
-            PERF_EVENT_IOC_ENABLE, perf_event_attr, perf_event_open,
-            perf_hw_id, perf_type_id;
+            PERF_EVENT_IOC_ENABLE;
         import core.sys.posix.sys.ioctl : ioctl;
-        import sparkles.test_runner.bench : benchCase, blackBox;
-        import sparkles.test_runner.skip : skipTest;
+        import sparkles.test_runner.bench : blackBox;
+
+        enum Bracket { ioctlPair, rdpmcRead, read2Syscall }
+
+        Bracket bracket;
+        int fd = -1;
+        RdpmcCounter reader;
+        bool readOk;
+
+        void setup() @trusted
+        {
+            fd = openInstructions();
+            assert(fd >= 0, "perf_event_open worked in the probe and failed now");
+            if (bracket == Bracket.rdpmcRead)
+                reader = RdpmcCounter.tryMap(fd);
+            // The reads measure a counting event: enabled, or the mmap page
+            // reads index 0 and `read` measures its early-exit branch, not the
+            // seqlock+rdpmc path. The ioctl pair toggles it itself.
+            if (bracket != Bracket.ioctlPair)
+                cast(void) ioctl(fd, cast(c_ulong) PERF_EVENT_IOC_ENABLE, 0);
+        }
+
+        void timed() @trusted
+        {
+            import core.sys.posix.unistd : read;
+
+            final switch (bracket)
+            {
+                case Bracket.ioctlPair:
+                    cast(void) ioctl(fd, cast(c_ulong) PERF_EVENT_IOC_ENABLE, 0);
+                    cast(void) ioctl(fd, cast(c_ulong) PERF_EVENT_IOC_DISABLE, 0);
+                    break;
+                case Bracket.rdpmcRead:
+                    blackBox(reader.read(readOk));
+                    break;
+                case Bracket.read2Syscall:
+                    ulong[1] buf;
+                    blackBox(read(fd, buf.ptr, buf.sizeof));
+                    break;
+            }
+        }
+
+        void after()
+        {
+            if (bracket == Bracket.rdpmcRead)
+                assert(readOk, "the rdpmc case must measure a real read, "
+                    ~ "not the index==0 early exit");
+        }
+
+        void teardown() @trusted
+        {
+            import core.sys.posix.unistd : close;
+
+            reader.close();
+            reader = RdpmcCounter.init;
+            close(fd);
+            fd = -1;
+        }
+    }
+
+    // A disabled instructions counter: a stray enabled event would occupy a
+    // PMC across every other benchmark measured this run.
+    private int openInstructions() @trusted
+    {
+        import core.sys.linux.perf_event : perf_event_attr, perf_event_open,
+            perf_hw_id, perf_type_id;
 
         perf_event_attr attr;
         attr.size = perf_event_attr.sizeof;
         attr.type = perf_type_id.PERF_TYPE_HARDWARE;
         attr.config = perf_hw_id.PERF_COUNT_HW_INSTRUCTIONS;
         attr.exclude_hv = 1;
-        // Created disabled: a stray enabled event would occupy a PMC across
-        // every other benchmark measured this run. Each case enables what it
-        // needs in its own untimed setup.
         attr.disabled = 1;
-        const fd = (() @trusted => cast(int) perf_event_open(
-            hw_event: &attr, pid: 0, cpu: -1, group_fd: -1, flags: 0UL))();
+        return cast(int) perf_event_open(hw_event: &attr, pid: 0, cpu: -1,
+            group_fd: -1, flags: 0UL);
+    }
+
+    // The delivery plan's counting-bracket cost measurement: the per-iteration
+    // price of the current ioctl ENABLE/DISABLE pair vs one rdpmc seqlock read
+    // vs one read(2), on this host, under `--bench` — the numbers that decide
+    // whether the counting pass switches brackets (open-issue O2).
+    @("rdpmc.bracketCost")
+    @benchmark @system
+    unittest
+    {
+        import core.sys.posix.unistd : close;
+        import sparkles.test_runner.bench : benchCase;
+        import sparkles.test_runner.skip : skipTest;
+
+        // Probe once, so an unprivileged host skips instead of erroring per row.
+        const fd = openInstructions();
         if (fd < 0)
             skipTest("perf_event_open failed — perf_event_paranoid?");
-        auto reader = RdpmcCounter.tryMap(fd);
-        if (!reader.capRdpmc)
-        {
-            reader.close();
-            (() @trusted { import core.sys.posix.unistd : close; close(fd); })();
+        auto probe = RdpmcCounter.tryMap(fd);
+        const capRdpmc = probe.capRdpmc;
+        probe.close();
+        close(fd);
+        if (!capRdpmc)
             skipTest("cap_user_rdpmc denied (kernel rdpmc policy)");
-        }
 
-        // Deferred execution: the cases run after this body returns, so the
-        // fd/reader ride the closures (released by the last case's teardown).
-        benchCase(
-            name: "ioctl-pair",
-            labels: ["bracket": "ioctl"],
-            timed: () @trusted {
-                cast(void) ioctl(fd, cast(c_ulong) PERF_EVENT_IOC_ENABLE, 0);
-                cast(void) ioctl(fd, cast(c_ulong) PERF_EVENT_IOC_DISABLE, 0);
-            },
-            after: () {});
-        auto readOk = new bool;
-        benchCase(
-            name: "rdpmc-read",
-            timed: () @trusted {
-                bool ok;
-                blackBox(reader.read(ok));
-                *readOk = ok;
-            },
-            after: () {
-                assert(*readOk, "the rdpmc case must measure a real read, "
-                    ~ "not the index==0 early exit");
-            },
-            labels: ["bracket": "rdpmc"],
-            // The ioctl case leaves the event DISABLED (index 0 in the mmap
-            // page — the read would measure its early-exit branch, not the
-            // seqlock+rdpmc path); re-enable it untimed first.
-            setup: () @trusted {
-                cast(void) ioctl(fd, cast(c_ulong) PERF_EVENT_IOC_ENABLE, 0);
-            });
-        benchCase(
-            name: "read2-syscall",
-            timed: () @trusted {
-                import core.sys.posix.unistd : read;
-
-                ulong[1] buf;
-                blackBox(read(fd, buf.ptr, buf.sizeof));
-            },
-            after: () {},
-            labels: ["bracket": "read2"],
-            teardown: () @trusted {
-                import core.sys.posix.unistd : close;
-
-                reader.close();
-                close(fd);
-            });
+        alias B = BracketCost.Bracket;
+        benchCase(BracketCost(B.ioctlPair), name: "ioctl-pair", labels: ["bracket": "ioctl"]);
+        benchCase(BracketCost(B.rdpmcRead), name: "rdpmc-read", labels: ["bracket": "rdpmc"]);
+        benchCase(BracketCost(B.read2Syscall), name: "read2-syscall",
+            labels: ["bracket": "read2"]);
     }
 
 }

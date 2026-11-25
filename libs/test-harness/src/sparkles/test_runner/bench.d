@@ -328,6 +328,13 @@ version (unittest)
         string error;
         bool hasError() const @safe pure nothrow @nogc => error.length != 0;
     }
+
+    /// A case that spins `n` times and has nothing to verify.
+    private struct Spin
+    {
+        int n;
+        void timed() { foreach (j; 0 .. n) blackBox(j); }
+    }
 }
 
 @("benchCase.inertPathSurfacesExpectedError")
@@ -340,9 +347,14 @@ unittest
     // error from `after` must fail the test, not vanish; teardown still runs.
     static bool teardownRan;
     teardownRan = false;
-    assertThrown(benchCase(name: "bad", timed: () {},
-        after: () => SoftResult("mismatch"),
-        teardown: () { teardownRan = true; }));
+    static struct Bad
+    {
+        void timed() {}
+        SoftResult after() => SoftResult("mismatch");
+        void teardown() { teardownRan = true; }
+    }
+
+    assertThrown(benchCase(Bad(), name: "bad"));
     assert(teardownRan, "teardown runs on the inert failure path");
 }
 
@@ -417,26 +429,43 @@ unittest
 // In-test measurement API (`benchIter`) and the runner-side driver
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// One benchmark case, captured by `benchCase`/`benchIter` and measured later by
-/// `measureCase`. The generic `timed`/`after` closures are type-erased to uniform
-/// delegates at registration, so a heterogeneous matrix collapses to a flat list
-/// the runner can freely filter, group, sort, and schedule before executing.
-///
-/// The delegates run at *execution* time, not registration — so their captured
-/// state must outlive the registering body (use `setup`/`teardown` for untimed
-/// per-case setup and release; capture fresh per-case values, never a shared loop
-/// variable).
+/**
+One benchmark case, captured by `benchCase`/`benchIter` and measured later by
+`measureCase`. Every case is erased to the same shape — a block of state the
+case owns and function pointers over it (TRB1) — so a heterogeneous matrix
+collapses to a flat list the runner can freely filter, group, sort, and
+schedule before executing.
+
+The hooks are `function` pointers, not delegates: a function pointer cannot
+close over the registering frame, so nothing a case needs can die with the body
+that registered it. `state` is a GC block holding the case (its scanned
+references stay alive) and, for a value-returning `timed`, the last result.
+*/
 struct RegisteredCase
 {
     string name;              /// row name (the varying dimension, e.g. an engine)
     string[string] labels;    /// orthogonal dimensions for grouping, e.g. `["dataset": …]`
     Metric[] metrics;         /// throughput / level columns
-    void delegate() setup;    /// untimed, once before measurement (null = none)
-    void delegate() runTimed; /// the measured body (value results stashed internally)
+    void* state;              /// the case's own block, passed to every hook
+    void function(void*) setup;    /// untimed, once before measurement (null = none)
+    void function(void*) runTimed; /// the measured body (a result is kept in `state`)
     /// Untimed, after each measured call; `null`/`""` = ok, else an error message.
     /// `null` selects batched timing (`benchIter` / whole-body — no per-call release).
-    string delegate() runAfter;
-    void delegate() teardown; /// untimed, once after measurement (null = none)
+    string function(void*) runAfter;
+    void function(void*) teardown; /// untimed, once after measurement (null = none)
+    /// Destroys the case — its destructor runs — at most once, however often it
+    /// is called (null = nothing to destroy). Runs after `teardown`, and for a
+    /// case never measured when the worker shuts down.
+    void function(void*) dispose;
+}
+
+/// Destroys every case in `cases` that `measureCase` did not (idempotent).
+package(sparkles.test_runner)
+void disposeCases(scope RegisteredCase[] cases) @system
+{
+    foreach (ref c; cases)
+        if (c.dispose !is null)
+            c.dispose(c.state);
 }
 
 /// The three counter sources bundled into one value, so the bench driver threads
@@ -646,12 +675,18 @@ if (is(typeof(run()) == void))
         run();
         return;
     }
-    // `runAfter: null` → batched measurement (a tight loop, no per-call release).
-    context.cases ~= RegisteredCase(
-        name: context.testName,
-        labels: labels,
-        runTimed: () { run(); },
-    );
+    // Batched measurement (a tight loop, no per-call release).
+    context.cases ~= eraseCase(Batched!DG(run), context.testName, labels, null,
+        perCall: false);
+}
+
+/// The state of a batched case: a callable `benchIter` or a whole-body
+/// benchmark was handed. It holds a delegate, which is why `benchIter` keeps
+/// the closure discipline `benchCase` does away with.
+private struct Batched(DG)
+{
+    DG run;
+    void timed() { run(); }
 }
 
 @("benchIter.inertOutsideBenchRuns")
@@ -690,64 +725,13 @@ private string errorText(V)(V v)
     }
 }
 
-/// Invokes a no-argument `after` (for a `void`-returning `timed`). A `void`
-/// return throws on failure; an `Expected` return yields a soft error message.
-private string invokeAfter(After)(scope After after)
-{
-    static if (is(typeof(after()) == void))
-    {
-        after();
-        return null;
-    }
-    else
-    {
-        auto v = after();
-        return v.hasError ? errorText(v) : null;
-    }
-}
-
-/// Invokes a result-taking `after(ref Res)`. Same throw-vs-`Expected` contract.
-private string invokeAfter(Res, After)(scope After after, ref Res result)
-{
-    static if (is(typeof(after(result)) == void))
-    {
-        after(result);
-        return null;
-    }
-    else
-    {
-        auto v = after(result);
-        return v.hasError ? errorText(v) : null;
-    }
-}
-
-/// Times one `timed()` call and runs `after` untimed on its result.
-private DriveResult driveOnce(Timed, After)(scope Timed timed, scope After after)
-{
-    static if (is(typeof(timed()) == void))
-    {
-        const t0 = MonoTime.currTime.ticks;
-        timed();
-        const ns = elapsedNs(t0);
-        return DriveResult(ns, invokeAfter(after));
-    }
-    else
-    {
-        const t0 = MonoTime.currTime.ticks;
-        auto r = timed();
-        const ns = elapsedNs(t0);
-        return DriveResult(ns, invokeAfter(after, r));
-    }
-}
-
-/// Times one already-erased `runTimed()` call and runs `runAfter` untimed after.
-private DriveResult driveErased(
-    scope void delegate() runTimed, scope string delegate() runAfter) @system
+/// Times one erased `runTimed` call and runs `runAfter` untimed after it.
+private DriveResult driveErased(ref RegisteredCase c) @system
 {
     const t0 = MonoTime.currTime.ticks;
-    runTimed();
+    c.runTimed(c.state);
     const ns = elapsedNs(t0);
-    return DriveResult(ns, runAfter is null ? null : runAfter());
+    return DriveResult(ns, c.runAfter is null ? null : c.runAfter(c.state));
 }
 
 /// Whether the per-call timing loop should collect another sample. It stops once
@@ -778,40 +762,6 @@ unittest
     assert(keepSampling(4, 0, config));               // count unmet → keep, even at 0 ns
 }
 
-/// A `Setup`/`Teardown` argument as a plain `void delegate()` (`null` when absent).
-/// A `@safe` delegate converts to the `@system` slot (the erased case is measured
-/// on the runner side, not from a `@safe` body); a delegate value passes through so
-/// a runtime `null` (e.g. an engine with no setup) is preserved for `measureCase`'s
-/// null guard; a `function` pointer (a lambda capturing only globals) is wrapped.
-private void delegate() toVoidDg(S)(S s)
-{
-    static if (is(S == typeof(null)))
-        return null;
-    else static if (is(S : void delegate()))
-        return s; // already a delegate (possibly null) — preserve it
-    else
-        // function pointer → wrap into a delegate, preserving a runtime null so
-        // measureCase's `!is null` guard still treats it as "no setup/teardown"
-        // (a non-null wrapper around a null fptr would call through null).
-        return s is null ? null : () { s(); };
-}
-
-@("bench.toVoidDg.preservesNull")
-@safe
-unittest
-{
-    assert(toVoidDg(null) is null);
-    void delegate() nullDg;
-    assert(toVoidDg(nullDg) is null); // null delegate preserved
-    void function() nullFp;
-    assert(toVoidDg(nullFp) is null); // null fptr → null, not a call-through wrapper
-    static void f() @safe {}
-    assert(toVoidDg(&f) !is null); // real fptr → wrapped
-}
-
-/// Type-erases a case's generic `timed`/`after` into a `RegisteredCase`'s uniform
-/// delegates. A value-returning `timed` stashes its result in a shared slot that
-/// `runAfter` reads, so the value still flows to `after` across the erasure.
 /// Enforces `groupKeyOf`'s collision-freedom invariant at registration time:
 /// group-key parts are joined with the US control character (`metrics.d`'s
 /// `groupKeySep`), which therefore must not appear in a case name or label —
@@ -849,98 +799,289 @@ unittest
     assertThrown(validateGroupSafe("ok", ["a\x1fb": "v"]));
 }
 
-private RegisteredCase makeCase(Timed, After)(string name, string[string] labels,
-    Timed timed, After after, Metric[] metrics, void delegate() setup, void delegate() teardown)
+/// Whether a value of type `T` can reach a stack frame: `T` is a nested
+/// struct, union or class (it carries a hidden frame pointer), or holds a
+/// delegate, directly or through a struct, union or static-array field. A
+/// bench case must not (TRB2): it runs after the frame that built it returns.
+/// Classes and pointers are followed no further — what they point to lives
+/// wherever it was allocated, and dip1000 rejects pointing at a local in
+/// `@safe` code.
+template reachesFrame(T)
 {
-    validateGroupSafe(name, labels);
+    import std.traits : Fields, isDelegate;
+
+    static if (isDelegate!T)
+        enum reachesFrame = true;
+    else static if (is(T == struct) || is(T == union))
+        enum reachesFrame = __traits(isNested, T) || anySatisfy!(.reachesFrame, Fields!T);
+    else static if (is(T == class))
+        enum reachesFrame = __traits(isNested, T);
+    else static if (is(T == E[n], E, size_t n))
+        enum reachesFrame = .reachesFrame!E;
+    else
+        enum reachesFrame = false;
+}
+
+private alias anySatisfy = imported!"std.meta".anySatisfy;
+
+///
+@("bench.reachesFrame")
+@safe
+unittest
+{
+    int local;
+    struct Nested { int get() => local; }
+    static struct Plain { int[4] a; string s; Object o; int* p; }
+    static struct HoldsDelegate { int delegate() dg; }
+    static struct Deep { HoldsDelegate[2] inner; }
+
+    static assert(!reachesFrame!Plain);
+    static assert(reachesFrame!Nested);
+    static assert(reachesFrame!HoldsDelegate);
+    static assert(reachesFrame!Deep);
+    static assert(reachesFrame!(void delegate()));
+    static assert(!reachesFrame!(void function()));
+}
+
+/// The block a registered case lives in: the case itself, the last result of a
+/// value-returning `timed` (handed to `after`), and whether it was destroyed.
+private struct CaseCell(C)
+{
+    C bench;
+    static if (!is(CaseResult!C == void))
+        CaseResult!C last;
+    bool disposed;
+}
+
+/// What `C.timed` returns.
+private alias CaseResult(C) = typeof(imported!"std.traits".lvalueOf!C.timed());
+
+/// The erased hooks of a case of type `C`: `static` functions over its
+/// `CaseCell`, so the apparatus closes over nothing either.
+private template CaseHooks(C)
+{
+    alias Cell = CaseCell!C;
+    enum bool hasResult = !is(CaseResult!C == void);
+
+    static if (__traits(hasMember, C, "setup"))
+        void setup(void* p) { (cast(Cell*) p).bench.setup(); }
+
+    void runTimed(void* p)
+    {
+        auto cell = cast(Cell*) p;
+        static if (hasResult)
+            cell.last = cell.bench.timed();
+        else
+            cell.bench.timed();
+    }
+
+    string runAfter(void* p)
+    {
+        auto cell = cast(Cell*) p;
+        static if (hasResult)
+            return runAfterOf(cell.bench, cell.last);
+        else
+            return runAfterOf(cell.bench);
+    }
+
+    static if (__traits(hasMember, C, "teardown"))
+        void teardown(void* p) { (cast(Cell*) p).bench.teardown(); }
+
+    void dispose(void* p)
+    {
+        auto cell = cast(Cell*) p;
+        if (cell.disposed)
+            return;
+        cell.disposed = true;
+        destroy(cell.bench);
+    }
+}
+
+/// Runs `bench.after` on `result` (or with no argument, when that is the
+/// signature it has), or nothing without one. A `void` `after` reports failure
+/// by throwing; an `Expected` one by its error, returned as text.
+private string runAfterOf(C, R...)(ref C bench, ref R result)
+if (R.length <= 1)
+{
+    static if (!__traits(hasMember, C, "after"))
+        return null;
+    else
+    {
+        static if (R.length == 1 && __traits(compiles, bench.after(result[0])))
+            alias call = () => bench.after(result[0]);
+        else
+            alias call = () => bench.after();
+
+        static if (is(typeof(call()) == void))
+        {
+            call();
+            return null;
+        }
+        else
+        {
+            auto v = call();
+            return v.hasError ? errorText(v) : null;
+        }
+    }
+}
+
+/// Moves `bench` into a GC block of its own and erases it into a
+/// `RegisteredCase`. `perCall` selects per-call timing (`after` runs between
+/// calls, even when `C` has none); otherwise the case is batched.
+private RegisteredCase eraseCase(C)(C bench, string name, string[string] labels,
+    Metric[] metrics, bool perCall)
+{
+    import core.lifetime : move;
+
+    alias Hooks = CaseHooks!C;
+    auto cell = new CaseCell!C;
+    move(bench, cell.bench);
+
     RegisteredCase c;
     c.name = name;
     c.labels = labels;
     c.metrics = metrics;
-    c.setup = setup;
-    c.teardown = teardown;
-
-    // `timed` and `after` run after the registering body returns, so they
-    // must not be `scope`: a `scope` delegate argument lets the caller keep the
-    // frame it closes over on the stack, and the case then reads a dead frame.
-    // Capturing them in the closures below is an escape, but not one every
-    // frontend sees (LDC 1.43 inferred both `scope` and the registering frame
-    // stayed on the stack), so they are stored into a GC block first: an
-    // assignment through a heap pointer is an escape any escape analysis sees.
-    static struct Callables
-    {
-        Timed timed;
-        After after;
-        static if (!is(typeof(timed()) == void))
-            typeof(timed()) last; // the result, carried from `runTimed` to `runAfter`
-    }
-
-    auto callables = new Callables;
-    callables.timed = timed;
-    callables.after = after;
-    static if (is(typeof(timed()) == void))
-    {
-        c.runTimed = () { callables.timed(); };
-        c.runAfter = () => invokeAfter(callables.after);
-    }
-    else
-    {
-        c.runTimed = () { callables.last = callables.timed(); };
-        c.runAfter = () => invokeAfter(callables.after, callables.last);
-    }
+    c.state = cell;
+    c.runTimed = &Hooks.runTimed;
+    if (perCall)
+        c.runAfter = &Hooks.runAfter;
+    static if (__traits(hasMember, C, "setup"))
+        c.setup = &Hooks.setup;
+    static if (__traits(hasMember, C, "teardown"))
+        c.teardown = &Hooks.teardown;
+    c.dispose = &Hooks.dispose;
     return c;
 }
 
-/// Registers one named case inside a `@benchmark` body; call it repeatedly (over
-/// engines × datasets, say) to emit a matrix. `timed` is the measured body — its
-/// result flows to `after`, which runs untimed after every iteration to verify +
-/// release it. `after` may `throw` (→ the whole benchmark test fails) or return an
-/// `Expected` error (→ this case becomes an error row and the others continue). A
-/// case with nothing to release/verify passes a no-op `after` (`(ref r) {}`, or
-/// `() {}` for a `void` body). `metrics` attach throughput / level columns.
-///
-/// Optional `setup`/`teardown` run untimed once around this case's measurement (at
-/// execution time) — put per-case state that a scheduled, deferred run needs there
-/// (e.g. parse the document a serialize case serializes, and release it after).
-///
-/// Optional `labels` name orthogonal dimensions of the case (e.g.
-/// `["dataset": "twitter", "operation": "serialize"]`); `--group-by` selects label
-/// keys to group and stream the report by, while `name` stays the varying
-/// dimension shown per row (typically the implementation being compared).
-///
-/// Under `--bench` the case is *registered* and measured later by the runner, so
-/// the closures run after the body returns: capture fresh per-case state (never a
-/// shared loop variable), and keep any state they need alive via `setup`. Outside
-/// a `--bench` run the case runs once immediately, for correctness.
-///
-/// Uses per-call timing — each `timed()` timed alone, `after` between — so the
-/// result can be released before the next iteration; suited to µs-and-up ops.
+/**
+Registers one benchmark case inside a `@benchmark` body; call it repeatedly
+(over engines × datasets, say) to emit a matrix, one row per call (TRB1–TRB4).
+
+The case is a struct. The runner moves it into memory it owns and calls its
+members there, all optional except `timed`:
+
+$(UL
+$(LI `setup()` — untimed, once before the case is measured.)
+$(LI `timed()` — the measured call. What it returns flows to `after`.)
+$(LI `after(ref R result)` or `after()` — untimed, after every measured call,
+    to verify and release the result. It reports a failure by throwing or by
+    returning an `Expected` error; either way this case becomes an error row and
+    the rest of the matrix still runs.)
+$(LI `teardown()` — untimed, once after the measurement.)
+)
+
+The case's destructor runs after `teardown`, once; a case the run never
+measures (a filter excluded it) is destroyed when the worker shuts down. Like
+any D struct, a moved-from copy is destroyed too, as `.init`.
+
+Everything the case needs is a field, set by its constructor from the call's
+arguments — by value, so each case of a loop has its own. A case type that
+could reach the registering frame — a nested (non-`static`) struct, or a
+delegate field — is rejected at compile time: the case runs after that frame
+has returned (TRB2).
+
+`labels` name orthogonal dimensions of the case (e.g.
+`["dataset": "twitter", "operation": "serialize"]`); `--group-by` selects label
+keys to group and stream the report by, while `name` stays the varying
+dimension shown per row (typically the implementation being compared).
+`metrics` attach throughput / level columns.
+
+Outside a `--bench` run the case runs once immediately — `setup`, one `timed`,
+`after`, `teardown` — and an `after` error throws, so a plain `dub test` still
+checks it.
+
+Each `timed()` is timed alone, with `after` between calls, so a result can be
+released before the next iteration: suited to µs-and-up operations. Keep
+$(LREF benchIter) for the finest micro-benchmarks.
+*/
+void benchCase(C)(C bench, string name, string[string] labels = null,
+    Metric[] metrics = null)
+if (is(C == struct))
+{
+    import core.lifetime : move;
+
+    static assert(__traits(hasMember, C, "timed"),
+        "benchCase: `" ~ C.stringof ~ "` has no `timed()` to measure");
+    static assert(!reachesFrame!C,
+        "benchCase: `" ~ C.stringof ~ "` can reach the frame that registers it"
+        ~ " (a nested struct, or a delegate field), which is gone when the case runs:"
+        ~ " make it a `static struct` and pass what it needs to its constructor");
+    runOrRegister(move(bench), name, labels, metrics);
+}
+
+// `benchCase` past its compile-time checks: runs the case now outside `--bench`,
+// registers it under one.
+private void runOrRegister(C)(C bench, string name, string[string] labels,
+    Metric[] metrics)
+{
+    import core.lifetime : move;
+
+    validateGroupSafe(name, labels);
+    auto context = activeBenchContext;
+    if (context is null) // outside a --bench run: run once, for correctness
+    {
+        static if (__traits(hasMember, C, "setup"))
+            bench.setup();
+        scope (exit)
+        {
+            static if (__traits(hasMember, C, "teardown"))
+                bench.teardown();
+        }
+        static if (is(CaseResult!C == void))
+        {
+            bench.timed();
+            const error = runAfterOf(bench);
+        }
+        else
+        {
+            auto result = bench.timed();
+            const error = runAfterOf(bench, result);
+        }
+        // An `Expected` error from `after` isolates a *row* under --bench;
+        // outside --bench there is no table to isolate into, and swallowing
+        // it would green a failing verification under a foreign runner.
+        if (error.length)
+            throw new Exception("benchCase '" ~ name ~ "': " ~ error);
+        return;
+    }
+    context.cases ~= eraseCase(move(bench), name, labels, metrics, perCall: true);
+}
+
+/**
+The delegate form of $(LREF benchCase), kept only until every caller has moved
+to case structs. Its closures run after the registering body returns, which is
+the trap the struct form removes.
+*/
 void benchCase(Timed, After, Setup = typeof(null), Teardown = typeof(null))(
     string name, Timed timed, After after, Metric[] metrics = null,
     string[string] labels = null, Setup setup = null, Teardown teardown = null)
 {
-    auto context = activeBenchContext;
-    if (context is null) // outside a --bench run: run once, for correctness
+    static struct Legacy
     {
-        static if (!is(Setup == typeof(null)))
-            if (setup !is null)
-                setup();
-        scope (exit)
+        Timed timedFn;
+        After afterFn;
+        Setup setupFn;
+        Teardown teardownFn;
+
+        auto timed() => timedFn();
+        auto after(Args...)(ref Args args) => afterFn(args);
+
+        void setup()
+        {
+            static if (!is(Setup == typeof(null)))
+                if (setupFn !is null)
+                    setupFn();
+        }
+
+        void teardown()
         {
             static if (!is(Teardown == typeof(null)))
-                if (teardown !is null)
-                    teardown();
+                if (teardownFn !is null)
+                    teardownFn();
         }
-        const r = driveOnce(timed, after);
-        // An `Expected` error from `after` isolates a *row* under --bench;
-        // outside --bench there is no table to isolate into, and swallowing
-        // it would green a failing verification under a foreign runner.
-        if (r.error.length)
-            throw new Exception("benchCase '" ~ name ~ "': " ~ r.error);
-        return;
     }
-    context.cases ~= makeCase(name, labels, timed, after, metrics,
-        toVoidDg(setup), toVoidDg(teardown));
+
+    runOrRegister(Legacy(timed, after, setup, teardown), name, labels, metrics);
 }
 
 /// Measures one registered case into a `BenchStats` row. `setup`/`teardown` bracket
@@ -963,15 +1104,21 @@ BenchStats measureCase(BenchContext* context, RegisteredCase c) @system
     import std.algorithm.iteration : map;
     import std.array : array;
 
+    // Registered first, so it runs last: the case is destroyed even when its
+    // `teardown` throws.
+    scope (exit)
+        if (c.dispose !is null)
+            c.dispose(c.state);
     if (c.setup !is null)
-        c.setup();
+        c.setup(c.state);
     scope (exit)
         if (c.teardown !is null)
-            c.teardown();
+            c.teardown(c.state);
 
+    auto runTimed = () { c.runTimed(c.state); };
     if (c.runAfter is null) // batched: benchIter / whole-body
     {
-        auto m = measure(c.runTimed, context.config);
+        auto m = measure(runTimed, context.config);
         auto row = computeStats(c.name, m.iterations, m.nsPerIter);
         row.labels = c.labels;
         row.metrics = c.metrics;
@@ -982,7 +1129,7 @@ BenchStats measureCase(BenchContext* context, RegisteredCase c) @system
             // counters are all bracket. Sized from the timing pass we just ran.
             const batch = perfBatchFor(row.nsPerIterMedian,
                 perfIters(m.iterations, context.config), context.config);
-            context.counters.countInto(row, c.runTimed, () {}, m.iterations,
+            context.counters.countInto(row, runTimed, () {}, m.iterations,
                 context.config, batch);
         }
         return row;
@@ -992,7 +1139,7 @@ BenchStats measureCase(BenchContext* context, RegisteredCase c) @system
     // except under a pinned count, where every call is one of the N samples.
     if (!context.config.iterations)
     {
-        const probe = driveErased(c.runTimed, c.runAfter);
+        const probe = driveErased(c);
         if (probe.error.length)
             return BenchStats(name: c.name, labels: c.labels,
                 error: errorCell(probe.error));
@@ -1007,7 +1154,7 @@ BenchStats measureCase(BenchContext* context, RegisteredCase c) @system
         ? samples.length < context.config.iterations
         : keepSampling(samples.length, totalNs, context.config))
     {
-        const d = driveErased(c.runTimed, c.runAfter);
+        const d = driveErased(c);
         if (d.error.length)
             return BenchStats(name: c.name, labels: c.labels,
                 error: errorCell(d.error));
@@ -1021,9 +1168,9 @@ BenchStats measureCase(BenchContext* context, RegisteredCase c) @system
 
     // Counting pass: bracket `runTimed`; `runAfter` releases the result between
     // iterations (excluded from every source's window).
-    auto release = () { cast(void) c.runAfter(); };
+    auto release = () { cast(void) c.runAfter(c.state); };
     if (context.counters !is null)
-        context.counters.countInto(row, c.runTimed, release, samples.length, context.config);
+        context.counters.countInto(row, runTimed, release, samples.length, context.config);
     return row;
 }
 
@@ -1062,7 +1209,8 @@ Registration registerBenchmark(Test test, in BenchConfig config) @system
 
     auto result = executeTest(test);
     if (result.succeeded && context.cases.length == 0)
-        context.cases ~= RegisteredCase(name: test.name, runTimed: { test.ptr(); });
+        context.cases ~= eraseCase(Batched!(typeof(test.ptr))(test.ptr), test.name, null,
+            null, perCall: false);
     return Registration(context.cases, result);
 }
 
@@ -1079,6 +1227,8 @@ BenchOutcome runBenchmark(Test test, in BenchConfig config, ref CounterGroups co
     import sparkles.test_runner.execution : toThrown;
 
     auto reg = registerBenchmark(test, config);
+    scope (exit)
+        disposeCases(reg.cases); // the ones a failure left unmeasured
     BenchOutcome outcome;
     outcome.result = reg.result;
     if (!reg.result.succeeded)
@@ -1201,23 +1351,18 @@ unittest
 {
     // Dogfoods benchCase: one @benchmark emits a row per size, each with an
     // element-throughput metric. Skipped by default; measured under `--bench`.
-    // The per-case work is registered through a helper taking `size` by value, so
-    // each case's `timed` closure captures its own `size` (a loop-body variable is
-    // one shared slot under deferred execution — the register model's key contract).
+    // Each case is a value carrying its own `size`, so the loop needs no helper.
     import std.conv : text;
 
-    static void reg(int size) @safe
+    static struct Sum
     {
-        benchCase(
-            name: text("sum/", size),
-            timed: () { size_t s; foreach (i; 0 .. size) s += i; blackBox(s); },
-            after: () {}, // nothing to release
-            metrics: [Metric(unit: Unit("elem"), amount: double(size), mode: Metric.Mode.rate)],
-        );
+        int size;
+        void timed() @safe { size_t s; foreach (i; 0 .. size) s += i; blackBox(s); }
     }
 
     foreach (size; [64, 256, 1024])
-        reg(size);
+        benchCase(Sum(size), name: text("sum/", size),
+            metrics: [Metric(unit: Unit("elem"), amount: double(size), mode: Metric.Mode.rate)]);
 }
 
 version (linux)
@@ -1246,12 +1391,8 @@ unittest
         foreach (i; 0 .. 3)
         {
             const n = (i + 1) * 200;
-            benchCase(
-                name: text("case", i),
-                timed: () { foreach (j; 0 .. n) blackBox(j); },
-                after: () {}, // nothing to release/verify
-                metrics: [Metric(unit: Unit("B"), amount: double(n), mode: Metric.Mode.rate)],
-            );
+            benchCase(Spin(n), name: text("case", i),
+                metrics: [Metric(unit: Unit("B"), amount: double(n), mode: Metric.Mode.rate)]);
         }
     }
 
@@ -1274,9 +1415,8 @@ unittest
     // calls neither benchCase nor benchIter registers a single whole-body case.
     static void matrix()
     {
-        static void reg(int i) { benchCase(name: "c", timed: () { blackBox(i); }, after: () {}); }
         foreach (i; 0 .. 3)
-            reg(i);
+            benchCase(Spin(i), name: "c");
     }
 
     static void whole()
@@ -1299,18 +1439,10 @@ unittest
 {
     import core.time : usecs;
 
-    // Register through a per-case helper so each deferred `timed` closure captures
-    // its own `i` — the "never a shared loop variable" contract benchCase documents
-    // (a bare `foreach (i; …)` capture would read one shared, post-loop `i`).
-    static void reg(int i)
-    {
-        benchCase(name: "c", timed: () { blackBox(i); }, after: () {});
-    }
-
     static void body_()
     {
         foreach (i; 0 .. 3)
-            reg(i);
+            benchCase(Spin(i), name: "c");
     }
 
     // The progress hook is `@safe nothrow @nogc`; count via a struct-method
@@ -1339,13 +1471,18 @@ unittest
 {
     import core.time : usecs;
 
-    static SoftResult check(int r) => r == 5 ? SoftResult.init : SoftResult("expected 5");
+    static struct Yields
+    {
+        int value;
+        int timed() => value;
+        SoftResult after(ref int r) => r == 5 ? SoftResult.init : SoftResult("expected 5");
+    }
 
     static void body_()
     {
         // A soft (Expected) failure becomes an error row; the matrix continues.
-        benchCase(name: "bad", timed: () => 3, after: (ref int r) => check(r));
-        benchCase(name: "good", timed: () => 5, after: (ref int r) => check(r));
+        benchCase(Yields(3), name: "bad");
+        benchCase(Yields(5), name: "good");
     }
 
     auto counters = CounterGroups.none;
@@ -1363,14 +1500,19 @@ unittest
 {
     import core.time : usecs;
 
+    // On this in-process path (`runBenchmark`, a single test measured where it
+    // registered) a throwing `after` aborts the whole benchmark test. The
+    // runner's worker instead makes it an error row and measures the rest
+    // (`benchCase.throwIsAnErrorRowInTheWorker`).
+    static struct Boom
+    {
+        int[] timed() => null;
+        void after(ref int[] r) { assert(r.length == 1, "empty result"); }
+    }
+
     static void body_()
     {
-        // A throwing `after` (a hard mismatch) aborts the whole benchmark test.
-        benchCase(
-            name: "boom",
-            timed: () { int[] result; return result; },
-            after: (ref int[] r) { assert(r.length == 1, "empty result"); },
-        );
+        benchCase(Boom(), name: "boom");
     }
 
     auto counters = CounterGroups.none;
@@ -1392,15 +1534,16 @@ unittest
     static size_t setups, teardowns, timeds;
     setups = teardowns = timeds = 0;
 
+    static struct Counted
+    {
+        void setup() { setups++; }
+        void timed() { timeds++; blackBox(timeds); }
+        void teardown() { teardowns++; }
+    }
+
     static void body_()
     {
-        benchCase(
-            name: "c",
-            timed: () { timeds++; blackBox(timeds); },
-            after: () {},
-            setup: () { setups++; },
-            teardown: () { teardowns++; },
-        );
+        benchCase(Counted(), name: "c");
     }
 
     auto counters = CounterGroups.none;
@@ -1423,14 +1566,16 @@ unittest
     static size_t teardowns;
     teardowns = 0;
 
+    static struct Bad
+    {
+        void timed() {}
+        SoftResult after() => SoftResult("boom");
+        void teardown() { teardowns++; }
+    }
+
     static void body_()
     {
-        benchCase(
-            name: "bad",
-            timed: () {},
-            after: () => SoftResult("boom"),
-            teardown: () { teardowns++; },
-        );
+        benchCase(Bad(), name: "bad");
     }
 
     auto counters = CounterGroups.none;
@@ -1471,13 +1616,17 @@ unittest
     import core.time : usecs;
     import sparkles.test_runner.skip : skipTest;
 
-    // A skipTest inside a deferred benchCase closure skips only that case's
-    // row (yellow, run stays green); the other cases still measure.
+    // A skipTest inside a case's `timed` skips only that case's row (yellow,
+    // run stays green); the other cases still measure.
+    static struct Skipper
+    {
+        void timed() { skipTest("needs root"); }
+    }
+
     static void body_()
     {
-        benchCase(name: "skipper", timed: () { skipTest("needs root"); },
-            after: () {});
-        benchCase(name: "fine", timed: () { blackBox(1); }, after: () {});
+        benchCase(Skipper(), name: "skipper");
+        benchCase(Spin(1), name: "fine");
     }
 
     auto counters = CounterGroups.none;
@@ -1498,10 +1647,14 @@ unittest
     static size_t timeds;
     timeds = 0;
 
+    static struct Pinned
+    {
+        void timed() { timeds++; blackBox(timeds); }
+    }
+
     static void body_()
     {
-        benchCase(name: "pinned", timed: () { timeds++; blackBox(timeds); },
-            after: () {});
+        benchCase(Pinned(), name: "pinned");
     }
 
     auto counters = CounterGroups.none;
