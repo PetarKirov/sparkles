@@ -1,0 +1,214 @@
+    Starting Performing "debug" build using dmd for x86_64.
+    Building sparkles:metadata ~main: building configuration [library]
+    Building sparkles:reflection ~main: building configuration [library]
+    Building sparkles:test-attributes ~main: building configuration [library]
+    Building sparkles:base ~main: building configuration [library]
+    Building ui-api-demo-lazy ~master: building configuration [app]
+app.d(30,6): Error: function `app.statsPane` is `@nogc` yet allocates closure for `statsPane()` with the GC
+Node statsPane(ref Ui ui, in Stats s, in IdsView ids) @safe pure nothrow @nogc
+     ^
+app.d(33,21):        delegate `Node() => label(ui, NamedOnly(), Slot.heading, "Stats")` closes over variable `ui`
+            ui.label(slot: Slot.heading, text: "Stats"),
+                    ^
+app.d(30,23):        `ui` declared here
+Node statsPane(ref Ui ui, in Stats s, in IdsView ids) @safe pure nothrow @nogc
+                      ^
+app.d(34,22):        delegate `Node() => toggle(ui, NamedOnly(), s.hashOnEdit, "hash on edit", on(ui, SumTyp...` closes over variable `ui`
+            ui.toggle(on: s.hashOnEdit, label: "hash on edit",
+                     ^
+app.d(30,23):        `ui` declared here
+Node statsPane(ref Ui ui, in Stats s, in IdsView ids) @safe pure nothrow @nogc
+                      ^
+app.d(36,27):        delegate `Node() => numberField(ui, NamedOnly(), s.debounceMs, "ms", on(ui))` closes over variable `ui`
+            ui.numberField(value: s.debounceMs, unit: "ms",
+                          ^
+app.d(30,23):        `ui` declared here
+Node statsPane(ref Ui ui, in Stats s, in IdsView ids) @safe pure nothrow @nogc
+                      ^
+app.d(32,15):        delegate `Node() => row(ui, NamedOnly(), 2, NamedOnly(), [Node() => label(ui, NamedOnly...` closes over variable `ui`
+        ui.row(gap: 2, children:
+              ^
+app.d(30,23):        `ui` declared here
+Node statsPane(ref Ui ui, in Stats s, in IdsView ids) @safe pure nothrow @nogc
+                      ^
+app.d(40,13):        delegate `Node() => ids.computing ? label(ui, NamedOnly(), Slot.dim, ui.text(Interpolat...` closes over variable `ui`
+            ? ui.label(slot: Slot.dim, text: ui.text(i"computing… (query $(ids.query))"))
+            ^
+app.d(30,23):        `ui` declared here
+Node statsPane(ref Ui ui, in Stats s, in IdsView ids) @safe pure nothrow @nogc
+                      ^
+app.d(44,13):        delegate `Node() => mapKeyed(toUi(ids.rows, ui))` closes over variable `ui`
+            .mapKeyed!(
+            ^
+app.d(30,23):        `ui` declared here
+Node statsPane(ref Ui ui, in Stats s, in IdsView ids) @safe pure nothrow @nogc
+                      ^
+app.d(52,13):        delegate `Node() => cast(int)ui.env().density == 0 ? label(ui, NamedOnly(), Slot.dim, "...` closes over variable `ui`
+            ? ui.label(slot: Slot.dim, text: "click a name to copy it")
+            ^
+app.d(30,23):        `ui` declared here
+Node statsPane(ref Ui ui, in Stats s, in IdsView ids) @safe pure nothrow @nogc
+                      ^
+app.d(58,6): Error: function `app.explorerView` is `@nogc` yet allocates closure for `explorerView()` with the GC
+Node explorerView(ref Ui ui, in Model m) @safe pure nothrow @nogc
+     ^
+app.d(65,42):        delegate `Node() => statsPane(ui, m.stats, m.ids)` closes over variable `ui`
+            ui.mapMsg!liftStats(statsPane(ui, m.stats, m.ids)),
+                                         ^
+app.d(58,26):        `ui` declared here
+Node explorerView(ref Ui ui, in Model m) @safe pure nothrow @nogc
+                         ^
+app.d(65,32):        delegate `Node() => mapMsg(ui, [Node() => statsPane(ui, m.stats, m.ids)][])` closes over variable `ui`
+            ui.mapMsg!liftStats(statsPane(ui, m.stats, m.ids)),
+                               ^
+app.d(58,26):        `ui` declared here
+Node explorerView(ref Ui ui, in Model m) @safe pure nothrow @nogc
+                         ^
+app.d(73,46):        delegate `Node() => memo(ui, m.stats, m.ids)` closes over variable `ui`
+        ui.mapMsg!liftStats(ui.memo!statsPane(m.stats, m.ids)),
+                                             ^
+app.d(58,26):        `ui` declared here
+Node explorerView(ref Ui ui, in Model m) @safe pure nothrow @nogc
+                         ^
+app.d(60,17):        delegate `Node() => label(ui, NamedOnly(), Slot.heading, ui.text(InterpolationHeader(),...` closes over variable `ui`
+        ui.label(slot: Slot.heading, text: ui.text(i"members: $(m.ids.rows.length)")),
+                ^
+app.d(58,26):        `ui` declared here
+Node explorerView(ref Ui ui, in Model m) @safe pure nothrow @nogc
+                         ^
+app.d(64,18):        delegate `Node() => column(ui, NamedOnly(), 0, m.tutorial, ui.env().withDensity(Density...` closes over variable `ui`
+        ui.column(env: ui.env.withDensity(Density.compact), disabled: m.tutorial, children:
+                 ^
+app.d(58,26):        `ui` declared here
+Node explorerView(ref Ui ui, in Model m) @safe pure nothrow @nogc
+                         ^
+app.d(70,18):        delegate `Node() => badOrGood(ui, m)` closes over variable `ui`
+        badOrGood(ui, m),
+                 ^
+app.d(58,26):        `ui` declared here
+Node explorerView(ref Ui ui, in Model m) @safe pure nothrow @nogc
+                         ^
+app.d(73,28):        delegate `Node() => mapMsg(ui, [Node() => memo(ui, m.stats, m.ids)][])` closes over variable `ui`
+        ui.mapMsg!liftStats(ui.memo!statsPane(m.stats, m.ids)),
+                           ^
+app.d(58,26):        `ui` declared here
+Node explorerView(ref Ui ui, in Model m) @safe pure nothrow @nogc
+                         ^
+app.d(86,10): Error: function `app.badOrGood` is `@nogc` yet allocates closure for `badOrGood()` with the GC
+    Node badOrGood(ref Ui ui, in Model m) @safe pure nothrow @nogc
+         ^
+app.d(87,41):        delegate `Node() => statsPane(ui, m.stats, m.ids)` closes over variable `ui`
+        => ui.mapMsg!liftStats(statsPane(ui, m.stats, m.ids));
+                                        ^
+app.d(86,27):        `ui` declared here
+    Node badOrGood(ref Ui ui, in Model m) @safe pure nothrow @nogc
+                          ^
+app.d(94,6): Error: function `app.card` is `@nogc` yet allocates closure for `card()` with the GC
+Node card(ref Ui ui, string title, scope ChildFn content) @safe pure nothrow @nogc
+     ^
+app.d(96,17):        delegate `Node() => label(ui, NamedOnly(), Slot.heading, cast(const(char)[])title)` closes over variable `ui`
+        ui.label(slot: Slot.heading, text: title),
+                ^
+app.d(94,18):        `ui` declared here
+Node card(ref Ui ui, string title, scope ChildFn content) @safe pure nothrow @nogc
+                 ^
+app.d(97,16):        delegate `Node() => content()` closes over variable `content`
+        content(),
+               ^
+app.d(94,50):        `content` declared here
+Node card(ref Ui ui, string title, scope ChildFn content) @safe pure nothrow @nogc
+                                                 ^
+app.d(101,6): Error: function `app.memberList` is `@nogc` yet allocates closure for `memberList()` with the GC
+Node memberList(ref Ui ui, in IdsView ids,
+     ^
+app.d(103,45):        delegate `Node() => mapKeyed(toUi(ids.rows, ui))` closes over variable `ids`
+    => ui.column(children: ids.rows.toUi(ui).mapKeyed!(r => r.name, r => row(r)));
+                                            ^
+app.d(101,39):        `ids` declared here
+Node memberList(ref Ui ui, in IdsView ids,
+                                      ^
+app.d(105,6): Error: function `app.subtrees` is `@nogc` yet allocates closure for `subtrees()` with the GC
+Node subtrees(ref Ui ui, in IdsView ids, bool wide) @safe pure nothrow @nogc
+     ^
+app.d(110,26):        delegate `Node() => mapKeyed(toUi(ids.rows, ui))` closes over variable `ui`
+        ids.rows.toUi(ui).mapKeyed!(r => r.name, r => ui.label(text: r.name)));
+                         ^
+app.d(105,22):        `ui` declared here
+Node subtrees(ref Ui ui, in IdsView ids, bool wide) @safe pure nothrow @nogc
+                     ^
+app.d(117,41):        delegate `Node() => label(ui, NamedOnly(), Slot.code, "left")` closes over variable `ui`
+            ui.column(children: ui.label(text: "left"), wide ? names() : Node.none),
+                                        ^
+app.d(105,22):        `ui` declared here
+Node subtrees(ref Ui ui, in IdsView ids, bool wide) @safe pure nothrow @nogc
+                     ^
+app.d(119,25):        delegate `Node() => label(ui, NamedOnly(), Slot.code, "right")` closes over variable `ui`
+                ui.label(text: "right"), wide ? Node.none : names()),
+                        ^
+app.d(105,22):        `ui` declared here
+Node subtrees(ref Ui ui, in IdsView ids, bool wide) @safe pure nothrow @nogc
+                     ^
+app.d(117,22):        delegate `Node() => column(ui, NamedOnly(), 0, false, EnvOverride(false, Env(Layout.wid...` closes over variable `ui`
+            ui.column(children: ui.label(text: "left"), wide ? names() : Node.none),
+                     ^
+app.d(105,22):        `ui` declared here
+Node subtrees(ref Ui ui, in IdsView ids, bool wide) @safe pure nothrow @nogc
+                     ^
+app.d(118,22):        delegate `Node() => column(ui, NamedOnly(), 0, false, ui.env().withDensity(Density.comp...` closes over variable `ui`
+            ui.column(env: ui.env.withDensity(Density.compact), children:
+                     ^
+app.d(105,22):        `ui` declared here
+Node subtrees(ref Ui ui, in IdsView ids, bool wide) @safe pure nothrow @nogc
+                     ^
+app.d(113,13):        delegate `Node() => card(ui, "(a) inline content", () => label(ui, NamedOnly(), Slot.co...` closes over variable `ui`
+        card(ui, title: "(a) inline content", content: () => ui.label(text: ids.query)),
+            ^
+app.d(105,22):        `ui` declared here
+Node subtrees(ref Ui ui, in IdsView ids, bool wide) @safe pure nothrow @nogc
+                     ^
+app.d(114,13):        delegate `Node() => card(ui, "(b) stored content", names)` closes over variable `ui`
+        card(ui, title: "(b) stored content", content: names),
+            ^
+app.d(105,22):        `ui` declared here
+Node subtrees(ref Ui ui, in IdsView ids, bool wide) @safe pure nothrow @nogc
+                     ^
+app.d(116,15):        delegate `Node() => row(ui, NamedOnly(), 3, NamedOnly(), [Node() => column(ui, NamedOnl...` closes over variable `ui`
+        ui.row(gap: 3, children:
+              ^
+app.d(105,22):        `ui` declared here
+Node subtrees(ref Ui ui, in IdsView ids, bool wide) @safe pure nothrow @nogc
+                     ^
+app.d(121,19):        delegate `Node() => memberList(ui, ids, (in MemberRow r) => label(ui, NamedOnly(), Slot...` closes over variable `ui`
+        memberList(ui, ids, (in MemberRow r) => ui.label(text: r.value)),
+                  ^
+app.d(105,22):        `ui` declared here
+Node subtrees(ref Ui ui, in IdsView ids, bool wide) @safe pure nothrow @nogc
+                     ^
+app.d(117,62):        delegate `Node() => wide ? names() : Node(4294967294u)` closes over variable `wide`
+            ui.column(children: ui.label(text: "left"), wide ? names() : Node.none),
+                                                             ^
+app.d(105,47):        `wide` declared here
+Node subtrees(ref Ui ui, in IdsView ids, bool wide) @safe pure nothrow @nogc
+                                              ^
+app.d(119,47):        delegate `Node() => wide ? Node(4294967294u) : names()` closes over variable `wide`
+                ui.label(text: "right"), wide ? Node.none : names()),
+                                              ^
+app.d(105,47):        `wide` declared here
+Node subtrees(ref Ui ui, in IdsView ids, bool wide) @safe pure nothrow @nogc
+                                              ^
+app.d(127,6): Error: function `app.misplaced` is `@nogc` yet allocates closure for `misplaced()` with the GC
+Node misplaced(ref Ui ui) @safe pure nothrow @nogc
+     ^
+app.d(131,17):        delegate `Node() => label(ui, NamedOnly(), Slot.code, "a")` closes over variable `ui`
+        ui.label(text: "a"),
+                ^
+app.d(127,23):        `ui` declared here
+Node misplaced(ref Ui ui) @safe pure nothrow @nogc
+                      ^
+app.d(132,9):        delegate `Node() => early` closes over variable `early`
+        early, // only the handle is passed: the slot returns an old node
+        ^
+app.d(129,10):        `early` declared here
+    auto early = ui.label(text: "early"); // built now, before the column
+         ^
+Error dmd failed with exit code 1.
