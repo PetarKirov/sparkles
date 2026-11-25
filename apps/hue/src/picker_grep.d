@@ -36,7 +36,7 @@ import picker_view : GrepRowText;
 // compiled in every build, not only `-unittest`, so guarding this behind
 // `version (unittest)` breaks the application build (`AGENTS.md`). The
 // measurement API itself lives in the impl library and stays guarded.
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 
 version (unittest)
     import sparkles.test_runner.bench : benchCase, Metric, Unit;
@@ -1829,7 +1829,7 @@ unittest
 }
 
 @("picker_grep.scan.bench")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
     // Three shapes with different failure modes: an ordinary source file,
