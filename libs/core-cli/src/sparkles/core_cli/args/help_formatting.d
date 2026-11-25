@@ -7,6 +7,7 @@ import std.format : format;
 import std.path : baseName, buildPath, stripExtension;
 import std.string : stripRight, wrap;
 import sparkles.base.text.case_text : unicodeUpper;
+import std.meta : AliasSeq, Filter;
 import std.traits : FieldNameTuple, getUDAs;
 
 import sparkles.core_cli.help_formatting : HelpInfo, Sections, formatSection;
@@ -194,6 +195,23 @@ package HelpInfo childHelpInfo(Root, Cli)(HelpInfo parent)
     return parent;
 }
 
+/// The commands above the one at `path` beneath `T`: `T`, then each one on
+/// the way down, the command at `path` itself excluded.
+private template commandAncestors(T, string[] path)
+{
+    static if (path.length <= 1)
+        alias commandAncestors = AliasSeq!T;
+    else
+        alias commandAncestors = AliasSeq!(T, commandAncestors!(childNamed!(T, path[0]), path[1 .. $]));
+}
+
+/// The child of `T` whose primary name is `name`.
+private template childNamed(T, string name)
+{
+    enum isNamed(C) = commandPrimaryName!C == name;
+    alias childNamed = Filter!(isNamed, allChildren!T)[0];
+}
+
 package string formatHelp(Root, Cli)(HelpInfo info)
 {
     auto command = commandInfo!(Root, Cli);
@@ -223,6 +241,23 @@ package string formatHelp(Root, Cli)(HelpInfo info)
         if (group.lines.length)
             sections ~= formatSection(group.heading, group.lines, 0, "", "\n");
     }
+
+    // A subcommand accepts its ancestors' options too, before or after its
+    // name, so its help lists them: one section per ancestor, nearest last.
+    static if (!is(Root == Cli))
+    {{
+        enum path = subcommandPath!(Root, Cli);
+        const words = info.programName.split(" ");
+        static foreach (i, Ancestor; commandAncestors!(Root, path))
+        {{
+            auto inherited = collectAllOptionsForGroup!(Root, Ancestor, Ancestor)();
+            const owner = words.length >= path.length - i
+                ? words[0 .. $ - (path.length - i)].join(" ")
+                : commandPrimaryName!Ancestor;
+            if (inherited.length)
+                sections ~= formatSection(owner ~ " options", inherited, 0, "", "\n");
+        }}
+    }}
 
     static if (allChildren!Cli.length > 0)
     {
@@ -442,7 +477,17 @@ private string formatOptionLine(T)(Option optionInfo, string field, string descr
         .map!(name => "%s".format(optionDisplayName(name).sty.bold))
         .array
         .join(", ");
-    return helpRow(names ~ valuePlaceholder!T(optionInfo, field), description);
+    return helpRow(names ~ valuePlaceholder!T(optionInfo, field),
+        withEnvFallback(description, optionInfo));
+}
+
+/// `description`, naming the environment variable the option falls back to.
+private string withEnvFallback(string description, in Option optionInfo) @safe pure
+{
+    if (!optionInfo.envFallback_.length)
+        return description;
+    const note = "[env: " ~ optionInfo.envFallback_ ~ "]";
+    return description.length ? description ~ " " ~ note : note;
 }
 
 /// Render the "help on a single option" screen used when the user passes
@@ -454,9 +499,10 @@ private string formatOptionLine(T)(Option optionInfo, string field, string descr
 package string formatOptionValueHelp(T)(Option optionInfo, string field)
 {
     string[] lines = [optionHeader!T(optionInfo, field)];
-    if (optionInfo.description_.length)
+    const description = withEnvFallback(optionInfo.description_, optionInfo);
+    if (description.length)
     {
-        lines ~= "  " ~ optionInfo.description_;
+        lines ~= "  " ~ description;
         lines ~= "";
     }
 

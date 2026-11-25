@@ -84,6 +84,20 @@ template ParsedCommand(Command)
 }
 
 
+/**
+Reads the environment variable an option names with `envFallback`, for the
+parser: the variable's value, empty when it is unset. Parsing reads the
+process environment unless a caller passes its own, as a test does.
+*/
+alias EnvLookup = string delegate(string name) @safe;
+
+private string processEnvironment(string name) @safe
+{
+    import std.process : environment;
+
+    return environment.get(name);
+}
+
 // `parseCli` and `parseKnownCli` are NOT marked `@safe`: although the
 // pure parsing logic itself is safe, the user-supplied `Cli` struct may
 // hold a `SumType` whose `opAssign` is `@system` (it becomes `@system`
@@ -95,21 +109,23 @@ template ParsedCommand(Command)
 CliExpected!(ParsedCommand!Cli) parseCli(Cli)(
     string[] argv,
     HelpInfo helpInfo = HelpInfo.init,
+    EnvLookup env = null,
 )
 {
     ParsedCommand!Cli result;
-    return parseCli!Cli(argv, result, helpInfo);
+    return parseCli!Cli(argv, result, helpInfo, env);
 }
 
 CliExpected!(ParsedCommand!Cli) parseCli(Cli)(
     string[] argv,
     ref ParsedCommand!Cli receiver,
     HelpInfo helpInfo = HelpInfo.init,
+    EnvLookup env = null,
 )
 {
     auto info = normalizeHelpInfo!Cli(argv, helpInfo);
     auto args = argv.length > 0 ? argv[1 .. $] : argv;
-    auto parsed = parseCommandImpl!(Cli, Cli)(receiver, args, info);
+    auto parsed = parseCommandImpl!(Cli, Cli)(receiver, args, info, false, null, env);
     if (!parsed)
         return error!(ParsedCommand!Cli)(parsed.error);
 
@@ -120,11 +136,12 @@ CliExpected!(ParsedCommand!Cli) parseKnownCli(Cli)(
     ref string[] argv,
     ref ParsedCommand!Cli receiver,
     HelpInfo helpInfo = HelpInfo.init,
+    EnvLookup env = null,
 )
 {
     auto info = normalizeHelpInfo!Cli(argv, helpInfo);
     auto args = argv.length > 0 ? argv[1 .. $] : argv;
-    auto parsed = parseCommandImpl!(Cli, Cli)(receiver, args, info, true);
+    auto parsed = parseCommandImpl!(Cli, Cli)(receiver, args, info, true, null, env);
     if (!parsed)
         return error!(ParsedCommand!Cli)(parsed.error);
 
@@ -308,9 +325,12 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
     HelpInfo helpInfo,
     bool keepUnknown = false,
     ParentOptionHandler parentOption = null,
+    EnvLookup env = null,
 )
 {
     enum hasChildren = allChildren!Cli.length > 0;
+    if (env is null)
+        env = (string name) @safe => processEnvironment(name);
     // A variadic option must not eat the subcommand that follows its values.
     static if (hasChildren)
         const commandBoundary = childCommandNames!Cli();
@@ -334,6 +354,19 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
     // harmlessly (a failed parse's receiver is discarded).
     static if (isCommandNode!Receiver)
         scope (exit) receiver.seenOptions = seen;
+
+    // A level's options are complete once everything after it has parsed —
+    // the child's too, since a root option may follow the subcommand — and
+    // only then may the environment fill the ones the command line left out.
+    CliExpected!(string[]) settled(CliExpected!(string[]) parsed)
+    {
+        if (!parsed)
+            return parsed;
+        auto fell = applyEnvFallbacks!Cli(valueOf(), seen, env);
+        if (!fell)
+            return error!(string[])(fell.error);
+        return parsed;
+    }
 
     size_t index;
     while (index < args.length)
@@ -384,11 +417,11 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
                 auto selected = dispatchChild!(Root, Cli)(
                     receiver.command,
                     receiver.commandSelected,
-                    arg, subArgs, helpInfo, keepUnknown, handOff,
+                    arg, subArgs, helpInfo, keepUnknown, handOff, env,
                 );
 
                 if (selected)
-                    return selected;
+                    return settled(selected);
 
                 if (selected.error.isHelp || selected.error.isVersion || selected.error.message.length)
                     return error!(string[])(selected.error);
@@ -402,12 +435,12 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
                     auto subInfo = childHelpInfo!(Root, DefaultType)(helpInfo);
                     auto remainingArgs = args[index .. $];
                     auto parsedDefault = parseCommandImpl!(Root, DefaultType)(
-                        defaultCmd, remainingArgs, subInfo, keepUnknown, handOff);
+                        defaultCmd, remainingArgs, subInfo, keepUnknown, handOff, env);
                     if (parsedDefault)
                     {
                         receiver.command = defaultCmd;
                         receiver.commandSelected = true;
-                        return parsedDefault;
+                        return settled(parsedDefault);
                     }
                     if (parsedDefault.error.isHelp || parsedDefault.error.isVersion || parsedDefault.error.message.length)
                         return error!(string[])(parsedDefault.error);
@@ -464,12 +497,12 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
                             return here;
                         };
                     auto parsedDefault = parseCommandImpl!(Root, DefaultType)(
-                        defaultCmd, remainingArgs, subInfo, keepUnknown, defaultHandOff);
+                        defaultCmd, remainingArgs, subInfo, keepUnknown, defaultHandOff, env);
                     if (parsedDefault)
                     {
                         receiver.command = defaultCmd;
                         receiver.commandSelected = true;
-                        return parsedDefault;
+                        return settled(parsedDefault);
                     }
                     if (parsedDefault.error.isHelp || parsedDefault.error.isVersion || parsedDefault.error.message.length)
                         return error!(string[])(parsedDefault.error);
@@ -507,6 +540,10 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
     if (!assignedPositionals)
         return error!(string[])(assignedPositionals.error);
 
+    auto fell = applyEnvFallbacks!Cli(valueOf(), seen, env);
+    if (!fell)
+        return error!(string[])(fell.error);
+
     auto required = validateRequired!Cli(seen);
     if (!required)
         return error!(string[])(required.error);
@@ -536,12 +573,12 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
                         return here;
                     };
                 auto parsedDefault = parseCommandImpl!(Root, DefaultType)(
-                    defaultCmd, emptyArgs, subInfo, keepUnknown, defaultHandOff);
+                    defaultCmd, emptyArgs, subInfo, keepUnknown, defaultHandOff, env);
                 if (parsedDefault)
                 {
                     receiver.command = defaultCmd;
                     receiver.commandSelected = true;
-                    return ok(unknown);
+                    return settled(ok(unknown));
                 }
                 if (parsedDefault.error.isHelp || parsedDefault.error.isVersion || parsedDefault.error.message.length)
                     return error!(string[])(parsedDefault.error);
@@ -569,6 +606,7 @@ private CliExpected!(string[]) dispatchChild(Root, Parent)(
     HelpInfo parentHelp,
     bool keepUnknown,
     ParentOptionHandler parentOption = null,
+    EnvLookup env = null,
 )
 {
     static foreach (CommandType; allChildren!Parent)
@@ -578,7 +616,7 @@ private CliExpected!(string[]) dispatchChild(Root, Parent)(
             CommandNode!CommandType command;
             auto info = childHelpInfo!(Root, CommandType)(parentHelp);
             auto parsed = parseCommandImpl!(Root, CommandType)(
-                command, args, info, keepUnknown, parentOption);
+                command, args, info, keepUnknown, parentOption, env);
             if (!parsed)
                 return parsed;
 
@@ -804,6 +842,7 @@ private CliExpected!void applyOption(string field, T)(
     string inlineValue,
     bool hasInlineValue,
     const string[] commandBoundary = null,
+    bool fromEnvironment = false,
 )
 {
     import sparkles.core_cli.args.help_formatting : formatOptionValueHelp;
@@ -821,7 +860,7 @@ private CliExpected!void applyOption(string field, T)(
                 kind: CliError.Kind.parse,
                 message: "Missing value for " ~ originalArg,
             ));
-        if (isOptionHelpToken(values[0]))
+        if (!fromEnvironment && isOptionHelpToken(values[0]))
             return error(CliError(
                 kind: CliError.Kind.help,
                 help: formatOptionValueHelp!T(optionInfo, field),
@@ -837,7 +876,7 @@ private CliExpected!void applyOption(string field, T)(
     {
         if (hasInlineValue)
         {
-            if (isOptionHelpToken(inlineValue))
+            if (!fromEnvironment && isOptionHelpToken(inlineValue))
                 return error(CliError(
                     kind: CliError.Kind.help,
                     help: formatOptionValueHelp!T(optionInfo, field),
@@ -882,7 +921,7 @@ private CliExpected!void applyOption(string field, T)(
         // `help` / `?` pass through as literal values — preserving an
         // escape hatch for free-form string options that legitimately
         // want those literal values.
-        if (hasInlineValue)
+        if (hasInlineValue && !fromEnvironment)
         {
             foreach (v; values)
                 if (isOptionHelpToken(v))
@@ -1076,6 +1115,61 @@ private CliExpected!void assignPositionalsRec(Cli)(
                 seen,
                 prefixPath ~ field ~ ".",
             );
+            if (!res)
+                return res;
+        }}
+    }}
+
+    return ok();
+}
+
+/**
+Fill each option of `Cli` (and of its flattened groups) that names an
+`envFallback` and that the command line left out, from that variable, parsed
+as `--option=VALUE` would be. An empty variable counts as unset. An option
+filled this way is recorded in `seen`, so it satisfies `required` and
+overrides lower configuration layers the way a typed one does.
+*/
+private CliExpected!void applyEnvFallbacks(Cli)(
+    ref Cli receiver,
+    ref bool[string] seen,
+    EnvLookup env,
+    string prefixPath = "",
+)
+{
+    static foreach (field; FieldNameTuple!Cli)
+    {{
+        alias symbol = __traits(getMember, Cli, field);
+        enum options = getUDAs!(symbol, Option);
+        enum isFlattened = hasFlatten!symbol;
+        static if (options.length && options[0].envFallback_.length)
+        {{
+            enum optionInfo = options[0];
+            enum variable = optionInfo.envFallback_;
+            const path = prefixPath ~ field;
+            if (!seen.get(path, false))
+            {
+                const value = env(variable);
+                if (value.length)
+                {
+                    string[] token = ["$" ~ variable];
+                    size_t index;
+                    auto applied = applyOption!field(__traits(getMember, receiver, field), optionInfo,
+                        token, index, value, true, null, true);
+                    if (!applied)
+                        return error(CliError(
+                            kind: CliError.Kind.parse,
+                            message: "$" ~ variable ~ " (the fallback for "
+                                ~ displayOption(optionInfo, field) ~ "): " ~ applied.error.message,
+                        ));
+                    seen[path] = true;
+                }
+            }
+        }}
+        else static if (isFlattened && is(typeof(symbol) == struct))
+        {{
+            auto res = applyEnvFallbacks!(typeof(symbol))(
+                __traits(getMember, receiver, field), seen, env, prefixPath ~ field ~ ".");
             if (!res)
                 return res;
         }}
@@ -3039,4 +3133,218 @@ unittest
         (CommandNode!View v) { assert(v.value.paths == ["a.d"]); },
         (CommandNode!Diff) { assert(false); }
     );
+}
+
+/// An environment for the `envFallback` tests: `vars`, and nothing else.
+version (unittest) private EnvLookup fakeEnvironment(string[string] vars) @safe
+{
+    return (string name) @safe => vars.get(name, null);
+}
+
+/// The command line wins; without it the variable is read; without either,
+/// the field keeps its initializer (CLE1).
+@("args.envFallback.precedence")
+@system
+unittest
+{
+    @(Command("tool"))
+    struct Cli
+    {
+        @(Option("cache-dir", envFallback: "XDG_CACHE_HOME"))
+        string cacheDir = "default";
+    }
+
+    auto env = fakeEnvironment(["XDG_CACHE_HOME": "/from/env"]);
+
+    auto typed = parseCli!Cli(["tool", "--cache-dir", "/typed"], HelpInfo.init, env);
+    assert(typed, typed.error.message);
+    assert(typed.value.cacheDir == "/typed");
+
+    auto fallen = parseCli!Cli(["tool"], HelpInfo.init, env);
+    assert(fallen, fallen.error.message);
+    assert(fallen.value.cacheDir == "/from/env");
+
+    auto neither = parseCli!Cli(["tool"], HelpInfo.init, fakeEnvironment(null));
+    assert(neither, neither.error.message);
+    assert(neither.value.cacheDir == "default");
+
+    // An empty variable counts as unset.
+    auto empty = parseCli!Cli(["tool"], HelpInfo.init, fakeEnvironment(["XDG_CACHE_HOME": ""]));
+    assert(empty, empty.error.message);
+    assert(empty.value.cacheDir == "default");
+}
+
+/// The variable parses as `--option=VALUE` would: an enum by its wire names,
+/// a bool by its spellings, an array split on commas, and a bad value names
+/// the variable it came from (CLE2).
+@("args.envFallback.parsesAsAnInlineValue")
+@system
+unittest
+{
+    @(Command("tool"))
+    struct Cli
+    {
+        @(Option("color", envFallback: "TOOL_COLOR"))
+        TestColor color;
+
+        @(Option("quiet", envFallback: "TOOL_QUIET"))
+        bool quiet;
+
+        @(Option("jobs", envFallback: "TOOL_JOBS"))
+        uint jobs;
+
+        @(Option("only", envFallback: "TOOL_ONLY"))
+        string[] only;
+    }
+
+    auto parsed = parseCli!Cli(["tool"], HelpInfo.init, fakeEnvironment([
+        "TOOL_COLOR": "green", "TOOL_QUIET": "yes", "TOOL_JOBS": "4", "TOOL_ONLY": "a,b",
+    ]));
+    assert(parsed, parsed.error.message);
+    assert(parsed.value.color == TestColor.green);
+    assert(parsed.value.quiet);
+    assert(parsed.value.jobs == 4);
+    assert(parsed.value.only == ["a", "b"]);
+
+    // A typed array replaces the variable's, rather than joining it.
+    auto typed = parseCli!Cli(["tool", "--only", "c"], HelpInfo.init, fakeEnvironment(["TOOL_ONLY": "a,b"]));
+    assert(typed, typed.error.message);
+    assert(typed.value.only == ["c"]);
+
+    auto bad = parseCli!Cli(["tool"], HelpInfo.init, fakeEnvironment(["TOOL_JOBS": "many"]));
+    assert(!bad);
+    assert(bad.error.message.startsWith("$TOOL_JOBS (the fallback for --jobs): "), bad.error.message);
+
+    // `help` from the environment is a value, not a request for help.
+    auto literal = parseCli!Cli(["tool"], HelpInfo.init, fakeEnvironment(["TOOL_COLOR": "help"]));
+    assert(!literal);
+    assert(!literal.error.isHelp);
+}
+
+/// A variable satisfies a required option, and counts among the options the
+/// command line set (CLE3).
+@("args.envFallback.satisfiesRequired")
+@system
+unittest
+{
+    struct Auth
+    {
+        @(Option("token", required: true, envFallback: "TOOL_TOKEN"))
+        string token;
+    }
+
+    @(Command("tool"))
+    struct Cli
+    {
+        @Flatten Auth auth;
+
+        @(Command("sync")) static struct Sync {}
+    }
+
+    auto parsed = parseCli!Cli(["tool", "sync"], HelpInfo.init, fakeEnvironment(["TOOL_TOKEN": "xyz"]));
+    assert(parsed, parsed.error.message);
+    assert(parsed.value.auth.token == "xyz");
+    assert(parsed.value.seenOptions.get("auth.token", false));
+
+    auto missing = parseCli!Cli(["tool"], HelpInfo.init, fakeEnvironment(null));
+    assert(!missing);
+}
+
+/// A root option given after the subcommand still wins over its variable:
+/// the root reads the environment only once the whole line has parsed (CLE1).
+@("args.envFallback.rootOptionAfterSubcommand")
+@system
+unittest
+{
+    @(Command("tool"))
+    struct Cli
+    {
+        @(Option("cache-dir", envFallback: "XDG_CACHE_HOME"))
+        string cacheDir;
+
+        @(Command("test")) static struct Test {}
+    }
+
+    auto env = fakeEnvironment(["XDG_CACHE_HOME": "/from/env"]);
+    auto after = parseCli!Cli(["tool", "test", "--cache-dir", "/typed"], HelpInfo.init, env);
+    assert(after, after.error.message);
+    assert(after.value.cacheDir == "/typed");
+
+    auto fallen = parseCli!Cli(["tool", "test"], HelpInfo.init, env);
+    assert(fallen, fallen.error.message);
+    assert(fallen.value.cacheDir == "/from/env");
+}
+
+/// `--help` names the variable on the option's line, and so does the
+/// option's own help (CLE4).
+@("args.envFallback.help")
+@system
+unittest
+{
+    import sparkles.core_cli.term_unstyle : unstyle;
+
+    @(Command("tool"))
+    struct Cli
+    {
+        @(Option("cache-dir", description: "Where the cache lives.", envFallback: "XDG_CACHE_HOME"))
+        string cacheDir;
+
+        @(Option("color", envFallback: "TOOL_COLOR"))
+        TestColor color;
+    }
+
+    auto help = parseCli!Cli(["tool", "--help"]);
+    assert(help.error.isHelp);
+    const text = help.error.help.unstyle;
+    assert(text.canFind("Where the cache lives. [env: XDG_CACHE_HOME]"), text);
+    assert(text.canFind("[env: TOOL_COLOR]"), text);
+
+    auto one = parseCli!Cli(["tool", "--color=?"]);
+    assert(one.error.isHelp);
+    assert(one.error.help.unstyle.canFind("[env: TOOL_COLOR]"), one.error.help);
+}
+
+/// A subcommand's help lists the options of each command above it, which it
+/// accepts too, under a section named for that command (CLE4).
+@("args.formatHelp.inheritedOptions")
+@system
+unittest
+{
+    import sparkles.core_cli.term_unstyle : unstyle;
+
+    @(Command("tool"))
+    static struct Tool
+    {
+        @(Option("cache-dir", description: "Where the cache lives.", envFallback: "XDG_CACHE_HOME"))
+        string cacheDir;
+
+        @(Command("remote"))
+        static struct Remote
+        {
+            @(Option("name", description: "The remote."))
+            string name;
+
+            @(Command("add"))
+            static struct Add
+            {
+                @(Option("url", description: "Its URL."))
+                string url;
+            }
+        }
+    }
+
+    auto help = parseCli!Tool(["tool", "remote", "add", "--help"]);
+    assert(help.error.isHelp);
+    const text = help.error.help.unstyle;
+    assert(text.canFind("--url"), text);
+    assert(text.canFind("TOOL OPTIONS\n"), text);
+    assert(text.canFind("TOOL REMOTE OPTIONS\n"), text);
+    assert(text.canFind("[env: XDG_CACHE_HOME]"), text);
+    // Nearest last: the root's section comes first.
+    import std.string : indexOf;
+    assert(text.indexOf("TOOL OPTIONS") < text.indexOf("TOOL REMOTE OPTIONS"), text);
+
+    // The root's own help has no inherited section.
+    auto root = parseCli!Tool(["tool", "--help"]);
+    assert(!root.error.help.unstyle.canFind("TOOL OPTIONS"), root.error.help);
 }

@@ -152,6 +152,9 @@ struct Option
     bool hidden_;
     bool counter_;
     string[] allowedValues_;
+    /// The environment variable the option falls back to when the command
+    /// line leaves it out; `--help` names it.
+    string envFallback_;
 
     this(
         string aliases,
@@ -162,6 +165,7 @@ struct Option
         bool hidden = false,
         bool counter = false,
         string[] allowedValues = null,
+        string envFallback = null,
     ) @safe
     {
         this.aliases = aliases;
@@ -171,6 +175,7 @@ struct Option
         this.hidden_ = hidden;
         this.counter_ = counter;
         this.allowedValues_ = allowedValues.dup;
+        this.envFallback_ = envFallback;
     }
 
     Option description(string text) @safe
@@ -214,6 +219,18 @@ struct Option
         result.allowedValues_ = values.dup;
         return result;
     }
+
+    /**
+    Read the option from the environment variable `name` when the command
+    line leaves it out. The value parses as `--option=VALUE` would; an empty
+    variable counts as unset.
+    */
+    Option envFallback(string name) @safe
+    {
+        auto result = this;
+        result.envFallback_ = name;
+        return result;
+    }
 }
 
 @("args.Option.namedArguments")
@@ -228,6 +245,7 @@ unittest
         hidden: true,
         counter: true,
         allowedValues: ["trace", "info"],
+        envFallback: "TOOL_LOG_LEVEL",
     );
 
     assert(info.aliases == "L|log-level");
@@ -237,6 +255,8 @@ unittest
     assert(info.hidden_);
     assert(info.counter_);
     assert(info.allowedValues_ == ["trace", "info"]);
+    assert(info.envFallback_ == "TOOL_LOG_LEVEL");
+    assert(Option("cache-dir").envFallback("XDG_CACHE_HOME").envFallback_ == "XDG_CACHE_HOME");
 }
 
 struct Argument

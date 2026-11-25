@@ -22,6 +22,7 @@ public import sparkles.core_cli.args.internal :
     commandChildren,
     parseCli,
     parseKnownCli,
+    EnvLookup,
     reportCliError,
     runCli,
     runParsedCli;
