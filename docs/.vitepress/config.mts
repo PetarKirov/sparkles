@@ -99,6 +99,9 @@ export default withMermaid(
       /\/research\/application-packaging\/grounding\//,
       // Exact source snapshots of unpublished Android terminal/backend revisions.
       /\/research\/android-dev-env\/grounding\//,
+      // The UI-authoring experiments: dub packages and their READMEs, kept as
+      // evidence beside the study and excluded from the site (docs-config.json).
+      /\/research\/ui-authoring\/experiments\//,
       // The twoslash showcase is a static gallery generated into docs/public/ at
       // build time (docs/scripts/build-twoslash-showcase.sh), not a markdown page.
       /\/apps\/hue\/twoslash\//,

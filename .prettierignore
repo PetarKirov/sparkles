@@ -33,3 +33,7 @@ docs/.vitepress/theme/spk.css
 
 # The fileset grammar's tree-sitter.json: pretty-format-json's canonical form.
 nix/packages/tree-sitter-fileset/tree-sitter.json
+
+# A D fragment the lazy-variadic probes share; prettier would parse `.inc` as
+# another language.
+docs/research/ui-authoring/experiments/lazy-variadic/base.inc
