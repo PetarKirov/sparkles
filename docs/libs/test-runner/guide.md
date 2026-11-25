@@ -92,6 +92,7 @@ any other runner. Full details: [Attributes reference](./reference/attributes.md
 | `@betterC`   | runtime **and** druntime-free       | `--better-c` |
 | `@wasm`      | runtime **and** cross-compiled wasm | `--wasm`     |
 | `@benchmark` | timed, skipped by normal runs       | `--bench`    |
+| `@benchCases` | registers timed cases, skipped by normal runs | `--bench` |
 
 ### `@ctfe` — verify at compile time
 
@@ -222,7 +223,7 @@ the run still passes.
 
 `benchIter` measures one thing. To benchmark a **matrix** — several
 implementations across several inputs — call `benchCase` repeatedly inside one
-`@benchmark` body; each call emits its own row. The plain-D loop (and a
+`@benchCases` body; each call emits its own row. The plain-D loop (and a
 `static foreach` over a compile-time engine list) _is_ the matrix — the runner
 never learns about "engines" or "ops":
 
@@ -246,7 +247,7 @@ static struct Parse(Engine)
     void teardown() { e.teardown(); }           // untimed, once after this case's samples
 }
 
-@("json.parse") @benchmark
+@("json.parse") @benchCases
 unittest
 {
     static foreach (Engine; Engines)
@@ -280,6 +281,12 @@ Piped output skips all animation and stays byte-stable.
 > reach the registering frame — a non-`static` nested struct, or a delegate
 > field — does not compile. Outside `--bench` the case runs once immediately,
 > for correctness.
+>
+> The marker says what the body is: a `@benchCases` body only registers, and
+> is never measured itself. One that registers no case fails ("`<test>`
+> registered no cases"); when an environment filter can leave nothing, call
+> `skipTest` instead. `benchCase` in a `@benchmark` body, or `benchIter` in a
+> `@benchCases` one, fails its registration too.
 
 - **`timed()`** is the measured call; its return value flows to
   **`after(ref result)`** (or `after()`), which runs _untimed_ after every call
@@ -304,7 +311,7 @@ Piped output skips all animation and stays byte-stable.
 
 `benchCase` times each call individually (so the result can be released between
 iterations), which suits µs-and-up operations; keep `benchIter` for the finest
-micro-benchmarks. One `@benchmark` can emit many rows, and `--perf` adds its
+micro-benchmarks. One `@benchCases` test can emit many rows, and `--perf` adds its
 counter columns to each:
 
 ```console

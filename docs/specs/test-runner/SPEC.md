@@ -101,7 +101,7 @@ benchmark-measurement layer under `--bench`.
 
 The measurement layer has **two measurement models**:
 
-- **`@benchmark`** — per-iteration statistics: the timed body runs many times;
+- **`@benchmark`** / **`@benchCases`** — per-iteration statistics: the timed body (or each registered case) runs many times;
   the runner reports median / median-absolute-deviation / min / max
   nanoseconds per iteration, plus per-iteration counter averages.
 - **`@workload`** — window statistics: the body runs once (or a few reps);
@@ -181,11 +181,16 @@ Marker UDAs live in `sparkles.test_runner.attributes` and must be imported
 unconditionally (not under `version (unittest)`).
 
 - **`@benchmark`** — the test is skipped by normal runs and measured by
-  `--bench`. **`@benchmark(iterations: N)`** pins the iteration count instead
-  of auto-scaling: per sample for batched timing; a per-call `benchCase` runs
-  exactly N timed calls, one sample each.
-- **`benchIter(scope void delegate())`** — measure only the closure; the rest
-  of the body is setup. Outside `--bench` the closure runs exactly once.
+  `--bench`; its body is the measured unit, or the parts it hands to
+  `benchIter`. **`@benchmark(iterations: N)`** pins the per-sample iteration
+  count instead of auto-scaling.
+- **`@benchCases`** — the test is skipped by normal runs and measured by
+  `--bench`; its body registers a matrix with `benchCase` and is never
+  measured itself. **`@benchCases(iterations: N)`** runs exactly N timed calls
+  per case, one sample each.
+- **`benchIter(scope void delegate())`** — in a `@benchmark` body, measure
+  only the closure; the rest of the body is setup. Any number of calls, one
+  row each. Outside `--bench` the closure runs exactly once.
 - **`benchCase(aCase, name:, labels:, metrics:)`** — register one row of a
   matrix benchmark. The case is a struct: `timed()` is the measured call, and
   the optional `setup()`, `after(ref result)` (or `after()`) and `teardown()`
@@ -223,7 +228,22 @@ unconditionally (not under `version (unittest)`).
   measures **must** still be destroyed once, when the worker shuts down.
   Registration runs no hook. Outside `--bench` the same sequence runs once.
 
-  _Rationale:_ the delegate form this replaces registered closures, and every
+  **TRB5: The body's role is declared.** A `@benchmark` body **must** be
+  measured whole, or through its `benchIter` parts; a `benchCase` call from
+  one **must** fail its registration with a message naming the test. A
+  `@benchCases` body **must** only register: it is never measured, a
+  `benchIter` call from it **must** fail its registration, and a body that
+  registers no case **must** fail with "`<test>` registered no cases" unless
+  it skipped (`skipTest`), which leaves the test skipped with no rows. The two
+  markers are exclusive, and each is exclusive with `@workload`. Both set the
+  listing's `isBenchmark`, so the runner executable schedules them alike.
+
+  _Rationale:_ the role used to be inferred: a body that registered no case
+  was measured whole. An empty matrix — an environment filter, a loop bound —
+  then silently benchmarked its own registration loop, so suites registered a
+  `(filtered out)` no-op case to avoid it.
+
+  _Rationale (TRB1–TRB4):_ the delegate form this replaces registered closures, and every
   way a closure's captured state can be gone by measurement time happened, to
   authors who had read the warning: a `foreach` variable shared by every case;
   an fd a `scope (exit)` closed, so the loop wedged in `io_cqring_wait`; a
@@ -260,7 +280,7 @@ unconditionally (not under `version (unittest)`).
   per-iteration amount as-is. `Unit` is an open-basis symbol (`"B"`, `"req"`,
   …); see §5.3.
 - **`@workload`** / **`@workload(reps: N)`** — window-model marker (`reps`
-  clamps to ≥ 1; combining with `@benchmark` is a discovery-time error — the
+  clamps to ≥ 1; combining with `@benchmark` or `@benchCases` is a discovery-time error — the
   models are exclusive). The in-body **`workloadWindow(dg)`** /
   `workloadWindow(name, dg)` primitive measures only the closure (× reps) as
   one window; without any call the whole body is the window. Outside a
@@ -282,7 +302,7 @@ unconditionally (not under `version (unittest)`).
 
 ## 4. Measurement protocol
 
-Normative for `@benchmark`:
+Normative for `@benchmark` and `@benchCases`:
 
 1. **Auto-scaling** — the per-sample iteration count doubles until one sample
    takes at least `BenchConfig.minSampleTime` (default 5 ms;
@@ -295,7 +315,7 @@ Normative for `@benchmark`:
    sample per call; `--bench-min-time` is the minimum _total_ measured time,
    samples accumulate past 32 until met); `benchIter`/whole-body timing is
    batched (`--bench-min-time` is the per-sample auto-scale target).
-   `@benchmark(iterations: N)` pins both shapes and makes the budget inert.
+   `iterations: N` on either marker pins its shape and makes the budget inert.
 4. **Counting passes** — after timing, each _available_ source re-runs the
    body under its counters, capped at `perfMaxIters` (100 000) iterations,
    with the untimed release/verify hook outside the enabled window. Counter

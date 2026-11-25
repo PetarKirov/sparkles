@@ -1,7 +1,9 @@
 # Benchmark with `@benchmark`
 
 `@benchmark` tests are skipped by normal `dub test` runs and measured by
-`--bench`:
+`--bench`; the test body (or a part of it handed to `benchIter`) is what is
+measured. A test that registers a matrix of rows instead is
+[`@benchCases`](#many-rows-from-one-test-benchcases-and-benchcase):
 
 ```bash
 dub test :yourpkg -- --bench
@@ -56,7 +58,8 @@ timed over millions of iterations), then 32 samples are collected and
 summarized as median, median-absolute-deviation, min, and max
 nanoseconds-per-iteration. `@benchmark(iterations: 1000)` pins the count
 instead of auto-scaling — per sample for batched (`benchIter`/whole-body)
-timing; a per-call `benchCase` runs exactly N timed calls, one sample each.
+timing; under `@benchCases(iterations: N)` each per-call `benchCase` runs
+exactly N timed calls, one sample each.
 `--bench-min-time=MS` overrides the 5 ms budget: for per-call cases it is
 the minimum total measured time per case (samples keep accumulating past 32
 until it is met), for batched ones the per-sample auto-scale target.
@@ -107,13 +110,18 @@ unittest
 Outside `--bench` (e.g. when another runner executes the test), `benchIter`
 invokes the closure exactly once, so the test still works as a plain test.
 
-## Many rows from one test: `benchCase`
+## Many rows from one test: `@benchCases` and `benchCase`
 
 `benchIter` measures one thing. To benchmark a **matrix** — several
-implementations across several inputs — call `benchCase` repeatedly; each call
-emits its own row, so ordinary D loops (and a `static foreach` over a
-compile-time list) build the table. The case is a struct: its fields are what
-the case needs, and its members are what the runner calls.
+implementations across several inputs — mark the test **`@benchCases`** and
+call `benchCase` repeatedly; each call emits its own row, so ordinary D loops
+(and a `static foreach` over a compile-time list) build the table. The case is
+a struct: its fields are what the case needs, and its members are what the
+runner calls. A `@benchCases` body only registers: it is never measured
+itself, and `benchIter` belongs in a `@benchmark` test. A body that registers
+no case fails with "`<test>` registered no cases" — when an environment
+filter can leave nothing to measure, say so with `skipTest`, which leaves the
+test skipped. Calling `benchCase` from a `@benchmark` body fails too.
 
 ```d
 import sparkles.test_runner.bench : benchCase, Metric, Unit;
@@ -132,7 +140,7 @@ static struct Parse(Engine)
     }
 }
 
-@("json.parse") @benchmark
+@("json.parse") @benchCases
 unittest
 {
     static foreach (Engine; Engines)

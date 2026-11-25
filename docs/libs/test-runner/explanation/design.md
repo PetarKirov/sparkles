@@ -110,7 +110,7 @@ thread-local context, so the same test degrades to a single invocation under
 any other runner. `blackBox` is the optimizer barrier (empty asm under LDC,
 volatile store elsewhere).
 
-`benchCase` extends this to a **matrix**: one `@benchmark` body calls it per
+`benchCase` extends this to a **matrix**: one `@benchCases` body calls it per
 (engine, dataset, …) and each call becomes its own row, so the combinatorics
 stay in plain-D loops rather than in the runner. Each case is a struct the
 runner takes ownership of — its state travels with it, and a case type that

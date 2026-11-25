@@ -28,7 +28,7 @@ against._
 | Engines         | simdjson 4.6.0, rapidjson 1.1.0, yyjson 0.12.0, serde_json 1.0.150, simd-json 0.17.0, sonic-rs 0.5.8, mir-ion 2.3.5, asdf 0.8.0, jsoniopipe 0.2.7                                                                 |
 | Corpora         | twitter.json 632 KB (strings), citm_catalog.json 1.7 MB (structure), canada.json 2.2 MB (floats), github_events.json 65 KB (small-doc), mesh.json 724 KB and mesh.pretty.json 1.58 MB (numeric arrays/whitespace) |
 | Allocator       | glibc, `M_TRIM_THRESHOLD`/`M_MMAP_THRESHOLD` raised to 64 MiB at process start (a `shared static this()` in the bench library)                                                                                    |
-| Harness         | `sparkles:test-runner` `--bench --perf` — one `@benchmark` per op, `benchCase` per engine×dataset                                                                                                                 |
+| Harness         | `sparkles:test-runner` `--bench --perf` — one `@benchCases` per op, `benchCase` per engine×dataset                                                                                                                 |
 
 Every engine reproduces the `std.json` structural fingerprint on every
 corpus (and the `TwitterStats` checksum on decode) in the untimed `after`

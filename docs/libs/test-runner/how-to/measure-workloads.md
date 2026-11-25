@@ -202,9 +202,9 @@ meaning.
 | You want                             | Use                            |
 | ------------------------------------ | ------------------------------ |
 | ns/iter medians, regression gating   | `@benchmark`                   |
-| a matrix of variants                 | `@benchmark` + `benchCase`     |
+| a matrix of variants                 | `@benchCases` + `benchCase`    |
 | where one long run's time went       | `@workload`                    |
 | phase-by-phase accounting of one run | `@workload` + `workloadWindow` |
 
-The models are exclusive per test — `@benchmark @workload` on one body is a
+The models are exclusive per test — `@benchmark @workload` (or `@benchCases @workload`) on one body is a
 discovery-time error.
