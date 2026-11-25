@@ -14,7 +14,7 @@ import sparkles.fuzzy.query : ConstraintWorkspace, QueryStorage,
     evaluateConstraints;
 import sparkles.fuzzy.rank : RankContext, RankedResult, TopK, rank;
 
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 
 /// One immutable corpus generation and optional aligned rank signals.
 struct CandidateSnapshot
@@ -408,13 +408,13 @@ unittest
 }
 
 @("fuzzy.search.bench.completeCandidateGeneration")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
     import sparkles.fuzzy.query : parseQuery;
-    import sparkles.test_runner.bench : benchIter, blackBox;
+    import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
 
-    class Context
+    static final class Context
     {
         bool alternate;
         ulong generation;
@@ -433,27 +433,37 @@ unittest
     context.snapshot.id.low = 91;
     context.snapshot.candidates = context.candidates[];
 
-    benchIter({
-        context.alternate = !context.alternate;
-        ++context.generation;
-        const prompt = context.alternate ? "unicode table" : "unicode tables";
-        auto query = parseQuery(blackBox(prompt), context.matcher.textWorkspace);
-        assert(query.hasValue);
-        auto cursor = context.accumulator.begin(context.snapshot.id,
-            context.generation, context.generation, 0,
-            context.page.length);
-        assert(cursor.hasValue);
-        SearchLimits limits;
-        limits.maxCandidates = 1;
-        limits.maxAnalyzedUnits = DefaultFuzzyCaps.maxCandidateUnits;
-        auto status = searchChunk(query.value, context.snapshot, cursor.value,
-            limits, context.accumulator, context.matcher,
-            context.constraints);
-        assert(status.hasValue && status.value.stop == SearchStop.exhausted);
-        auto count = context.accumulator.page(context.page);
-        assert(count.hasValue && count.value == 1);
-        blackBox(context.page[0].score.total);
-    }, ["profile": "codePath", "tier": "parse+search+rank+page",
+    static struct CompleteCandidateGeneration
+    {
+        enum timing = BenchTiming.batched;
+        Context context;
+
+        void timed() @safe
+        {
+            context.alternate = !context.alternate;
+            ++context.generation;
+            const prompt = context.alternate ? "unicode table" : "unicode tables";
+            auto query = parseQuery(blackBox(prompt), context.matcher.textWorkspace);
+            assert(query.hasValue);
+            auto cursor = context.accumulator.begin(context.snapshot.id,
+                context.generation, context.generation, 0,
+                context.page.length);
+            assert(cursor.hasValue);
+            SearchLimits limits;
+            limits.maxCandidates = 1;
+            limits.maxAnalyzedUnits = DefaultFuzzyCaps.maxCandidateUnits;
+            auto status = searchChunk(query.value, context.snapshot, cursor.value,
+                limits, context.accumulator, context.matcher,
+                context.constraints);
+            assert(status.hasValue && status.value.stop == SearchStop.exhausted);
+            auto count = context.accumulator.page(context.page);
+            assert(count.hasValue && count.value == 1);
+            blackBox(context.page[0].score.total);
+        }
+    }
+
+    benchCase(CompleteCandidateGeneration(context),
+        labels: ["profile": "codePath", "tier": "parse+search+rank+page",
         "construction": "generation-setup-included",
         "corpus": "one-candidate-keystroke"]);
 }

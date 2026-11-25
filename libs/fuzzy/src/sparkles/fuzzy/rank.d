@@ -6,7 +6,7 @@ import sparkles.fuzzy.common : CandidateId, CandidateView, FuzzyErrorCode,
     isPathSeparator;
 import sparkles.fuzzy.match : MatchKind, MatchOutcome;
 
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 
 /// Caller-supplied non-text signals for one candidate.
 struct RankContext
@@ -583,12 +583,12 @@ private bool nextPermutation(ref size_t[6] values)
 }
 
 @("fuzzy.rank.bench.topKGeneration")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
-    import sparkles.test_runner.bench : benchIter, blackBox;
+    import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
 
-    class Context
+    static final class Context
     {
         TopK!64 top;
         RankedResult[64] values;
@@ -602,18 +602,29 @@ unittest
         context.values[i].score.total = cast(long)((i * 37) % 101);
         context.values[i].recencyKey = cast(long)((i * 11) % 17);
     }
-    benchIter({
-        context.rotation = (context.rotation + 1) % context.values.length;
-        assert(!context.top.reset(0, context.page.length).hasError);
-        foreach (i; 0 .. context.values.length)
+
+    static struct TopKGeneration
+    {
+        enum timing = BenchTiming.batched;
+        Context context;
+
+        void timed() @safe
         {
-            const at = (i + context.rotation) % context.values.length;
-            assert(!context.top.offer(blackBox(context.values[at])).hasError);
+            context.rotation = (context.rotation + 1) % context.values.length;
+            assert(!context.top.reset(0, context.page.length).hasError);
+            foreach (i; 0 .. context.values.length)
+            {
+                const at = (i + context.rotation) % context.values.length;
+                assert(!context.top.offer(blackBox(context.values[at])).hasError);
+            }
+            auto count = context.top.page(context.page);
+            assert(count.hasValue && count.value == context.page.length);
+            blackBox(context.page[0].score.total);
         }
-        auto count = context.top.page(context.page);
-        assert(count.hasValue && count.value == context.page.length);
-        blackBox(context.page[0].score.total);
-    }, ["profile": "n/a", "tier": "ranked-topK",
+    }
+
+    benchCase(TopKGeneration(context),
+        labels: ["profile": "n/a", "tier": "ranked-topK",
         "construction": "generation-reset-included",
         "corpus": "64-ranked-results"]);
 }
