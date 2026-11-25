@@ -4,9 +4,8 @@ The fiber parker's benchmarks FB1–FB7
 §7): each workload runs once with `fiberPark` forced to the ring path and once
 to the inbox path, as two rows of one group (`--group-by=bench`).
 
-Every case stands up its own schedulers inside the timed closure and does
-enough handoffs there for the setup to amortize (as `loop.d` explains,
-`benchCase` defers its closures). The wake-latency and fan-out workloads time
+Every case's `timed` stands up its own schedulers and does enough handoffs
+there for that setup to amortize. The wake-latency and fan-out workloads time
 their own interval as well, and print its median and 99th percentile once the
 case's measurement ends; `--syscalls=futex,io_uring_enter` adds the system
 calls per iteration.
@@ -17,7 +16,8 @@ version (linux)  :
 
 import core.atomic : atomicLoad, atomicOp, atomicStore;
 import core.thread.osthread : Thread;
-import core.time : Duration, MonoTime, msecs, seconds, usecs;
+import core.time : Duration, MonoTime, msecs, nsecs, seconds, usecs;
+import std.conv : to;
 import std.typecons : No;
 
 import sparkles.base.sync : ManualResetEvent, Mutex, NativePlatform, Semaphore, WaitStatus;
@@ -62,12 +62,10 @@ void take(ref Semaphore s, bool timed, ref uint expired)
 }
 
 /// Durations a case's iterations measured themselves, summarized at its end.
-final class Samples
+struct Samples
 {
     string label;
     Duration[] all;
-
-    this(string label) { this.label = label; }
 
     void report()
     {
@@ -161,20 +159,26 @@ void crossWorker(FiberPark path, bool timed)
     }
 }
 
+/// FB1, FB2, FB7: one handoff workload on one path.
+struct HandoffCase
+{
+    FiberPark path;
+    bool cross;
+    bool timedWaits; /// each wait carries the 100 µs deadline (FB7)
+
+    void timed()
+    {
+        if (cross)
+            crossWorker(path, timedWaits);
+        else
+            sameWorker(path, timedWaits);
+    }
+}
+
 void registerHandoff(string bench, FiberPark path, bool cross, bool timed)
 {
-    benchCase(
-        name: nameOf(path),
-        labels: ["bench": bench],
-        timed: () {
-            if (cross)
-                crossWorker(path, timed);
-            else
-                sameWorker(path, timed);
-        },
-        after: () {},
-        metrics: [Metric(Unit("handoff"), 2 * handoffs, Metric.Mode.rate)],
-    );
+    benchCase(HandoffCase(path, cross, timed), name: nameOf(path), labels: ["bench": bench],
+        metrics: [Metric(Unit("handoff"), 2 * handoffs, Metric.Mode.rate)]);
 }
 
 @("fiberPark.FB1.sameWorkerHandoff")
@@ -215,7 +219,7 @@ unittest
 /// Wakes per measured iteration of FB3.
 enum uint foreignWakes = 500;
 
-void foreignWake(FiberPark path, Samples samples)
+void foreignWake(FiberPark path, ref Samples samples)
 {
     Sched s;
     if (Sched.create(s, SchedOptions(fiberPark: path)).hasError)
@@ -273,20 +277,23 @@ unittest
 {
     requireRing();
     foreach (path; paths)
-        registerForeign(path);
+        benchCase(ForeignCase(path), name: nameOf(path), labels: ["bench": "FB3"],
+            metrics: [Metric(Unit("wake"), foreignWakes, Metric.Mode.rate)]);
 }
 
-void registerForeign(FiberPark path)
+struct ForeignCase
 {
-    auto samples = new Samples("FB3 " ~ nameOf(path) ~ " wake-to-resume");
-    benchCase(
-        name: nameOf(path),
-        labels: ["bench": "FB3"],
-        timed: () => foreignWake(path, samples),
-        after: () {},
-        teardown: () => samples.report(),
-        metrics: [Metric(Unit("wake"), foreignWakes, Metric.Mode.rate)],
-    );
+    FiberPark path;
+    Samples samples;
+
+    this(FiberPark path)
+    {
+        this.path = path;
+        samples = Samples("FB3 " ~ nameOf(path) ~ " wake-to-resume");
+    }
+
+    void timed() { foreignWake(path, samples); }
+    void teardown() { samples.report(); }
 }
 
 // ── FB4: one Event set wakes n fibers over all workers ──────────────────────
@@ -322,18 +329,22 @@ Duration fanOut(FiberPark path, uint n)
     return ticksToDuration(atomicLoad(lastAt) - atomicLoad(setAt));
 }
 
-void registerFanOut(FiberPark path, uint n)
+struct FanOutCase
 {
-    import std.conv : to;
+    FiberPark path;
+    uint n;
+    Samples samples;
 
-    auto samples = new Samples("FB4 " ~ nameOf(path) ~ " n=" ~ n.to!string ~ " set-to-last-resume");
-    benchCase(
-        name: nameOf(path),
-        labels: ["bench": "FB4 n=" ~ n.to!string],
-        timed: () => fanOut(path, n),
-        after: (ref Duration d) { samples.all ~= d; },
-        teardown: () => samples.report(),
-    );
+    this(FiberPark path, uint n)
+    {
+        this.path = path;
+        this.n = n;
+        samples = Samples("FB4 " ~ nameOf(path) ~ " n=" ~ n.to!string ~ " set-to-last-resume");
+    }
+
+    Duration timed() => fanOut(path, n);
+    void after(ref Duration d) { samples.all ~= d; }
+    void teardown() { samples.report(); }
 }
 
 @("fiberPark.FB4.eventFanOut")
@@ -344,7 +355,7 @@ unittest
     requireRing();
     foreach (n; [1u, 16, 256])
         foreach (path; paths)
-            registerFanOut(path, n);
+            benchCase(FanOutCase(path, n), name: nameOf(path), labels: ["bench": "FB4 n=" ~ n.to!string]);
 }
 
 // ── FB5: cancelling a scope with n interruptible waits ──────────────────────
@@ -383,18 +394,22 @@ Duration cancelScope(FiberPark path, uint n)
     return lastAt - cancelledAt;
 }
 
-void registerCancel(FiberPark path, uint n)
+struct CancelCase
 {
-    import std.conv : to;
+    FiberPark path;
+    uint n;
+    Samples samples;
 
-    auto samples = new Samples("FB5 " ~ nameOf(path) ~ " n=" ~ n.to!string ~ " cancel-to-last-resume");
-    benchCase(
-        name: nameOf(path),
-        labels: ["bench": "FB5 n=" ~ n.to!string],
-        timed: () => cancelScope(path, n),
-        after: (ref Duration d) { samples.all ~= d; },
-        teardown: () => samples.report(),
-    );
+    this(FiberPark path, uint n)
+    {
+        this.path = path;
+        this.n = n;
+        samples = Samples("FB5 " ~ nameOf(path) ~ " n=" ~ n.to!string ~ " cancel-to-last-resume");
+    }
+
+    Duration timed() => cancelScope(path, n);
+    void after(ref Duration d) { samples.all ~= d; }
+    void teardown() { samples.report(); }
 }
 
 @("fiberPark.FB5.scopeCancellation")
@@ -405,7 +420,7 @@ unittest
     requireRing();
     foreach (n; [1u, 64, 1024])
         foreach (path; paths)
-            registerCancel(path, n);
+            benchCase(CancelCase(path, n), name: nameOf(path), labels: ["bench": "FB5 n=" ~ n.to!string]);
 }
 
 // ── FB6: mutexes whose keys share a parking-lot bucket ──────────────────────
@@ -434,8 +449,6 @@ Mutex*[] sharedBucketMutexes(size_t count)
 Duration threadCpu() @trusted
 {
     import core.sys.linux.time : clock_gettime, CLOCK_THREAD_CPUTIME_ID, timespec;
-    import core.time : nsecs;
-
     timespec ts;
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
     return (ts.tv_sec * 1_000_000_000L + ts.tv_nsec).nsecs;
@@ -486,31 +499,36 @@ Contention contend(FiberPark path, Mutex*[] ms)
             s.yieldNow();
         atomicOp!"+="(cpuNs, (threadCpu() - start).total!"nsecs");
     });
-    import core.time : nsecs;
-
     return Contention(atomicLoad(cpuNs).nsecs, atomicLoad(ticks));
 }
 
-void registerContention(FiberPark path)
+struct ContentionCase
 {
-    auto ms = sharedBucketMutexes(4);
-    auto cpu = new Samples("FB6 " ~ nameOf(path) ~ " worker CPU per 50 ms window (8 workers)");
-    auto others = new Samples("FB6 " ~ nameOf(path) ~ " other fibers' turns per 50 ms (as ns = turns)");
-    benchCase(
-        name: nameOf(path),
-        labels: ["bench": "FB6"],
-        timed: () => contend(path, ms),
-        after: (ref Contention c) {
-            import core.time : nsecs;
+    FiberPark path;
+    Mutex*[] ms;
+    Samples cpu, others;
 
-            cpu.all ~= c.cpu;
-            others.all ~= (cast(long) c.ticks).nsecs;
-        },
-        teardown: () {
-            cpu.report();
-            others.report();
-        },
-    );
+    this(FiberPark path)
+    {
+        this.path = path;
+        ms = sharedBucketMutexes(4);
+        cpu = Samples("FB6 " ~ nameOf(path) ~ " worker CPU per 50 ms window (8 workers)");
+        others = Samples("FB6 " ~ nameOf(path) ~ " other fibers' turns per 50 ms (as ns = turns)");
+    }
+
+    Contention timed() => contend(path, ms);
+
+    void after(ref Contention c)
+    {
+        cpu.all ~= c.cpu;
+        others.all ~= (cast(long) c.ticks).nsecs;
+    }
+
+    void teardown()
+    {
+        cpu.report();
+        others.report();
+    }
 }
 
 @("fiberPark.FB6.sharedBucketContention")
@@ -520,5 +538,5 @@ unittest
 {
     requireRing();
     foreach (path; paths)
-        registerContention(path);
+        benchCase(ContentionCase(path), name: nameOf(path), labels: ["bench": "FB6"]);
 }

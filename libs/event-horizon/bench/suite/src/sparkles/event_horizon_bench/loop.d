@@ -32,6 +32,7 @@ import sparkles.test_runner.attributes : benchmark;
 import sparkles.test_runner.bench : benchCase, benchIter, blackBox, Metric, Unit;
 import sparkles.test_runner.skip : skipTest;
 
+import sparkles.event_horizon.buffer : BufferPool;
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig;
 import sparkles.event_horizon.op : Completion, OpNop, OpRead;
 import sparkles.event_horizon.sched : Sched;
@@ -91,7 +92,7 @@ unittest
 }
 
 /// Ops per measured iteration for the scheduler-backed rows. `benchIter`
-/// **defers** its closure (like `benchCase`), so anything the closure needs
+/// **defers** its closure, so anything the closure needs
 /// must be built *inside* it — a `Sched` created in the test body is long
 /// destroyed by the time the runner measures, and awaiting on it segfaults.
 /// Each iteration therefore stands up its own scheduler and does `schedOps`
@@ -294,79 +295,67 @@ unittest
     // as a regression tracker that the fixed path never falls behind.
     // ~7 µs per read puts these in `benchCase`'s range (µs and up), so each
     // variant gets its own row plus a bytes/s column.
-    //
-    // NB the fixture fd is opened in each case's `setup` and closed in its
-    // `teardown`, NOT around these calls: under `--bench` `benchCase` only
-    // *registers*, and the closures run after this body returns — a
-    // `scope (exit)` close here would shut the fd before any read ran (it
-    // deadlocked the loop in `io_cqring_wait` when written that way).
-    registerRead(registered: false);
-    registerRead(registered: true);
+    foreach (registered; [false, true])
+        benchCase(ReadCase(registered), name: registered ? "fixed (READ_FIXED)" : "plain",
+            labels: ["buffers": registered ? "registered" : "pool"],
+            metrics: [Metric(Unit("B"), 4096, Metric.Mode.rate)]);
 }
 
-/// Registers one read variant as its own `benchCase` row. Takes its state by
-/// value: under `--bench` the closures run after the body returns, so a shared
-/// loop variable would be one slot for every case.
-private void registerRead(bool registered)
+/// One read variant: its fixture fd, loop and pool are opened in `setup` and
+/// closed in `teardown`.
+private struct ReadCase
 {
-    import sparkles.event_horizon.buffer : BufferPool;
+    DefaultLoop loop;
+    BufferPool!() pool;
+    ulong done;
+    int fd = -1;
+    bool ok;
+    bool registered;
 
-    static struct Fixture
+    this(bool registered) { this.registered = registered; }
+
+    void setup()
     {
-        DefaultLoop loop;
-        BufferPool!() pool;
-        ulong done;
-        int fd = -1;
-        bool ok;
-        bool registered;
+        fd = makeTempFile();
+        if (fd < 0)
+            return;
+        if (DefaultLoop.create(loop).hasError)
+            return;
+        if (BufferPool!().create(pool, 1, 4096).hasError)
+            return;
+        if (registered)
+        {
+            if (!loop.caps().registeredBuffers)
+                return; // caps absent: the case degrades, never breaks
+            if (pool.register(loop).hasError)
+                return;
+        }
+        ok = true;
     }
 
-    auto f = new Fixture;
-    f.registered = registered;
+    void timed()
+    {
+        // Never call `runOnce` without a submission in flight: it would
+        // block in `io_cqring_wait` for a completion that cannot arrive.
+        if (!ok)
+            return;
+        auto b = pool.acquire();
+        if (b.hasError)
+            return;
+        auto h = loop.submit(OpRead(fd, move(b.value), 0), &onRead, &done);
+        if (h.hasError)
+            return;
+        cast(void) loop.runOnce();
+    }
 
-    benchCase(
-        name: registered ? "fixed (READ_FIXED)" : "plain",
-        labels: ["buffers": registered ? "registered" : "pool"],
-        setup: () {
-            f.fd = makeTempFile();
-            if (f.fd < 0)
-                return;
-            if (DefaultLoop.create(f.loop).hasError)
-                return;
-            if (BufferPool!().create(f.pool, 1, 4096).hasError)
-                return;
-            if (f.registered)
-            {
-                if (!f.loop.caps().registeredBuffers)
-                    return; // caps absent: the case degrades, never breaks
-                if (f.pool.register(f.loop).hasError)
-                    return;
-            }
-            f.ok = true;
-        },
-        timed: () {
-            // Never call `runOnce` without a submission in flight: it would
-            // block in `io_cqring_wait` for a completion that cannot arrive.
-            if (!f.ok)
-                return;
-            auto b = f.pool.acquire();
-            if (b.hasError)
-                return;
-            auto h = f.loop.submit(OpRead(f.fd, move(b.value), 0), &onRead, &f.done);
-            if (h.hasError)
-                return;
-            cast(void) f.loop.runOnce();
-        },
-        after: () {},
-        teardown: () {
-            if (f.ok && f.registered)
-                cast(void) f.loop.unregisterBuffers();
-            f.loop.destroy();
-            if (f.fd >= 0)
-                closeFd(f.fd);
-        },
-        metrics: [Metric(Unit("B"), 4096, Metric.Mode.rate)],
-    );
+    void teardown()
+    {
+        if (ok && registered)
+            cast(void) loop.unregisterBuffers();
+        loop.destroy();
+        if (fd >= 0)
+            closeFd(fd);
+    }
 }
 
 extern (D) private void onRead(void* ctx, ref Completion) nothrow @nogc
