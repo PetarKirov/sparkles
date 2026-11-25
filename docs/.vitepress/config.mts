@@ -102,6 +102,8 @@ export default withMermaid(
       // The UI-authoring experiments: dub packages and their READMEs, kept as
       // evidence beside the study and excluded from the site (docs-config.json).
       /\/research\/ui-authoring\/experiments\//,
+      // ... and the study's relative links into it (`./experiments/…/README`).
+      /^\.\/experiments\//,
       // The twoslash showcase is a static gallery generated into docs/public/ at
       // build time (docs/scripts/build-twoslash-showcase.sh), not a markdown page.
       /\/apps\/hue\/twoslash\//,
