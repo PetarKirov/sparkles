@@ -138,7 +138,7 @@ The following entries are analysed in depth.
 
 ### Pure layout libraries
 
-- **[Clay][clay]** - single-header C library; sizing primitives `FIT` / `GROW` / `FIXED` / `PERCENT`; render-command emission
+- **[Clay][clay]** - single-header C library; sizing primitives `FIT` / `GROW` / `FIXED` / `PERCENT`; render-command emission (measured against `sparkles:ui`'s builders in [UI component authoring](../ui-authoring/index.md#clay))
 - **[Yoga][yoga]** - Meta's cross-platform Flexbox; the engine behind [Ink](../tui-libraries/ink.md) and React Native
 - **[Taffy][taffy]** - Rust; supports CSS Flexbox + Grid + Block; used by Dioxus, Bevy, Zed
 - **[Stretch][stretch]** - Taffy's archived Flexbox-only predecessor
@@ -187,6 +187,8 @@ The following entries are analysed in depth.
 ### Comparative
 
 A focused cross-library comparison is in [the TUI Libraries Comparison](../tui-libraries/comparison.md). A follow-up `comparison.md` for layout libraries specifically may be added here as the catalog matures.
+
+Clay's element model measured against `sparkles:ui`'s own builders — its children stack, its fit size at close, the cost of its 312-byte records, and a fused versus separate fit pass with AoS, SoA and SIMD layouts — is in the [UI component authoring](../ui-authoring/index.md) study.
 
 ---
 

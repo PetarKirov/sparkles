@@ -38,7 +38,9 @@ This survey answers ten questions:
     and what does keeping a retained tree in sync cost?** — [solid-components]
     (JSX compiled to templates and holes, run-once components, the custom-renderer
     contract) and [flutter] (immutable widgets rebuilt over retained element and
-    render trees, identity-based skipping).
+    render trees, identity-based skipping). The [UI component authoring][ui-authoring]
+    study turns them into `sparkles:ui`'s decisions, measured across seven
+    builders.
 
 The shared vocabulary is defined once in [concepts]; the deep-dives use it.
 
@@ -171,7 +173,8 @@ The shared vocabulary is defined once in [concepts]; the deep-dives use it.
   (what a compiler can split into static template and dynamic holes, and what
   run-once components cost), then [flutter] (rebuilding descriptions every frame,
   keys, and layout and repaint boundaries), then [jetpack-compose] (positional
-  identity in a per-frame UI).
+  identity in a per-frame UI), then the [UI component authoring][ui-authoring]
+  study (the decided builder: lazy variadic children, built top-down).
 - **I want FRP without a garbage collector.** [yampa] (signal functions as Mealy
   machines), [jane-street-incremental] (explicit stabilisation, a frame-shaped
   step), then [reflex] (what a GC-driven teardown costs).
@@ -220,6 +223,7 @@ the [master catalog](#master-catalog). The Sparkles side of the comparison cites
 [jetpack-compose]: ./jetpack-compose.md
 [solid-components]: ./solid-components.md
 [flutter]: ./flutter.md
+[ui-authoring]: ../ui-authoring/index.md
 [sodium]: ./sodium.md
 [elm]: ./elm.md
 [synchronous-languages]: ./synchronous-languages.md
