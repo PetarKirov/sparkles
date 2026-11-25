@@ -11,7 +11,7 @@ import std.meta : AliasSeq;
 
 import sparkles.base.hash.blake3;
 import sparkles.base.hash.blake3_vectors;
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 
 private:
 
@@ -338,7 +338,7 @@ ubyte[32] blake3With(Blake3Backend backend, scope const(ubyte)[] input) @safe pu
 }
 
 @("blake3.bench.throughput")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
     static foreach (name; concreteBackendNames)

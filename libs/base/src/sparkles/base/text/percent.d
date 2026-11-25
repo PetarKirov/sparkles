@@ -27,7 +27,7 @@ import sparkles.base.text.errors :
 
 // Unconditional import (phobos-style, cf. std.internal.attributes): unittest
 // UDAs are resolved even in builds where the unittest bodies are not compiled.
-import sparkles.test_runner.attributes : benchmark, betterC;
+import sparkles.test_runner.attributes : benchCases, betterC;
 
 /**
 Which bytes survive percent-encoding unescaped.
@@ -639,7 +639,7 @@ private void registerPercentBench(PercentSet s)(
 /// Percent-encoding throughput depends heavily on how much of the input
 /// escapes, so the matrix varies the data profile as well as the set.
 @("text.percent.bench")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
     enum size = 1 << 16;

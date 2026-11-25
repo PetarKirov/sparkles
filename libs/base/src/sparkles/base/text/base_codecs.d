@@ -18,7 +18,7 @@ import sparkles.base.text.errors :
 
 // Unconditional import (phobos-style, cf. std.internal.attributes): unittest
 // UDAs are resolved even in builds where the unittest bodies are not compiled.
-import sparkles.test_runner.attributes : benchmark, betterC;
+import sparkles.test_runner.attributes : benchCases, benchmark, betterC;
 
 /**
 A positional digit vocabulary: `digits[i]` is the character for symbol
@@ -1171,7 +1171,7 @@ private void registerStreamingBench(Alphabet a)(
 }
 
 @("text.base_codecs.bench.streaming")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
     registerStreamingBench!base16("base16", "1KiB", 1 << 10);

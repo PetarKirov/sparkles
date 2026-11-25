@@ -16,7 +16,7 @@ import sparkles.base.hash.blake3;
 import sparkles.blake3_bench.c : blake3_hasher, blake3_hasher_finalize,
     blake3_hasher_init, blake3_hasher_init_derive_key, blake3_hasher_init_keyed,
     blake3_hasher_update, blake3_version;
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 import sparkles.test_runner.bench : benchCase, benchProvenance, blackBox, Metric, Unit;
 
 private:
@@ -131,7 +131,7 @@ void register(string name, Blake3Backend backend, bool reference, string sizeLab
 }
 
 @("blake3_bench.throughput")
-@benchmark @system
+@benchCases @system
 unittest
 {
     import std.string : fromStringz;

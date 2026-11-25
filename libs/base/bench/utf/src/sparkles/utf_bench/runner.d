@@ -5,7 +5,7 @@ import std.conv : to;
 import std.process : environment;
 import std.algorithm.iteration : splitter;
 import std.algorithm.searching : canFind, startsWith;
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 import sparkles.test_runner.bench : benchCase, blackBox, Metric, Unit;
 import sparkles.utf_bench.corpus : Corpus, corpora, DisplayCorpus, displayCorpora;
 import sparkles.utf_bench.engines;
@@ -211,10 +211,10 @@ private void matrix(Operation op)(bool measure)
 
 import std.meta : AliasSeq;
 
-@("utf.offset") @benchmark @system unittest { matrix!(Operation.offset)(true); }
-@("utf.boolean") @benchmark @system unittest { matrix!(Operation.boolean)(true); }
-@("utf.to16") @benchmark @system unittest { matrix!(Operation.to16)(true); }
-@("utf.to8") @benchmark @system unittest { matrix!(Operation.to8)(true); }
+@("utf.offset") @benchCases @system unittest { matrix!(Operation.offset)(true); }
+@("utf.boolean") @benchCases @system unittest { matrix!(Operation.boolean)(true); }
+@("utf.to16") @benchCases @system unittest { matrix!(Operation.to16)(true); }
+@("utf.to8") @benchCases @system unittest { matrix!(Operation.to8)(true); }
 
 // Explicit non-benchmark correctness command: never times and never produces a
 // misleading benchmark baseline. Includes error and output-guard verification.
@@ -327,4 +327,4 @@ private void displayMatrix(bool measure)
             }
 }
 
-@("utf.display") @benchmark @system unittest { displayMatrix(true); }
+@("utf.display") @benchCases @system unittest { displayMatrix(true); }
