@@ -13,7 +13,7 @@ import sparkles.syntax : MdDecoration, MdDoc, MdBlock, MdBlockKind, HighlightEve
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.source_view.markdown : MdTableExtras;
 import sparkles.base.term_color : mix;
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 
 // ── Presentation model ───────────────────────────────────────────────────────
 
@@ -236,7 +236,7 @@ version (unittest)
 // (`HUE_BENCH_FILE`, else the committed `docs/specs/base/text/index.md`). The
 // tree-sitter model build is setup (not measured).
 @("gui_preview.layout.resizeSweep")
-@benchmark
+@benchCases
 @system
 unittest
 {

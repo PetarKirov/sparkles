@@ -47,7 +47,7 @@ import sparkles.doc_view.viewer_model : ScrollAnchor, ViewerModel;
 import sparkles.ui.components.scroll_view : OverlayBar;
 import sparkles.ui.scroll_motion : ScrollMotion;
 import sparkles.doc_view.scroll_latch : ScrollLatch;
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 
 /**
 What every pane of one application shares: the grammars, the highlighting
@@ -1637,7 +1637,7 @@ version (unittest)
 // highlighting, parsing) is setup; only the relayout is timed. The file is
 // hue's own window module (5k lines), or `HUE_BENCH_FILE`.
 @("pane.relayout.largeCodeFile")
-@benchmark
+@benchCases
 @system unittest
 {
     import std.file : exists;
@@ -1670,7 +1670,7 @@ version (unittest)
 // re-wrap at the new width, which the code view's tree reuse does not reach.
 // The document is the event-horizon spec (2.7k lines), or `HUE_BENCH_MD_FILE`.
 @("pane.relayout.largeMarkdownFile")
-@benchmark
+@benchCases
 @system unittest
 {
     import std.file : exists;
@@ -1704,7 +1704,7 @@ version (unittest)
 // (`ViewerModel.windowed`, 50 rows): the frame a resize costs, and the
 // work it leaves to the frames after it, settled to the end.
 @("pane.relayout.largeMarkdownFileWindowed")
-@benchmark
+@benchCases
 @system unittest
 {
     import core.time : Duration;
@@ -1787,7 +1787,7 @@ version (unittest)
 // The raw code view's reflow with the source laid out as a window around a
 // 50-row pane: what a resize costs on hue's own window module.
 @("pane.relayout.largeCodeFileWindowed")
-@benchmark
+@benchCases
 @system unittest
 {
     import core.time : Duration;
