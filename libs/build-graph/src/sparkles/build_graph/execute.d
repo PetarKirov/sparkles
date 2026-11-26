@@ -41,7 +41,7 @@ import std.sumtype : match;
 import sparkles.build_graph.actions : Action, ActionGraph, ActionKind;
 import sparkles.build_primitives.task.action : EnvEntry, InProcessAction, InertAction, ProcessAction,
     TaskAction;
-import sparkles.build_primitives.task.model : TaskId, TaskNode;
+import sparkles.build_primitives.task.model : TaskEdge, TaskId, TaskNode;
 
 /// Where a run puts what its actions make.
 struct RunLayout
@@ -341,7 +341,7 @@ version (Posix):
 
 import sparkles.build_primitives.task.executor : RunResult, TaskContext;
 import sparkles.build_primitives.task.live_view : LiveView, TranscriptLines, WithLiveView;
-import sparkles.build_primitives.task.model : TaskOutcome;
+import sparkles.build_primitives.task.model : OutcomeKind, TaskOutcome, kindOf;
 import sparkles.build_primitives.task.process : EventChannel, InProcessHandler, ProcessDriver, ProcessDriverOptions;
 import sparkles.event_horizon.sched : Sched;
 import sparkles.build_graph.store : Manifest, ManifestEntry, OutputRecord, ResultRecord, Store,
@@ -385,6 +385,8 @@ struct RunStats
     /// (the run records of observability OD21 time each test leg).
     Duration[string] wallTimes;
     bool[string] succeeded; /// ditto
+    /// Every task's outcome at the end of the run, by its id.
+    OutcomeKind[string] outcomes;
     MonoTime[string] startedAt; /// ditto: when it started
 
     void future(string path) @safe pure nothrow
@@ -436,6 +438,47 @@ struct RunStats
 
 // This process's lease name: its id and start time, so a reused id names
 // another holder (BGS4).
+/// `id` with `suffix` as a last segment; `id` itself when `suffix` is empty.
+TaskId withSuffix(TaskId id, string suffix) @safe pure
+{
+    import std.array : split;
+    import sparkles.build_primitives.task.model : taskId;
+
+    if (!suffix.length)
+        return id;
+    const suffixed = taskId(id.text.split(":") ~ suffix);
+    assert(suffixed.hasValue, "a part's suffix is one segment");
+    return suffixed.value;
+}
+
+/// `id` without its last segment, `suffix`; `TaskId.init` when it has
+/// another; `id` itself when `suffix` is empty.
+TaskId withoutSuffix(TaskId id, string suffix) @safe pure
+{
+    import std.array : split;
+    import sparkles.build_primitives.task.model : taskId;
+
+    if (!suffix.length)
+        return id;
+    if (!id.text.endsWith(":" ~ suffix))
+        return TaskId.init;
+    const own = taskId(id.text[0 .. $ - suffix.length - 1].split(":"));
+    return own.hasValue ? own.value : TaskId.init;
+}
+
+@("build_graph.execute.withSuffix.roundTrips")
+@safe pure unittest
+{
+    import sparkles.build_primitives.task.model : taskId;
+
+    const compile = taskId("compile", "sparkles.ui", "library", "ldc", "abc").value;
+    const inPart = withSuffix(compile, "7bf3f4b");
+    assert(inPart.text == "compile:sparkles.ui:library:ldc:abc:7bf3f4b");
+    assert(withoutSuffix(inPart, "7bf3f4b") == compile);
+    assert(withoutSuffix(inPart, "d0d91e6").empty, "another part's action");
+    assert(withSuffix(compile, null) == compile && withoutSuffix(compile, null) == compile);
+}
+
 private string leaseHolder() @safe
 {
     import core.sys.posix.unistd : getpid;
@@ -596,6 +639,7 @@ struct ActionDriver
     private Store!(Dir!(BlockingVfs, Rights.all)) store;
     private bool stored;
     private const(Action)*[string] planned;
+    private TaskId[string] ownId; // in a run across worktrees: each node's id as its part planned it
     private string[string] outputsDigestOf; // by task id: what a consumer's key holds (BGK1)
     private ubyte[32][string] digests;      // file digests read this run, by manifest path
     private Recorded[string] recorded;      // producers only a digest record served (BGS5)
@@ -615,8 +659,12 @@ struct ActionDriver
     cache directory, which holds the store and the run directory, takes the
     run directory's place, so a publication renames within one root (BGS2),
     and the manifests' absolute paths are read through a read-only root.
+
+    In a run across worktrees ($(LREF runActionsAcross)), `nodes` are the
+    whole run's, and the driver runs the ones whose ids end in `idSuffix`,
+    the segment that tells its part's actions apart from the others'.
     */
-    this(RunLayout layout, const TaskNode[] nodes, const(ActionGraph)* g = null) @safe
+    this(RunLayout layout, const TaskNode[] nodes, const(ActionGraph)* g = null, string idSuffix = null) @safe
     {
         import core.lifetime : move;
         import sparkles.base.vfs.handles : ambientAuthority, openRoot;
@@ -628,9 +676,15 @@ struct ActionDriver
             foreach (ref a; g.actions)
                 planned[a.id.text] = &a;
         foreach (ref n; nodes)
+        {
+            const own = withoutSuffix(n.id, idSuffix);
+            if (own.empty)
+                continue;
+            ownId[n.id.text] = own;
             n.action.match!(
-                (ref const ProcessAction p) { concreteProcess[n.id.text] = ProcessAction(p.argv.dup, p.envDelta.dup, p.cwd); },
+                (ref const ProcessAction p) { concreteProcess[own.text] = ProcessAction(p.argv.dup, p.envDelta.dup, p.cwd); },
                 (ref const _) {});
+        }
         if (layout.cache.length && layout.runDirectory.startsWith(layout.cache ~ "/"))
         {
             // A run reads its producers' outputs through the links into the
@@ -680,8 +734,10 @@ struct ActionDriver
             failure = "cannot open the worktree " ~ layout.root;
         else
             worktree = move(tree.value);
+        const owned = ownId;
         process = new ProcessDriver(ProcessDriverOptions(repoRoot: layout.root,
-            spillPath: (ref const TaskNode n) => layout.outOf(n.id) ~ "/output.log"), nodes.length);
+            spillPath: (ref const TaskNode n) => layout.outOf(owned.get(n.id.text, n.id)) ~ "/output.log"),
+            nodes.length);
     }
 
     /// Why the driver cannot run anything; null when it can.
@@ -712,7 +768,7 @@ struct ActionDriver
 
         if (failure.length)
             return TaskOutcome(Failed(FailureReason.contract));
-        const id = ctx.node.id;
+        const id = ownId.get(ctx.node.id.text, ctx.node.id);
         auto a = id.text in planned;
         const kind = a !is null ? text((*a).kind) : "action";
         string declared, preimage;
@@ -722,7 +778,7 @@ struct ActionDriver
         if (declared.length)
             stats.declaredKeys[id.text] = declared;
         if (layout.explain)
-            return explainOnly(ctx.node.id, a is null ? null : *a, declared, preimage);
+            return explainOnly(id, a is null ? null : *a, declared, preimage);
         const(ResultRecord)* checked;
         string missed = declared.length ? null : "it has no declared key";
         // BGS9: checked actions run with their own lookup bypassed.
@@ -1938,6 +1994,44 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
     uint capacity, RunStats* stats = null, bool failFast = false, InProcessHandler[string] handlers = null,
     RunReporting reporting = RunReporting.init)
 {
+    RunPart[1] part = [RunPart(nodes, &g, layout)];
+    RunStats[1] partStats;
+    auto r = runActionsAcross(part[], null, writer, capacity, partStats[], failFast, handlers, reporting);
+    if (stats !is null)
+        *stats = partStats[0];
+    return r;
+}
+
+/**
+One worktree's share of a run across several ($(LREF runActionsAcross)):
+its plan, run in its own worktree and run directory against the shared
+store.
+*/
+struct RunPart
+{
+    TaskNode[] nodes;          /// from $(LREF executionNodes), in `layout`
+    const(ActionGraph)* graph; /// what planned them
+    RunLayout layout;          ///
+    /// The last segment the run gives each of its ids, unique among the
+    /// parts; empty only for a run of one part. The store, the run
+    /// directory and the keys know each action by its own id.
+    string idSuffix;
+}
+
+/**
+Runs every part's actions as one graph (ci task-DAG CIC21, `ci commits
+build-each`): each part's ids take its `idSuffix` as a last segment, its
+edges with them, and `across` joins the parts in those ids. Each action runs
+in its own part's worktree and run directory, through a driver of its own
+part's, so its key, its result and its paths are those a run of that part
+alone would have. Otherwise as $(LREF runActions), with `stats[i]` what part
+`i` did.
+*/
+RunResult runActionsAcross(W)(RunPart[] parts, const TaskEdge[] across, ref W writer, uint capacity,
+    RunStats[] stats, bool failFast = false, InProcessHandler[string] handlers = null,
+    RunReporting reporting = RunReporting.init)
+in (stats.length == parts.length, "one stats slot per part")
+{
     import sparkles.build_primitives.task.executor : ExecutorOptions, runGraph;
     import sparkles.build_primitives.task.graph : TaskGraphBuilder;
     import sparkles.build_primitives.task.process : MonotonicClock;
@@ -1945,10 +2039,21 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
     import sparkles.event_horizon.loop : LoopConfig;
     import sparkles.event_horizon.sched : SchedOptions;
 
+    TaskNode[] nodes;
+    foreach (ref part; parts)
+        foreach (n; part.nodes)
+        {
+            n.id = withSuffix(n.id, part.idSuffix);
+            nodes ~= n;
+        }
     TaskGraphBuilder builder;
     foreach (n; nodes)
         builder.add(n);
-    foreach (e; g.edges)
+    foreach (ref part; parts)
+        foreach (e; part.graph.edges)
+            builder.add(TaskEdge(withSuffix(e.prerequisite, part.idSuffix), withSuffix(e.dependent, part.idSuffix),
+                e.condition, e.reason));
+    foreach (e; across)
         builder.add(e);
     auto built = builder.build();
     if (built.hasError)
@@ -1969,26 +2074,28 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
     // wide as a large host, beside the tasks' own.
     if (Sched.create(s, SchedOptions(stackSize: 256 * 1024, maxFibers: 1024), LoopConfig()).hasError)
         return RunResult(exitCode: 2);
-    auto driver = new ActionDriver(layout, nodes, &g); // the generators' handlers hold its address
-    if (driver.error.length)
-        return RunResult(exitCode: 2);
-    driver.processes.register("generate:test-root-module",
-        (ref TaskContext!Sched ctx, const ref InProcessAction a) => driver.generateTestRoot(ctx, a));
-    driver.processes.register("generate:file",
-        (ref TaskContext!Sched ctx, const ref InProcessAction a) => driver.generateFile(ctx, a));
-    driver.processes.register("generate:failing-tools",
-        (ref TaskContext!Sched ctx, const ref InProcessAction a) => driver.generateFailingTools(ctx, a));
-    // The client's own in-process actions: ci's test actions (CIC11).
-    foreach (name, handler; handlers)
-        driver.processes.register(name, handler);
+    // A driver per part, each over the whole run's nodes (its process driver
+    // keeps a record per task of the run), routed by the part a task is in.
+    auto router = new PartRouter;
+    router.partOf = new size_t[graph.nodes.length];
+    foreach (k, ref part; parts)
+    {
+        auto driver = partDriver(part, nodes, handlers);
+        if (driver is null)
+            return RunResult(exitCode: 2);
+        router.drivers ~= driver;
+        foreach (n; part.nodes)
+            router.partOf[graph.indexOf(withSuffix(n.id, part.idSuffix)).value] = k;
+    }
     const options = PlainOptions(interlaced: reporting.interlaced, timings: reporting.timings, ci: reporting.ci);
     auto sink = new EventChannel;
     MonotonicClock clock;
     RunResult result;
     void work()
     {
-        result = runGraph(s, clock, graph, *driver, *sink, ExecutorOptions(capacity: capacity, failFast: failFast));
-        driver.finish();
+        result = runGraph(s, clock, graph, *router, *sink, ExecutorOptions(capacity: capacity, failFast: failFast));
+        foreach (driver; router.drivers)
+            driver.finish();
     }
     bool ran;
     if (reporting.live is null)
@@ -2004,11 +2111,45 @@ RunResult runActions(W)(TaskNode[] nodes, const ActionGraph g, RunLayout layout,
         auto reporter = WithLiveView!(typeof(transcript))(&transcript, &lines, view);
         ran = runReported(s, reporter, sink, view, &work);
     }
-    if (stats !is null)
-        *stats = driver.stats;
+    foreach (k, driver; router.drivers)
+        stats[k] = driver.stats;
+    foreach (i, outcome; result.outcomes)
+    {
+        const k = router.partOf[i];
+        stats[k].outcomes[withoutSuffix(graph.nodes[i].id, parts[k].idSuffix).text] = kindOf(outcome);
+    }
     if (!ran)
         return RunResult(exitCode: 2);
     return result;
+}
+
+// The driver of `part`'s actions among the run's `nodes`, its generators
+// and the client's `handlers` registered on it; null when it cannot run.
+// A function of its own, so each closure holds its own part's driver.
+private ActionDriver* partDriver(ref RunPart part, const TaskNode[] nodes, InProcessHandler[string] handlers)
+{
+    auto driver = new ActionDriver(part.layout, nodes, part.graph, part.idSuffix); // the generators' handlers hold its address
+    if (driver.error.length)
+        return null;
+    driver.processes.register("generate:test-root-module",
+        (ref TaskContext!Sched ctx, const ref InProcessAction a) => driver.generateTestRoot(ctx, a));
+    driver.processes.register("generate:file",
+        (ref TaskContext!Sched ctx, const ref InProcessAction a) => driver.generateFile(ctx, a));
+    driver.processes.register("generate:failing-tools",
+        (ref TaskContext!Sched ctx, const ref InProcessAction a) => driver.generateFailingTools(ctx, a));
+    // The client's own in-process actions: ci's test actions (CIC11).
+    foreach (name, handler; handlers)
+        driver.processes.register(name, handler);
+    return driver;
+}
+
+// The executor's driver of a run across worktrees: each task to its part's.
+private struct PartRouter
+{
+    ActionDriver*[] drivers;
+    size_t[] partOf; // by task index
+
+    TaskOutcome run(ref TaskContext!Sched ctx) => drivers[partOf[ctx.task.value]].run(ctx);
 }
 
 /// Runs `work` on `s` beside the fiber that hands the run's events to
@@ -2048,6 +2189,72 @@ private void tickLiveView(ref Sched s, LiveView view, const(bool)* working)
         if (*working)
             view.tick();
     }
+}
+
+/// Two worktrees' plans run as one: each action runs in its own part's
+/// worktree and writes its own part's run directory, under the id its part
+/// planned; an edge across the parts orders them.
+@("build_graph.execute.runActionsAcross.eachPartInItsOwnWorktree")
+@system unittest
+{
+    import std.algorithm.iteration : splitter;
+    import std.file : exists, mkdirRecurse, readText, rmdirRecurse, tempDir;
+    import std.path : buildPath;
+    import std.process : environment, thisProcessID;
+    import std.string : strip;
+    import sparkles.build_graph.actions : DeclaredOutput, defaultWeight;
+    import sparkles.build_primitives.task.model : EdgeCondition, EdgeReason, taskId;
+
+    string sh;
+    foreach (dir; environment.get("PATH", "").splitter(':'))
+        if (exists(buildPath(dir, "sh")))
+        {
+            sh = buildPath(dir, "sh");
+            break;
+        }
+    assert(sh.length, "sh is on PATH");
+    const top = buildPath(tempDir, text("run-across-", thisProcessID));
+    scope (exit)
+        if (exists(top))
+            rmdirRecurse(top);
+    const id = taskId("generate", "r.where", "library", "ldc", "abc").value;
+    ActionGraph g;
+    // It marks its worktree, and logs its start and end beside the worktrees
+    // (with only POSIX tools: macOS's `date` has no nanoseconds, and its
+    // temporary directory is a symbolic link, so a printed working directory
+    // differs from the path the part names).
+    g.actions ~= Action(ActionKind.generate, id, 0,
+        TaskAction(ProcessAction(argv: [sh, "-c",
+            "touch here; echo \"start $(basename \"$(pwd)\")\" >> ../log; sleep 0.2; echo end >> ../log; touch $OUT/done"])),
+        [DeclaredOutput("done")], defaultWeight(ActionKind.generate));
+    RunPart[] parts;
+    foreach (name; ["c1", "c2"])
+    {
+        const root = buildPath(top, name), run = buildPath(top, "runs", name);
+        mkdirRecurse(root);
+        mkdirRecurse(run);
+        auto layout = RunLayout(root, run);
+        parts ~= RunPart(executionNodes(g, layout, [EnvEntry("PATH", environment.get("PATH", ""))]), &g, layout,
+            name);
+    }
+    static struct Discard
+    {
+        void put(T)(T) {}
+    }
+    Discard quiet;
+    auto stats = new RunStats[2];
+    const across = [TaskEdge(withSuffix(id, "c1"), withSuffix(id, "c2"), EdgeCondition.onCompletion,
+        EdgeReason.reuse)];
+    const r = runActionsAcross(parts, across, quiet, 4, stats);
+    assert(r.exitCode == 0, text(r.exitCode));
+    foreach (k, ref part; parts)
+    {
+        assert(exists(buildPath(part.layout.root, "here")), "in its own worktree");
+        assert(exists(buildPath(part.layout.outOf(id), "done")), "into its own run directory");
+        assert(stats[k].outcomes == [id.text: OutcomeKind.succeeded], text(stats[k].outcomes));
+    }
+    assert(readText(buildPath(top, "log")).strip == "start c1\nend\nstart c2\nend",
+        "the edge across the parts orders them");
 }
 
 @("build_graph.execute.expand.outRelative")
