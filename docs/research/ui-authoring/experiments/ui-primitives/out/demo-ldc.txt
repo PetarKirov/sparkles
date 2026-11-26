@@ -1,0 +1,119 @@
+== node counts ==
+pure    statsPane(1000 rows):  3012   settingsPage(1000-row virtual list):  135
+hybrid  statsPane(1000 rows):  3009   settingsPage(1000-row virtual list):  106
+
+== one toggle, pure ==
+box.row @0,0 13×1
+  box.row @0,0 4×1
+    box.column @2,0 2×1
+  text "Autosave" @5,0 8×1
+draw ops: 3
+== one toggle, hybrid ==
+toggle "Autosave" @0,0 13×1
+draw ops: 3
+
+== settings page semantics (pure and hybrid print the same; first 24 lines) ==
+heading "Settings" @0,0 8×1
+scrollArea @0,1 80×12
+  switch_ "Autosave" checked=on focusable [press] @0,1 13×1
+  switch_ "Format on save" checked=off focusable [press] @0,2 19×1
+  switch_ "Word wrap" checked=on focusable [press] @0,3 14×1
+  switch_ "Line numbers" checked=off focusable [press] @0,4 17×1
+  switch_ "Minimap" checked=on focusable [press] @0,5 12×1
+  switch_ "Telemetry" checked=off focusable [press] @0,6 14×1
+  switch_ "Spell check" checked=off focusable [press] @0,7 16×1
+  switch_ "Hash on edit" checked=on focusable [press] @0,8 17×1
+  spinButton "Tab width" value=4 focusable [press] @17,9 6×1
+  spinButton "Font size" value=13 focusable [press] @17,10 5×1
+  spinButton "Line height" value=120 focusable [press] @17,11 5×1
+  spinButton "Debounce" value=300 focusable [press] @17,12 6×1
+  spinButton "History" value=1000 focusable [press] @17,13 12×1
+  spinButton "Ruler" value=80 focusable [press] @17,14 7×1
+  spinButton "Autosave delay" value=30 focusable [press] @17,15 4×1
+  spinButton "Workers" value=8 focusable [press] @17,16 1×1
+textField focusable [press] @17,13 24×1
+button "Apply" focusable [press] @0,14 7×1
+button "Reset" focusable [press] @9,14 7×1
+button "Cancel" focusable [press] @18,14 8×1
+list @0,15 80×12
+  button "row000000" [press] @0,15 22×1
+… 35 semantic nodes
+
+== clock (a)+(c) ==
+box.column @0,0 21×21
+  custom @0,0 21×21
+  text "12" @9,1 2×1
+  text "1" @15,2 1×1
+  text "2" @18,5 1×1
+  text "3" @19,10 1×1
+  text "4" @18,15 1×1
+  text "5" @15,18 1×1
+  text "6" @10,19 1×1
+  text "7" @5,18 1×1
+  text "8" @2,15 1×1
+  text "9" @1,10 1×1
+  text "10" @1,5 2×1
+  text "11" @4,2 2×1
+|                     |
+|         12          |
+|    11         1     |
+|                     |
+|                     |
+| 10               2  |
+|                     |
+|                     |
+|                     |
+|                     |
+| 9                 3 |
+|                     |
+|                     |
+|                     |
+|                     |
+|  8               4  |
+|                     |
+|                     |
+|     7         5     |
+|          6          |
+|                     |
+
+== timeline (a) ==
+box.column @0,0 40×3
+  box.column @0,0 4×1 [msg]
+    text "a" @0,0 1×1
+  box.column @2,1 6×1 [msg]
+    text "b" @2,1 1×1
+  box.column @4,0 10×1 [msg]
+    text "long label" @4,0 10×1
+  box.column @6,2 1×1 [msg]
+    text "d" @6,2 1×1
+  box.column @8,1 4×1 [msg]
+    text "c" @8,1 1×1
+timeline "timeline" @0,0 40×3
+  event "a" [press] @0,0 4×1
+  event "b" [press] @2,1 6×1
+  event "long label" [press] @4,0 10×1
+  event "d" [press] @6,2 1×1
+  event "c" [press] @8,1 4×1
+
+== calendar (a) ==
+box.column @0,0 70×25
+  box.row @0,0 70×1
+    text "Mon" @0,0 10×1
+    text "Tue" @10,0 10×1
+    text "Wed" @20,0 10×1
+    text "Thu" @30,0 10×1
+    text "Fri" @40,0 10×1
+    text "Sat" @50,0 10×1
+    text "Sun" @60,0 10×1
+  box.column @0,1 70×24
+    custom @0,1 70×24
+    box.column @0,3 5×2 [msg]
+      text "Standup" @0,3 5×2
+    box.column @5,4 5×3 [msg]
+      text "Review" @5,4 5×2
+    box.column @0,6 5×2 [msg]
+      text "Pairing" @0,6 5×2
+    box.column @0,9 10×2 [msg]
+      text "Lunch" @0,9 5×1
+    box.column @10,3 10×2 [msg]
+      text "Planning" @10,3 8×1

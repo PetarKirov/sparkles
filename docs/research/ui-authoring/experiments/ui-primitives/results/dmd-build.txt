@@ -1,0 +1,27 @@
+             Generating test runner configuration 'ui-primitives-test-unittest' for 'unittest' (library).
+    Starting Performing "bench" build using dmd for x86_64.
+    Building sparkles:metadata ~main: building configuration [library]
+    Building sparkles:reflection ~main: building configuration [library]
+    Building sparkles:test-attributes ~main: building configuration [library]
+    Building sparkles:base ~main: building configuration [library]
+    Building sparkles:profiling-counters ~main: building configuration [library]
+    Building sparkles:test-harness ~main: building configuration [library]
+    Building ui-primitives ~master: building configuration [ui-primitives-test-unittest]
+     Linking ui-primitives-test-unittest
+     Running build/ui-primitives-test-unittest
+ ✓ tests primitives.settings.sameSemantics
+ ✓ tests primitives.settings.findToggleAndPress
+ ✓ tests primitives.settings.numberFieldPayload
+ ✓ tests primitives.settings.focusOrder
+ ✓ tests primitives.settings.virtualListScrolls
+ ✓ tests layouts.clock.protocol
+ ✓ tests layouts.clock.paintOnly
+ ✓ tests layouts.clock.layoutBuilder
+ ✓ tests layouts.clock.lastFrameBounds
+ ✓ tests layouts.clock.anchored
+ ✓ tests layouts.timeline.lanes
+ ✓ tests layouts.calendar.overlapColumns
+ ✓ tests layouts.calendar.keyedIdentity
+ ✓ tests primitives.settings.scrollViewScrollsAndClips
+
+Summary: 14 passed, 0 failed, 2 benchmarks (run with --bench) in 50ms

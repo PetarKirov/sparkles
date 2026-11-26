@@ -1,0 +1,30 @@
+== stock dmd: DMD64 D Compiler v2.115.0-master
+Error dmd failed with exit code 1.
+src/layouts.d(129,14): Error: function `layouts.clockLabels` is `@nogc` yet allocates closure for `clockLabels()` with the GC
+src/layouts.d(149,14): Error: function `layouts.clockLaggedAt` is `@nogc` yet allocates closure for `clockLaggedAt()` with the GC
+src/layouts.d(160,6): Error: function `layouts.clockAnchored` is `@nogc` yet allocates closure for `clockAnchored()` with the GC
+src/layouts.d(232,6): Error: function `layouts.eventBox` is `@nogc` yet allocates closure for `eventBox()` with the GC
+src/layouts.d(332,6): Error: function `layouts.calEventBox` is `@nogc` yet allocates closure for `calEventBox()` with the GC
+src/layouts.d(343,6): Error: function `layouts.timelineView` is `@nogc` yet allocates closure for `timelineView()` with the GC
+src/layouts.d(349,6): Error: function `layouts.calendarView` is `@nogc` yet allocates closure for `calendarView()` with the GC
+src/layouts.d(362,6): Error: function `layouts.eventColumn` is `@nogc` yet allocates closure for `eventColumn()` with the GC
+src/layouts.d(89,6): Error: function `layouts.clockFace` is `@nogc` yet allocates closure for `clockFace()` with the GC
+src/views_hybrid.d-mixin-6(11,6): Error: function `views_hybrid.statsPane` is `@nogc` yet allocates closure for `statsPane()` with the GC
+src/views_hybrid.d-mixin-6(37,6): Error: function `views_hybrid.settingsPage` is `@nogc` yet allocates closure for `settingsPage()` with the GC
+src/views_hybrid.d-mixin-6(79,14): Error: `@nogc` function `views_hybrid.settingsPage` cannot call non-@nogc function `views_hybrid.settingsPage.virtualList!((r) => r.name, (r) => ui.keyValue(name: r.name, value: r.value, onPress: ui.on(SettingsMsg(CopyName(r.name)))), const(MemberRow)[])`
+src/views_pure.d-mixin-6(11,6): Error: function `views_pure.statsPane` is `@nogc` yet allocates closure for `statsPane()` with the GC
+== stock ldc2: LDC - the LLVM D compiler (1.43.0):
+Error ldc2 failed with exit code 1.
+src/layouts.d(129,14): Error: function `layouts.clockLabels` is `@nogc` yet allocates closure for `clockLabels()` with the GC
+src/layouts.d(149,14): Error: function `layouts.clockLaggedAt` is `@nogc` yet allocates closure for `clockLaggedAt()` with the GC
+src/layouts.d(160,6): Error: function `layouts.clockAnchored` is `@nogc` yet allocates closure for `clockAnchored()` with the GC
+src/layouts.d(232,6): Error: function `layouts.eventBox` is `@nogc` yet allocates closure for `eventBox()` with the GC
+src/layouts.d(332,6): Error: function `layouts.calEventBox` is `@nogc` yet allocates closure for `calEventBox()` with the GC
+src/layouts.d(343,6): Error: function `layouts.timelineView` is `@nogc` yet allocates closure for `timelineView()` with the GC
+src/layouts.d(349,6): Error: function `layouts.calendarView` is `@nogc` yet allocates closure for `calendarView()` with the GC
+src/layouts.d(362,6): Error: function `layouts.eventColumn` is `@nogc` yet allocates closure for `eventColumn()` with the GC
+src/layouts.d(89,6): Error: function `layouts.clockFace` is `@nogc` yet allocates closure for `clockFace()` with the GC
+src/views_hybrid.d-mixin-6(11,6): Error: function `views_hybrid.statsPane` is `@nogc` yet allocates closure for `statsPane()` with the GC
+src/views_hybrid.d-mixin-6(37,6): Error: function `views_hybrid.settingsPage` is `@nogc` yet allocates closure for `settingsPage()` with the GC
+src/views_hybrid.d-mixin-6(79,14): Error: `@nogc` function `views_hybrid.settingsPage` cannot call non-@nogc function `views_hybrid.settingsPage.virtualList!((r) => r.name, (r) => ui.keyValue(name: r.name, value: r.value, onPress: ui.on(SettingsMsg(CopyName(r.name)))), const(MemberRow)[]).virtualList`
+src/views_pure.d-mixin-6(11,6): Error: function `views_pure.statsPane` is `@nogc` yet allocates closure for `statsPane()` with the GC
