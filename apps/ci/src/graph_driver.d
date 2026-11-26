@@ -28,10 +28,10 @@ import std.typecons : Nullable;
 
 import sparkles.build_graph.actions : ActionGraph, ActionKind, CoverageAttempt, TestLeg, TestProgram, Tools,
     planActions, taskNodes;
-import sparkles.build_graph.execute : RunReporting, RunStats;
+import sparkles.build_graph.execute : RunLayout, RunReporting, RunStats;
 import sparkles.build_graph.variants : LayoutCheck, PlanError, PlanOptions, Role, ToolchainIdentity,
     VariantPlan, planVariants;
-import sparkles.build_primitives.task.model : PlanExpected, planErr, planOk;
+import sparkles.build_primitives.task.model : PlanExpected, TaskNode, planErr, planOk;
 import sparkles.build_primitives.resolve.configure : Resolution, ResolveRequest, resolve;
 import sparkles.build_primitives.resolve.libraries : PkgConfigDriver, RecordingPkgConfig, SystemPkgConfig;
 import sparkles.build_primitives.resolve.platform : BuildPlatform;
@@ -789,22 +789,32 @@ struct GraphRun
     string dubCalls;     /// what tests passed to `dub` (BGX1); empty when none ran it
 }
 
-/**
-Plans the test root of the package `only` (every package's when null) with
-the tools on `PATH`, named by absolute path, and runs it on the task-DAG
-executor into `o.into`, against the store beneath `o.cache` when one is
-named.
-*/
-GraphRun runGraph(string root, string only, RunOptions o)
+/// A run planned and lowered onto the executor's nodes, not yet run
+/// ($(LREF prepareGraph)).
+struct PreparedRun
 {
-    import std.array : appender;
-    import std.file : exists, mkdirRecurse, readText;
-    import sparkles.build_graph.execute : RunLayout, executionNodes, runActions;
+    GraphRun run;     /// its plan and toolchain; `run.error` says why it cannot run
+    TaskNode[] nodes; /// in `layout`
+    RunLayout layout; ///
+    InProcessHandler[string] handlers; /// the client's and the runner core's
+    string trap;      /// the dub trap's directory (BGX1)
+    bool dry;         /// a dry run or an explain, which writes nothing
+}
+
+/**
+The first half of $(LREF runGraph): plans `root` as it does and lowers the
+plan onto executor nodes in its run directory, running nothing. `ci commits
+build-each` prepares each commit's worktree and runs them all as one graph.
+*/
+PreparedRun prepareGraph(string root, string only, RunOptions o)
+{
+    import std.file : exists, mkdirRecurse;
+    import sparkles.build_graph.execute : executionNodes;
 
     GraphRun g;
     Tools tools;
     if (const why = pathTools(tools, g.toolchain))
-        return GraphRun(why);
+        return PreparedRun(GraphRun(why));
     if (o.adjustTools !is null)
     {
         o.adjustTools(tools);
@@ -821,11 +831,11 @@ GraphRun runGraph(string root, string only, RunOptions o)
     g.plan = planRepository(root, false, only, tools, g.toolchain.identity, !o.noLayoutLint, o.packages,
         o.coverage, o.singleFiles, o.applications);
     if (g.plan.error.length)
-        return GraphRun(g.plan.error);
+        return PreparedRun(GraphRun(g.plan.error));
     // Single files that all failed to plan leave nothing to run but are no
     // error of the run's: each is its own (§5.5).
     if (g.plan.requests == 0 && !o.singleFiles.length)
-        return GraphRun("no package " ~ only);
+        return PreparedRun(GraphRun("no package " ~ only));
     // A dry run writes nothing (CIC1): no run directory, no dub trap.
     const dry = o.reporting.dryRun || o.explain;
     if (!dry)
@@ -835,7 +845,7 @@ GraphRun runGraph(string root, string only, RunOptions o)
     {
         const strace = onPath("strace");
         if (strace is null)
-            return GraphRun("tracing compiles needs strace on PATH");
+            return PreparedRun(GraphRun("tracing compiles needs strace on PATH"));
         foreach (ref a; g.plan.graph.actions)
             if (a.kind == ActionKind.compile)
                 a.action.match!(
@@ -855,7 +865,7 @@ GraphRun runGraph(string root, string only, RunOptions o)
         const wrapper = buildPath(o.into, "confine");
         const built = execute([tools.compiler, "-O", "-of=" ~ wrapper, buildPath(root, "apps/ci/tools/confine.d")]);
         if (built.status != 0)
-            return GraphRun("cannot build the confinement wrapper: " ~ built.output);
+            return PreparedRun(GraphRun("cannot build the confinement wrapper: " ~ built.output));
         foreach (ref a; g.plan.graph.actions)
         {
             if (a.kind == ActionKind.test && o.confine != Confinement.tests)
@@ -899,7 +909,7 @@ GraphRun runGraph(string root, string only, RunOptions o)
             string why;
             const id = uniqueTask(g.plan.graph, t, why);
             if (!id.length)
-                return GraphRun(why);
+                return PreparedRun(GraphRun(why));
             targets ~= id;
         }
         g.plan.graph = needing(g.plan.graph, targets);
@@ -951,7 +961,7 @@ GraphRun runGraph(string root, string only, RunOptions o)
         import test_leg : legAction, legHandler, runTestLeg;
 
         if (o.confine == Confinement.tests)
-            return GraphRun("the runner core's tests cannot run confined yet");
+            return PreparedRun(GraphRun("the runner core's tests cannot run confined yet"));
         handlers[legHandler] = (ref TaskContext!Sched ctx, const ref InProcessAction a) => runTestLeg(ctx, a);
         // A package beneath the runner (`metadata`, `test-harness`, …) cannot
         // depend on it: its binary runs its own tests, and its exit status is
@@ -994,6 +1004,23 @@ GraphRun runGraph(string root, string only, RunOptions o)
                 (ref _) {});
             (() @trusted { n.action = action; })();
         }
+    return PreparedRun(g, nodes, layout, handlers, trap, dry);
+}
+
+/**
+Plans the test root of the package `only` (every package's when null) with
+the tools on `PATH`, named by absolute path, and runs it on the task-DAG
+executor into `o.into`, against the store beneath `o.cache` when one is
+named.
+*/
+GraphRun runGraph(string root, string only, RunOptions o)
+{
+    import std.array : appender;
+    import sparkles.build_graph.execute : runActions;
+
+    auto p = prepareGraph(root, only, o);
+    if (p.run.error.length)
+        return p.run;
     static struct Tee
     {
         typeof(appender!string())* log;
@@ -1009,20 +1036,31 @@ GraphRun runGraph(string root, string only, RunOptions o)
     }
     auto log = appender!string;
     auto w = Tee(&log, o.echo);
-    const r = runActions(nodes, g.plan.graph, layout, w, o.jobs ? o.jobs : logicalProcessors, &g.stats,
-        o.failFast, handlers, o.reporting);
-    g.exitCode = r.exitCode;
-    g.log = log.data;
+    const r = runActions(p.nodes, p.run.plan.graph, p.layout, w, o.jobs ? o.jobs : logicalProcessors,
+        &p.run.stats, o.failFast, p.handlers, o.reporting);
+    p.run.exitCode = r.exitCode;
+    p.run.log = log.data;
+    finishRun(p, o);
+    return p.run;
+}
+
+/// What a run leaves after the executor: the store's eviction (BGS5), the
+/// dub trap's calls, and a determinism check's private outputs removed.
+void finishRun(ref PreparedRun p, const RunOptions o)
+{
+    import std.array : appender;
+    import std.file : exists, readText;
+
     // BGS5: eviction after the run, off its publish path.
-    if (o.cache.length && !dry)
+    if (o.cache.length && !p.dry)
     {
         import sparkles.build_graph.execute : storeOperation;
 
         auto discard = appender!string;
         cast(void) storeOperation(o.cache, "evict", discard);
     }
-    if (exists(buildPath(trap, "calls")))
-        g.dubCalls = readText(buildPath(trap, "calls"));
+    if (exists(buildPath(p.trap, "calls")))
+        p.run.dubCalls = readText(buildPath(p.trap, "calls"));
     // BGS9: the check's outputs are a private store, discarded after it.
     if (o.check && exists(o.into))
     {
@@ -1030,7 +1068,6 @@ GraphRun runGraph(string root, string only, RunOptions o)
 
         rmdirRecurse(o.into);
     }
-    return g;
 }
 
 int runPackage(string root, string only, string into, string cache, bool checkDeterminism = false,
