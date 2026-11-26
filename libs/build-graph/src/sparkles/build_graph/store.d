@@ -12,7 +12,9 @@ $(LIST
         used first (BGK3);
         * `leases/<key>/<holder>` one file per process using a result (BGS4);
         * `staging/` entries being written, published by one rename (BGS2);
-        * `trash/` entries a loser, a corruption or a removal moved aside.
+        * `trash/` entries a loser, a corruption or a removal moved aside;
+        * `pruned` present while no manifest list holds a manifest whose
+        result is neither published nor recorded (BGS5).
 )
 
 A result's key is its declared key for an action without a manifest, and,
@@ -57,6 +59,9 @@ enum uint formatVersion = 1;
 /// How many manifests a declared key keeps (BGK3).
 enum size_t manifestBound = 16;
 
+/// The marker that no manifest list holds a prunable manifest (BGS5).
+private enum prunedMarker = "pruned";
+
 /// One published result, as inspection lists it (BGS7).
 struct StoreEntry
 {
@@ -99,6 +104,12 @@ struct Manifest
 {
     ManifestEntry[] files; ///
     string[] absent;       ///
+    /// The result key $(LREF resultKey) gives this manifest under its list's
+    /// declared key, when known: a list records it beside each manifest, so
+    /// pruning and recording a list compare keys and hash no manifest text
+    /// (BGS5). It is not part of $(LREF Manifest.text); a lookup that serves
+    /// a result computes the key it leases (BGK3).
+    string resultKey;
 
     /// The canonical text, one entry per line, files first.
     string text() const @safe pure
@@ -198,7 +209,8 @@ bool parseRecord(scope const(char)[] source, out ResultRecord r) @safe pure
 }
 
 /// Parses a manifest list: manifests separated by `--` lines, after a
-/// `format` line; empty for another format.
+/// `format` line; empty for another format. A manifest's `key` line, which
+/// lists written before it lack, is its cached result key.
 Manifest[] parseManifestList(scope const(char)[] source) @safe pure
 {
     import std.string : lineSplitter;
@@ -236,6 +248,8 @@ Manifest[] parseManifestList(scope const(char)[] source) @safe pure
             current.absent ~= rest;
             any = true;
         }
+        else if (word(line, "key", rest))
+            current.resultKey = rest.idup;
     }
     if (any)
         list ~= current;
@@ -247,7 +261,7 @@ string manifestListText(const Manifest[] list) @safe pure
 {
     string s = "format " ~ formatVersion.text ~ "\n";
     foreach (ref m; list)
-        s ~= "--\n" ~ m.text;
+        s ~= "--\n" ~ (m.resultKey.length ? "key " ~ m.resultKey ~ "\n" : "") ~ m.text;
     return s;
 }
 
@@ -360,15 +374,25 @@ struct Store(D)
 
     /*
     BGS5's manifests: drops from each manifest list every manifest whose
-    result is neither published nor recorded, removing a list left empty.
-    Returns the bytes freed, counting each list removed in `dropped`.
+    result is neither published nor recorded, removing a list left empty,
+    and records each kept manifest's result key in its list. Counts each list
+    removed in `dropped`.
+
+    A manifest is recorded only for a result just published or served, so
+    one becomes prunable only when a result leaves `results/` without a
+    digest record, or a digest record is dropped. Each of those removes the
+    store's `pruned` marker first, and a prune writes it before it reads
+    the lists, so a prune that one of them races is repeated by the next.
+    While the marker stands, no list can have changed, and the prune is
+    skipped: it would read and rewrite nothing.
     */
-    private ulong pruneManifests(ref size_t dropped)
+    private void pruneManifests(ref size_t dropped)
     {
         auto dir = v.walk("manifests");
-        if (dir.hasError)
-            return 0;
-        ulong freed;
+        if (dir.hasError || !statPath(v, prunedMarker).hasError)
+            return;
+        if (v.writeFileAtomic(prunedMarker, "").hasError)
+            return;
         foreach (declared; names("manifests"))
         {
             string source;
@@ -377,8 +401,9 @@ struct Store(D)
             Manifest[] kept;
             foreach (ref m; parseManifestList(source))
             {
-                const key = resultKey(declared, m);
-                if (published(key) || !statPath(v, "records/" ~ key).hasError)
+                if (!m.resultKey.length)
+                    m.resultKey = resultKey(declared, m);
+                if (published(m.resultKey) || !statPath(v, "records/" ~ m.resultKey).hasError)
                     kept ~= m;
             }
             const text_ = kept.length ? manifestListText(kept) : null;
@@ -386,12 +411,13 @@ struct Store(D)
                 continue;
             if (kept.length ? dir.value.writeFileAtomic(declared, text_).hasError : dir.value.unlinkAt(declared).hasError)
                 continue;
-            freed += source.length - text_.length;
             if (!kept.length)
                 ++dropped;
         }
-        return freed;
     }
+
+    // BGS5: a manifest may have become prunable; the next eviction prunes.
+    private void unpruned() => cast(void) v.unlinkAt(prunedMarker);
 
     /// The manifests recorded for `declaredKey`, most recently used first.
     Manifest[] manifests(string declaredKey)
@@ -402,16 +428,24 @@ struct Store(D)
         return parseManifestList(source);
     }
 
-    /// Records `m` as the most recently used manifest of `declaredKey`,
-    /// keeping at most `manifestBound` (BGK3). A concurrent update may lose
-    /// an entry (BGS3).
-    void useManifest(string declaredKey, const ref Manifest m)
+    /// Records `m`, whose result key is `key`, as the most recently used
+    /// manifest of `declaredKey`, keeping at most `manifestBound` (BGK3);
+    /// a list that already starts with it is left as it is. A concurrent
+    /// update may lose an entry (BGS3).
+    void useManifest(string declaredKey, const ref Manifest m, string key)
     {
+        auto current = manifests(declaredKey);
+        if (current.length && current[0].resultKey == key)
+            return;
         Manifest[] list = [cast(Manifest) m];
-        const text_ = m.text;
-        foreach (ref other; manifests(declaredKey))
-            if (other.text != text_ && list.length < manifestBound)
+        list[0].resultKey = key;
+        foreach (ref other; current)
+        {
+            if (!other.resultKey.length)
+                other.resultKey = resultKey(declaredKey, other);
+            if (other.resultKey != key && list.length < manifestBound)
                 list ~= other;
+        }
         auto dir = v.walk("manifests");
         if (!dir.hasError)
             cast(void) dir.value.writeFileAtomic(declaredKey, manifestListText(list));
@@ -846,6 +880,7 @@ struct Store(D)
                 held ~= key;
                 continue;
             }
+            unpruned();
             if (moveToTrash(key))
                 removed ~= key;
         }
@@ -883,6 +918,8 @@ struct Store(D)
                 }
                 string source;
                 cast(void) readAll(v, "results/" ~ e.key ~ "/record", source);
+                if (!source.length)
+                    unpruned(); // no digest record will serve its manifests
                 if (!moveToTrash(e.key))
                     continue;
                 // Step 3: a lease that appeared meanwhile brings it back.
@@ -907,36 +944,67 @@ struct Store(D)
         }
         report.resultBytes = total;
         // The records' bound: first the manifests no result serves, then the
-        // oldest preimages and digest records, then the manifests those left
-        // without a result.
+        // least recently written preimages and digest records, then the
+        // manifests those left without a result, and last the least recently
+        // used manifest lists themselves, which a hit rewrites (BGK3): a
+        // compile whose list went misses once and records it anew.
         ulong records = recordBytes();
         if (records > recordsBound)
         {
-            import sparkles.base.vfs.types : StatMask;
-
             const target = recordsBound / 10 * 9;
-            records -= pruneManifests(report.recordsDropped);
-            foreach (dir; ["records", "preimages"])
+            pruneManifests(report.recordsDropped);
+            records = recordBytes();
+            foreach (dir; ["records", "preimages", "manifests"])
             {
+                if (dir == "manifests")
+                {
+                    pruneManifests(report.recordsDropped);
+                    records = recordBytes();
+                }
                 auto d = v.walk(dir);
                 if (d.hasError)
                     continue;
-                foreach (name; names(dir))
+                foreach (ref e; oldestFirst(dir))
                 {
                     if (records <= target)
                         break;
-                    auto st = d.value.statAt(name);
-                    if (!st.hasError && !d.value.unlinkAt(name).hasError)
+                    if (dir == "records")
+                        unpruned();
+                    if (!d.value.unlinkAt(e.name).hasError)
                     {
-                        records -= st.value.size;
+                        records -= e.size;
                         ++report.recordsDropped;
                     }
                 }
             }
-            records -= pruneManifests(report.recordsDropped);
         }
         report.recordBytes = records;
         return report;
+    }
+
+    // The entries of `<store>/<dir>` with their sizes, least recently
+    // modified first.
+    private auto oldestFirst(string dir)
+    {
+        import std.algorithm.sorting : sort;
+
+        static struct Aged
+        {
+            string name;
+            ulong size;
+            long mtime;
+        }
+        Aged[] all;
+        auto d = v.walk(dir);
+        if (d.hasError)
+            return all;
+        foreach (name; names(dir))
+        {
+            auto st = d.value.statAt(name, StatMask.mtime);
+            if (!st.hasError)
+                all ~= Aged(name, st.value.size, st.value.mtimeNs);
+        }
+        return all.sort!((a, b) => a.mtime < b.mtime || a.mtime == b.mtime && a.name < b.name).release;
     }
 
     // The names in `<store>/<dir>`, sorted.
@@ -1000,6 +1068,7 @@ struct Store(D)
     private ResultRecord* discard(string key, string why)
     {
         note = "corrupt result " ~ key ~ ": " ~ why;
+        unpruned();
         auto results = v.walk("results");
         auto trash = v.walk("trash");
         if (!results.hasError && !trash.hasError)
@@ -1422,4 +1491,128 @@ private bool word(scope const(char)[] line, string keyword, out string rest) @sa
     assert(!out2.value.symlinkAt("sub", "real").hasError);
     assert(store.find(b) is null);
     assert(store.note.canFind("out/sub is a link"), store.note);
+}
+
+/// BGS5: a list records each manifest's result key, and a list already led
+/// by the manifest used is not rewritten; pruning is skipped until a result
+/// leaves without a digest record; and over the records' bound the least
+/// recently used manifest lists go last, oldest first.
+@("build_graph.store.evict.manifests")
+@system unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+    import sparkles.base.hash.blake3 : blake3;
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : DotDotPolicy, ResolvePolicy, SymlinkPolicy;
+    import sparkles.event_horizon.sys : BlockingVfs;
+    import std.algorithm.searching : canFind;
+    import std.array : replicate;
+    import std.process : environment, thisProcessID;
+
+    auto vfs = new BlockingVfs;
+    auto tmp = openRoot!(Rights.all)(vfs, environment.get("TMPDIR", "/tmp"), ambientAuthority(),
+        ResolvePolicy(SymlinkPolicy.beneath, DotDotPolicy.reject));
+    assert(!tmp.hasError);
+    const name = text("sparkles-store-manifests-", thisProcessID);
+    cast(void) tmp.value.removeTree(name);
+    auto top = tmp.value.walkAll(name);
+    assert(!top.hasError);
+    scope (exit)
+        cast(void) tmp.value.removeTree(name);
+    auto build = top.value.walkAll("build");
+    Store!(typeof(build.value)) store;
+    assert(Store!(typeof(build.value)).open(build.value, "1-1", store));
+    auto out_ = top.value.walkAll("runs/r/out");
+    auto lists = build.value.walk("v1/manifests");
+    assert(!lists.hasError);
+    bool dead(string) => false;
+
+    string publishOne(string task, string key = null)
+    {
+        auto dir = out_.value.walkAll(task);
+        char[8] bytes = 'x';
+        assert(!dir.value.writeFileAtomic("f", bytes[]).hasError);
+        ResultRecord r;
+        r.task = task;
+        r.resultKey = key.length ? key : task ~ "-key";
+        r.outputs = [OutputRecord("f", 8, false, blake3(cast(const(ubyte)[]) bytes[]))];
+        assert(store.publish(out_.value, task, r, "../../../build/v1/results/{}/out") !is null, store.note);
+        return r.resultKey;
+    }
+    string listOf(string declared)
+    {
+        string s;
+        return readAll(lists.value, declared, s) ? s : null;
+    }
+    ubyte[32] zero;
+    const a = publishOne("a");
+    store.releaseLeases();
+
+    // The key beside the manifest; used again, the list is left as it is.
+    const m = Manifest([ManifestEntry("x.d", zero)], ["y.d"]);
+    store.useManifest("d", m, a);
+    assert(listOf("d").canFind("--\nkey " ~ a ~ "\nfile "), listOf("d"));
+    assert(!lists.value.writeFileAtomic("d", listOf("d") ~ "untouched\n").hasError);
+    store.useManifest("d", m, a);
+    assert(listOf("d").canFind("untouched"));
+
+    // A list without keys, as written before them, gets them on a prune;
+    // one whose result is gone is dropped.
+    publishOne("o", resultKey("old", m));
+    store.releaseLeases();
+    assert(!lists.value.writeFileAtomic("old", manifestListText([m])).hasError);
+    auto gone = cast(Manifest) m;
+    gone.resultKey = "gone-key";
+    assert(!lists.value.writeFileAtomic("stale", manifestListText([gone])).hasError);
+    size_t dropped;
+    store.pruneManifests(dropped);
+    assert(dropped == 1 && listOf("stale") is null);
+    assert(listOf("old").canFind("--\nkey " ~ resultKey("old", m) ~ "\n"), listOf("old"));
+
+    // While nothing left, a prune reads nothing: a stale list planted now stays.
+    assert(!lists.value.writeFileAtomic("stale", manifestListText([gone])).hasError);
+    store.pruneManifests(dropped);
+    assert(listOf("stale") !is null);
+    // A removal makes the next prune run.
+    string[] held;
+    assert(store.remove((ref const ResultRecord r) => r.task == "a", &dead, held) == [a]);
+    assert(listOf("old") !is null);
+    store.pruneManifests(dropped);
+    assert(listOf("stale") is null && listOf("d") is null, text(dropped));
+
+    // Over the records' bound with every manifest served, the least recently
+    // used list goes.
+    cast(void) lists.value.unlinkAt("old");
+    const b = publishOne("b");
+    store.releaseLeases();
+    auto big = Manifest([ManifestEntry("x.d", zero)], "absent.d".replicate(1).repeatLines(200));
+    store.useManifest("older", big, b);
+    long mtimeOf(string declared)
+    {
+        auto st = lists.value.statAt(declared, StatMask.mtime);
+        assert(!st.hasError);
+        return st.value.mtimeNs;
+    }
+    foreach (attempt; 0 .. 1000)
+    {
+        store.useManifest("newer", m, b);
+        if (mtimeOf("newer") > mtimeOf("older"))
+            break;
+        cast(void) lists.value.unlinkAt("newer");
+        Thread.sleep(1.msecs);
+    }
+    assert(mtimeOf("newer") > mtimeOf("older"));
+    const report = store.evict(1UL << 30, 2 * listOf("newer").length, &dead);
+    assert(listOf("older") is null && listOf("newer") !is null, text(report));
+    assert(report.recordsDropped == 1 && report.recordBytes == listOf("newer").length, text(report));
+}
+
+// `n` lines of `s`, each made distinct by its number.
+private string[] repeatLines(string s, size_t n) @safe pure
+{
+    string[] lines;
+    foreach (i; 0 .. n)
+        lines ~= text(i, "/", s);
+    return lines;
 }

@@ -1019,7 +1019,7 @@ struct ActionDriver
             store.recordPreimage(id.text, preimage);
             stats.resultKeys[id.text] = published.resultKey;
             if (hasManifest)
-                store.useManifest(declared, manifest);
+                store.useManifest(declared, manifest, published.resultKey);
             outputsDigestOf[id.text] = published.outputsDigest;
         }
         return true;
@@ -1513,11 +1513,14 @@ struct ActionDriver
             return store.find(declared);
         foreach (ref m; store.manifests(declared))
             if (holds(m))
-                if (auto r = store.find(resultKey(declared, m)))
+            {
+                const key = resultKey(declared, m);
+                if (auto r = store.find(key))
                 {
-                    store.useManifest(declared, m);
+                    store.useManifest(declared, m, key);
                     return r;
                 }
+            }
         // A failure published without a manifest (BGA9), under the
         // conservative key of the roots it searched.
         if (auto r = store.find(failureKey(a, declared)))

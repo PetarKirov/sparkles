@@ -731,6 +731,7 @@ The store's layout is:
 | `<store>/leases/<key>/`    | one lease file per process using a result              |
 | `<store>/staging/`         | entries being written                                  |
 | `<store>/trash/`           | entries being evicted or discarded                     |
+| `<store>/pruned`           | present while no manifest list holds a prunable entry  |
 
 **BGS1: One store per machine.** Results **must** live in one store per user and
 machine, under `$XDG_CACHE_HOME/sparkles/build` (`~/.cache/sparkles/build` when
@@ -812,7 +813,19 @@ Eviction follows these rules:
   record, the new digests replace it and the action is reported as
   nondeterministic, as BGS3 reports.
 - **Manifests:** a manifest whose result is neither present nor recorded is a
-  miss, and is dropped from its list. A list left empty is removed.
+  miss, and is dropped from its list. A list left empty is removed. A list
+  records each manifest's result key beside it, so dropping one and recording
+  a used one compare keys and never rehash a manifest. A manifest can become
+  droppable only when a result leaves without a digest record, or a digest
+  record goes. Each of those first removes `<store>/pruned`, and a prune
+  writes it before it reads any list. While it is present, the prune is
+  skipped, because it could drop nothing. A list already led by the manifest
+  a hit used is not rewritten.
+- **Records' order:** over the records' bound, eviction drops the manifests
+  no result serves, then the least recently written digest records and
+  preimages, then the manifests those left without a result, and last whole
+  manifest lists, least recently used first. A compile whose list went
+  misses once, and records its manifest again.
 
 An eviction of a result:
 
