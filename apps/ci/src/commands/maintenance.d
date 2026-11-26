@@ -3,19 +3,15 @@
 module commands.maintenance;
 
 import commands.files : detectRepoRoot;
-import commands.output :
-    RunMonitor, displayTestRunSummary, flushStdout, resultFooterRight, resultVerdict,
-    streamResultBox, uiWidth;
+import commands.output : flushStdout, uiWidth;
 import commands.toolchain : dubBuildCommand, findWasiCompiler, withLdcDflags;
-import core.time : Duration, msecs;
 import dub_deps : subPackageDirectories;
 import sparkles.base.expected : Expected, ok;
-import sparkles.base.logger : error, info, LogDelta, warning;
+import sparkles.base.logger : error, info, warning;
 import sparkles.base.styled_template : styledText;
 import sparkles.core_cli.args : failRun, ranOk, RunExpected;
-import sparkles.core_cli.process_utils : ChildStdin, executeMonitoredLines, ResourceUsage;
 import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
-import std.algorithm : any, canFind, filter, map, startsWith;
+import std.algorithm : any, canFind, countUntil, filter, map, sort, startsWith;
 import std.array : array, join;
 import std.conv : text, to;
 import std.file : exists, mkdirRecurse, remove, tempDir, write;
@@ -45,19 +41,35 @@ RunExpected!void runSeedDubCache()
 }
 
 /++
-`ci commits build-each`: `dub build` the chosen packages at every commit from
-`base` (exclusive) to `HEAD`, in one detached scratch worktree walked oldest
-first. See $(MREF each_commit) for why.
+`ci commits build-each`: build the chosen packages at every commit from
+`base` (exclusive) to `HEAD`, as one run of the build graph (ci task-DAG
+CIC21). Each commit is checked out in a scratch worktree of its own and
+planned there; the plans run together against the shared store, an action a
+commit shares with the one before it waiting for that one's result. The
+packages the graph does not build (the WebAssembly modules, and a recipe
+planning refuses) build with dub in one more worktree, walked oldest first
+so each build is incremental on the last, as tasks of the same run. See
+$(MREF each_commit) for why.
 +/
 RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool failFast)
 {
-    import std.conv : to;
     import std.file : rmdirRecurse, tempDir;
     import std.process : thisProcessID;
+    import graph_driver : PreparedRun, RunOptions, logicalProcessors, prepareGraph;
+    import sparkles.build_graph.actions : ActionGraph, ActionKind;
+    import sparkles.build_graph.execute : RunLayout, RunPart, RunReporting, RunStats, runActionsAcross,
+        storeOperation;
     import sparkles.build_primitives.git_env : runGit;
-    import each_commit : CommitFailure, defaultEachCommitPackages, failureReport,
-        parseCommitRange, selectPackages, targetBuildArgs, wasiPackages;
-    import std.process : thisProcessID;
+    import sparkles.build_primitives.task.action : EnvEntry, InProcessAction, ProcessAction, TaskAction;
+    import sparkles.build_primitives.task.executor : TaskContext;
+    import sparkles.build_primitives.task.model : EdgeCondition, EdgeReason, FailureReason, Failed, OutcomeKind,
+        OutputStream, PresentationKey, ResourceClaim, Succeeded, TaskEdge, TaskId, TaskKind, TaskNode, TaskOutcome,
+        taskId;
+    import sparkles.build_primitives.task.process : InProcessHandler;
+    import sparkles.ci_provider : CiLog, systemEnvironment;
+    import sparkles.event_horizon.sched : Sched;
+    import each_commit : CommitFailure, defaultEachCommitPackages, failureReport, parseCommitRange,
+        reuseEdges, selectPackages, targetBuildArgs, wasiPackages;
 
     // The build graph's store, shared by every commit's builds.
     const graphCache = buildPath(environment.get("XDG_CACHE_HOME",
@@ -65,13 +77,13 @@ RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool fa
 
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
-    return failRun("Could not detect repository root");
+        return failRun("Could not detect repository root");
 
     string[] unknown;
     const pkgs = selectPackages(requested.length ? requested
         : defaultEachCommitPackages.dup, subPackageDirectories(repoRoot), unknown);
     if (unknown.length)
-    return failRun(text(i"--from: no sub-package named $(unknown.join(", "))"));
+        return failRun(text(i"--packages: no sub-package named $(unknown.join(", "))"));
     string wasiCompiler;
     if (!findWasiCompiler(pkgs, wasiCompiler))
         return failRun("no WebAssembly-capable compiler for a package that needs one");
@@ -80,13 +92,13 @@ RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool fa
     {
         const mb = runGit(["-C", repoRoot, "merge-base", "HEAD", "origin/main"]);
         if (mb.status != 0)
-        return failRun(text(i"--base not given and HEAD has no merge-base with origin/main: $(mb.output.strip)"));
+            return failRun(text(i"--base not given and HEAD has no merge-base with origin/main: $(mb.output.strip)"));
         base = mb.output.strip;
     }
     const log = runGit(["-C", repoRoot, "log", "--reverse", "--format=%h %s",
         base ~ "..HEAD"]);
     if (log.status != 0)
-    return failRun(text(i"Could not list $(base)..HEAD: $(log.output.strip)"));
+        return failRun(text(i"Could not list $(base)..HEAD: $(log.output.strip)"));
     const commits = parseCommitRange(log.output);
     if (commits.length == 0)
     {
@@ -94,138 +106,219 @@ RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool fa
         return ranOk();
     }
 
-    // One worktree for the whole walk, so each build is incremental on the
-    // last; detached, so no branch is created or moved.
-    const wt = buildPath(tempDir, "ci-each-commit-" ~ thisProcessID.to!string);
-    const add = runGit(["-C", repoRoot, "worktree", "add", "--detach", "--quiet",
-        wt, commits[0].sha]);
-    if (add.status != 0)
-    return failRun(text(i"Could not create the scratch worktree: $(add.output.strip)"));
+    // The worktrees, one per commit and one for dub's walk, detached, so no
+    // branch is created or moved; and the run's directories in the store.
+    const pid = thisProcessID.to!string;
+    const scratch = buildPath(tempDir, "ci-each-commit-" ~ pid);
+    const runs = buildPath(graphCache, "runs", "build-each-" ~ pid);
+    string[] worktrees;
     scope (exit)
     {
-        runGit(["-C", repoRoot, "worktree", "remove", "--force", wt]);
-        if (wt.exists)
-            rmdirRecurse(wt);
+        foreach (wt; worktrees)
+            runGit(["-C", repoRoot, "worktree", "remove", "--force", wt]);
+        if (scratch.exists)
+            rmdirRecurse(scratch);
     }
+    string addWorktree(string name, string sha)
+    {
+        const wt = buildPath(scratch, name);
+        const add = runGit(["-C", repoRoot, "worktree", "add", "--detach", "--quiet", wt, sha]);
+        if (add.status != 0)
+        {
+            error(i"Could not create the scratch worktree $(wt): $(add.output.strip)");
+            return null;
+        }
+        worktrees ~= wt;
+        return wt;
+    }
+    // A package a later commit adds is not in an earlier one, and has
+    // nothing to build there.
+    bool hasPackage(string sha, string pkg)
+        => [pkg ~ "/dub.sdl", pkg ~ "/dub.json"].any!(recipe =>
+            runGit(["-C", repoRoot, "cat-file", "-e", sha ~ ":" ~ recipe]).status == 0);
 
     i"Building $(pkgs.length) package(s) at $(commits.length) commit(s) after $(base[0 .. base.length < 9 ? $ : 9])".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
         .writeln("\n");
     flushStdout();
 
-    auto monitor = RunMonitor.start();
-    void onSample(in ResourceUsage) @safe
+    auto reporting = RunReporting(timings: true, ci: CiLog.detect(&systemEnvironment));
     {
-        monitor.sample();
+        import sparkles.base.term_caps : isTerminal;
+        import sparkles.ci_provider : CiProvider;
+        import task.reporter_live : LiveOptions, liveViewWanted, stdoutLiveView;
+
+        if (liveViewWanted(false, false, isTerminal(), reporting.ci.provider != CiProvider.none))
+            reporting.live = stdoutLiveView(LiveOptions());
     }
 
-    CommitFailure[] failures;
-    string[] failedLabels;
-    size_t processed;
-    const total = commits.length * pkgs.length;
-    walk: foreach (cIdx, commit; commits)
+    // Each commit planned in its own worktree. A package planning refuses
+    // joins the WebAssembly modules on dub's walk.
+    auto prepared = new PreparedRun[commits.length]; // the parts point into it
+    auto onGraph = new string[][commits.length];
+    auto withDub = new string[][commits.length];
+    RunPart[] parts;
+    size_t[] commitOf; // by part
+    foreach (k, commit; commits)
     {
-        // What the last commit's builds left untracked goes first: a file dub
-        // writes for a package (its `dub.selections.json`) that a later
-        // commit tracks otherwise stops the checkout. Ignored build output
-        // stays, so each build is still incremental.
-        runGit(["-C", wt, "clean", "-fdq"]);
-        const co = runGit(["-C", wt, "checkout", "--quiet", "--detach", commit.sha]);
-        if (co.status != 0)
-        return failRun(text(i"Could not check out $(commit.sha): $(co.output.strip)"));
-        // The packages this commit has; a package a later commit adds is not
-        // here yet, and has nothing to build.
-        string[] present;
         foreach (pkg; pkgs)
-            if (buildPath(wt, pkg, "dub.sdl").exists || buildPath(wt, pkg, "dub.json").exists)
-                present ~= pkg;
-            else
-            {
+            if (!hasPackage(commit.sha, pkg))
                 writeln(styledText(i"{dim $(commit.sha) $(pkg.baseName): not in this commit}"));
-                ++processed;
-            }
-        // The build graph builds what it can model against the shared store
-        // (build graph E3's follow-up): a commit compiles only the actions
-        // whose keys it changes. The WebAssembly cross-builds, and a package
-        // planning refuses, build with dub, and the report names them.
-        string[] onGraph, withDub;
-        foreach (pkg; present)
-            (wasiPackages.canFind(pkg.baseName) ? withDub : onGraph) ~= pkg;
-        while (onGraph.length)
-        {
-            import graph_driver : logicalProcessors, runGraph, RunOptions;
-
-            const header = styledText(i"{dim $(commit.sha)} {cyan $(onGraph.map!(p => p.baseName).join(", "))} {dim › the build graph › $(commit.subject)}");
-            writeln(header);
-            auto g = runGraph(wt, null, RunOptions(into: buildPath(graphCache, "runs",
-                text("build-each-", commit.sha, "-", thisProcessID)), cache: graphCache,
-                applications: onGraph.map!(p => p.baseName).array, buildOnly: true, failFast: failFast,
-                jobs: logicalProcessors));
-            if (g.error.length)
-            {
-                // A package the graph cannot plan builds with dub instead.
-                const refused = onGraph.filter!(p => g.error.startsWith(p.baseName ~ ":")).array;
-                if (!refused.length)
-                    return failRun(text(i"$(commit.sha): the build graph cannot plan: $(g.error)"));
-                warning(i"$(commit.sha): the build graph cannot model $(refused[0].baseName) ($(g.error)); building it with dub");
-                withDub ~= refused[0];
-                onGraph = onGraph.filter!(p => p != refused[0]).array;
-                continue;
-            }
-            processed += onGraph.length;
-            if (g.exitCode != 0)
-            {
-                foreach (line; g.log.lineSplitter.filter!(l => l.canFind(": failed")))
-                    writeln("  ", line);
-                foreach (pkg; onGraph)
-                    if (g.log.lineSplitter.any!(l => l.canFind(": failed") && l.canFind("sparkles." ~ pkg.baseName ~ ":")))
-                    {
-                        failures ~= CommitFailure(commit, pkg.baseName);
-                        failedLabels ~= commit.sha ~ " :" ~ pkg.baseName;
-                    }
-                if (!failures.length || failures[$ - 1].commit.sha != commit.sha)
-                {
-                    failures ~= CommitFailure(commit, onGraph.map!(p => p.baseName).join(","));
-                    failedLabels ~= commit.sha ~ " :" ~ onGraph.map!(p => p.baseName).join(",");
-                }
-                if (failFast)
-                    break walk;
-            }
             else
-                info(i"✓ $(commit.sha): $(onGraph.length) package(s) built by the build graph: $(g.stats.summary)");
-            break;
-        }
-        foreach (pi, pkg; withDub)
+                (wasiPackages.canFind(pkg.baseName) ? withDub[k] : onGraph[k]) ~= pkg;
+        if (!onGraph[k].length)
+            continue;
+        const wt = addWorktree(commit.sha, commit.sha);
+        if (wt is null)
+            return failRun(text(i"$(commit.sha): no worktree to build it in"));
+        while (onGraph[k].length)
         {
-            const pkgName = pkg.baseName;
-            const progress = i"[$(processed + 1)/$(total)]".text;
-            const header = styledText(i"{dim $(progress)} {yellow $(commit.sha)} {cyan $(pkgName)} {dim › dub (not on the build graph) › $(commit.subject)}");
-            mkdirRecurse(buildPath(wt, pkg, "build"));
-            auto lines = executeMonitoredLines(
-                dubBuildCommand(wt, pkg, pkgName, targetBuildArgs(pkgName, wasiCompiler)),
-                250.msecs, &onSample,
-                ChildStdin.empty, Duration.zero, withLdcDflags(null));
-            streamResultBox(header, lines,
-                () => resultVerdict(lines.result.status == 0),
-                (LogDelta d) => resultFooterRight(lines.result.usage, d));
-            monitor.sample();
-            ++processed;
-            writeln();
-
-            if (lines.result.status != 0)
-            {
-                failures ~= CommitFailure(commit, pkgName);
-                failedLabels ~= commit.sha ~ " :" ~ pkgName;
-                if (failFast)
-                    break walk;
-            }
+            prepared[k] = prepareGraph(wt, null, RunOptions(into: buildPath(runs, commit.sha), cache: graphCache,
+                applications: onGraph[k].map!(p => p.baseName).array, buildOnly: true));
+            const why = prepared[k].run.error;
+            if (!why.length)
+                break;
+            const refused = onGraph[k].filter!(p => why.startsWith(p.baseName ~ ":")).array;
+            if (!refused.length)
+                return failRun(text(i"$(commit.sha): the build graph cannot plan: $(why)"));
+            warning(i"$(commit.sha): the build graph cannot model $(refused[0].baseName) ($(why)); building it with dub");
+            withDub[k] ~= refused[0];
+            onGraph[k] = onGraph[k].filter!(p => p != refused[0]).array;
         }
+        if (!onGraph[k].length)
+            continue;
+        parts ~= RunPart(prepared[k].nodes, &prepared[k].run.plan.graph, prepared[k].layout, commit.sha);
+        commitOf ~= k;
     }
 
-    displayTestRunSummary(monitor.finish(processed, total, failedLabels));
+    // An action a commit shares with the one before it waits for that one,
+    // and reuses its result.
+    TaskEdge[] across;
+    foreach (i; 1 .. parts.length)
+    {
+        const diff = runGit(["-C", repoRoot, "diff", "--name-only", parts[i - 1].idSuffix, parts[i].idSuffix]);
+        const changed = diff.status == 0 ? diff.output.lineSplitter.map!(l => l.idup).array : null;
+        if (diff.status != 0)
+            warning(i"$(parts[i].idSuffix): cannot list what changed since $(parts[i - 1].idSuffix), so nothing waits to be reused");
+        across ~= reuseEdges(*parts[i - 1].graph, parts[i - 1].idSuffix, *parts[i].graph, parts[i].idSuffix,
+            changed);
+    }
+
+    // dub's walk: per commit, a checkout of it, then each package's build,
+    // one at a time, as they share the worktree's build directories.
+    enum dubSuffix = "dub";
+    ActionGraph dubEdges; // edges only: the walk's tasks are keyless
+    TaskNode[] dubNodes;
+    string[][string] dubPackageOf; // a dub build's id: [commit, package]
+    InProcessHandler[string] handlers;
+    if (withDub.any!(w => w.length > 0))
+    {
+        const dubWt = addWorktree(dubSuffix, commits[0].sha);
+        if (dubWt is null)
+            return failRun("no worktree for the packages dub builds");
+        EnvEntry[] dubEnv;
+        foreach (name, value; withLdcDflags(null))
+            dubEnv ~= EnvEntry(name, value);
+        TaskId last;
+        foreach (k, commit; commits)
+        {
+            if (!withDub[k].length)
+                continue;
+            const checkout = taskId("checkout", commit.sha).value;
+            dubNodes ~= TaskNode(id: checkout, kind: TaskKind.build, label: "checkout " ~ commit.sha,
+                order: PresentationKey(1, checkout.text, 0, 0), resources: ResourceClaim(jobsWeight: 1),
+                action: TaskAction(InProcessAction("build-each:checkout", [dubWt, commit.sha] ~ withDub[k])));
+            if (!last.empty)
+                dubEdges.edges ~= TaskEdge(last, checkout, EdgeCondition.onCompletion, EdgeReason.planning);
+            last = checkout;
+            foreach (pkg; withDub[k])
+            {
+                const id = taskId("dub", pkg.baseName, commit.sha).value;
+                dubNodes ~= TaskNode(id: id, kind: TaskKind.build, label: "dub " ~ pkg.baseName ~ " " ~ commit.sha,
+                    order: PresentationKey(1, id.text, 0, 0), resources: ResourceClaim(jobsWeight: 2),
+                    action: TaskAction(ProcessAction(argv: dubBuildCommand(dubWt, pkg, pkg.baseName,
+                        targetBuildArgs(pkg.baseName, wasiCompiler)), envDelta: dubEnv, cwd: dubWt)));
+                dubEdges.edges ~= TaskEdge(checkout, id, EdgeCondition.onSuccess, EdgeReason.planning);
+                if (last != checkout)
+                    dubEdges.edges ~= TaskEdge(last, id, EdgeCondition.onCompletion, EdgeReason.planning);
+                dubPackageOf[id.text] = [commit.sha, pkg.baseName];
+                last = id;
+            }
+        }
+        const into = buildPath(runs, dubSuffix);
+        mkdirRecurse(into);
+        parts ~= RunPart(dubNodes, &dubEdges, RunLayout(dubWt, into, graphCache), dubSuffix);
+        handlers["build-each:checkout"] = (ref TaskContext!Sched ctx, const ref InProcessAction a) {
+            // What the last commit's builds left untracked goes first: a file
+            // dub writes for a package (its `dub.selections.json`) that a
+            // later commit tracks otherwise stops the checkout. Ignored build
+            // output stays, so each build is still incremental.
+            const wt = a.arguments[0];
+            runGit(["-C", wt, "clean", "-fdq"]);
+            const co = runGit(["-C", wt, "checkout", "--quiet", "--detach", a.arguments[1]]);
+            if (co.status != 0)
+            {
+                ctx.output(OutputStream.stderr, co.output.strip);
+                return TaskOutcome(Failed(FailureReason.exitStatus, co.status));
+            }
+            foreach (pkg; a.arguments[2 .. $])
+                mkdirRecurse(buildPath(wt, pkg, "build"));
+            return TaskOutcome(Succeeded());
+        };
+    }
+    if (!parts.length)
+    {
+        info(i"no commit of $(base)..HEAD has any of the packages: nothing to build");
+        return ranOk();
+    }
+
+    static struct Echo
+    {
+        void put(T)(T s)
+        {
+            import std.stdio : stdout;
+
+            stdout.write(s);
+        }
+    }
+    Echo echo;
+    auto stats = new RunStats[parts.length];
+    const result = runActionsAcross(parts, across, echo, logicalProcessors, stats, failFast, handlers, reporting);
+    {
+        import std.array : appender;
+
+        auto discard = appender!string;
+        cast(void) storeOperation(graphCache, "evict", discard); // BGS5, off the run's path
+    }
+    writeln();
+
+    // A package built at a commit when its application's link succeeded,
+    // or its dub build did.
+    CommitFailure[] failures;
+    foreach (i, ref part; parts)
+    {
+        if (part.idSuffix == dubSuffix)
+        {
+            foreach (id, which; dubPackageOf)
+                if (stats[i].outcomes.get(id, OutcomeKind.skipped) != OutcomeKind.succeeded)
+                    failures ~= CommitFailure(commits[commits.countUntil!(c => c.sha == which[0])], which[1]);
+            continue;
+        }
+        const k = commitOf[i];
+        foreach (pkg; onGraph[k])
+        {
+            const link = "link:sparkles." ~ pkg.baseName ~ ":application:";
+            const built = part.graph.actions.any!(a => a.kind == ActionKind.link && a.id.text.startsWith(link)
+                && stats[i].outcomes.get(a.id.text, OutcomeKind.skipped) == OutcomeKind.succeeded);
+            if (!built)
+                failures ~= CommitFailure(commits[k], pkg.baseName);
+        }
+        info(i"$(commits[k].sha): $(stats[i].summary)");
+    }
+    failures.sort!((a, b) => commits.countUntil(a.commit) < commits.countUntil(b.commit));
     const report = failureReport(failures, commits.length, pkgs.length);
-    if (failures.length)
-    return failRun(report);
+    if (failures.length || result.exitCode != 0)
+        return failRun(failures.length ? report : text("the build graph's run failed (exit ", result.exitCode, ")"));
     info(i"✓ $(report)");
     return ranOk();
 }

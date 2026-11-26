@@ -1017,7 +1017,8 @@ struct CommitsCommand
 {
     @(Command("build-each",
         shortDescription: "Build sub-packages at every commit from --base to HEAD",
-        description: "Builds every commit of the range in one scratch worktree, so each commit of "
+        description: "Builds every commit of the range as one run of the build graph, a scratch "
+        ~ "worktree per commit, so each commit of "
         ~ "a stack is known to build: CI builds only a pull request's tip. Defaults to the apps "
         ~ "whose default configuration dub test never compiles (hue, ui-gallery, diagram).",
     ))
