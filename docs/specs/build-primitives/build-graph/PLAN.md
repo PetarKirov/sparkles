@@ -316,8 +316,8 @@ Gate:
   `dub-manifest-nix-wasm`) for `wasm32-unknown-wasip2`, and each validates
   (`wasm-tools validate`; a component for wasip2, TCW6).
 - `hue`'s and `terminal`'s Android libraries link for aarch64 and x86_64 from
-  the configuration `buildDAndroidLib` builds, and export the same dynamic
-  symbols as its output.
+  their `android` configurations, and export the same dynamic symbols as the
+  Nix packages' dub builds of them (`buildSparklesAndroidLib`).
 - `ci commits build-each` over a range builds the modules on the graph, and a
   second run reuses every action.
 
