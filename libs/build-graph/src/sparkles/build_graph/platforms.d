@@ -78,6 +78,9 @@ struct ToolchainTable
 {
     string build;                 /// the build platform's `config`
     HostToolchain[string] hosts;  /// by `config`, the build platform's included
+    /// The packages whose default configuration builds for another host, and
+    /// those hosts, by package name (the WebAssembly modules).
+    string[][string] packages;
 
     /// The entry of `config`, or null when the table has none.
     const(HostToolchain)* host(string config) const pure nothrow => config in hosts;
@@ -140,6 +143,13 @@ Expected!(ToolchainTable, string) parseToolchainTable(string json) @safe
             return err!ToolchainTable(text(config, ": an entry needs `system`, `ldc` and `archiver`"));
         t.hosts[config] = h;
     }
+    if (auto packages = "packages" in root.objectNoRef)
+        if (packages.type == JSONType.object)
+            foreach (name, ref hostsOf; packages.objectNoRef)
+                if (hostsOf.type == JSONType.array)
+                    foreach (h; hostsOf.arrayNoRef)
+                        if (h.type == JSONType.string)
+                            t.packages[name] ~= h.str;
     if (t.build !in t.hosts)
         return err!ToolchainTable(text("the build platform ", t.build, " has no entry"));
     if (!t.hosts[t.build].platform.canExecute)
@@ -165,7 +175,8 @@ Expected!(ToolchainTable, string) parseToolchainTable(string json) @safe
             "wasm32-unknown-wasip1": {"system": "wasm32-wasip1", "canExecute": false,
                 "triple": "wasm32-unknown-wasip1", "ldc": "/s/wasi/bin/ldc2",
                 "archiver": "/s/llvm/bin/llvm-ar", "emulator": "/s/wasmtime/bin/wasmtime"}
-        }
+        },
+        "packages": {"text-wasm": ["wasm32-unknown-wasip1", "wasm32-unknown-wasip2"]}
     }`);
     assert(t.hasValue, t.hasError ? t.error : null);
     assert(t.value.buildHost.platform == Platform("x86_64-unknown-linux-gnu", "x86_64-linux", null, true));
@@ -176,6 +187,8 @@ Expected!(ToolchainTable, string) parseToolchainTable(string json) @safe
         "left to the compiler's configuration");
     assert(t.value.host("aarch64-unknown-linux-android") is null);
     assert(t.value.names == ["wasm32-unknown-wasip1", "x86_64-unknown-linux-gnu"]);
+    assert(t.value.packages.length == 1
+        && t.value.packages["text-wasm"] == ["wasm32-unknown-wasip1", "wasm32-unknown-wasip2"]);
 }
 
 /// A table without its build platform, with an entry missing a tool, or with
