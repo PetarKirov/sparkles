@@ -29,6 +29,8 @@ import std.typecons : Nullable;
 import sparkles.build_graph.actions : ActionGraph, ActionKind, CoverageAttempt, TestLeg, TestProgram, Tools,
     planActions, taskNodes;
 import sparkles.build_graph.execute : RunLayout, RunReporting, RunStats;
+import sparkles.build_graph.platforms : HostToolchain, ToolchainTable;
+import sparkles.base.expected : Expected;
 import sparkles.build_graph.variants : LayoutCheck, PlanError, PlanOptions, Role, ToolchainIdentity,
     VariantPlan, planVariants;
 import sparkles.build_primitives.task.model : PlanExpected, TaskNode, planErr, planOk;
@@ -90,6 +92,162 @@ BuildPlatform platformOf(string compiler) @safe
         frontend ? 2000 + frontend[1].to!int : 2113, own ? own[1].idup : (dmd ? "2.112.1" : "1.43.0"));
     memo[compiler] = p;
     return p;
+}
+
+
+/++
+The toolchain table (build-graph SPEC BGH4): `$SPARKLES_TOOLCHAINS`, which the
+dev shells and `ci`'s wrapper set (nix/packages/toolchains.nix). Read once.
++/
+Expected!(ToolchainTable, string) toolchainTable() @safe
+{
+    import std.file : exists, readText;
+    import sparkles.base.expected : err, ok;
+    import sparkles.build_graph.platforms : parseToolchainTable;
+
+    // Per thread: each thread that plans reads it once.
+    static ToolchainTable table;
+    static string why;
+    static bool read;
+    if (!read)
+    {
+        const path = environment.get("SPARKLES_TOOLCHAINS", "");
+        if (!path.length || !path.exists)
+            why = "SPARKLES_TOOLCHAINS names no toolchain table; run in the dev shell, or through `nix run .#ci`";
+        else
+        {
+            auto parsed = parseToolchainTable(readText(path));
+            if (parsed.hasError)
+                why = text("SPARKLES_TOOLCHAINS (", path, "): ", parsed.error);
+            else
+                table = parsed.value;
+        }
+        read = true;
+    }
+    return why.length ? err!ToolchainTable(why) : ok(table);
+}
+
+/++
+The platform a build for host `config` resolves against (BGH1): the frontend
+and compiler versions of the host's compiler, and dub's platform and
+architecture identifiers derived from the host, as dub derives them, by
+compiling a probe of `version` conditions for the host's triple. The build
+platform's are this driver's own. Memoized; the error names what failed.
++/
+Expected!(BuildPlatform, string) hostPlatform(string config, string compiler = compilerName) @trusted
+{
+    import std.file : remove, tempDir, write;
+    import std.process : execute, thisProcessID;
+    import sparkles.base.expected : err, ok;
+
+    __gshared BuildPlatform[string] memo;
+    const key = config ~ " " ~ compiler;
+    if (auto known = key in memo)
+        return ok(*known);
+    const table = toolchainTable();
+    if (table.hasError)
+        return err!BuildPlatform(table.error.idup);
+    const entry = table.value.host(config);
+    if (entry is null)
+        return err!BuildPlatform(text("the toolchain table has no host ", config, "; it has ",
+            table.value.names.join(", ")));
+    const isBuild = config == table.value.build;
+    const binary = isBuild && compiler == "dmd" ? entry.dmd : entry.ldc;
+    if (!binary.length)
+        return err!BuildPlatform(text(config, ": the toolchain table names no ", compiler));
+    auto p = platformOf(binary).dup;
+    p.config = config;
+    if (!isBuild)
+    {
+        const probe = buildPath(tempDir, text("sparkles-platform-probe-", thisProcessID, ".d"));
+        write(probe, platformProbe);
+        scope (exit)
+            remove(probe);
+        const ran = execute([binary, "-mtriple=" ~ (entry.platform.triple.length ? entry.platform.triple : config),
+            "-o-", probe]);
+        if (ran.status != 0)
+            return err!BuildPlatform(text(config, ": its compiler could not probe the platform: ", ran.output));
+        if (!parsePlatformProbe(ran.output, p.platform, p.architecture))
+            return err!BuildPlatform(text(config, ": the platform probe printed no identifiers: ", ran.output));
+    }
+    memo[key] = p;
+    return ok(p);
+}
+
+/// The probe $(LREF hostPlatform) compiles: dub's own `version` lists
+/// (`dub.platform`), and `wasi`, which the repository's recipes match.
+enum platformProbe = q{
+module probe;
+enum string[] platforms = () {
+    string[] r;
+    version (Windows) r ~= "windows";
+    version (linux) r ~= "linux";
+    version (Posix) r ~= "posix";
+    version (OSX) r ~= ["osx", "darwin"];
+    version (iOS) r ~= ["ios", "darwin"];
+    version (FreeBSD) r ~= "freebsd";
+    version (Android) r ~= "android";
+    version (WebAssembly) r ~= "wasm";
+    version (WASI) r ~= "wasi";
+    version (Emscripten) r ~= "emscripten";
+    return r;
+}();
+enum string[] architectures = () {
+    string[] r;
+    version (X86) r ~= "x86";
+    version (X86_64) r ~= "x86_64";
+    version (ARM) r ~= "arm";
+    version (AArch64) r ~= "aarch64";
+    version (WebAssembly) { version (D_LP64) r ~= "wasm64"; else r ~= "wasm32"; }
+    return r;
+}();
+pragma(msg, "platform ", platforms);
+pragma(msg, "architecture ", architectures);
+};
+
+/// The identifiers the probe printed, `platform ["wasm", "wasi"]` and
+/// `architecture ["wasm32"]`; false when either line is missing.
+bool parsePlatformProbe(string output, out string[] platform, out string[] architecture) @safe
+{
+    import std.json : JSONType, parseJSON;
+    import std.string : lineSplitter, strip;
+
+    bool sawPlatform, sawArchitecture;
+    foreach (line; output.lineSplitter)
+        foreach (kind; ["platform ", "architecture "])
+            if (line.startsWith(kind))
+            {
+                string[] ids;
+                try
+                    foreach (v; (() @trusted => parseJSON(line[kind.length .. $].strip).array.dup)())
+                        if (v.type == JSONType.string)
+                            ids ~= v.str;
+                catch (Exception)
+                    return false;
+                if (kind == "platform ")
+                {
+                    platform = ids;
+                    sawPlatform = true;
+                }
+                else
+                {
+                    architecture = ids;
+                    sawArchitecture = true;
+                }
+            }
+    return sawPlatform && sawArchitecture;
+}
+
+@("graph_driver.parsePlatformProbe")
+@safe unittest
+{
+    string[] platform, architecture;
+    assert(parsePlatformProbe("platform [\"wasm\", \"wasi\"]\narchitecture [\"wasm32\"]\n", platform, architecture));
+    assert(platform == ["wasm", "wasi"] && architecture == ["wasm32"]);
+    assert(parsePlatformProbe("platform [\"linux\", \"posix\", \"android\"]\narchitecture [\"aarch64\"]",
+        platform, architecture));
+    assert(platform == ["linux", "posix", "android"] && architecture == ["aarch64"]);
+    assert(!parsePlatformProbe("platform []\n", platform, architecture), "both lines are needed");
 }
 
 /// The processors online, as `std.parallelism.totalCPUs` counts them.
@@ -198,7 +356,10 @@ Planned planRepository(string root, bool markers = false, string only = null, To
     const string[] singleFiles = null, const string[] applications = null)
 {
     // The platform the tools' compiler builds for (D19).
-    auto platform = platformOf(tools.compiler);
+    auto platform = platformOf(tools.compiler).dup;
+    const table = toolchainTable();
+    if (table.hasValue)
+        platform.config = table.value.build;
     // The packages planned: `only`, else `packages`, else every one, unless
     // only single-file packages are asked for.
     bool chosen(string name) => only.length ? name == only : packages.length ? packages.canFind(name)
@@ -1011,7 +1172,7 @@ PreparedRun prepareGraph(string root, string only, RunOptions o)
 
 /**
 Plans the test root of the package `only` (every package's when null) with
-the tools on `PATH`, named by absolute path, and runs it on the task-DAG
+the toolchain table's tools (100 1 17 20 59 62 67 100 131 979 982 983 985 986 987 988 990 996LREF pathTools)), and runs it on the task-DAG
 executor into `o.into`, against the store beneath `o.cache` when one is
 named.
 */
@@ -1605,31 +1766,33 @@ string[] manifestCompleteness(const ActionGraph g, string root, string runDirect
 }
 
 /**
-The tools a run names, each found on `PATH` by absolute path, and their
-identity (§8): the compiler's configuration passed explicitly, its own tree
-remapped to `/ldc` (BGA11), the fork's dependency output used when the
-compiler has it. Returns null, or why the tools cannot be named.
+The tools a run names, by absolute path: the build platform's compiler,
+archiver, C driver and linker from the toolchain table (BGH4), the generator
+tools found on `PATH`; and their identity (§8): the compiler's
+configuration passed explicitly, its own tree remapped to `/ldc` (BGA11), the
+fork's dependency output used when the compiler has it. Returns null, or why the tools cannot be named.
 */
 string pathTools(out Tools tools, out Toolchain toolchain)
 {
     import std.process : execute;
 
-    // lld is Linux's linker (the build-settings policy); elsewhere the C
-    // driver's own links, as dub's do: macOS's `ld64.lld` asserts on the
-    // Objective-C method lists of the windowing packages.
-    version (linux)
-        const linker = onPath("ld.lld");
-    else
-        const string linker = null;
-    tools = Tools(compiler: onPath(compilerName), archiver: onPath("ar"), cc: onPath("cc"), linker: linker,
+    // The build platform's toolchain, from the table (BGH4): its compiler,
+    // archiver, C driver and linker (lld on Linux, by the build-settings
+    // policy; elsewhere the C driver's own, as dub's links are: macOS's
+    // `ld64.lld` asserts on the Objective-C method lists of the windowing
+    // packages). The generator tools stay the build platform's `PATH`'s.
+    const table = toolchainTable();
+    if (table.hasError)
+        return table.error;
+    const build = &table.value.buildHost();
+    const compiler = compilerName == "dmd" ? build.dmd : build.ldc;
+    tools = Tools(compiler: compiler, archiver: build.archiver, cc: build.cc, linker: build.linker,
         fail: onPath("false"), deviceCompiler: onPath("ldc2-vulkan"));
     foreach (name; ["spirv-val", "spirv-opt", "spirv-dis", "spirv-as", "spirv-cross", "glslangValidator"])
         tools.shaderTools ~= [name, onPath(name)];
-    version (linux)
-        if (tools.linker is null)
-            return "ld.lld must be on PATH";
-    if (tools.compiler is null || tools.archiver is null || tools.cc is null)
-        return compilerName ~ ", ar and cc must be on PATH";
+    if (!tools.compiler.length || !tools.cc.length)
+        return text("the toolchain table's build platform, ", table.value.build, ", names no ", compilerName,
+            " or no C driver");
     // The fork's dependency output, which a compile's manifest comes from.
     const help = execute([tools.compiler, "--help-hidden"]);
     tools.dependencyOutput = help.output.canFind("makedeps-digests") && !noDependencyOutput;
