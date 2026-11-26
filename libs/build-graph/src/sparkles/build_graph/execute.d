@@ -344,6 +344,8 @@ import sparkles.build_primitives.task.live_view : LiveView, TranscriptAndView, T
 import sparkles.build_primitives.task.model : OutcomeKind, TaskOutcome, kindOf;
 import sparkles.build_primitives.task.process : EventChannel, InProcessHandler, ProcessDriver, ProcessDriverOptions;
 import sparkles.event_horizon.sched : Sched;
+import sparkles.build_graph.probes : eachAbsent, isImmutableRoot, parseProbes, Probes;
+import sparkles.build_graph.listings : DirectoryListings;
 import sparkles.build_graph.store : Manifest, ManifestEntry, OutputRecord, ResultRecord, Store,
     preimageDifferences, differences,
     cacheDirTag, declaredKeyOf, formatVersion, hexOf, layoutVersion, parseHex, readAll, readBytes, resultKey,
@@ -1332,6 +1334,21 @@ struct ActionDriver
         foreach (path; list[0].absent)
             if (!path.startsWith("/nix/store/") && present(path))
                 return ["manifest", path ~ " appeared"];
+        if (list[0].probes.length)
+        {
+            const block = store.probes(list[0].probes);
+            if (block is null)
+                return ["manifest", "its probe block " ~ list[0].probes ~ " is gone"];
+            string appeared;
+            cast(void) eachAbsent(*block, (string path) {
+                if (!present(path))
+                    return true;
+                appeared = path;
+                return false;
+            });
+            if (appeared.length)
+                return ["manifest", appeared ~ " appeared"];
+        }
         return ["manifest", "no manifest matches"];
     }
 
@@ -1556,11 +1573,41 @@ struct ActionDriver
             if (!digestOf(f.path, d) || d != f.digest)
                 return false;
         }
+        listings.beginCheck();
         foreach (path; m.absent)
-            if (!path.startsWith("/nix/store/") && present(path))
+            if (!path.startsWith("/nix/store/") && listed(path))
                 return false;
-        return true;
+        if (!m.probes.length)
+            return true;
+        const block = m.block !is null ? m.block : store.probes(m.probes);
+        return block !is null && eachAbsent(*block, (string path) => !listed(path));
     }
+
+    /*
+    Whether a path exists, by its directory's listing while that listing is
+    current (BGK2, `sparkles.build_graph.listings`): a manifest's probes stand
+    for tens of thousands of candidates in a few hundred directories, most of
+    them missing. A path in the run directory, which the run's own actions
+    write, and one no listing can answer for are looked up directly.
+    */
+    private bool listed(string path)
+    {
+        import std.datetime.systime : Clock;
+        import std.string : lastIndexOf;
+        import sparkles.build_graph.listings : Presence;
+
+        if (path.startsWith("$RUN/"))
+            return present(path);
+        const slash = path.lastIndexOf('/');
+        const dir = slash < 0 ? "" : path[0 .. slash];
+        const name = path[slash + 1 .. $];
+        const now = (Clock.currStdTime - 621_355_968_000_000_000L) * 100;
+        const answer = dir.startsWith("/") ? listings.of(system, dir[1 .. $], name, now)
+            : path.startsWith("/") ? listings.of(system, "", name, now) : listings.of(worktree, dir, name, now);
+        return answer == Presence.unknown ? present(path) : answer == Presence.present;
+    }
+
+    private DirectoryListings listings; // BGK2: the directories this run listed
 
     // Links `id`'s output directory to a published result and takes its
     // outputs' digest for the consumers' keys.
@@ -1687,8 +1734,9 @@ struct ActionDriver
     private bool readManifest(TaskId id, out Manifest m, out string why)
     {
         const measure = relativeToRun(layout.measureOf(id));
-        string digestsText, absentText;
-        if (!readAll(run_, measure ~ "/digests", digestsText) || !readAll(run_, measure ~ "/absent", absentText))
+        string digestsText, absentText, probesText;
+        const haveProbes = readAll(run_, measure ~ "/probes", probesText);
+        if (!readAll(run_, measure ~ "/digests", digestsText) || !haveProbes && !readAll(run_, measure ~ "/absent", absentText))
         {
             why = "the compiler wrote no dependency digests";
             return false;
@@ -1712,9 +1760,38 @@ struct ActionDriver
             }
             m.files ~= e;
         }
-        if (!dropAbsentCandidates)
+        if (dropAbsentCandidates)
+            return true;
+        // The candidates under a store root are never checked (a store path's
+        // contents are its name's), so neither are they kept.
+        void absent(string path)
+        {
+            const n = named(path);
+            if (!isImmutableRoot(n))
+                m.absent ~= n;
+        }
+        if (!haveProbes)
+        {
             foreach (path; makeRulePrerequisites(absentText))
-                m.absent ~= named(path);
+                absent(path);
+            return true;
+        }
+        Probes reported;
+        string[] rest;
+        if (!parseProbes(probesText, reported, rest))
+        {
+            why = "the compiler's search probes are malformed";
+            return false;
+        }
+        foreach (path; rest)
+            absent(path);
+        auto block = new Probes;
+        *block = reported.withoutImmutableRoots((string r) => named(r));
+        if (block.modules.length || block.strings.length)
+        {
+            m.block = block;
+            m.probes = block.digest;
+        }
         return true;
     }
 
@@ -2369,7 +2446,7 @@ private void tickLiveView(ref Sched s, LiveView view, const(bool)* working)
         r.task = task;
         r.resultKey = task ~ "-key";
         r.outputs = [OutputRecord("f", 100, false, blake3(cast(const(ubyte)[]) bytes[]))];
-        assert(store.publish(out_.value, task, r, "../../../build/v1/results/{}/out") !is null, store.note);
+        assert(store.publish(out_.value, task, r, "../../../build/v2/results/{}/out") !is null, store.note);
         return r;
     }
 
@@ -2408,11 +2485,11 @@ private void tickLiveView(ref Sched s, LiveView view, const(bool)* working)
     assert(store.find("b-key") is null && store.find("a-key") !is null);
     store.releaseLeases();
     string record;
-    assert(readAll(build.value, "v1/records/b-key", record) && record.canFind("output "));
+    assert(readAll(build.value, "v2/records/b-key", record) && record.canFind("output "));
 
     // A flipped byte, same size: a lookup that rehashes no hit misses it, and
     // verification sees it (BGS6).
-    auto published = build.value.walk("v1/results/a-key/out");
+    auto published = build.value.walk("v2/results/a-key/out");
     char[100] flipped = 'a';
     flipped[50] = 'z';
     assert(!published.value.writeFileAtomic("f", flipped[]).hasError);
@@ -2425,7 +2502,7 @@ private void tickLiveView(ref Sched s, LiveView view, const(bool)* working)
     // With the sample at one, the lookup rehashes every hit and finds it.
     publishOne("d", 'd');
     store.releaseLeases();
-    auto dOut = build.value.walk("v1/results/d-key/out");
+    auto dOut = build.value.walk("v2/results/d-key/out");
     flipped[] = 'd';
     flipped[7] = 'x';
     assert(!dOut.value.writeFileAtomic("f", flipped[]).hasError);

@@ -13,6 +13,7 @@ $(LIST
         * `leases/<key>/<holder>` one file per process using a result (BGS4);
         * `staging/` entries being written, published by one rename (BGS2);
         * `trash/` entries a loser, a corruption or a removal moved aside;
+        * `probes/<digest>` a probe block, which every manifest naming it shares (BGK2);
         * `pruned` present while no manifest list holds a manifest whose
         result is neither published nor recorded (BGS5).
 )
@@ -40,27 +41,33 @@ module sparkles.build_graph.store;
 
 import std.algorithm.iteration : splitter;
 import std.algorithm.searching : startsWith;
-import std.array : array;
+import std.array : array, replicate;
 import std.conv : text;
 import std.string : indexOf;
 
 import sparkles.base.vfs.types : Access, Disposition, EntryKind, OpenMode, Rights, Stat, StatMask;
+import sparkles.build_graph.probes : parseProbes, Probes;
 
 // The system's random source (glibc 2.36 and later, the BSDs, macOS).
 private extern (C) void arc4random_buf(void* buf, size_t nbytes) nothrow @nogc;
 
-/// The store's layout version: the name of its directory, `v1` (BGS1, BGS10).
-enum uint layoutVersion = 1;
+/// The store's layout version: the name of its directory, `v2` (BGS1, BGS10).
+enum uint layoutVersion = 2;
 
 /// The format version of every record and manifest list (BGS10, BGK1): it
 /// changes with any change to how a key, a manifest or a record is made.
-enum uint formatVersion = 1;
+enum uint formatVersion = 2;
 
 /// How many manifests a declared key keeps (BGK3).
 enum size_t manifestBound = 16;
 
-/// The marker that no manifest list holds a prunable manifest (BGS5).
+/// The marker that no manifest list holds a prunable manifest (BGS5): the
+/// prune token a prune started with, written once it scanned every list.
 private enum prunedMarker = "pruned";
+
+/// The token every change that can make a manifest prunable replaces
+/// (BGS5): a prune whose marker holds another token runs.
+private enum pruneToken = "prune-token";
 
 /// One published result, as inspection lists it (BGS7).
 struct StoreEntry
@@ -98,12 +105,18 @@ struct ManifestEntry
     ubyte[32] digest; ///
 }
 
-/// What a compile resolved (BGK2): the files it read and the absent
-/// candidates its searches probed.
+/// What a compile resolved (BGK2): the files it read, and the absent
+/// candidates its searches probed: as the digest of its probe block, which
+/// the store keeps once for every manifest that names it
+/// ($(LREF Store.putProbes)), and as the paths no probe rule covers.
 struct Manifest
 {
     ManifestEntry[] files; ///
-    string[] absent;       ///
+    string[] absent;       /// the absent candidates outside `probes`
+    string probes;         /// the digest of its probe block, or null
+    /// The block `probes` names, when this process made or read it; not
+    /// part of $(LREF Manifest.text), which names it by its digest.
+    const(Probes)* block;
     /// The result key $(LREF resultKey) gives this manifest under its list's
     /// declared key, when known: a list records it beside each manifest, so
     /// pruning and recording a list compare keys and hash no manifest text
@@ -114,7 +127,7 @@ struct Manifest
     /// The canonical text, one entry per line, files first.
     string text() const @safe pure
     {
-        string s;
+        string s = probes.length ? "probes " ~ probes ~ "\n" : null;
         foreach (ref f; files)
             s ~= "file " ~ hexOf(f.digest) ~ " " ~ f.path ~ "\n";
         foreach (a; absent)
@@ -211,14 +224,13 @@ bool parseRecord(scope const(char)[] source, out ResultRecord r) @safe pure
 /// Parses a manifest list: manifests separated by `--` lines, after a
 /// `format` line; empty for another format. A manifest's `key` line, which
 /// lists written before it lack, is its cached result key.
-Manifest[] parseManifestList(scope const(char)[] source) @safe pure
+Manifest[] parseManifestList(const(char)[] source) @safe pure
 {
-    import std.string : lineSplitter;
-
     Manifest[] list;
     Manifest current;
     bool any, formatSeen;
-    foreach (line; source.lineSplitter)
+    // LF only: a path the compiler read or probed may hold a CR.
+    foreach (line; source.splitter('\n'))
     {
         string rest;
         if (word(line, "format", rest))
@@ -250,6 +262,11 @@ Manifest[] parseManifestList(scope const(char)[] source) @safe pure
         }
         else if (word(line, "key", rest))
             current.resultKey = rest.idup;
+        else if (word(line, "probes", rest))
+        {
+            current.probes = rest.idup;
+            any = true;
+        }
     }
     if (any)
         list ~= current;
@@ -271,7 +288,7 @@ becomes a manifest (BGK2). It enters every compile's result key, so a
 change to the extraction alone, which no declared key sees, still changes
 them (BGK1, oracle 9). Mutable only so the oracle can play another.
 */
-__gshared uint manifestExtraction = 1;
+__gshared uint manifestExtraction = 2;
 
 /// A compile's result key: the digest of its declared key and its
 /// manifest's entries (BGK3), under the manifest extraction's version.
@@ -363,7 +380,7 @@ struct Store(D)
         auto v = dir.walkAll("v" ~ layout.text);
         if (v.hasError)
             return false;
-        foreach (sub; ["results", "manifests", "leases", "staging", "trash", "preimages", "recency", "records", "digests"])
+        foreach (sub; ["results", "manifests", "leases", "staging", "trash", "preimages", "recency", "records", "digests", "probes"])
             if (v.value.walkAll(sub).hasError)
                 return false;
         s.v = move(v.value);
@@ -380,24 +397,37 @@ struct Store(D)
 
     A manifest is recorded only for a result just published or served, so
     one becomes prunable only when a result leaves `results/` without a
-    digest record, or a digest record is dropped. Each of those removes the
-    store's `pruned` marker first, and a prune writes it before it reads
-    the lists, so a prune that one of them races is repeated by the next.
-    While the marker stands, no list can have changed, and the prune is
-    skipped: it would read and rewrite nothing.
+    digest record, or a digest record is dropped. Each of those first
+    replaces the store's prune token (`unpruned`). A prune reads the token,
+    scans every list, and only when the scan read and wrote each one writes
+    the token into `pruned`. So a prune is skipped exactly while `pruned`
+    holds the current token: no list can have changed since a complete scan.
+    A removal during a scan, a crash in one, or a failed read or write leaves
+    the marker behind the token, and the next prune runs.
     */
     private void pruneManifests(ref size_t dropped)
     {
         auto dir = v.walk("manifests");
-        if (dir.hasError || !statPath(v, prunedMarker).hasError)
+        if (dir.hasError)
             return;
-        if (v.writeFileAtomic(prunedMarker, "").hasError)
+        string token, done;
+        if (!readAll(v, pruneToken, token))
+        {
+            unpruned();
+            if (!readAll(v, pruneToken, token))
+                return;
+        }
+        if (readAll(v, prunedMarker, done) && done == token)
             return;
-        foreach (declared; names("manifests"))
+        bool complete;
+        foreach (declared; names("manifests", complete))
         {
             string source;
             if (!readAll(v, "manifests/" ~ declared, source))
+            {
+                complete = false;
                 continue;
+            }
             Manifest[] kept;
             foreach (ref m; parseManifestList(source))
             {
@@ -410,14 +440,105 @@ struct Store(D)
             if (text_ == source)
                 continue;
             if (kept.length ? dir.value.writeFileAtomic(declared, text_).hasError : dir.value.unlinkAt(declared).hasError)
+            {
+                complete = false;
                 continue;
+            }
             if (!kept.length)
                 ++dropped;
         }
+        if (complete)
+            cast(void) v.writeFileAtomic(prunedMarker, token);
     }
 
     // BGS5: a manifest may have become prunable; the next eviction prunes.
-    private void unpruned() => cast(void) v.unlinkAt(prunedMarker);
+    private void unpruned()
+    {
+        ubyte[8] fresh;
+        (() @trusted => arc4random_buf(fresh.ptr, fresh.length))();
+        cast(void) v.writeFileAtomic(pruneToken, hexOf(fresh[]));
+    }
+
+    /**
+    BGK2: keeps the probe block `p` under its digest `digest`, once for
+    every manifest that names it. It is written whenever a list that names
+    it is: that refreshes its age, which the sweep's grace reads, and
+    replaces a block whose bytes were lost or damaged. False when it cannot
+    be written.
+    */
+    bool putProbes(const ref Probes p, string digest)
+    {
+        auto dir = v.walk("probes");
+        if (dir.hasError)
+            return false;
+        if (dir.value.writeFileAtomic(digest, p.text).hasError)
+            return false;
+        probeBlocks.remove(digest);
+        return true;
+    }
+
+    /// The probe block `digest` names, read once per process; null when the
+    /// store has none, or holds bytes of another digest (a lookup through
+    /// it then misses). A failed read is not remembered, so a block a later
+    /// compile writes again serves the next lookup.
+    const(Probes)* probes(string digest)
+    {
+        if (auto cached = digest in probeBlocks)
+            return *cached;
+        string source;
+        Probes* p = new Probes;
+        string[] rest;
+        if (!readAll(v, "probes/" ~ digest, source) || !parseProbes(source, *p, rest) || rest.length
+            || p.digest != digest)
+            return null;
+        probeBlocks[digest] = p;
+        return p;
+    }
+
+    private const(Probes)*[string] probeBlocks;
+
+    /*
+    BGS5: removes each probe block no manifest list names, unless it was
+    written within the last hour: a list naming it may be on its way, and
+    a list that reuses a block writes it again first (`putProbes`), so a
+    block in use is always young. A scan of the lists that could not read
+    one removes nothing. A lookup through a list whose block went misses,
+    and the compile records it anew.
+    */
+    private size_t sweepProbes()
+    {
+        import std.datetime.systime : Clock;
+
+        bool[string] named;
+        bool complete;
+        foreach (declared; names("manifests", complete))
+        {
+            string source;
+            if (!readAll(v, "manifests/" ~ declared, source))
+                return 0;
+            foreach (ref m; parseManifestList(source))
+                if (m.probes.length)
+                    named[m.probes] = true;
+        }
+        if (!complete)
+            return 0;
+        auto dir = v.walk("probes");
+        if (dir.hasError)
+            return 0;
+        const young = Clock.currStdTime - 36_000_000_000L; // an hour, in hnsecs
+        size_t n;
+        foreach (name; names("probes"))
+        {
+            if (name in named)
+                continue;
+            auto st = dir.value.statAt(name, StatMask.mtime);
+            if (st.hasError || (st.value.mtimeNs / 100 + 621_355_968_000_000_000L) > young)
+                continue;
+            if (!dir.value.unlinkAt(name).hasError)
+                ++n;
+        }
+        return n;
+    }
 
     /// The manifests recorded for `declaredKey`, most recently used first.
     Manifest[] manifests(string declaredKey)
@@ -436,6 +557,14 @@ struct Store(D)
     {
         auto current = manifests(declaredKey);
         if (current.length && current[0].resultKey == key)
+        {
+            // The list stands; its block may not, and the hit's own copy of it
+            // restores it.
+            if (m.block !is null && statPath(v, "probes/" ~ m.probes).hasError)
+                cast(void) putProbes(*m.block, m.probes);
+            return;
+        }
+        if (m.block !is null && !putProbes(*m.block, m.probes))
             return;
         Manifest[] list = [cast(Manifest) m];
         list[0].resultKey = key;
@@ -568,7 +697,10 @@ struct Store(D)
             if (alive !is null && leasedByOthers(key, alive))
                 note = "replacing " ~ key ~ " waits for a live lease another process holds on it";
             else
+            {
+                unpruned(); // the replacement may fail, leaving no result
                 cast(void) moveToTrash(key);
+            }
         }
         auto results = v.walk("results");
         const(ResultRecord)* published = &record;
@@ -762,12 +894,12 @@ struct Store(D)
         return all;
     }
 
-    /// The bytes of the records the store keeps: manifest lists, digest
-    /// records and preimages (BGS5's second bound).
+    /// The bytes of the records the store keeps: manifest lists, probe
+    /// blocks, digest records and preimages (BGS5's second bound).
     ulong recordBytes()
     {
         ulong n;
-        foreach (dir; ["manifests", "records", "preimages"])
+        foreach (dir; ["manifests", "records", "preimages", "probes"])
         {
             auto d = v.walk(dir);
             if (d.hasError)
@@ -826,6 +958,7 @@ struct Store(D)
             }
         foreach (key; names("leases"))
             cast(void) leasedByOthers(key, alive);
+        n += sweepProbes();
         return n;
     }
 
@@ -916,9 +1049,12 @@ struct Store(D)
                     report.leased ~= e.key;
                     continue;
                 }
+                // The digest record first, so a crash between the two leaves a
+                // record beside a published result, never neither (BGS5).
                 string source;
                 cast(void) readAll(v, "results/" ~ e.key ~ "/record", source);
-                if (!source.length)
+                auto records = v.walkAll("records");
+                if (!source.length || records.hasError || records.value.writeFileAtomic(e.key, source).hasError)
                     unpruned(); // no digest record will serve its manifests
                 if (!moveToTrash(e.key))
                     continue;
@@ -932,9 +1068,6 @@ struct Store(D)
                     report.leased ~= e.key;
                     continue;
                 }
-                auto records = v.walkAll("records");
-                if (!records.hasError && source.length)
-                    cast(void) records.value.writeFileAtomic(e.key, source);
                 auto recency = v.walk("recency");
                 if (!recency.hasError)
                     cast(void) recency.value.unlinkAt(e.key);
@@ -943,19 +1076,29 @@ struct Store(D)
             }
         }
         report.resultBytes = total;
-        // The records' bound: first the manifests no result serves, then the
-        // least recently written preimages and digest records, then the
-        // manifests those left without a result, and last the least recently
-        // used manifest lists themselves, which a hit rewrites (BGK3): a
-        // compile whose list went misses once and records it anew.
+        // The records' bound, cheapest loss first: the manifests no result
+        // serves; the probe blocks no list names; the least recently written
+        // preimages, which only explain misses; the least recently written
+        // digest records, then the manifests those left without a result; and
+        // last the least recently used manifest lists themselves (a hit
+        // leases its result, which dates the list), and the blocks those
+        // named. A compile whose list went misses once and records it anew.
         ulong records = recordBytes();
         if (records > recordsBound)
         {
             const target = recordsBound / 10 * 9;
             pruneManifests(report.recordsDropped);
             records = recordBytes();
-            foreach (dir; ["records", "preimages", "manifests"])
+            if (records > target)
             {
+                report.recordsDropped += sweepProbes();
+                records = recordBytes();
+            }
+            size_t listsDropped;
+            foreach (dir; ["preimages", "records", "manifests"])
+            {
+                if (records <= target)
+                    break;
                 if (dir == "manifests")
                 {
                     pruneManifests(report.recordsDropped);
@@ -972,10 +1115,19 @@ struct Store(D)
                         unpruned();
                     if (!d.value.unlinkAt(e.name).hasError)
                     {
-                        records -= e.size;
+                        // Another process may have published since the count:
+                        // never wrap it, count again.
+                        records = e.size > records ? recordBytes() : records - e.size;
                         ++report.recordsDropped;
+                        if (dir == "manifests")
+                            ++listsDropped;
                     }
                 }
+            }
+            if (listsDropped)
+            {
+                report.recordsDropped += sweepProbes();
+                records = recordBytes();
             }
         }
         report.recordBytes = records;
@@ -983,7 +1135,9 @@ struct Store(D)
     }
 
     // The entries of `<store>/<dir>` with their sizes, least recently
-    // modified first.
+    // modified first; a manifest list dated by the later of its own write and
+    // its leading manifest's result's lease (`recency/<key>`), so a list a
+    // hit used, which the hit does not rewrite, counts as used then (BGS5).
     private auto oldestFirst(string dir)
     {
         import std.algorithm.sorting : sort;
@@ -998,17 +1152,41 @@ struct Store(D)
         auto d = v.walk(dir);
         if (d.hasError)
             return all;
+        auto recency = v.walk("recency");
         foreach (name; names(dir))
         {
             auto st = d.value.statAt(name, StatMask.mtime);
-            if (!st.hasError)
-                all ~= Aged(name, st.value.size, st.value.mtimeNs);
+            if (st.hasError)
+                continue;
+            long mtime = st.value.mtimeNs;
+            if (dir == "manifests" && !recency.hasError)
+            {
+                string source;
+                if (readAll(d.value, name, source))
+                {
+                    const lead = parseManifestList(source);
+                    if (lead.length && lead[0].resultKey.length)
+                    {
+                        auto used = recency.value.statAt(lead[0].resultKey, StatMask.mtime);
+                        if (!used.hasError && used.value.mtimeNs > mtime)
+                            mtime = used.value.mtimeNs;
+                    }
+                }
+            }
+            all ~= Aged(name, st.value.size, mtime);
         }
         return all.sort!((a, b) => a.mtime < b.mtime || a.mtime == b.mtime && a.name < b.name).release;
     }
 
     // The names in `<store>/<dir>`, sorted.
     private string[] names(string dir)
+    {
+        bool complete;
+        return names(dir, complete);
+    }
+
+    // ditto, and whether the listing ended rather than failed.
+    private string[] names(string dir, out bool complete)
     {
         import std.algorithm.sorting : sort;
 
@@ -1022,10 +1200,13 @@ struct Store(D)
         while (true)
         {
             auto more = listing.value.next();
-            if (more.hasError || !more.value)
+            if (more.hasError)
+                return null;
+            if (!more.value)
                 break;
             result ~= listing.value.front.name.idup;
         }
+        complete = true;
         return result.sort.release;
     }
 
@@ -1414,6 +1595,11 @@ private bool word(scope const(char)[] line, string keyword, out string rest) @sa
     const list = parseManifestList(manifestListText([m, Manifest([ManifestEntry("x.d", digestOf(1))])]));
     assert(list.length == 2 && list[0] == m && list[1].files[0].path == "x.d");
     assert(parseManifestList("format 0\n--\nabsent a\n") is null);
+    Manifest withProbes = m;
+    withProbes.probes = "ab12";
+    const listed = parseManifestList(manifestListText([withProbes]));
+    assert(listed.length == 1 && listed[0].probes == "ab12" && listed[0].files == m.files);
+    assert(resultKey("d", withProbes) != resultKey("d", m), "the block's digest enters the key");
     assert(resultKey("d", m) != resultKey("e", m));
 }
 
@@ -1468,14 +1654,14 @@ private bool word(scope const(char)[] line, string keyword, out string rest) @sa
         r.task = task;
         r.resultKey = task ~ "-key";
         r.outputs = [OutputRecord("sub/f", 8, false, blake3(cast(const(ubyte)[]) bytes[]))];
-        assert(store.publish(out_.value, task, r, "../../../build/v1/results/{}/out") !is null, store.note);
+        assert(store.publish(out_.value, task, r, "../../../build/v2/results/{}/out") !is null, store.note);
         return r.resultKey;
     }
 
     // The output itself replaced by a link to a file of the same size.
     const a = publishOne("a");
     assert(store.find(a) !is null);
-    auto sub = build.value.walk("v1/results/" ~ a ~ "/out/sub");
+    auto sub = build.value.walk("v2/results/" ~ a ~ "/out/sub");
     assert(!sub.hasError);
     assert(!sub.value.renameAt("f", sub.value, "g").hasError);
     assert(!sub.value.symlinkAt("f", "g").hasError);
@@ -1485,7 +1671,7 @@ private bool word(scope const(char)[] line, string keyword, out string rest) @sa
 
     // A directory above it replaced by a link to a copy.
     const b = publishOne("b");
-    auto out2 = build.value.walk("v1/results/" ~ b ~ "/out");
+    auto out2 = build.value.walk("v2/results/" ~ b ~ "/out");
     assert(!out2.hasError);
     assert(!out2.value.renameAt("sub", out2.value, "real").hasError);
     assert(!out2.value.symlinkAt("sub", "real").hasError);
@@ -1524,7 +1710,7 @@ private bool word(scope const(char)[] line, string keyword, out string rest) @sa
     Store!(typeof(build.value)) store;
     assert(Store!(typeof(build.value)).open(build.value, "1-1", store));
     auto out_ = top.value.walkAll("runs/r/out");
-    auto lists = build.value.walk("v1/manifests");
+    auto lists = build.value.walk("v2/manifests");
     assert(!lists.hasError);
     bool dead(string) => false;
 
@@ -1537,7 +1723,7 @@ private bool word(scope const(char)[] line, string keyword, out string rest) @sa
         r.task = task;
         r.resultKey = key.length ? key : task ~ "-key";
         r.outputs = [OutputRecord("f", 8, false, blake3(cast(const(ubyte)[]) bytes[]))];
-        assert(store.publish(out_.value, task, r, "../../../build/v1/results/{}/out") !is null, store.note);
+        assert(store.publish(out_.value, task, r, "../../../build/v2/results/{}/out") !is null, store.note);
         return r.resultKey;
     }
     string listOf(string declared)
@@ -1615,4 +1801,192 @@ private string[] repeatLines(string s, size_t n) @safe pure
     foreach (i; 0 .. n)
         lines ~= text(i, "/", s);
     return lines;
+}
+
+/// BGK2: a probe block is kept once under its digest, and read back through
+/// it; a manifest naming a block it lacks writes it with its list; bytes of
+/// another digest are no block.
+@("build_graph.store.probeBlocks")
+@system unittest
+{
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : DotDotPolicy, ResolvePolicy, SymlinkPolicy;
+    import sparkles.build_graph.probes : parseProbes;
+    import sparkles.event_horizon.sys : BlockingVfs;
+    import std.process : environment, thisProcessID;
+
+    auto vfs = new BlockingVfs;
+    auto tmp = openRoot!(Rights.all)(vfs, environment.get("TMPDIR", "/tmp"), ambientAuthority(),
+        ResolvePolicy(SymlinkPolicy.beneath, DotDotPolicy.reject));
+    assert(!tmp.hasError);
+    const name = text("sparkles-store-probes-", thisProcessID);
+    cast(void) tmp.value.removeTree(name);
+    auto top = tmp.value.walkAll(name);
+    assert(!top.hasError);
+    scope (exit)
+        cast(void) tmp.value.removeTree(name);
+    auto build = top.value.walkAll("build");
+    Store!(typeof(build.value)) store;
+    assert(Store!(typeof(build.value)).open(build.value, "1-1", store));
+
+    Probes p;
+    string[] rest;
+    assert(parseProbes("format 1\ncandidates .di .d\nroot src\nprobe 0 1 app\n", p, rest));
+    const digest = p.digest;
+    Manifest m;
+    m.probes = digest;
+    m.block = &p;
+    store.useManifest("d", m, "k");
+    string kept;
+    assert(readAll(build.value, "v2/probes/" ~ digest, kept) && kept == p.text);
+    assert(store.manifests("d")[0].probes == digest);
+    const back = store.probes(digest);
+    assert(back !is null && *back == p);
+    assert(store.probes(digest) is back, "read once per process");
+
+    auto blocks = build.value.walk("v2/probes");
+    assert(!blocks.hasError);
+    const other = "0".replicate(64);
+    assert(!blocks.value.writeFileAtomic(other, p.text).hasError);
+    assert(store.probes(other) is null, "its bytes are another digest's");
+    assert(store.recordBytes >= kept.length * 2);
+}
+
+/// BGS5's review cases: a prune that could not read a list leaves the marker
+/// behind the token; a hit restores a lost probe block; a failed block read
+/// is not remembered; the sweep keeps young and named blocks; a list a hit
+/// used counts as used then; and preimages go before digest records.
+@("build_graph.store.evict.reviewCases")
+@system unittest
+{
+    import core.sys.posix.unistd : geteuid;
+    import sparkles.base.hash.blake3 : blake3;
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : DotDotPolicy, ResolvePolicy, SymlinkPolicy;
+    import sparkles.build_graph.probes : parseProbes;
+    import sparkles.event_horizon.sys : BlockingVfs;
+    import std.conv : octal;
+    import std.datetime.systime : Clock, SysTime;
+    import std.file : setAttributes, setTimes;
+    import std.path : buildPath;
+    import std.process : environment, thisProcessID;
+
+    const tmpdir = environment.get("TMPDIR", "/tmp");
+    auto vfs = new BlockingVfs;
+    auto tmp = openRoot!(Rights.all)(vfs, tmpdir, ambientAuthority(),
+        ResolvePolicy(SymlinkPolicy.beneath, DotDotPolicy.reject));
+    assert(!tmp.hasError);
+    const name = text("sparkles-store-review-", thisProcessID);
+    cast(void) tmp.value.removeTree(name);
+    auto top = tmp.value.walkAll(name);
+    assert(!top.hasError);
+    scope (exit)
+        cast(void) tmp.value.removeTree(name);
+    auto build = top.value.walkAll("build");
+    Store!(typeof(build.value)) store;
+    assert(Store!(typeof(build.value)).open(build.value, "1-1", store));
+    const v = buildPath(tmpdir, name, "build", "v" ~ layoutVersion.text);
+    auto out_ = top.value.walkAll("runs/r/out");
+    auto lists = build.value.walk("v" ~ layoutVersion.text ~ "/manifests");
+    assert(!lists.hasError);
+    bool dead(string) => false;
+    string publishOne(string task)
+    {
+        auto dir = out_.value.walkAll(task);
+        char[8] bytes = 'x';
+        assert(!dir.value.writeFileAtomic("f", bytes[]).hasError);
+        ResultRecord r;
+        r.task = task;
+        r.resultKey = task ~ "-key";
+        r.outputs = [OutputRecord("f", 8, false, blake3(cast(const(ubyte)[]) bytes[]))];
+        assert(store.publish(out_.value, task, r, "../../../build/v" ~ layoutVersion.text ~ "/results/{}/out") !is null,
+            store.note);
+        store.releaseLeases();
+        return r.resultKey;
+    }
+    string read(string path)
+    {
+        string s;
+        return readAll(build.value, "v" ~ layoutVersion.text ~ "/" ~ path, s) ? s : null;
+    }
+    ubyte[32] zero;
+
+    // A prune that cannot read a list writes no marker, so the next runs.
+    if (geteuid() != 0)
+    {
+        assert(!lists.value.writeFileAtomic("locked", manifestListText([Manifest([ManifestEntry("x.d", zero)])])).hasError);
+        setAttributes(buildPath(v, "manifests", "locked"), octal!0);
+        size_t dropped;
+        store.pruneManifests(dropped);
+        assert(read("pruned") is null || read("pruned") != read("prune-token"), "an incomplete scan is not complete");
+        setAttributes(buildPath(v, "manifests", "locked"), octal!644);
+        store.pruneManifests(dropped);
+        assert(read("pruned") == read("prune-token") && read("pruned").length, "a complete scan is");
+    }
+
+    // A hit whose list stands restores the block it names.
+    const a = publishOne("a");
+    Probes p;
+    string[] rest;
+    assert(parseProbes("format 1\ncandidates .di .d\nroot src\nprobe 0 1 app\n", p, rest));
+    Manifest m;
+    m.files = [ManifestEntry("x.d", zero)];
+    m.probes = p.digest;
+    m.block = &p;
+    store.useManifest("d", m, a);
+    auto blocks = build.value.walk("v" ~ layoutVersion.text ~ "/probes");
+    assert(!blocks.hasError && !blocks.value.unlinkAt(p.digest).hasError);
+    assert(store.probes(p.digest) is null);
+    store.useManifest("d", m, a);
+    assert(read("probes/" ~ p.digest) == p.text, "the hit wrote the lost block again");
+    assert(store.probes(p.digest) !is null, "the earlier failed read was not remembered");
+
+    // The sweep: an old block no list names goes; an old named one and a
+    // young unnamed one stay.
+    Probes q;
+    assert(parseProbes("format 1\ncandidates .di .d\nroot src\nprobe 0 1 other\n", q, rest));
+    assert(store.putProbes(q, q.digest));
+    Probes r;
+    assert(parseProbes("format 1\ncandidates .di .d\nroot src\nprobe 0 1 young\n", r, rest));
+    assert(store.putProbes(r, r.digest));
+    const old = SysTime(Clock.currStdTime - 2 * 36_000_000_000L);
+    setTimes(buildPath(v, "probes", q.digest), old, old);
+    setTimes(buildPath(v, "probes", p.digest), old, old);
+    assert(store.sweepProbes() == 1);
+    assert(read("probes/" ~ q.digest) is null && read("probes/" ~ p.digest) !is null && read("probes/" ~ r.digest) !is null);
+
+    // A list a hit used, written before another, is the later used: the other
+    // goes first. (The hit leases the result, which dates the list.)
+    cast(void) lists.value.unlinkAt("d");
+    cast(void) lists.value.unlinkAt("locked");
+    const b = publishOne("b");
+    // `b`'s publication dated it moments before the hit on `a` below; on a
+    // kernel whose file clock ticks coarsely (HZ 100: 10 ms) the two can
+    // share a timestamp, and the tie then goes by name. Date it earlier.
+    setTimes(buildPath(v, "recency", b), SysTime(Clock.currStdTime - 200_000_000L),
+        SysTime(Clock.currStdTime - 200_000_000L));
+    const mFirst = Manifest([ManifestEntry("first.d", zero)]), mSecond = Manifest([ManifestEntry("second.d", zero)]);
+    store.useManifest("first", mFirst, a);
+    const earlier = SysTime(Clock.currStdTime - 100_000_000L);
+    setTimes(buildPath(v, "manifests", "first"), earlier, earlier);
+    store.useManifest("second", mSecond, b);
+    setTimes(buildPath(v, "manifests", "second"), SysTime(Clock.currStdTime - 50_000_000L),
+        SysTime(Clock.currStdTime - 50_000_000L));
+    store.lease(a); // the hit on `first`
+    store.releaseLeases();
+    // A bound whose target drops one list and no more (after the sweep, which
+    // comes first, has taken the block the removed list `d` named).
+    cast(void) store.sweepProbes();
+    const total = store.recordBytes, second = read("manifests/second").length;
+    const report = store.evict(1UL << 30, (total - second / 2) * 10 / 9 + 10, &dead);
+    assert(read("manifests/first") !is null && read("manifests/second") is null, text(report));
+
+    // Preimages go before digest records.
+    import std.array : replicate;
+
+    store.recordPreimage("task:p", "arg x\n".replicate(10_000)); // most of the records' bytes
+    assert(!build.value.walkAll("v" ~ layoutVersion.text ~ "/records").value.writeFileAtomic("gone-key", "x").hasError);
+    const preimageFile = "preimages/" ~ taskFileName("task:p");
+    cast(void) store.evict(1UL << 30, store.recordBytes - 1, &dead);
+    assert(read(preimageFile) is null && read("records/gone-key") !is null);
 }
