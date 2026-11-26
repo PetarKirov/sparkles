@@ -360,6 +360,7 @@ enum EdgeReason
     reduction,         /// a result feeds a reducer
     publication,       /// a reducer feeds its atomic write
     summary,           /// a result feeds the run summary
+    reuse,             /// the dependent's result is expected to be the prerequisite's, from the store
     cleanup,           /// work feeds its cleanup
 }
 
