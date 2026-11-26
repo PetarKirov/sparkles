@@ -1075,8 +1075,8 @@ Verdict[] oracle17()
         const r1 = resultKey("declared-1", m1), r2 = resultKey("declared-2", m2);
         s.publish("compile:p.e:1", r1, 100);
         s.publish("compile:p.e:2", r2, 100);
-        s.store.useManifest("declared-1", m1);
-        s.store.useManifest("declared-2", m2);
+        s.store.useManifest("declared-1", m1, r1);
+        s.store.useManifest("declared-2", m2, r2);
         s.store.releaseLeases();
         const records = s.names("records");
         const lists = s.names("manifests");
