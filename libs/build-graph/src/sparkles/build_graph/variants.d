@@ -226,9 +226,21 @@ struct PlanOptions
     /// The worktree, beneath which a generator's description names paths as
     /// `$ROOT/…`.
     string root;
-    /// The platform the build runs on, which a generator's tool is planned
-    /// for whatever its reader targets (BGG6); empty takes the reader's.
-    BuildPlatform host;
+    /// The build platform, where every action runs, for which a generator's
+    /// tool is planned whatever its reader's host (BGG6, BGH3); empty takes
+    /// the reader's.
+    BuildPlatform build;
+    /// The toolchain of each host other than the build platform, by its
+    /// `config` (BGH7); `toolchain` is the build platform's.
+    ToolchainIdentity[string] hostToolchains;
+    /// Resolves the `libs` of each host other than the build platform, by its
+    /// `config` (BGH6); a host without one resolves none, and a target of it
+    /// that names any is refused.
+    PkgConfigDriver[string] hostPkgConfigs;
+
+    /// Whether `platform` is another host than the build platform's.
+    bool isOtherHost(const BuildPlatform platform) const @safe pure nothrow
+        => platform.config.length && platform.config != build.config;
 }
 
 /// Resolves a request for a generator (see `PlanOptions.resolveTool`).
@@ -261,7 +273,7 @@ PlanExpected!(VariantPlan, PlanError) planVariants(const Resolution[] resolution
         size_t[] indices;
         foreach (i, ref t; r.targets)
         {
-            auto v = variantOf(r, t, i == 0, options, options.pkgConfig, scans);
+            auto v = variantOf(r, t, i == 0, options, pkgConfigFor(options, r.platform), scans);
             if (v.hasError)
                 return planErr!VariantPlan(v.error);
             auto variant = v.value;
@@ -455,8 +467,8 @@ PlanError* planGenerators(ref VariantPlan plan, PlanOptions options, ResolveTree
                 // dub's default build type for a single file, `debug`.
                 t.settings.options = BuildOption.debugMode | BuildOption.debugInfo;
                 t.toolchain = options.toolchain;
-                // BGG6: the host's, whatever its reader targets: the build runs it.
-                t.platform = options.host.compiler.length ? options.host.dup : plan.variants[vi].platform.dup;
+                // BGG6, BGH3: the build platform's, whatever its reader's host: the build runs it.
+                t.platform = options.build.compiler.length ? options.build.dup : plan.variants[vi].platform.dup;
                 t.key = sha256Of(t.keyText);
                 g.tool = plan.variants.length;
                 plan.variants ~= t;
@@ -472,7 +484,7 @@ PlanError* planGenerators(ref VariantPlan plan, PlanOptions options, ResolveTree
                 size_t[] indices;
                 foreach (i, ref target; tool.value.targets)
                 {
-                    auto v = variantOf(tool.value, target, i == 0, options, options.pkgConfig, scans);
+                    auto v = variantOf(tool.value, target, i == 0, options, pkgConfigFor(options, tool.value.platform), scans);
                     if (v.hasError)
                         return new PlanError(v.error.message, v.error.file, v.error.line);
                     indices ~= addVariant(plan, v.value);
@@ -498,6 +510,11 @@ PlanError* planGenerators(ref VariantPlan plan, PlanOptions options, ResolveTree
     }
     return null;
 }
+
+// The `pkg-config` that resolves the libraries of a target of `platform`:
+// the build platform's, or its host's own (BGH6), null when it has none.
+PkgConfigDriver pkgConfigFor(ref PlanOptions options, const BuildPlatform platform) @safe
+    => options.isOtherHost(platform) ? options.hostPkgConfigs.get(platform.config, null) : options.pkgConfig;
 
 // `v`'s index in the plan, added unless a variant with its key is there.
 size_t addVariant(ref VariantPlan plan, Variant v) @safe
@@ -528,14 +545,30 @@ PlanExpected!(Variant, PlanError) variantOf(ref const Resolution r, ref const Re
     v.directory = t.directory;
     v.packages = t.packages.dup;
     v.settings = t.settings.dup;
+    // BGH6: a host's libraries resolve through its own `pkg-config` (the
+    // caller's choice, `pkgConfigFor`), and a host without one has none.
+    const otherHost = options.isOtherHost(r.platform);
+    if (otherHost && pkgConfig is null && v.settings.libs.length)
+        return planErr!Variant(PlanError(text(t.package_, " needs the libraries ", v.settings.libs.join(", "),
+            " for ", r.platform.config, ", whose toolchain names no pkg-config directory")));
     if (pkgConfig !is null)
     {
         const resolved = resolveLibraries(v.settings, r.platform, pkgConfig);
         v.pcFiles = resolved.pcFiles.dup;
         v.pcSearch = resolved.pcSearch.dup;
     }
+    // BGH5: another host's variant takes its own toolchain, never the build
+    // platform's, and its own target: a recipe that names one is refused.
+    if (otherHost && r.platform.config !in options.hostToolchains)
+        return planErr!Variant(PlanError(text(t.package_, " is requested for ", r.platform.config,
+            ", for which the plan has no toolchain")));
+    if (otherHost)
+        foreach (flag; v.settings.dflags ~ v.settings.lflags)
+            if (flag.startsWith("-mtriple") || flag.startsWith("--mtriple"))
+                return planErr!Variant(PlanError(text(t.package_, "'s recipe sets its own target (", flag,
+                    "), which would override ", r.platform.config, "'s")));
     v.inheritance = r.inheritance;
-    v.toolchain = options.toolchain;
+    v.toolchain = otherHost ? options.hostToolchains[r.platform.config] : options.toolchain;
     v.platform = r.platform.dup;
     v.role = !isRoot ? Role.dependencyLibrary
         : r.testRoot.configuration.length ? Role.testRoot
@@ -856,7 +889,7 @@ bool endsWithAny(string s, string a, string b) @safe pure nothrow @nogc
 }
 
 string platformText(const BuildPlatform p) @safe
-    => text(p.platform.join(","), "|", p.architecture.join(","), "|", p.compiler, "|",
+    => text(p.config, "|", p.platform.join(","), "|", p.architecture.join(","), "|", p.compiler, "|",
         p.frontendVersion, "|", p.compilerVersion);
 
 string hex(const ubyte[32] bytes) @safe pure nothrow
@@ -1147,7 +1180,7 @@ version (unittest)
     auto r = resolve(ResolveRequest(directory: "/r", subPackage: ":g", platform: wasm), tree);
     assert(r.hasValue, r.hasError ? r.error.message : null);
     auto options = PlanOptions(ToolchainIdentity("ldc", "toolchain-1"));
-    options.host = host;
+    options.build = host;
     const plan = planVariants([r.value], options, tree);
     assert(plan.hasValue, plan.hasError ? plan.error.message : null);
     assert(plan.value.generators.length == 1);
@@ -1157,4 +1190,64 @@ version (unittest)
     foreach (ref v; plan.value.variants)
         if (v.package_ == "r:g")
             assert(v.platform == wasm);
+}
+
+/// BGH3, BGH6: two WASI previews share every dub identifier, so only their
+/// `config` tells their variants apart; and a host's `libs` resolve through
+/// its own `pkg-config` alone, so one whose toolchain names none refuses
+/// them, naming what is missing.
+@("build_graph.variants.hostPlatforms")
+@safe unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.build_primitives.resolve.configure : ResolveRequest, resolve;
+    import sparkles.build_primitives.resolve.tree : memoryTree;
+
+    auto tree = memoryTree([
+        "/r/dub.sdl": "name \"r\"\nsubPackage \"m\"\nsubPackage \"c\"\n",
+        "/r/m/dub.sdl": "name \"m\"\ntargetType \"executable\"\n",
+        "/r/m/source/app.d": "module app;\n",
+        "/r/c/dub.sdl": "name \"c\"\ntargetType \"executable\"\nlibs \"freetype2\"\n",
+        "/r/c/source/app.d": "module app;\n",
+    ]);
+    auto build = BuildPlatform(["linux", "posix"], ["x86_64"], "ldc", "ldc2", 2113, "1.43.0",
+        "x86_64-unknown-linux-gnu");
+    BuildPlatform wasi(string config) => BuildPlatform(["posix", "wasm", "wasi"], ["wasm32"], "ldc", "ldc2", 2113,
+        "1.43.0", config);
+    auto options = PlanOptions(ToolchainIdentity("ldc", "build-toolchain"));
+    options.build = build;
+    options.hostToolchains["wasm32-unknown-wasip1"] = ToolchainIdentity("ldc", "wasi-toolchain");
+    options.hostToolchains["wasm32-unknown-wasip2"] = ToolchainIdentity("ldc", "wasi-toolchain");
+
+    auto p1 = resolve(ResolveRequest(directory: "/r", subPackage: ":m", platform: wasi("wasm32-unknown-wasip1")), tree);
+    auto p2 = resolve(ResolveRequest(directory: "/r", subPackage: ":m", platform: wasi("wasm32-unknown-wasip2")), tree);
+    assert(p1.hasValue && p2.hasValue);
+    const both = planVariants([p1.value, p2.value], options, tree);
+    assert(both.hasValue, both.hasError ? both.error.message : null);
+    assert(both.value.variants.length == 2 && both.value.variants[0].key != both.value.variants[1].key,
+        "a variant per preview");
+    assert(both.value.variants[0].toolchain.identity == "wasi-toolchain");
+
+    auto c = resolve(ResolveRequest(directory: "/r", subPackage: ":c", platform: wasi("wasm32-unknown-wasip1")), tree);
+    assert(c.hasValue);
+    const refused = planVariants([c.value], options, tree);
+    assert(refused.hasError && refused.error.message.canFind("freetype2")
+        && refused.error.message.canFind("wasm32-unknown-wasip1"), refused.hasError ? refused.error.message : null);
+
+    // A host the plan has no toolchain for is refused, never built with the
+    // build platform's; so is a recipe that names its own target.
+    auto p3 = resolve(ResolveRequest(directory: "/r", subPackage: ":m", platform: wasi("wasm32-unknown-wasip3")), tree);
+    assert(p3.hasValue);
+    const unknown = planVariants([p3.value], options, tree);
+    assert(unknown.hasError && unknown.error.message.canFind("wasm32-unknown-wasip3")
+        && unknown.error.message.canFind("no toolchain"), unknown.hasError ? unknown.error.message : null);
+    auto t = memoryTree([
+        "/t/dub.sdl": "name \"t\"\ntargetType \"executable\"\ndflags \"-mtriple=x86_64-unknown-linux-gnu\"\n",
+        "/t/source/app.d": "module app;\n",
+    ]);
+    auto own = resolve(ResolveRequest(directory: "/t", platform: wasi("wasm32-unknown-wasip1")), t);
+    assert(own.hasValue);
+    const overriding = planVariants([own.value], options, t);
+    assert(overriding.hasError && overriding.error.message.canFind("sets its own target"),
+        overriding.hasError ? overriding.error.message : null);
 }

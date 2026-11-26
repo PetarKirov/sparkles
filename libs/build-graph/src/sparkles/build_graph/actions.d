@@ -105,6 +105,9 @@ struct Action
     /// What it holds alone while it runs: a package's test legs share one
     /// key, as they run the same tests, whose fixtures may name fixed paths.
     string[] exclusiveKeys;
+    /// The identity of the toolchain that runs it, its variant's host's
+    /// (build-graph SPEC BGH7), which its key covers; empty takes the run's.
+    string toolchain;
 }
 
 /// The actions and their edges.
@@ -187,6 +190,60 @@ struct Tools
     /// Runner options a package's test legs take after the legs' own, by
     /// the package's name (`sparkles:base`): the slow tests a run selects.
     string[][string] testArguments;
+    /// The tools of each host platform other than the build platform, by its
+    /// `config` (build-graph SPEC BGH5); the fields above are the build
+    /// platform's.
+    HostTools[string] hosts;
+    /// The build platform's `config`: when set, a variant of any other host
+    /// needs its tools in `hosts`, and planning refuses one without them rather
+    /// than build it with the build platform's (BGH5).
+    string build;
+
+    /// The tools that build for host `config`: these, with the host's own in
+    /// place of the build platform's when it is another.
+    Tools of(string config) const @safe pure nothrow
+    {
+        auto t = Tools(compiler, archiver, cc, linker, fail, deviceCompiler, shaderTools.dup, dependencyOutput,
+            this.config, prefixMaps.dup, testLimit, actionLimit, testLegs.dup, extraFlags.dup,
+            runtimeEnvironment.dup, libraryPath.dup);
+        foreach (pkg, more; testArguments)
+            t.testArguments[pkg] = more.dup;
+        if (auto h = config in hosts)
+        {
+            t.compiler = h.compiler;
+            t.archiver = h.archiver;
+            t.cc = h.cc;
+            t.linker = h.linker;
+            t.config = h.config;
+            t.prefixMaps = h.prefixMaps.dup;
+            t.dependencyOutput = h.dependencyOutput;
+            t.triple = h.triple;
+            t.libraryPath = null;
+        }
+        return t;
+    }
+
+    /// The triple the compiler is given (`-mtriple=`), when not its default.
+    string triple;
+}
+
+/**
+One host platform's tools (build-graph SPEC BGH4, BGH5), from its entry in
+the toolchain table: an empty `cc` or `linker` leaves the compiler's
+configuration to choose, as LDC's selects the WASI and NDK drivers by
+triple.
+*/
+struct HostTools
+{
+    string compiler; /// by absolute path
+    string archiver; /// an `ar` for this host's objects
+    string cc;       /// the C driver (`-gcc=`), or empty
+    string linker;   /// the linker (`--linker=`), or empty
+    string config;   /// the compiler's configuration file (`-conf=`)
+    string triple;   /// `-mtriple=`, or empty for the compiler's default
+    string[] prefixMaps; /// as `Tools.prefixMaps`, for this compiler's paths
+    bool dependencyOutput; /// as `Tools.dependencyOutput`
+    string identity; /// its toolchain identity (BGT1), which its actions' keys cover (BGH7)
 }
 
 /**
@@ -259,11 +316,21 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
     // Each request's test.
     TaskId[][size_t] testOf; // each test root's legs
 
+    // BGH5: another host's variant is built with its own tools, or not at all.
+    if (tools.build.length)
+        foreach (ref v; plan.variants)
+            if (v.platform.config.length && v.platform.config != tools.build && v.platform.config !in tools.hosts)
+                return planErr!ActionGraph(ActionError(text(v.package_, " is planned for ", v.platform.config,
+                    ", whose tools the run does not have")));
+
     TaskId add(Action a)
     {
         if (a.id.text in made)
             return a.id;
         made[a.id.text] = true;
+        // BGH7: its key covers its own toolchain, its variant's host's.
+        if (a.variant < plan.variants.length)
+            a.toolchain = plan.variants[a.variant].toolchain.identity;
         // BGA12: every process the graph runs ends by its limit.
         a.action.match!(
             (ref ProcessAction p) {
@@ -447,7 +514,7 @@ PlanExpected!(ActionGraph, ActionError) planActions(ref const VariantPlan plan,
             else if (v.role == Role.dependencyLibrary && v.settings.targetType != TargetType.none)
             {
                 auto a = Action(ActionKind.archive, actionId(ActionKind.archive, *v), vi,
-                    TaskAction(ProcessAction(argv: [tools.archiver, "rcsD", "$OUT/" ~ archiveName(*v),
+                    TaskAction(ProcessAction(argv: [tools.of(v.platform.config).archiver, "rcsD", "$OUT/" ~ archiveName(*v),
                         inputPath(compileOf[vi], objectName(*v))], sandbox: SandboxPolicy.taskDirectory)),
                     [DeclaredOutput(archiveName(*v))], defaultWeight(ActionKind.archive));
                 archiveOf[vi] = add(a);
@@ -697,8 +764,9 @@ string archiveName(ref const Variant v) @safe pure nothrow => "lib" ~ baseName(v
 /// A link's planned environment: DMD finds its C driver only through `$CC`,
 /// a Darwin link records no object's time (`ZERO_AR_DATE`),
 /// and a build action's `PATH` is empty (BGA4).
-EnvEntry[] linkEnvironment(ref const Variant v, const Tools tools) @safe pure nothrow
+EnvEntry[] linkEnvironment(ref const Variant v, const Tools build) @safe pure nothrow
 {
+    const tools = build.of(v.platform.config);
     EnvEntry[] env;
     if (v.platform.compiler != "ldc" && tools.cc.length)
         env ~= EnvEntry("CC", tools.cc);
@@ -710,7 +778,20 @@ EnvEntry[] linkEnvironment(ref const Variant v, const Tools tools) @safe pure no
         env ~= EnvEntry("ZERO_AR_DATE", "1");
     return env;
 }
-string binaryName(ref const Variant v) @safe pure nothrow => baseName(v);
+/// A link's output, named as dub names it for the variant's host: an
+/// executable takes `.wasm` on WebAssembly and `.exe` on Windows, and no
+/// extension elsewhere (BGH5).
+string binaryName(ref const Variant v) @safe pure nothrow
+{
+    import std.algorithm.searching : canFind;
+
+    const name = baseName(v);
+    if (v.platform.platform.canFind("wasm"))
+        return name ~ ".wasm";
+    if (v.platform.isWindows)
+        return name ~ ".exe";
+    return name;
+}
 
 string inputPath(TaskId producer, string path) @safe pure nothrow => "$IN(" ~ producer.text ~ ")/" ~ path;
 
@@ -769,12 +850,16 @@ struct GeneratedRoot
 }
 
 // The compiler's arguments for a variant's one compile.
-string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId generatedRoot,
+string[] compileArgv(ref const Variant v, string root, const Tools build, TaskId generatedRoot,
     const GeneratedRoot[] generated) @safe
 {
+    // BGH5: the variant's host's tools, its triple named when not the compiler's default.
+    const tools = build.of(v.platform.config);
     const s = &v.settings;
     const ldc = v.platform.compiler == "ldc";
     string[] argv = [tools.compiler];
+    if (tools.triple.length)
+        argv ~= "-mtriple=" ~ tools.triple;
     if (archivesItself(v))
         // One member per module, as dub builds a library, so a link pulls in
         // only the modules it needs: LDC names each by its module, written
@@ -838,14 +923,18 @@ string[] compileArgv(ref const Variant v, string root, const Tools tools, TaskId
 
 // The link's arguments: the root's object, the archives in link order, the
 // libraries and linker flags, and the linker's thread count (BGA8).
-string[] linkArgv(ref const Variant v, string root, const Tools tools, TaskId compile,
+string[] linkArgv(ref const Variant v, string root, const Tools build, TaskId compile,
     const string[] archives, uint threads) @safe
 {
+    // BGH5: the variant's host's tools, its triple named when not the compiler's default.
+    const tools = build.of(v.platform.config);
     const s = &v.settings;
     // dub links with the compiler flags too; the tools named here come
     // after them, so they win over a recipe's `--linker=lld`.
     // dub turns build options into compiler flags before it links.
     string[] argv = [tools.compiler];
+    if (tools.triple.length)
+        argv ~= "-mtriple=" ~ tools.triple;
     if (tools.config.length)
         argv ~= "-conf=" ~ tools.config;
     argv ~= optionFlags(s.options, v.platform.compiler == "ldc");
@@ -1394,4 +1483,80 @@ version (unittest)
     assert(legs[0].id.text.endsWith(":serial") != legs[1].id.text.endsWith(":serial"));
     // They run the same tests, so never at once.
     assert(legs[0].exclusiveKeys.length == 1 && legs[0].exclusiveKeys == legs[1].exclusiveKeys);
+}
+
+/// BGH3, BGH5, BGH7: a WebAssembly request and the generator its library
+/// reads, in one plan. The request's actions use the host's tools: its
+/// compiler and triple, its archiver, no linker or library path of the build
+/// platform's, and a `.wasm` module; the generator's tool is the build
+/// platform's, with its tools. Each action's toolchain is its variant's, so
+/// the host's keys and the build platform's never meet.
+@("build_graph.actions.planActions.hostPlatform")
+@safe unittest
+{
+    import std.algorithm.searching : any;
+
+    auto tree = memoryTree([
+        "/r/dub.sdl": "name \"r\"\nsubPackage \"m\"\nsubPackage \"g\"\n",
+        "/r/m/dub.sdl": "name \"m\"\ntargetType \"executable\"\ndependency \"r:g\" path=\"..\"\n",
+        "/r/m/source/app.d": "module app;\n",
+        "/r/g/dub.sdl": "name \"g\"\nstringImportPaths \"gen\"\n"
+            ~ "preGenerateCommands `\"$DUB_EXE\" --single \"${PACKAGE_DIR}/tool.d\" -- \"${PACKAGE_DIR}/gen\"`\n",
+        "/r/g/source/g.d": "module g;\n",
+        "/r/g/tool.d": "/+ dub.sdl:\n    name \"tool\"\n+/\nmodule tool;\nvoid main() {}\n",
+    ]);
+    const build = BuildPlatform(["linux", "posix"], ["x86_64"], "ldc", "ldc2", 2113, "1.43.0",
+        "x86_64-unknown-linux-gnu");
+    const wasi = BuildPlatform(["posix", "wasm", "wasi"], ["wasm32"], "ldc", "ldc2", 2113, "1.43.0",
+        "wasm32-unknown-wasip1");
+    auto r = resolve(ResolveRequest(directory: "/r", subPackage: ":m", buildType: "debug", platform: wasi.dup), tree);
+    assert(r.hasValue, r.hasError ? r.error.message : null);
+    auto options = PlanOptions(ToolchainIdentity("ldc", "build-toolchain"));
+    options.build = build.dup;
+    options.hostToolchains["wasm32-unknown-wasip1"] = ToolchainIdentity("ldc", "wasi-toolchain");
+    const plan = planVariants([r.value], options, tree);
+    assert(plan.hasValue, plan.hasError ? plan.error.message : null);
+
+    auto tools = Tools(compiler: "/b/ldc2", archiver: "/b/ar", cc: "/b/cc", linker: "/b/ld.lld", fail: "/bin/false",
+        libraryPath: ["/b/lib"]);
+    tools.hosts["wasm32-unknown-wasip1"] = HostTools(compiler: "/w/ldc2", archiver: "/w/llvm-ar",
+        config: "/w/ldc2.conf", triple: "wasm32-unknown-wasip1", identity: "wasi-toolchain");
+    auto g = planActions(plan.value, [r.value], "/r", tools);
+    assert(g.hasValue, g.hasError ? g.error.message : null);
+
+    const(Action)* of(string prefix)
+    {
+        foreach (ref a; g.value.actions)
+            if (a.id.text.startsWith(prefix))
+                return &a;
+        assert(false, prefix);
+    }
+    string[] argvOf(const(Action)* a) => a.action.match!((ref const ProcessAction p) => p.argv.dup, (_) => null);
+
+    const compile = of("compile:r.m:application:"), link = of("link:r.m:application:");
+    foreach (argv; [argvOf(compile), argvOf(link)])
+    {
+        assert(argv[0] == "/w/ldc2" && argv.canFind("-mtriple=wasm32-unknown-wasip1")
+            && argv.canFind("-conf=/w/ldc2.conf"), text(argv));
+        assert(!argv.any!(a => a.canFind("/b/")), text("no build-platform tool or library path: ", argv));
+    }
+    assert(argvOf(link).canFind("-of=$OUT/r_m.wasm"), text(argvOf(link)));
+    assert(compile.toolchain == "wasi-toolchain" && link.toolchain == "wasi-toolchain");
+
+    // The library the module links is the host's too: LDC archives it itself.
+    const lib = of("compile:r.g:library:");
+    assert(argvOf(lib)[0] == "/w/ldc2" && argvOf(lib).canFind("-mtriple=wasm32-unknown-wasip1")
+        && argvOf(lib).canFind("-lib"), text(argvOf(lib)));
+
+    // The generator's tool is the build platform's (BGG6, BGH3).
+    const toolCompile = of("compile:r.tool:application:");
+    assert(argvOf(toolCompile)[0] == "/b/ldc2" && !argvOf(toolCompile).canFind!(a => a.startsWith("-mtriple=")));
+    assert(toolCompile.toolchain == "build-toolchain");
+
+    // Without the host's tools, a run that names its build platform refuses
+    // the host's variants instead of building them with its own.
+    auto missing = Tools(compiler: "/b/ldc2", fail: "/bin/false", build: "x86_64-unknown-linux-gnu");
+    const refused = planActions(plan.value, [r.value], "/r", missing);
+    assert(refused.hasError && refused.error.message.canFind("wasm32-unknown-wasip1"),
+        refused.hasError ? refused.error.message : null);
 }

@@ -983,9 +983,9 @@ probed (BGK2–BGK3), or conservatively (BGK6) when the tool reports none.
 _Rationale:_ its declared inputs name the shader modules, not the modules they
 import, so a declared key alone would miss an edit to an imported one.
 
-**BGG6: Generator tools are host variants.** A generator's tool **must** be
-built as an application variant for the host platform, whatever the target
-platform of the variant that reads its outputs.
+**BGG6: Generator tools are build-platform variants.** A generator's tool
+**must** be built as an application variant for the build platform (§8.1),
+whatever the host platform of the variant that reads its outputs.
 
 ## 8. Toolchain identity
 
