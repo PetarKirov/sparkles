@@ -105,7 +105,22 @@ in
               ldc = lib.getExe' ldcAndroid "ldc2";
               # The NDK's, as the Nix Android builds archive with (./android/ndk.nix).
               archiver = config.legacyPackages.androidNdk.ar;
+              # The NDK's driver for the API level, as its own script runs it but
+              # with its directory named: a build action's `PATH` is empty
+              # (build-graph BGA4), and the NDK's script calls `dirname`.
+              cc = toString (
+                pkgs.writeScript "ndk-${t.abi}-clang" ''
+                  #!${pkgs.runtimeShell}
+                  if [ "$1" != "-cc1" ]; then
+                    exec ${dirOf t.cc}/clang --target=${lib.removeSuffix "-clang" (baseNameOf t.cc)} "$@"
+                  fi
+                  exec ${dirOf t.cc}/clang "$@"
+                ''
+              );
               pkgConfigLibdir = "${config.packages.android-pkg-config}/${t.abi}";
+              # The API level `sparkles:android`'s recipe links for, as
+              # `buildSparklesAndroidLib` sets it (./build-sparkles-app.nix).
+              environment.SPARKLES_ANDROID_MIN_SDK = toString config.legacyPackages.androidNdk.minSdk;
             }
           )
         ) config.legacyPackages.androidNdk.targets;
