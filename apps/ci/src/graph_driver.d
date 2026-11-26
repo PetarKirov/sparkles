@@ -1032,6 +1032,10 @@ PreparedRun prepareGraph(string root, string only, RunOptions o)
     if (o.adjustTools !is null)
     {
         o.adjustTools(tools);
+        // Another compiler may write other dependency output.
+        const output = dependencyOutputOf(tools.compiler);
+        tools.dependencyOutput = output.digests;
+        tools.probesOutput = output.probes;
         g.toolchain = toolchainOf(tools);
         tools.config = g.toolchain.config;
         tools.prefixMaps = g.toolchain.root.length ? [g.toolchain.root ~ "=/ldc"] : null;
@@ -1644,7 +1648,7 @@ __gshared string fetchedSources;
 
 /**
 BGR4 without Nix: fetches the packages the dub lockfiles pin into
-`<cache>/build/v1/sources`, verified by the locks' hashes. Archives come
+`<cache>/build/v<layout>/sources`, verified by the locks' hashes. Archives come
 through `curl`, repositories through a shallow `git fetch` of the pinned
 commit. Returns the sources directory, or null after printing why not.
 */
@@ -1658,7 +1662,10 @@ string fetchSources(string root, string cache)
     import std.file : mkdirRecurse;
     import std.process : execute;
 
-    const sourcesPath = buildPath(cache, "build", "v1", "sources");
+    import sparkles.build_graph.store : layoutVersion;
+
+    // Inside the current layout: BGS10 removes an older one, sources and all.
+    const sourcesPath = buildPath(cache, "build", text("v", layoutVersion), "sources");
     mkdirRecurse(sourcesPath);
     auto tree = systemTree();
     const locked = readDubLocks([root.buildPath("nix", "dub-lock.json"), root.buildPath("nix", "ci-dub-lock.json")],
@@ -1752,8 +1759,30 @@ string[] manifestCompleteness(const ActionGraph g, string root, string runDirect
         foreach (line; readText(buildPath(measure, "digests")).lineSplitter)
             if (line.length > 66)
                 files[buildNormalizedPath(absolute(line[66 .. $]))] = true;
-        foreach (p; makeRulePrerequisites(readText(buildPath(measure, "absent"))))
-            absent[buildNormalizedPath(absolute(p))] = true;
+        // The compiler's search probes when it wrote them (BGK2), expanded;
+        // otherwise its expanded list.
+        const probesFile = buildPath(measure, "probes");
+        if (probesFile.exists)
+        {
+            import sparkles.build_graph.probes : eachAbsent, parseProbes, Probes;
+
+            Probes probes;
+            string[] rest;
+            if (!parseProbes(readText(probesFile), probes, rest))
+            {
+                failures ~= text(a.id.text, ": its search probes are malformed");
+                continue;
+            }
+            foreach (p; rest)
+                absent[buildNormalizedPath(absolute(p))] = true;
+            cast(void) eachAbsent(probes, (string p) {
+                absent[buildNormalizedPath(absolute(p))] = true;
+                return true;
+            });
+        }
+        else
+            foreach (p; makeRulePrerequisites(readText(buildPath(measure, "absent"))))
+                absent[buildNormalizedPath(absolute(p))] = true;
         string[] roots, cRoots;
         a.action.match!(
             (ref const ProcessAction p) {
@@ -1809,7 +1838,8 @@ string[] manifestCompleteness(const ActionGraph g, string root, string runDirect
                     failures ~= text(a.id.text, ": read but not in the manifest: ", e.path);
                 continue;
             }
-            if (!e.ok && e.ret.canFind("ENOENT") && roots.canFind!(r => e.path.startsWith(r ~ "/")))
+            // A failed lookup in the store needs no candidate: nothing appears there.
+            if (!e.ok && e.ret.canFind("ENOENT") && !host(e.path) && roots.canFind!(r => e.path.startsWith(r ~ "/")))
             {
                 ++failedLookups;
                 if (!underAbsent(e.path) && !cRoots.canFind!(r => e.path.startsWith(r ~ "/")))
@@ -1848,13 +1878,65 @@ string hostTools(ref Tools tools, const string[] configs)
         const own = Tools(compiler: entry.ldc, archiver: entry.archiver, cc: entry.cc, linker: entry.linker,
             fail: tools.fail);
         const t = toolchainOf(own);
-        const help = execute([entry.ldc, "--help-hidden"]);
+        const output = dependencyOutputOf(entry.ldc);
         tools.hosts[config] = HostTools(compiler: entry.ldc, archiver: entry.archiver, cc: entry.cc,
             linker: entry.linker, config: t.config, triple: entry.platform.triple,
             prefixMaps: t.root.length ? [t.root ~ "=/ldc"] : null,
-            dependencyOutput: help.output.canFind("makedeps-digests") && !noDependencyOutput, identity: t.identity);
+            dependencyOutput: output.digests, probesOutput: output.probes, identity: t.identity);
     }
     return null;
+}
+
+/// Which of the LDC fork's dependency outputs a compiler writes (BGK2):
+/// the digests, which a manifest needs, and the search probes, used only
+/// with them. Off with `--no-dependency-output`.
+struct DependencyOutput
+{
+    bool digests; /// `--makedeps-digests` (and `--makedeps-absent`)
+    bool probes;  /// `--makedeps-probes`
+}
+
+/// ditto: what `compiler --help-hidden` lists, when it exits zero.
+DependencyOutput dependencyOutputOf(string compiler)
+{
+    import std.process : execute, ProcessException;
+
+    if (noDependencyOutput || !compiler.length)
+        return DependencyOutput.init;
+    try
+    {
+        const help = execute([compiler, "--help-hidden"]);
+        return help.status == 0 ? dependencyOptions(help.output) : DependencyOutput.init;
+    }
+    catch (ProcessException)
+        return DependencyOutput.init;
+}
+
+/// ditto, from a help text: an option counts only as the start of one of
+/// its lines (`  --makedeps-probes=<filename>  - …`), never as text elsewhere
+/// in it (a program's path in its usage line).
+DependencyOutput dependencyOptions(string help) @safe pure
+{
+    import std.algorithm.searching : any;
+    import std.string : lineSplitter, stripLeft;
+
+    bool has(string name) => help.lineSplitter.any!(l => l.stripLeft.startsWith("--" ~ name ~ "=")
+        || l.stripLeft.startsWith("-" ~ name ~ "="));
+    const digests = has("makedeps-digests");
+    return DependencyOutput(digests, digests && has("makedeps-probes"));
+}
+
+///
+@("graph_driver.dependencyOptions")
+@safe pure unittest
+{
+    assert(dependencyOptions("  --makedeps-digests=<filename>   - …\n  --makedeps-probes=<filename>   - …\n")
+        == DependencyOutput(true, true));
+    assert(dependencyOptions("  --makedeps-digests=<filename>   - …\n") == DependencyOutput(true, false));
+    assert(dependencyOptions("USAGE: /nix/store/x-makedeps-probes/bin/ldc2 [options]\n  --makedeps-digests=<f> - …\n")
+        == DependencyOutput(true, false), "a path naming the option is no option");
+    assert(dependencyOptions("  --makedeps-probes=<filename>   - …\n") == DependencyOutput(false, false),
+        "probes only with digests");
 }
 
 /**
@@ -1886,8 +1968,9 @@ string pathTools(out Tools tools, out Toolchain toolchain)
         return text("the toolchain table's build platform, ", table.value.build, ", names no ", compilerName,
             " or no C driver");
     // The fork's dependency output, which a compile's manifest comes from.
-    const help = execute([tools.compiler, "--help-hidden"]);
-    tools.dependencyOutput = help.output.canFind("makedeps-digests") && !noDependencyOutput;
+    const output = dependencyOutputOf(tools.compiler);
+    tools.dependencyOutput = output.digests;
+    tools.probesOutput = output.probes;
     toolchain = toolchainOf(tools);
     tools.config = toolchain.config;
     if (testTimeout != Duration.max)

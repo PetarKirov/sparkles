@@ -51,6 +51,13 @@ static import std.stdio;
 import std.sumtype : match;
 
 import sparkles.build_graph.actions : ActionKind, Tools;
+import sparkles.build_graph.store : formatVersion, layoutVersion;
+
+/// The store's layout directory beneath `build/` (BGS10), and the next one,
+/// which oracle 17 plays another build's with.
+enum layoutDir = "v" ~ layoutVersion.to!string;
+/// ditto
+enum nextLayoutDir = "v" ~ (layoutVersion + 1).to!string;
 import sparkles.build_primitives.task.action : ProcessAction;
 import sparkles.build_primitives.dub_manifest : DubManifest, DubPlatformValues;
 
@@ -701,7 +708,7 @@ Verdict[] oracle16()
         {
             const normalCache = freshCache("o16"), cache = freshCache("o16");
             auto normal = run(p.name, normalCache);
-            const results = buildPath(cache, "build", "v1", "results");
+            const results = buildPath(cache, "build", layoutDir, "results");
             mkdirRecurse(results);
             setAttributes(results, octal!555);
             auto ro = run(p.name, cache);
@@ -869,7 +876,7 @@ string[] storeEntries(string cache)
 {
     import std.file : dirEntries, SpanMode;
 
-    const results = buildPath(cache, "build", "v1", "results");
+    const results = buildPath(cache, "build", layoutDir, "results");
     if (!exists(results))
         return null;
     string[] keys;
@@ -879,7 +886,7 @@ string[] storeEntries(string cache)
 }
 
 /// Whether the store beneath `cache` publishes `key`.
-bool storeHas(string cache, string key) => exists(buildPath(cache, "build", "v1", "results", key));
+bool storeHas(string cache, string key) => exists(buildPath(cache, "build", layoutDir, "results", key));
 
 /// Plants other bytes under the published result `key`: flips a byte of an
 /// object, keeping its size, and records the new bytes' digest as if they
@@ -891,7 +898,7 @@ string plantByte(string cache, string key)
     import sparkles.base.hash.blake3 : blake3;
     import sparkles.build_graph.store : hexOf;
 
-    const entry = buildPath(cache, "build", "v1", "results", key);
+    const entry = buildPath(cache, "build", layoutDir, "results", key);
     const out_ = buildPath(entry, "out");
     foreach (e; dirEntries(out_, SpanMode.depth))
         if (e.isFile && (e.name.endsWith(".o") || e.name.endsWith(".a")))
@@ -903,7 +910,7 @@ string plantByte(string cache, string key)
             setAttributes(e.name, getAttributes(e.name) | octal!200);
             write(e.name, bytes);
             const after = hexOf(blake3(bytes));
-            foreach (record; [buildPath(entry, "record"), buildPath(cache, "build", "v1", "records", key)])
+            foreach (record; [buildPath(entry, "record"), buildPath(cache, "build", layoutDir, "records", key)])
                 if (exists(record))
                 {
                     setAttributes(record, getAttributes(record) | octal!200);
@@ -938,7 +945,7 @@ struct ScratchStore
 
     @disable this(this);
 
-    static ScratchStore make(string label, uint layout = 1)
+    static ScratchStore make(string label, uint layout = layoutVersion)
     {
         import core.lifetime : move;
         import sparkles.base.vfs.handles : ambientAuthority, openRoot;
@@ -980,13 +987,13 @@ struct ScratchStore
         r.declaredKey = "declared-" ~ key;
         r.resultKey = key;
         r.outputs = [OutputRecord("f", size, false, blake3(cast(const(ubyte)[]) bytes))];
-        return store.publish(runOut, name, r, "../../../build/v1/results/{}/out") !is null;
+        return store.publish(runOut, name, r, "../../../build/" ~ layoutDir ~ "/results/{}/out") !is null;
     }
 
     /// Writes a lease on `key` held by `holder`, another process.
     void leaseAs(string key, string holder)
     {
-        auto leases = build.walkAll("v1/leases/" ~ key);
+        auto leases = build.walkAll(layoutDir ~ "/leases/" ~ key);
         assert(!leases.hasError);
         assert(!leases.value.writeFileAtomic(holder, "").hasError);
     }
@@ -996,7 +1003,7 @@ struct ScratchStore
     {
         import std.file : dirEntries, SpanMode;
 
-        const at = buildPath(dir, "build", "v1", sub);
+        const at = buildPath(dir, "build", layoutDir, sub);
         if (!exists(at))
             return null;
         string[] result;
@@ -1024,7 +1031,7 @@ Verdict[] oracle17()
         s.store.lease("A");
         s.store.releaseLeases();
         // An access time pushed far into the past changes nothing.
-        const f = buildPath(s.dir, "build", "v1", "results", "A", "out", "f");
+        const f = buildPath(s.dir, "build", layoutDir, "results", "A", "out", "f");
         setTimes(f, SysTime(0), SysTime.fromUnixTime(2_000_000_000));
         const report = s.store.evict(150, 1 << 20, &none);
         vs ~= Verdict("step 1", report.evicted != ["B"] ? text("evicted ", report.evicted, ", not B")
@@ -1091,7 +1098,7 @@ Verdict[] oracle17()
         {
             import std.file : remove;
 
-            remove(buildPath(s.dir, "build", "v1", "records", r2));
+            remove(buildPath(s.dir, "build", layoutDir, "records", r2));
         }
         const bound = s.store.recordBytes - 1;
         const dropped = s.store.evict(1 << 20, bound, &none);
@@ -1151,24 +1158,25 @@ Verdict[] oracle17()
             import sparkles.build_graph.store : Store;
 
             typeof(s.store) newer;
-            assert(typeof(s.store).open(s.build, "1-1", newer, 2));
+            assert(typeof(s.store).open(s.build, "1-1", newer, layoutVersion + 1));
         }
-        const separate = exists(buildPath(s.dir, "build", "v1")) && exists(buildPath(s.dir, "build", "v2"));
+        const separate = exists(buildPath(s.dir, "build", layoutDir)) && exists(buildPath(s.dir, "build", nextLayoutDir));
         // An entry in an unknown format: a miss, left in place.
-        const record = buildPath(s.dir, "build", "v1", "results", "F", "record");
-        write(record, readText(record).replace("format 1\n", "format 99\n"));
-        const unknown = s.store.find("F") is null && exists(buildPath(s.dir, "build", "v1", "results", "F"));
+        const record = buildPath(s.dir, "build", layoutDir, "results", "F", "record");
+        write(record, readText(record).replace(text("format ", formatVersion, "\n"), "format 99\n"));
+        const unknown = s.store.find("F") is null && exists(buildPath(s.dir, "build", layoutDir, "results", "F"));
         s.store.releaseLeases();
         // The older layout goes only when no lease in it is live.
         s.leaseAs("F", "99999-2");
         bool other(string h) => h == "99999-2";
-        const whileLeased = collectOlderLayouts(s.build, &other, 2);
-        const afterwards = collectOlderLayouts(s.build, &none, 2);
+        const whileLeased = collectOlderLayouts(s.build, &other, layoutVersion + 1);
+        const afterwards = collectOlderLayouts(s.build, &none, layoutVersion + 1);
         vs ~= Verdict("step 8", !separate ? "the two layouts do not have directories of their own"
             : !unknown ? "an entry in an unknown format was served or removed"
             : whileLeased.length ? "the older layout went while a lease in it was live"
-            : afterwards != ["v1"] ? text("garbage collection removed ", afterwards, ", not v1") : null,
-            "v1 and v2 are separate; an unknown format is a miss left in place; v1 went once its lease ended");
+            : afterwards != [layoutDir] ? text("garbage collection removed ", afterwards, ", not ", layoutDir) : null,
+            text(layoutDir, " and ", nextLayoutDir, " are separate; an unknown format is a miss left in place; ", layoutDir,
+            " went once its lease ended"));
     }
 
     vs ~= oracle17DigestRecords();
@@ -1417,7 +1425,7 @@ Verdict[] oracle18()
         auto discard = appender!string;
         cast(void) storeOperation(cache, "remove-key=" ~ key, discard);
         cast(void) storeOperation(cache, "gc", discard);
-        const recorded = buildPath(cache, "build", "v1", "records", key);
+        const recorded = buildPath(cache, "build", layoutDir, "records", key);
         if (exists(recorded))
             remove(recorded);
         const lines = explained(cache, compile);
@@ -1453,7 +1461,7 @@ Verdict[] oracle18()
                     found = e.name;
             }
         string preimages;
-        foreach (e; dirEntries(buildPath(cache, "build", "v1", "preimages"), SpanMode.shallow))
+        foreach (e; dirEntries(buildPath(cache, "build", layoutDir, "preimages"), SpanMode.shallow))
             preimages ~= readText(e.name);
         vs ~= Verdict("redacted value", g.exitCode != 0 ? "the run failed:" ~ tailOf(g.log)
             : found.length ? "the value, or its plain SHA-256, is in " ~ found
@@ -1658,7 +1666,7 @@ Verdict[] oracle24()
         const compile = taskOf(g, fx.task("compile"));
         const key = g.stats.resultKeys.get(compile, null);
         string planted;
-        const out_ = buildPath(cache, "build", "v1", "results", key, "out");
+        const out_ = buildPath(cache, "build", layoutDir, "results", key, "out");
         foreach (e; dirEntries(out_, SpanMode.shallow))
             if (e.isFile && e.name.endsWith(".o"))
                 planted = e.name;
@@ -1686,7 +1694,7 @@ Verdict[] oracle24()
         vs ~= Verdict("step 5", built.status ? "cannot build `ci`:\n" ~ built.output
             : !planted.length ? "no object to plant a link at"
             : !r.output.canFind("miss") ? "the lookup through a planted link did not miss:\n" ~ r.output
-            : !exists(buildPath(cache, "build", "v1", "trash")) || storeHas(cache, key) ? "the entry was not moved to trash/"
+            : !exists(buildPath(cache, "build", layoutDir, "trash")) || storeHas(cache, key) ? "the entry was not moved to trash/"
             : trace.canFind(target) ? "the lookup touched the link's target " ~ target : null,
             "the lookup refused the planted link, moved the entry to trash/, and never touched its target");
     }
@@ -1891,7 +1899,7 @@ string[string] outputsOf(string cache, string key)
     import std.file : dirEntries, read, SpanMode;
 
     string[string] files;
-    const out_ = buildPath(cache, "build", "v1", "results", key, "out");
+    const out_ = buildPath(cache, "build", layoutDir, "results", key, "out");
     if (!exists(out_))
         return files;
     foreach (e; dirEntries(out_, SpanMode.depth))
@@ -1941,7 +1949,7 @@ Verdict[] oracle5()
         const key = a.stats.resultKeys.get(link, null);
         string binary;
         foreach (name, _; outputsOf(cacheA, key))
-            binary = buildPath(cacheA, "build", "v1", "results", key, "out", name);
+            binary = buildPath(cacheA, "build", layoutDir, "results", key, "out", name);
         const traceFile = buildPath(scratch, "o5.trace");
         const r = execute(["strace", "-f", "-qq", "-e", "trace=openat,open,stat,newfstatat", "-o", traceFile,
             binary, "--no-runner"], null, std.process.Config.none, size_t.max, other);
@@ -2179,9 +2187,12 @@ Verdict[] oracle9()
 
     // The manifest extraction's version alone changes every compile's result key.
     {
-        manifestExtraction = 2;
+        const saved = manifestExtraction;
+        scope (exit)
+            manifestExtraction = saved;
+        manifestExtraction = saved + 1;
         auto other = run(app.name, freshCache("o9"));
-        manifestExtraction = 1;
+        manifestExtraction = saved;
         auto same = run(app.name, freshCache("o9"));
         string[] kept;
         foreach (task, key; same.stats.resultKeys)
@@ -2457,7 +2468,7 @@ __gshared string renameBlockCache;
 void blockRename(string key) @trusted
 {
     try
-        write(buildPath(renameBlockCache, "build", "v1", "results", key), "in the way");
+        write(buildPath(renameBlockCache, "build", layoutDir, "results", key), "in the way");
     catch (Exception) {}
 }
 
@@ -2526,7 +2537,7 @@ string[] storeDir(string cache, string sub)
     import std.file : dirEntries, SpanMode;
     import std.path : baseName;
 
-    const dir = buildPath(cache, "build", "v1", sub);
+    const dir = buildPath(cache, "build", layoutDir, sub);
     return exists(dir) ? dirEntries(dir, SpanMode.shallow).map!(e => baseName(e.name)).array.sort.release : null;
 }
 
@@ -3050,7 +3061,7 @@ Verdict[] oracle4()
         foreach (name; records)
         {
             string path, digest;
-            foreach (line; readText(buildPath(cache, "build", "v1", "digests", name)).lineSplitter)
+            foreach (line; readText(buildPath(cache, "build", layoutDir, "digests", name)).lineSplitter)
             {
                 if (line.startsWith("path "))
                     path = line[5 .. $].idup;
@@ -3066,7 +3077,7 @@ Verdict[] oracle4()
         }
         vs ~= Verdict("step 2", second.exitCode ? "the second run failed:" ~ tailOf(second.log)
             : second.stats.executedTasks.any!(t => !t.startsWith("test:")) ? text("the second run rebuilt ", second.stats.executedTasks)
-            : !records.canFind!(r => readText(buildPath(cache, "build", "v1", "digests", r)).canFind("path " ~ relativeModule ~ "\n"))
+            : !records.canFind!(r => readText(buildPath(cache, "build", layoutDir, "digests", r)).canFind("path " ~ relativeModule ~ "\n"))
                 ? "no digest record names the fixture's module"
             : wrong.length ? "records that disagree with a rehash:" ~ wrong : null,
             text("a second run hit through the digest cache, and rehashing its ", audited,
@@ -3082,7 +3093,7 @@ Verdict[] oracle4()
         const key = first.stats.resultKeys.get(compile, null);
         string object;
         foreach (name, bytes; outputsOf(cache, key))
-            object = buildPath(cache, "build", "v1", "results", key, "out", name);
+            object = buildPath(cache, "build", layoutDir, "results", key, "out", name);
         string corrupt(string how)
         {
             import std.file : remove;
@@ -3134,7 +3145,7 @@ Verdict[] oracle4()
         vs ~= Verdict("step 4, the future", !first.stats.futureTimes.canFind(relativeModule)
             || !second.stats.futureTimes.canFind(relativeModule) ? text("not reported in both runs: ",
                 first.stats.futureTimes, " ", second.stats.futureTimes)
-            : !storeDir(cache, "digests").all!(r => !readText(buildPath(cache, "build", "v1", "digests", r))
+            : !storeDir(cache, "digests").all!(r => !readText(buildPath(cache, "build", layoutDir, "digests", r))
                 .canFind("path " ~ relativeModule ~ "\n")) ? "its digest was cached" : null,
             "a module dated a day ahead was reported in both runs, and its digest never cached");
         write(module_, libModule);
@@ -3173,7 +3184,7 @@ Verdict[] oracle4()
         auto during = run(app.name, cache, editing(rewrite, [compile]));
         const manifestsAfter = storeDir(cache, "manifests");
         const editedDigest = hexOf(blake3(cast(const(ubyte)[]) edited));
-        const cachedEdit = storeDir(cache, "digests").any!(r => readText(buildPath(cache, "build", "v1", "digests", r))
+        const cachedEdit = storeDir(cache, "digests").any!(r => readText(buildPath(cache, "build", layoutDir, "digests", r))
             .canFind("digest " ~ editedDigest));
         auto next = run(app.name, cache);
         write(module_, libModule);

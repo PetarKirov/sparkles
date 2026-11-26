@@ -591,6 +591,37 @@ The manifest comes from the compiler's dependency output. On LDC, that is
   fork's does, the manifest **must** record those digests rather than digests
   taken afterwards. A file's entry then describes what the compile read,
   whenever the file changed.
+- **Search probes:** where the compiler reports its searches as their
+  factors, as the LDC fork's `--makedeps-probes` does (the ordered import and
+  string-import roots, the order a module's candidates are tried in, and where
+  each lookup resolved), the manifest **must** record those factors instead
+  of the expanded list. They stand for the same absent candidates: for a
+  module, every candidate under each root before the one it resolved in, and
+  those before its own in that root, or every candidate under every root when
+  the lookup failed; for a string import, its name under each string-import
+  root before the one it resolved in, or under every one when it failed; and
+  each path the compiler lists alone. The format is read line by line on LF
+  only, since a name may hold any other byte, a CR included. One compile's probes are a few thousand short
+  lines where the expanded list is tens of thousands of long ones. The store
+  keeps each set of probes once, under its digest, and a manifest names it by
+  that digest, so the manifests of one declared key, and the compiles that
+  search the same roots for the same modules, share it.
+- **Immutable roots:** an absent candidate inside the Nix store is never
+  recorded, and never checked. A store path's contents are fixed by its name,
+  so no file can appear in one. A store object that holds a link to a mutable
+  directory breaks that assumption, and is outside what a key covers, as it
+  always was.
+- **Checking absence:** on Linux, a lookup **may** decide that absent
+  candidates are still absent from directory listings, rather than probing
+  each path. A listing **must** be reused only while the directory's
+  identity, modification time and status-change time are those it was read
+  with, and its modification time predates the listing by BGK5's two
+  seconds; otherwise the directory is listed again. A missing directory
+  **must** be looked up again on every check. A walk, open or listing that
+  fails leaves the directory unknown, and each candidate in it is looked up
+  itself, as is every path in the run directory, which the run's own actions
+  write. On other systems, whose file systems may fold case, every candidate
+  is looked up itself.
 
 **BGK3: Several manifests per declared key.** The store **must** keep, under one
 declared key, a bounded list of manifests. Each manifest leads to its own
@@ -722,16 +753,18 @@ what an action uses without changing anything it read.
 
 The store's layout is:
 
-| Directory                  | Holds                                                  |
-| -------------------------- | ------------------------------------------------------ |
-| `<store>/results/<key>/`   | a published result: outputs, diagnostics, digests      |
-| `<store>/manifests/<key>`  | the manifest list of a declared key                    |
-| `<store>/records/<key>`    | the digest record of an evicted result (BGS5)          |
-| `<store>/preimages/<task>` | the declared-key preimage a task last published (BGS8) |
-| `<store>/leases/<key>/`    | one lease file per process using a result              |
-| `<store>/staging/`         | entries being written                                  |
-| `<store>/trash/`           | entries being evicted or discarded                     |
-| `<store>/pruned`           | present while no manifest list holds a prunable entry  |
+| Directory                  | Holds                                                     |
+| -------------------------- | --------------------------------------------------------- |
+| `<store>/results/<key>/`   | a published result: outputs, diagnostics, digests         |
+| `<store>/manifests/<key>`  | the manifest list of a declared key                       |
+| `<store>/records/<key>`    | the digest record of an evicted result (BGS5)             |
+| `<store>/preimages/<task>` | the declared-key preimage a task last published (BGS8)    |
+| `<store>/leases/<key>/`    | one lease file per process using a result                 |
+| `<store>/staging/`         | entries being written                                     |
+| `<store>/trash/`           | entries being evicted or discarded                        |
+| `<store>/prune-token`      | replaced by each change that can make a manifest prunable |
+| `<store>/pruned`           | the prune token a complete scan of the lists started with |
+| `<store>/probes/<digest>`  | a probe block (BGK2), shared by every manifest naming it  |
 
 **BGS1: One store per machine.** Results **must** live in one store per user and
 machine, under `$XDG_CACHE_HOME/sparkles/build` (`~/.cache/sparkles/build` when
@@ -789,8 +822,8 @@ publishes, and **must** hold the lease until its run ends.
 by evicting its least recently used entries first:
 
 - **Results:** output bytes, 20 GiB by default.
-- **Records:** manifest lists, digest records and key preimages, 1 GiB by
-  default. Large results therefore never evict the small records that later
+- **Records:** manifest lists, probe blocks, digest records and key
+  preimages, 1 GiB by default. Large results therefore never evict the small records that later
   lookups need.
 
 A result's recency is the time a lease on it was last created (BGS4); the
@@ -817,15 +850,27 @@ Eviction follows these rules:
   records each manifest's result key beside it, so dropping one and recording
   a used one compare keys and never rehash a manifest. A manifest can become
   droppable only when a result leaves without a digest record, or a digest
-  record goes. Each of those first removes `<store>/pruned`, and a prune
-  writes it before it reads any list. While it is present, the prune is
-  skipped, because it could drop nothing. A list already led by the manifest
-  a hit used is not rewritten.
-- **Records' order:** over the records' bound, eviction drops the manifests
-  no result serves, then the least recently written digest records and
-  preimages, then the manifests those left without a result, and last whole
-  manifest lists, least recently used first. A compile whose list went
-  misses once, and records its manifest again.
+  record goes. Each of those first replaces `<store>/prune-token`. A prune
+  reads the token, scans every list, and writes the token into
+  `<store>/pruned` only when it read and wrote each list; it is skipped while
+  `pruned` holds the current token, because it could drop nothing. A change
+  during a scan, a crash in one, or a failed read leaves `pruned` behind,
+  and the next prune runs. Eviction writes a result's digest record before it
+  moves the result to `trash/`. A list already led by the manifest a hit used
+  is not rewritten; the hit leases its result, and that lease's recency
+  dates the list.
+- **Records' order:** over the records' bound, eviction drops, until it is
+  at 90 % of it: the manifests no result serves; the probe blocks no list
+  names; the least recently written preimages, which only explain misses;
+  the least recently written digest records, then the manifests those left
+  without a result; and last whole manifest lists, least recently used
+  first (the later of a list's write and its leading manifest's lease), and
+  the blocks those named. A compile whose list went misses once, and records
+  its manifest again. A probe block goes only when no list names it and it
+  was not written in the last hour: a list that names a block writes it
+  again first, so a block in use is never old, and a sweep whose scan of the
+  lists could not read one removes nothing. A lookup through a manifest
+  whose block is gone misses, and the compile writes the block again.
 
 An eviction of a result:
 
@@ -934,7 +979,11 @@ sample on every CI run
 separate stores on one machine. Each entry, record and manifest list
 **must** record the format version of its own encoding. An entry in a format
 the reading process does not know is a miss, and is left in place for a
-process that does.
+process that does. A change to how a list is read, such as the
+probe blocks and cached result keys of layout 2, takes a layout of its own,
+so an older revision, which would read the new lists without them, never
+reads or prunes them. A newer revision collects an older layout once no live
+lease is in it.
 
 **BGS11: Snapshots before sharing.** A result **must** be published to a store
 or cache shared beyond its machine only if its action read a snapshot of its

@@ -163,6 +163,10 @@ struct Tools
     /// files it read with their digests and the absent candidates (BGK2),
     /// which a compile's manifest comes from.
     bool dependencyOutput;
+    /// Whether it also writes the fork's search probes (`--makedeps-probes`,
+    /// BGK2): the roots and where each lookup resolved, the compact form of
+    /// the absent candidates, written instead of their expanded list.
+    bool probesOutput;
     /// The compiler's configuration file, passed explicitly (`-conf=`, BGT1);
     /// empty leaves the compiler to find its own.
     string config;
@@ -204,7 +208,7 @@ struct Tools
     Tools of(string config) const @safe pure nothrow
     {
         auto t = Tools(compiler, archiver, cc, linker, fail, deviceCompiler, shaderTools.dup, dependencyOutput,
-            this.config, prefixMaps.dup, testLimit, actionLimit, testLegs.dup, extraFlags.dup,
+            probesOutput, this.config, prefixMaps.dup, testLimit, actionLimit, testLegs.dup, extraFlags.dup,
             runtimeEnvironment.dup, libraryPath.dup);
         foreach (pkg, more; testArguments)
             t.testArguments[pkg] = more.dup;
@@ -217,6 +221,7 @@ struct Tools
             t.config = h.config;
             t.prefixMaps = h.prefixMaps.dup;
             t.dependencyOutput = h.dependencyOutput;
+            t.probesOutput = h.probesOutput;
             t.triple = h.triple;
             t.libraryPath = null;
         }
@@ -243,6 +248,7 @@ struct HostTools
     string triple;   /// `-mtriple=`, or empty for the compiler's default
     string[] prefixMaps; /// as `Tools.prefixMaps`, for this compiler's paths
     bool dependencyOutput; /// as `Tools.dependencyOutput`
+    bool probesOutput;     /// as `Tools.probesOutput`
     string identity; /// its toolchain identity (BGT1), which its actions' keys cover (BGH7)
 }
 
@@ -876,7 +882,8 @@ string[] compileArgv(ref const Variant v, string root, const Tools build, TaskId
         argv ~= ["-c"] ~ (ldc ? ["-singleobj"] : null) ~ ["-of=$OUT/" ~ objectName(v)];
     // BGK2: the manifest, beside the action's measurements.
     if (ldc && tools.dependencyOutput)
-        argv ~= ["--makedeps=$MEASURE/deps", "--makedeps-absent=$MEASURE/absent",
+        argv ~= ["--makedeps=$MEASURE/deps",
+            tools.probesOutput ? "--makedeps-probes=$MEASURE/probes" : "--makedeps-absent=$MEASURE/absent",
             "--makedeps-digests=$MEASURE/digests"];
     if (tools.config.length)
         argv ~= "-conf=" ~ tools.config;
@@ -1450,6 +1457,35 @@ version (unittest)
                 }, (_) {});
         assert(compiles && testRoots == 1, text(compiler, ": ", compiles, " compiles, ", testRoots, " test roots"));
     }
+}
+
+/// BGK2: a compile asks for the search probes exactly when its compiler writes
+/// them, the expanded list otherwise, and another host's tools carry their
+/// own answer.
+@("build_graph.actions.compileArgv.probesWhenTheCompilerHasThem")
+@safe unittest
+{
+    foreach (probes; [false, true])
+    {
+        Tools tools;
+        tools.dependencyOutput = true;
+        tools.probesOutput = probes;
+        const g = graphWith([[":t1", "unittest"]], null, tools, null, ["linux", "posix"], "ldc");
+        size_t compiles;
+        foreach (ref a; g.actions)
+            if (a.kind == ActionKind.compile)
+                a.action.match!((ref const ProcessAction p) {
+                    ++compiles;
+                    assert(p.argv.canFind("--makedeps-probes=$MEASURE/probes") == probes, text(p.argv));
+                    assert(p.argv.canFind("--makedeps-absent=$MEASURE/absent") == !probes, text(p.argv));
+                }, (_) {});
+        assert(compiles);
+    }
+    Tools build;
+    build.dependencyOutput = build.probesOutput = true;
+    build.hosts["wasm32-unknown-wasip1"] = HostTools(compiler: "/w/ldc2", dependencyOutput: true, probesOutput: false);
+    assert(build.of("wasm32-unknown-wasip1").probesOutput == false && build.of("wasm32-unknown-wasip1").dependencyOutput);
+    assert(build.of("x86_64-unknown-linux-gnu").probesOutput, "the build platform keeps its own");
 }
 
 @("build_graph.actions.linkArgv.darwinNamesObjectsFromTheRun")
