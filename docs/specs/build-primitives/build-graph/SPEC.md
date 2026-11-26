@@ -248,7 +248,7 @@ the same variant exactly when they produce interchangeable object code.
 - its versions and debug versions after inheritance, pruned as below;
 - the inheritance mode (BGR3);
 - the toolchain identity (§8);
-- the target platform, including WebAssembly and betterC targets.
+- the host platform (BGH3).
 
 Two requests that resolve to equal variant keys **must** share one set of
 actions.
@@ -1022,6 +1022,66 @@ BGT1's runner-core item replaces this requirement. Its former text, not normativ
 > depends on through an ordinary `dependency`. A change to the working tree's
 > test-runner implementation affects only that package's own tests until the
 > pin is bumped.
+
+### 8.1 Platforms
+
+The graph names platforms as Nix does
+([nixpkgs, cross-compilation](https://nixos.org/manual/nixpkgs/stable/#chap-cross)):
+an action runs on the **build platform**, the machine that plans and executes
+the run, and a variant's output runs on its **host platform**. Native
+compilation is the case where the two are equal, not a mode of its own. A
+compiler's _target_ platform is not modelled: LDC emits for any platform its
+`-mtriple` names, and its configuration chooses the runtime per triple.
+
+**BGH1: Platform names.** A platform **must** be identified by its nixpkgs
+`config`, the LLVM target triple (`x86_64-unknown-linux-gnu`,
+`wasm32-unknown-wasip1`, `aarch64-unknown-linux-android`). Its Nix `system`
+double, the triple the compiler takes, and the dub platform and architecture
+identifiers a recipe's settings match **must** be derived from it, not
+declared beside it.
+
+**BGH2: The host is the request's.** A request **must** name its host platform,
+the build platform when it names none, as `pkgsCross.<platform>.<package>`
+names one in Nix. Every request **must** be planned through the same steps
+whatever its host.
+
+**BGH3: Hosts along edges.** A library dependency's variant **must** have the
+host platform of the variant that depends on it. A generator's tool **must**
+have the build platform as its host (BGG6), as a Nix build-time dependency's
+host is its dependent's build platform. The variant key (BGV1) **must** cover
+the host platform.
+
+**BGH4: The toolchain table.** The toolchain of each host platform **must** come
+from one table the environment provides, keyed by `config`, which the
+repository's Nix shells generate from the same `pkgsCross` and toolchain
+packages its Nix builds use. An entry **must** give the D compiler, whose
+configuration the run asks the compiler for, and its archiver; another host's
+entry **must** give its triple, the one target its compiles, links and
+platform probe all name. It gives the C compiler driver where the host links
+through one, the `pkg-config` search directory for that host's libraries when
+it has one, and the emulator that runs the host's programs on the build
+platform when one can: none for Android, whose programs need its own loader. A request
+whose host has no entry **must** be refused, naming the host.
+
+**BGH5: Lowering for a host.** Every compile, archive and link of a variant
+**must** use its host's entry: the compile names the host's triple, the archive
+is made by the host's compiler, and the link goes through the host's driver.
+An action of a variant **must not** use another platform's linker, library
+search path or `pkg-config` directory.
+
+**BGH6: Libraries for a host.** A recipe's system libraries (`libs`) **must**
+resolve through the host entry's `pkg-config` directory alone, so no library
+of the build platform reaches a variant of another host. A variant that needs
+what its host's entry does not provide **must** be refused with the missing
+item named, so the caller can build it another way.
+
+**BGH7: Keys per toolchain.** Every key **must** cover the identity (BGT1, BGT2)
+of its action's own toolchain, the host entry's, so two actions of one run
+with different hosts never share a key.
+
+**BGH8: Tests on another host.** A test whose binary the build platform cannot
+execute, and that no emulator of its host's entry runs, **must** be skipped
+and reported as skipped, never as passed.
 
 ## 9. Test actions and result reuse
 

@@ -277,6 +277,50 @@ Gate:
   specification (`docs/specs/build-primitives/observability/`), which this
   plan does not restate.
 
+## E5: Cross-compilation
+
+The graph builds a request for any host platform its toolchain table names
+(SPEC §8.1), in the vocabulary of nixpkgs' cross-compilation: build and host
+platforms named by `config`, a host per request, a generator's tool built for
+the build platform, and native compilation as the case where the two agree.
+
+- **Platforms** (BGH1): the platform record, derived from its `config`: the
+  `system` double, the compiler's triple, dub's identifiers, and whether the
+  build platform executes the host's programs.
+- **The toolchain table** (BGH4): `SPARKLES_TOOLCHAINS`, exported by the dev
+  shells from the flake's `pkgsCross` and dlang-nix packages, with entries for
+  the build platform, `wasm32-unknown-wasip1`, `wasm32-unknown-wasip2` and
+  Android on aarch64 and x86_64. It replaces finding the toolchain on `PATH`
+  and `$SPARKLES_WASI_LDC`.
+- **Planning** (BGH2, BGH3, BGH6): a host per request, libraries on the
+  dependent's host, generator tools on the build platform, `libs` through the
+  host entry's `pkg-config`, and refusals that name what is missing.
+- **Lowering and keys** (BGH5, BGH7): the host's triple, archiver and link
+  driver per action; each key over its own toolchain. Every stored result
+  misses once.
+- **Tests** (BGH8): skipped when the build platform cannot execute the host's
+  programs; no emulator runs yet.
+- **Callers:** `--host` for `ci test --build-only` and `ci commits build-each`;
+  the WebAssembly modules and their previews listed by
+  `nix/packages/wasm-modules.nix`, so build-each builds them on the graph and
+  dub only what planning refuses.
+
+Gate:
+
+- One plan holds a WebAssembly variant and the build-platform variant of the
+  generator tool it reads; their keys differ by host; a host without an entry,
+  and a WebAssembly recipe needing a library its entry lacks, are refused with
+  the reason named.
+- The four modules build for `wasm32-unknown-wasip1`, and the three that
+  import no host function of the Nix evaluator (all but
+  `dub-manifest-nix-wasm`) for `wasm32-unknown-wasip2`, and each validates
+  (`wasm-tools validate`; a component for wasip2, TCW6).
+- `hue`'s and `terminal`'s Android libraries link for aarch64 and x86_64 from
+  the configuration `buildDAndroidLib` builds, and export the same dynamic
+  symbols as its output.
+- `ci commits build-each` over a range builds the modules on the graph, and a
+  second run reuses every action.
+
 ## Progress
 
 | Milestone | State       |
@@ -287,3 +331,4 @@ Gate:
 | E2        | done        |
 | E3        | done        |
 | E4        | not started |
+| E5        | in progress |
