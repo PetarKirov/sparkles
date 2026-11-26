@@ -780,12 +780,17 @@ EnvEntry[] linkEnvironment(ref const Variant v, const Tools build) @safe pure no
 }
 /// A link's output, named as dub names it for the variant's host: an
 /// executable takes `.wasm` on WebAssembly and `.exe` on Windows, and no
-/// extension elsewhere (BGH5).
+/// extension elsewhere; a shared library is `lib<name>.so`, `lib<name>.dylib`
+/// on Darwin, `<name>.dll` on Windows (BGH5).
 string binaryName(ref const Variant v) @safe pure nothrow
 {
     import std.algorithm.searching : canFind;
 
     const name = baseName(v);
+    if (v.settings.targetType == TargetType.dynamicLibrary)
+        return v.platform.isWindows ? name ~ ".dll"
+            : v.platform.platform.canFind("darwin") ? "lib" ~ name ~ ".dylib"
+            : "lib" ~ name ~ ".so";
     if (v.platform.platform.canFind("wasm"))
         return name ~ ".wasm";
     if (v.platform.isWindows)
@@ -885,6 +890,9 @@ string[] compileArgv(ref const Variant v, string root, const Tools build, TaskId
     if (ldc && tools.cc.length)
         argv ~= "-gcc=" ~ tools.cc;
     argv ~= optionFlags(s.options, ldc);
+    // A shared library's code is position independent, as dub compiles it.
+    if (ldc && s.targetType == TargetType.dynamicLibrary && !v.platform.isWindows)
+        argv ~= "-relocation-model=pic";
     // Tests run on several threads, so LDC counts coverage atomically (CIC7).
     if (ldc && (s.options & BuildOption.coverage))
         argv ~= "--cov-increment=atomic";
@@ -938,6 +946,8 @@ string[] linkArgv(ref const Variant v, string root, const Tools build, TaskId co
     if (tools.config.length)
         argv ~= "-conf=" ~ tools.config;
     argv ~= optionFlags(s.options, v.platform.compiler == "ldc");
+    if (s.targetType == TargetType.dynamicLibrary)
+        argv ~= "-shared";
     foreach (f; s.dflags)
         argv ~= f;
     argv ~= tools.extraFlags;
@@ -970,6 +980,13 @@ string[] linkArgv(ref const Variant v, string root, const Tools build, TaskId co
         argv ~= "-L-L" ~ dir;
     foreach (lib; s.libs)
         argv ~= "-L-l" ~ lib;
+    // A shared library names itself, as dub's `addDynamicLibName` does, before
+    // the recipe's flags so one can override it: a consumer then records the
+    // file name, not the path it was linked from (ELF's `DT_SONAME`, which
+    // Android's loader requires; Mach-O's install name).
+    if (s.targetType == TargetType.dynamicLibrary && !v.platform.isWindows)
+        argv ~= v.platform.platform.canFind("darwin") ? ["-L-install_name", "-L@rpath/" ~ binaryName(v)]
+            : ["-L-soname", "-L" ~ binaryName(v)];
     foreach (f; s.lflags)
         argv ~= "-L" ~ f;
     // lld's thread count: only a link that names lld takes it, and the C
@@ -1559,4 +1576,49 @@ version (unittest)
     const refused = planActions(plan.value, [r.value], "/r", missing);
     assert(refused.hasError && refused.error.message.canFind("wasm32-unknown-wasip1"),
         refused.hasError ? refused.error.message : null);
+}
+
+/// BGV2, BGH5: a shared library a program loads is an application: its
+/// compile is position independent, its link `-shared`, through the host's
+/// C driver, and its output `lib<name>.so`, as dub names it on Android.
+@("build_graph.actions.planActions.sharedLibrary")
+@safe unittest
+{
+    auto tree = memoryTree([
+        "/r/dub.sdl": "name \"r\"\nsubPackage \"app\"\n",
+        "/r/app/dub.sdl": "name \"app\"\nconfiguration \"android\" {\n    platforms \"android\"\n"
+            ~ "    targetType \"dynamicLibrary\"\n    targetName \"hue\"\n}\n",
+        "/r/app/source/app.d": "module app;\n",
+    ]);
+    const android = BuildPlatform(["linux", "posix", "android"], ["aarch64"], "ldc", "ldc2", 2113, "1.43.0",
+        "aarch64-unknown-linux-android");
+    auto r = resolve(ResolveRequest(directory: "/r", subPackage: ":app", buildType: "debug", platform: android.dup),
+        tree);
+    assert(r.hasValue, r.hasError ? r.error.message : null);
+    auto options = PlanOptions(ToolchainIdentity("ldc", "build-toolchain"));
+    options.build = BuildPlatform(["linux", "posix"], ["x86_64"], "ldc", "ldc2", 2113, "1.43.0",
+        "x86_64-unknown-linux-gnu");
+    options.hostToolchains["aarch64-unknown-linux-android"] = ToolchainIdentity("ldc", "android-toolchain");
+    const plan = planVariants([r.value], options, tree);
+    assert(plan.hasValue, plan.hasError ? plan.error.message : null);
+    assert(plan.value.variants[0].role == Role.application);
+
+    auto tools = Tools(compiler: "/b/ldc2", archiver: "/b/ar", fail: "/bin/false");
+    tools.hosts["aarch64-unknown-linux-android"] = HostTools(compiler: "/a/ldc2", archiver: "/a/llvm-ar",
+        cc: "/a/clang", triple: "aarch64--linux-android");
+    auto g = planActions(plan.value, [r.value], "/r", tools);
+    assert(g.hasValue, g.hasError ? g.error.message : null);
+    string[] argvOf(string prefix)
+    {
+        foreach (ref a; g.value.actions)
+            if (a.id.text.startsWith(prefix))
+                return a.action.match!((ref const ProcessAction p) => p.argv.dup, (_) => null);
+        assert(false, prefix);
+    }
+    const compile = argvOf("compile:r.app:application:"), link = argvOf("link:r.app:application:");
+    assert(compile.canFind("-relocation-model=pic") && compile.canFind("-mtriple=aarch64--linux-android"),
+        text(compile));
+    assert(link.canFind(["-L-soname", "-Llibhue.so"]), text(link));
+    assert(link.canFind("-shared") && link.canFind("-of=$OUT/libhue.so") && link.canFind("-gcc=/a/clang"),
+        text(link));
 }

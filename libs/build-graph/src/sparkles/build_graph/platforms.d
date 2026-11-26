@@ -70,6 +70,9 @@ struct HostToolchain
     /// environment's search path, and elsewhere for none (BGH6).
     string pkgConfigLibdir;
     string emulator;   /// what runs this host's programs on the build platform, when anything does
+    /// The variables a recipe built for this host may read, with their values
+    /// (`SPARKLES_ANDROID_MIN_SDK`, the API level Android's links target).
+    string[string] environment;
 }
 
 /// The toolchain table (BGH4): the build platform, and every host a run may
@@ -139,6 +142,11 @@ Expected!(ToolchainTable, string) parseToolchainTable(string json) @safe
         h.linker = str(e, "linker");
         h.pkgConfigLibdir = str(e, "pkgConfigLibdir");
         h.emulator = str(e, "emulator");
+        if (auto vars = "environment" in e.objectNoRef)
+            if (vars.type == JSONType.object)
+                foreach (name, ref value; vars.objectNoRef)
+                    if (value.type == JSONType.string)
+                        h.environment[name] = value.str;
         if (!h.platform.system.length || !h.ldc.length || !h.archiver.length)
             return err!ToolchainTable(text(config, ": an entry needs `system`, `ldc` and `archiver`"));
         t.hosts[config] = h;

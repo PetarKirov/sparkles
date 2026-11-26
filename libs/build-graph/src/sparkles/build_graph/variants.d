@@ -567,12 +567,20 @@ PlanExpected!(Variant, PlanError) variantOf(ref const Resolution r, ref const Re
             if (flag.startsWith("-mtriple") || flag.startsWith("--mtriple"))
                 return planErr!Variant(PlanError(text(t.package_, "'s recipe sets its own target (", flag,
                     "), which would override ", r.platform.config, "'s")));
+    // A Windows DLL's exports come from LDC's `-shared` compile defaults,
+    // which a graph that compiles before it links does not reproduce: dub
+    // builds it instead (BGV2).
+    if (isRoot && t.settings.targetType == TargetType.dynamicLibrary && r.platform.isWindows)
+        return planErr!Variant(PlanError(text(t.package_, " is a Windows shared library, which the build graph does not",
+            " build: its exports need LDC's -shared compile defaults")));
     v.inheritance = r.inheritance;
     v.toolchain = otherHost ? options.hostToolchains[r.platform.config] : options.toolchain;
     v.platform = r.platform.dup;
     v.role = !isRoot ? Role.dependencyLibrary
         : r.testRoot.configuration.length ? Role.testRoot
-        : t.settings.targetType == TargetType.executable ? Role.application
+        // A shared library a program loads is linked as an executable is.
+        : t.settings.targetType == TargetType.executable || t.settings.targetType == TargetType.dynamicLibrary
+            ? Role.application
         : Role.dependencyLibrary;
 
     if (t.inheritedVersions.length || t.inheritedDebugVersions.length)
@@ -1250,4 +1258,18 @@ version (unittest)
     const overriding = planVariants([own.value], options, t);
     assert(overriding.hasError && overriding.error.message.canFind("sets its own target"),
         overriding.hasError ? overriding.error.message : null);
+
+    // A Windows DLL is left to dub.
+    auto dll = memoryTree([
+        "/d/dub.sdl": "name \"d\"\ntargetType \"dynamicLibrary\"\n",
+        "/d/source/d.d": "module d;\n",
+    ]);
+    auto windows = BuildPlatform(["windows"], ["x86_64"], "ldc", "ldc2", 2113, "1.43.0", "x86_64-pc-windows-msvc");
+    auto onWindows = resolve(ResolveRequest(directory: "/d", platform: windows), dll);
+    assert(onWindows.hasValue);
+    auto native = PlanOptions(ToolchainIdentity("ldc", "build-toolchain"));
+    native.build = windows;
+    const refusedDll = planVariants([onWindows.value], native, dll);
+    assert(refusedDll.hasError && refusedDll.error.message.canFind("Windows shared library"),
+        refusedDll.hasError ? refusedDll.error.message : null);
 }

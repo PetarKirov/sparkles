@@ -317,7 +317,14 @@ handles.
   package's library configuration under the requester's build type, with
   `-unittest` removed, as dub does for every non-root package.
 - **Application:** a root compiled for shipping, with dependency libraries of
-  the same build type.
+  the same build type: an executable, or a shared library (`dynamicLibrary`)
+  that a program loads, such as an Android app's NativeActivity library. A
+  shared library is linked `-shared`, its own code position independent,
+  named as dub names it for its host (`lib<name>.so`), and given its file
+  name as its `DT_SONAME` (on Darwin, `@rpath/<name>.dylib` as its install
+  name) before the recipe's linker flags, as dub gives it. A Windows DLL is
+  refused: its exports come from LDC's `-shared` compile defaults, which a
+  graph that compiles before it links does not reproduce, so dub builds it.
 
 A package that other selected packages depend on is therefore built at least
 twice when its tests run: once as a test root and once as a dependency
