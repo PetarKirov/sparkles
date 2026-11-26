@@ -25,11 +25,15 @@ struct BuildPlatform
     int frontendVersion;
     /// The compiler's own version, such as `1.41.0`.
     string compilerVersion;
+    /// The platform's name, its nixpkgs `config` (the LLVM target triple,
+    /// `wasm32-unknown-wasip1`; build-graph SPEC BGH1), from which the
+    /// identifiers above are derived. Empty in a resolution outside a graph.
+    string config;
 
     /// A copy that shares no array with this one.
     BuildPlatform dup() const @safe pure nothrow
         => BuildPlatform(platform.dup, architecture.dup, compiler, compilerBinary, frontendVersion,
-            compilerVersion);
+            compilerVersion, config);
 
     /// Whether the platform is Windows.
     bool isWindows() const scope @safe pure nothrow @nogc
