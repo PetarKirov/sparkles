@@ -276,13 +276,20 @@ string[] pkgConfigSearch(const string[] packages, PkgConfigDriver driver) @safe
 final class SystemPkgConfig : PkgConfigDriver
 {
     private string executable;
+    private string[string] overrides; // variables each run sets over the process's
 
-    ///
-    this(string executable = null) @safe
+    /// `executable`, or `$PKG_CONFIG`, in the process's environment; with
+    /// `overrides`, in an environment of them alone: another host's search
+    /// directory as `PKG_CONFIG_LIBDIR`, and `PKG_CONFIG_PATH` empty, so no
+    /// library of the build platform reaches it (build-graph SPEC BGH6). Nix's
+    /// wrapper rebuilds `PKG_CONFIG_PATH` from its role variables, which a
+    /// fresh environment does not carry.
+    this(string executable = null, string[string] overrides = null) @safe
     {
         import std.process : environment;
 
         this.executable = executable.length ? executable : environment.get("PKG_CONFIG", "pkg-config");
+        this.overrides = overrides;
     }
 
     bool exists(string name) @safe => run(["--exists", name]).status == 0;
@@ -334,8 +341,9 @@ final class SystemPkgConfig : PkgConfigDriver
             }
         if (dirs.length)
             return dirs;
-        dirs = environment.get("PKG_CONFIG_PATH", "").splitter(':').filter!(d => d.length).array;
-        const libdir = environment.get("PKG_CONFIG_LIBDIR");
+        const variable = (string name) => name in overrides ? overrides[name] : environment.get(name);
+        dirs = variable("PKG_CONFIG_PATH").splitter(':').filter!(d => d.length).array;
+        const libdir = variable("PKG_CONFIG_LIBDIR");
         const defaults = libdir !is null ? libdir : run(["--variable", "pc_path", "pkg-config"]).output.strip;
         return dirs ~ defaults.splitter(':').filter!(d => d.length).array;
     }
@@ -366,14 +374,47 @@ final class SystemPkgConfig : PkgConfigDriver
 
     private auto run(const string[] arguments, const string[string] env = null) @safe
     {
-        import std.process : execute;
+        import std.process : Config, execute;
         import std.typecons : Tuple;
 
         try
-            return execute([executable] ~ arguments, env);
+        {
+            string[string] all = overrides.dup;
+            foreach (name, value; env)
+                all[name] = value;
+            return execute([executable] ~ arguments, all, overrides is null ? Config.none : Config.newEnv);
+        }
         catch (Exception e)
             return Tuple!(int, "status", string, "output")(-1, e.msg);
     }
+}
+
+/// BGH6: a query for another host runs in an environment of its overrides
+/// alone: nothing of this process's, such as a wrapper's role variables,
+/// reaches it; without overrides it inherits the environment.
+@("build_primitives.resolve.libraries.SystemPkgConfig.hostEnvironment")
+@system unittest
+{
+    import std.file : remove, setAttributes, tempDir, write;
+    import std.path : buildPath;
+    import std.process : environment, thisProcessID;
+    import std.conv : text;
+    import std.string : strip;
+    import sparkles.test_runner.skip : skipTest;
+
+    version (Windows)
+        return skipTest("the stand-in pkg-config is a shell script");
+    const script = buildPath(tempDir, text("sparkles-pkg-config-env-", thisProcessID));
+    write(script, "#!/bin/sh\necho \"${HOME:-unset}|${PKG_CONFIG_LIBDIR:-unset}\"\n");
+    setAttributes(script, 493);
+    scope (exit)
+        remove(script);
+    string output;
+    assert(new SystemPkgConfig(script, ["PKG_CONFIG_LIBDIR": "/host/pc", "PKG_CONFIG_PATH": ""])
+        .libs(["x"], output));
+    assert(output.strip == "unset|/host/pc", output);
+    assert(new SystemPkgConfig(script).libs(["x"], output));
+    assert(output.strip == environment.get("HOME", "unset") ~ "|" ~ environment.get("PKG_CONFIG_LIBDIR", "unset"), output);
 }
 
 /**
@@ -389,6 +430,7 @@ final class RecordingPkgConfig : PkgConfigDriver
     private PkgConfigDriver inner;
     private ResolveTree tree;
     private string[string] environment;
+    private string label; // another host's `config`, naming its records; empty for the build platform's
     private Answer[string] answers;
 
     private static struct Answer
@@ -402,12 +444,15 @@ final class RecordingPkgConfig : PkgConfigDriver
         "PKG_CONFIG_SYSROOT_DIR", "PKG_CONFIG_ALLOW_SYSTEM_CFLAGS", "PKG_CONFIG_ALLOW_SYSTEM_LIBS"];
 
     /// Queries `inner`, recording in `tree`; `environment` holds the
-    /// values of `variables` that are set.
-    this(PkgConfigDriver inner, ResolveTree tree, string[string] environment) @safe
+    /// values of `variables` that are set. A driver for another host records
+    /// under its `label`, its `config`, so two hosts' answers to one query
+    /// both stay in the read set (BGP1, BGH6).
+    this(PkgConfigDriver inner, ResolveTree tree, string[string] environment, string label = null) @safe
     {
         this.inner = inner;
         this.tree = tree;
         this.environment = environment;
+        this.label = label;
     }
 
     bool exists(string name) @safe
@@ -462,14 +507,15 @@ final class RecordingPkgConfig : PkgConfigDriver
                 foreach (v; variables)
                 {
                     auto value = v in environment;
-                    tree.noteEnvironment(v, value ? *value : null, value !is null);
+                    tree.noteEnvironment(label.length ? label ~ ":" ~ v : v, value ? *value : null,
+                        value !is null);
                 }
             Answer a;
             a.ok = query(a.output);
             answers[key] = a;
             answer = key in answers;
         }
-        tree.noteQuery(arguments, answer.ok ? 0 : 1, answer.output);
+        tree.noteQuery(label.length ? [label ~ ":"] ~ arguments : arguments, answer.ok ? 0 : 1, answer.output);
         output = answer.output;
         return answer.ok;
     }
@@ -496,6 +542,15 @@ unittest
     assert(reads.canFind!(e => e.kind == ReadKind.query && e.names == "--exists absent" && !e.found));
     assert(reads.canFind!(e => e.kind == ReadKind.environment && e.path == "PKG_CONFIG_PATH" && e.found));
     assert(reads.canFind!(e => e.kind == ReadKind.environment && e.path == "PKG_CONFIG_LIBDIR" && !e.found));
+
+    // Another host's answer to the same query is recorded beside it.
+    auto host = new RecordingPkgConfig(new MemoryPkgConfig(["z": "-lz-host"], null), tree,
+        ["PKG_CONFIG_LIBDIR": "/host/pc"], "h");
+    assert(host.libs(["z"], output) && output == "-lz-host");
+    const both = tree.reads.entries;
+    assert(both.canFind!(e => e.kind == ReadKind.query && e.names == "--libs z"));
+    assert(both.canFind!(e => e.kind == ReadKind.query && e.names == "h: --libs z"));
+    assert(both.canFind!(e => e.kind == ReadKind.environment && e.path == "h:PKG_CONFIG_LIBDIR" && e.found));
 }
 
 /// A driver over fixed answers: `.pc` names to their `--libs` and `--cflags`.
