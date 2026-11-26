@@ -239,7 +239,7 @@ RunExpected!void runPipeline(in PipelineRequest r)
             foreach (name; checkVerdicts.keys.sort)
                 verdicts ~= JobVerdict(name, checkVerdicts[name]);
         }
-        recordLastRun(cache, LastRun(names.dup, legs, coverage, false, g.stats.resultKeys.dup));
+        recordLastRun(cache, LastRun(names.dup, null, legs, coverage, false, g.stats.resultKeys.dup));
 
         // CIC13: the determinism check over this run's actions.
         import std.stdio : stdout;

@@ -311,6 +311,13 @@ struct TestCommand
     @(Option(`build-only`, description: "Run each package's dub build instead of its tests."))
     bool buildOnly;
 
+    @(Option(`host`, placeholder: "CONFIG",
+        description: "With --build-only, build each selected package's default configuration for this host "
+        ~ "platform instead, named by its nixpkgs config (wasm32-unknown-wasip1, aarch64-unknown-linux-android), "
+        ~ "as pkgsCross builds it; the toolchain table ($SPARKLES_TOOLCHAINS) must name the host. Repeat it for "
+        ~ "several hosts. A host the build platform cannot execute runs no tests (build-graph BGH8)."))
+    string[] hosts;
+
     @(Option(`special-modes`,
         description: "Run the test runner's extracted modes, for each package that uses the "
         ~ "marker attribute: off (the default), betterc, wasm or all. Fails if a mode's "
@@ -434,6 +441,15 @@ struct TestCommand
         const modes = buildOnly + (specialModes != SpecialModes.off) + slow;
         if (modes > 1)
             return "--build-only, --special-modes and --slow are mutually exclusive";
+        if (hosts.length && !buildOnly)
+            return "--host needs --build-only: a host's tests do not run yet (build-graph BGH8)";
+        if (hosts.length && watch)
+            return "--host builds once, on the graph, not in --watch's rounds";
+        // The closures and the change set are judged on the build platform's
+        // dependency graph; a host's can differ (its platform conditions).
+        if (hosts.length && (since.length || dependencies || dependents))
+            return "--host takes packages by --from: --since, --dependencies and --dependents judge the "
+                ~ "build platform's graph";
         if (sanitize != Sanitizer.off && modes)
             return "--sanitize runs the ordinary tests, not --build-only, --special-modes or --slow";
         if (tests.length && !slow)
@@ -521,6 +537,12 @@ unittest
     assert(TestCommand(placement: "p", historyTip: "abc").conflict == "--history-tip needs --shard");
     assert(TestCommand(buildOnly: true, watch: true).conflict is null);
     assert(TestCommand(slow: true, watch: true).conflict == "--watch runs the ordinary tests or --build-only");
+    assert(TestCommand(hosts: ["wasm32-unknown-wasip1"]).conflict
+        == "--host needs --build-only: a host's tests do not run yet (build-graph BGH8)");
+    assert(TestCommand(hosts: ["wasm32-unknown-wasip1"], buildOnly: true, watch: true).conflict
+        == "--host builds once, on the graph, not in --watch's rounds");
+    assert(TestCommand(hosts: ["wasm32-unknown-wasip1"], buildOnly: true, dependencies: true).conflict !is null);
+    assert(TestCommand(hosts: ["wasm32-unknown-wasip1"], buildOnly: true).conflict is null);
     // CIC1: the common execution options.
     assert(TestCommand(jobs: "0").conflict == "--jobs takes a positive capacity");
     assert(TestCommand(jobs: "-2").conflict == "--jobs takes a positive capacity");
