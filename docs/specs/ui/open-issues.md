@@ -54,6 +54,10 @@ make every alternative satisfy `PRN6`. Close this issue when every interpreter i
 exhaustive over the sum and property tests cover equality laws, copy independence
 and one representative value of every alternative.
 
+[Component authoring](./authoring.md) (`AUT26`) narrows the sum this issue
+asks for: its alternatives are the four primitives `box`, `text`, `image`
+and `custom`, not the widget kinds.
+
 ## UI-O3 — Native pointer grab is missing {#ui-o3}
 
 **Status:** open. **Requirements:** `INP9`, `TGT5`.

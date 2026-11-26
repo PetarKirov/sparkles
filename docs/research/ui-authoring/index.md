@@ -29,6 +29,9 @@ This study answers seven questions:
 7. **Which compiler and tooling defects did the experiments hit?** —
    [defects found](#defects-found).
 
+The decisions are specified as requirements in
+[`sparkles:ui` component authoring](../../specs/ui/authoring.md) (`AUT`).
+
 **Last reviewed:** November 26, 2026
 
 > [!NOTE]

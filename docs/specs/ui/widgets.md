@@ -4,6 +4,13 @@ _**Status:** partial · **Date:** 2026-08-05 · **Scope:** the widget level — 
 tree representation, props and identity, and the component catalog, split into
 backend-independent **view models** (`VMD`) and **views** (`WGT`)._
 
+> [!NOTE]
+> How components are written — the builder, element identity and the four
+> primitives every widget is composed of — is specified in
+> [component authoring](./authoring.md). It supersedes `WGT2`, `WGT3`, `WGT5`,
+> `WGT7`, `WGT8` and `WGT10` in part; [its §12](./authoring.md#_12-what-this-page-supersedes)
+> says what changes in each.
+
 ## Design & rationale
 
 ### View model + view
@@ -155,14 +162,15 @@ contract — with the widget-tree adapter as the toolkit's self-inspection.
 
 ## Relationship to existing specs
 
-| Piece                                                                        | Role                                                       |
-| ---------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| [Tree-view case study](../../research/tui-libraries/tree-view-case-study.md) | the design record behind `VMD1`–`VMD7`                     |
-| [layout.md](./layout.md) `LAY`                                               | the sizing, clipping and track facilities components need  |
-| [state-machines.md](./state-machines.md) `STM`                               | the behavior half of every interactive component           |
-| [theme.md](./theme.md) `THM2`                                                | the widened slot vocabulary the catalog requires           |
-| [input.md](./input.md) `INP5`                                                | the tier a component declares                              |
-| [principles.md](./principles.md) `PRN1`, `PRN5`, `PRN6`, `PRN12`             | ownership, sum-payload and Regular-value rules             |
-| [open-issues.md](./open-issues.md) `UI-O1`, `UI-O2`                          | deferred ownership/copy and widget-sum implementation gaps |
+| Piece                                                                        | Role                                                                          |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [Tree-view case study](../../research/tui-libraries/tree-view-case-study.md) | the design record behind `VMD1`–`VMD7`                                        |
+| [layout.md](./layout.md) `LAY`                                               | the sizing, clipping and track facilities components need                     |
+| [state-machines.md](./state-machines.md) `STM`                               | the behavior half of every interactive component                              |
+| [theme.md](./theme.md) `THM2`                                                | the widened slot vocabulary the catalog requires                              |
+| [input.md](./input.md) `INP5`                                                | the tier a component declares                                                 |
+| [principles.md](./principles.md) `PRN1`, `PRN5`, `PRN6`, `PRN12`             | ownership, sum-payload and Regular-value rules                                |
+| [open-issues.md](./open-issues.md) `UI-O1`, `UI-O2`                          | deferred ownership/copy and widget-sum implementation gaps                    |
+| [authoring.md](./authoring.md) `AUT`                                         | how components build the tree; the four primitives the catalog is composed of |
 
 → [Overview](./index.md) · [Layout](./layout.md) · [State machines](./state-machines.md) · [Theme](./theme.md)

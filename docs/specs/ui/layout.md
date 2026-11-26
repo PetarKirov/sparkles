@@ -204,13 +204,14 @@ revisited:
 
 ## Relationship to existing specs
 
-| Piece                                                  | Role in layout                                                                                                           |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| [UI-layout catalog](../../research/ui-layout/index.md) | the evidence base this page decides from (`LAY2`)                                                                        |
-| [backends.md](./backends.md) `TGT`                     | the cells→device mapping (`LAY3`) and the `measure` primitive (`LAY5`)                                                   |
-| [widgets.md](./widgets.md) `WGT`                       | the tree layout consumes; the table/scroll widgets driving `LAY7`/`LAY9`                                                 |
-| [state-machines.md](./state-machines.md) `STM`         | scroll offset, which `LAY7` reads but does not own                                                                       |
-| `sparkles.base.text` (`wrap`, `grapheme`)              | the wrapping and width primitives behind `LAY5`/`LAY10`/`LAY14`                                                          |
-| [base/text wrapping](../base/text/wrapping.md)         | owns the pure solvers and cell wrapping (`WRAP-BOUND1`) and whole-cluster fitting (`fitPrefix`); layout keeps the policy |
+| Piece                                                  | Role in layout                                                                                                                                                                                   |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [UI-layout catalog](../../research/ui-layout/index.md) | the evidence base this page decides from (`LAY2`)                                                                                                                                                |
+| [backends.md](./backends.md) `TGT`                     | the cells→device mapping (`LAY3`) and the `measure` primitive (`LAY5`)                                                                                                                           |
+| [widgets.md](./widgets.md) `WGT`                       | the tree layout consumes; the table/scroll widgets driving `LAY7`/`LAY9`                                                                                                                         |
+| [state-machines.md](./state-machines.md) `STM`         | scroll offset, which `LAY7` reads but does not own                                                                                                                                               |
+| `sparkles.base.text` (`wrap`, `grapheme`)              | the wrapping and width primitives behind `LAY5`/`LAY10`/`LAY14`                                                                                                                                  |
+| [base/text wrapping](../base/text/wrapping.md)         | owns the pure solvers and cell wrapping (`WRAP-BOUND1`) and whole-cluster fitting (`fitPrefix`); layout keeps the policy                                                                         |
+| [authoring.md](./authoring.md) `AUT`                   | the build that feeds layout: fit sizes computed at close (in place of `LAY1`'s separate bottom-up width pass) and the custom-layout protocol (`AUT33`), which leaves the exclusions above intact |
 
 → [Overview](./index.md) · [Widgets](./widgets.md) · [Backends](./backends.md) · [Principles](./principles.md)

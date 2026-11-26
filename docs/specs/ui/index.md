@@ -89,6 +89,7 @@ the decisions rest on.
 | [Layout](./layout.md)                             | **the `LAY2` decision record** — the surveyed families, the verdict (box-flow + orientation-aware measure + clip), the integer-unit rule, and the explicit list of what is _not_ implemented                                                                                      |
 | [Theme](./theme.md)                               | the unified runtime-swappable design language — syntax rules, semantic slots, glyph sets and metrics in one value, gated by terminal capabilities                                                                                                                                 |
 | [Widgets](./widgets.md)                           | the view-model/view split, the widget catalog, `Props` vs handlers, keys and element identity                                                                                                                                                                                     |
+| [Component authoring](./authoring.md) _(planned)_ | how components are written: pure per-frame functions, lazy children built top-down, positional element identity, the four primitives, the custom-layout protocol, and what the overlay layer needs from the build — `AUT`                                                         |
 | [Input](./input.md)                               | the abstract event vocabulary, the tier-0/1/2 capability ladder, and the backend adapter contracts                                                                                                                                                                                |
 | [State machines](./state-machines.md)             | presentation-free behavior: scrollbar, selection, hover, focus, disclosure, timeline                                                                                                                                                                                              |
 | [Keymap & lantern](./keymap.md)                   | keyboard policy as data — `Binding!(Cmd, Scope)` tables over app-supplied enums, scope-order precedence with marker UDAs, two-direction resolution (`resolve`/`bindingsAt`), and the which-key-style guide machine + panel — `KEY`/`LTN`                                          |
@@ -156,6 +157,9 @@ Every requirement row carries one **Status**:
 | **partial**        | implemented with a documented limitation or missing sub-case (the row's notes say what is missing).                                                                                                     |
 | **full (`<sha>`)** | fully implemented; `<sha>` is the primary commit (the "commit hash evidence"). Where several commits contributed, the earliest feature commit is cited and later refinements are noted.                 |
 | **decided**        | a _decision_ requirement rather than an implementation one — the choice is settled and recorded on the page itself. Used only where there is nothing to implement, e.g. "the layout model is box-flow". |
+| **planned**        | decided and specified, with prototype evidence, but not implemented.                                                                                                                                    |
+| **proposed**       | the requirement itself awaits acceptance.                                                                                                                                                               |
+| **open**           | blocked on a decision or a change outside the page that states it.                                                                                                                                      |
 
 This matches the [hue spec's scheme](../hue/index.md#status-scheme) so the two
 trees can cross-reference status without translation.
@@ -167,7 +171,7 @@ within a document (e.g. `LAY4`, `WGT2`, `TGT1`). Areas: `UIA`/`PKG`/`NFR`
 (library-wide), `PRN` (principles), `LAY` (layout), `THM` (theme), `WGT`/`VMD`
 (widgets and view models), `INP` (input), `STM` (state machines), `INS`
 (inspector), `GUT` (gutter channels), `PRT` (property tree), `TGT` (backends),
-`MIG` (migration),
+`MIG` (migration), `AUT` ([component authoring](./authoring.md)),
 and — for
 [anchored overlays](./popup.md) — `POP` (the primitive), `ANC` (anchors),
 `PLC` (placement), `TRG` (triggers), `DSM` (dismissal), `LYR` (layering) and

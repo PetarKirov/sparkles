@@ -2270,6 +2270,10 @@
             "link": "/specs/ui/widgets"
           },
           {
+            "text": "Component authoring (planned)",
+            "link": "/specs/ui/authoring"
+          },
+          {
             "text": "Gutter channels",
             "link": "/specs/ui/gutter"
           },

@@ -97,13 +97,14 @@ share.
 
 ## Relationship to existing specs
 
-| Piece                                                      | Role                                                         |
-| ---------------------------------------------------------- | ------------------------------------------------------------ |
-| [Sean Parent catalog](../../research/sean-parent/index.md) | the evidence base these rules are drawn from                 |
-| [widgets.md](./widgets.md) `WGT`/`VMD`                     | where `PRN5`, `PRN6`, `PRN9` and `PRN12` are discharged      |
-| [state-machines.md](./state-machines.md) `STM`             | where `PRN7` and `PRN9` are discharged                       |
-| [backends.md](./backends.md) `TGT`                         | where `PRN8` is enforced — shared semantics, adapted targets |
-| [Open issues](./open-issues.md)                            | implementation gaps deliberately deferred by this docs pass  |
-| [Code style](../../guidelines/code-style.md)               | the D-level conventions these rules sit above                |
+| Piece                                                      | Role                                                                                                                |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| [Sean Parent catalog](../../research/sean-parent/index.md) | the evidence base these rules are drawn from                                                                        |
+| [widgets.md](./widgets.md) `WGT`/`VMD`                     | where `PRN5`, `PRN6`, `PRN9` and `PRN12` are discharged                                                             |
+| [authoring.md](./authoring.md) `AUT`                       | where `PRN12`'s closed sum becomes four primitives (`AUT26`) and messages and layout params are plain data (`PRN6`) |
+| [state-machines.md](./state-machines.md) `STM`             | where `PRN7` and `PRN9` are discharged                                                                              |
+| [backends.md](./backends.md) `TGT`                         | where `PRN8` is enforced — shared semantics, adapted targets                                                        |
+| [Open issues](./open-issues.md)                            | implementation gaps deliberately deferred by this docs pass                                                         |
+| [Code style](../../guidelines/code-style.md)               | the D-level conventions these rules sit above                                                                       |
 
 → [Overview](./index.md) · [Layout](./layout.md) · [Widgets](./widgets.md) · [Migration](./migration.md)

@@ -147,11 +147,12 @@ move is recorded in the destination spec's coverage table.
 
 ## Relationship to existing specs
 
-| Piece                                                      | Role                                                                                 |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| [feature-requirements.md](./feature-requirements.md) `PKG` | the target package graph this migration reaches                                      |
-| [hue feature spec](../hue/index.md)                        | the consumer being ported, and its requirement inventory                             |
-| [hue UI architecture](../hue/ui-architecture.md)           | hue's own consumption requirements after this spec supersedes its library-level ones |
-| [AGENTS.md](../../guidelines/AGENTS.md)                    | package table and test-runner integration recipes to update                          |
+| Piece                                                      | Role                                                                                          |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| [feature-requirements.md](./feature-requirements.md) `PKG` | the target package graph this migration reaches                                               |
+| [hue feature spec](../hue/index.md)                        | the consumer being ported, and its requirement inventory                                      |
+| [hue UI architecture](../hue/ui-architecture.md)           | hue's own consumption requirements after this spec supersedes its library-level ones          |
+| [authoring.md](./authoring.md) `AUT`                       | the component-authoring model every moved component and hue view is rebuilt on (its slice A6) |
+| [AGENTS.md](../../guidelines/AGENTS.md)                    | package table and test-runner integration recipes to update                                   |
 
 → [Overview](./index.md) · [Feature requirements](./feature-requirements.md) · [Principles](./principles.md)
