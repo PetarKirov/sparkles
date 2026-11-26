@@ -137,28 +137,53 @@
             platforms = lib.platforms.wasi;
           };
         });
+
+      # The packages whose default configuration is a WebAssembly module. Nix
+      # builds each for `wasm32-unknown-wasip1`; `ci commits build-each` builds
+      # each on the build graph for every host of `wasmModuleHostConfigs`
+      # (build-graph E5),
+      # from `legacyPackages.wasmModuleHosts`, which the toolchain table
+      # carries (./toolchains.nix).
+      wasmModules = {
+        text-wasm = {
+          appDir = "libs/base/text-wasm";
+          targetName = "spk-text";
+          description = "sparkles.base.text as a WebAssembly module (the docs' cell explorer)";
+        };
+        table-wasm = {
+          appDir = "libs/core-cli/table-wasm";
+          targetName = "spk-table";
+          description = "drawTable as a WebAssembly module (the docs' table playground)";
+        };
+        wired-wasm = {
+          appDir = "libs/wired/wired-wasm";
+          targetName = "spk-wired";
+          description = "sparkles:wired as a WebAssembly module (the docs' JSON/SDL playground, the npm package)";
+        };
+        # The dub recipe schema for Nix's `builtins.wasm` (docs/specs/wired/wasm,
+        # WW3): a WASI command module, not a reactor.
+        dub-manifest-nix-wasm = {
+          appDir = "libs/dub-manifest/dub-manifest-nix-wasm";
+          targetName = "spk-dub-manifest";
+          description = "The dub recipe schema as a Nix builtins.wasm module";
+          reactor = false;
+        };
+      };
+      # wasip2 has no nixpkgs platform at this pin (`Unknown kernel: wasip2`),
+      # so it is named by its config alone.
+      wasmModuleHostConfigs = [
+        wasiPkgs.stdenv.hostPlatform.config
+        "wasm32-unknown-wasip2"
+      ];
     in
     {
-      packages.text-wasm = buildWasmModule {
-        pname = "text-wasm";
-        appDir = "libs/base/text-wasm";
-        targetName = "spk-text";
-        description = "sparkles.base.text as a WebAssembly module (the docs' cell explorer)";
-      };
-
-      packages.table-wasm = buildWasmModule {
-        pname = "table-wasm";
-        appDir = "libs/core-cli/table-wasm";
-        targetName = "spk-table";
-        description = "drawTable as a WebAssembly module (the docs' table playground)";
-      };
-
-      packages.wired-wasm = buildWasmModule {
-        pname = "wired-wasm";
-        appDir = "libs/wired/wired-wasm";
-        targetName = "spk-wired";
-        description = "sparkles:wired as a WebAssembly module (the docs' JSON/SDL playground, the npm package)";
-      };
+      packages.text-wasm = buildWasmModule (wasmModules.text-wasm // { pname = "text-wasm"; });
+      packages.table-wasm = buildWasmModule (wasmModules.table-wasm // { pname = "table-wasm"; });
+      packages.wired-wasm = buildWasmModule (wasmModules.wired-wasm // { pname = "wired-wasm"; });
+      packages.dub-manifest-nix-wasm = buildWasmModule (
+        wasmModules.dub-manifest-nix-wasm // { pname = "dub-manifest-nix-wasm"; }
+      );
+      legacyPackages.wasmModuleHosts = lib.mapAttrs (_: _: wasmModuleHostConfigs) wasmModules;
 
       # The npm package `@sparkles-pkgs/wired` (docs/specs/wired/wasm WW13): its
       # sources with the site's module beside them, as `npm publish` takes it.
@@ -235,16 +260,6 @@
         npm-wired = config.packages.npm-wired.tests.node;
       }
       // lib.filterAttrs (name: _: lib.hasSuffix "-emulator" name) config.packages.docs-wasm.tests;
-
-      # The dub recipe schema for Nix's `builtins.wasm` (docs/specs/wired/wasm,
-      # WW3): a WASI command module, not a reactor.
-      packages.dub-manifest-nix-wasm = buildWasmModule {
-        pname = "dub-manifest-nix-wasm";
-        appDir = "libs/dub-manifest/dub-manifest-nix-wasm";
-        targetName = "spk-dub-manifest";
-        description = "The dub recipe schema as a Nix builtins.wasm module";
-        reactor = false;
-      };
 
       # The same answers computed natively, for the agreement check (WW10).
       packages.dub-manifest-nix-oracle = config.legacyPackages.buildSparklesApp {
