@@ -288,11 +288,17 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
                 isTerminal() && isTerminal(StdStream.stderr), ci.provider != CiProvider.none))
             reporting.live = stdoutLiveView(LiveOptions(timeline: cmd.timeline));
     }
+    // `--host`: each package's default configuration for each host (BGH2),
+    // in place of its test root.
+    string[][string] hostApplications;
+    foreach (host; cmd.hosts)
+        hostApplications[host] = names.dup;
     // CIC12 under a dry run: the actions that would fail, from BGS8's
     // explain, which executes and writes nothing.
     if (cmd.dryRun && cmd.requireCached.length)
     {
-        auto e = runGraph(repoRoot, null, RunOptions(into: into, cache: cache, packages: names.dup, legs: legs,
+        auto e = runGraph(repoRoot, null, RunOptions(into: into, cache: cache,
+            packages: cmd.hosts.length ? null : names.dup, hostApplications: hostApplications, legs: legs,
             coverage: coverage, buildOnly: buildOnly, explain: true));
         if (e.error.length)
             return failRun(e.error);
@@ -309,7 +315,8 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
         writeln(failing, " action(s) would fail under --require-cached ", cmd.requireCached.join(" "));
         return ranOk();
     }
-    auto g = runGraph(repoRoot, null, RunOptions(into: into, cache: cache, runnerCore: true, packages: names.dup,
+    auto g = runGraph(repoRoot, null, RunOptions(into: into, cache: cache, runnerCore: true,
+        packages: cmd.hosts.length ? null : names.dup, hostApplications: hostApplications,
         legs: legs, coverage: coverage, buildOnly: buildOnly, failFast: failFast, echo: true, jobs: jobs,
         reporting: reporting, requireCached: cmd.requireCached.dup,
         extraFlags: sanitize ? [sanitizeCompilerFlags] : null,
@@ -340,7 +347,7 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
     {
         import graph_driver : LastRun, recordLastRun;
 
-        recordLastRun(cache, LastRun(names.dup, legs, coverage, buildOnly, g.stats.resultKeys.dup));
+        recordLastRun(cache, LastRun(names.dup, cmd.hosts.dup, legs, coverage, buildOnly, g.stats.resultKeys.dup));
     }
     // The status lines have said what failed.
     if (g.exitCode != 0 && statusLines)
@@ -376,8 +383,10 @@ private string focusedPackages(string repoRoot, in TestCommand cmd, out string[]
         hostPlatformTokens());
     if (planned.hasError)
         return text("selection: ", planned.error.detail);
+    // With `--host`, a package this host cannot run (`platforms "wasi"`) is
+    // still selected: planning resolves it for each requested host (BGH2).
     foreach (ref p; planned.value.selection.packages)
-        if (!p.platformSkipped)
+        if (!p.platformSkipped || cmd.hosts.length)
             directories ~= planned.value.graph.packages[p.graphIndex].path;
     if (!directories.length)
         return "the selection holds no package that runs on this host";

@@ -54,7 +54,7 @@ ci pipeline [--from SELECTOR...] [--since REF] [--dependencies] [--dependents]
 ci placements list [--provider github|circleci] [--github-output FILE]
                    [--history-remote URL]
 
-ci test [--build-only | --special-modes off|betterc|wasm|all]
+ci test [--build-only [--host CONFIG...] | --special-modes off|betterc|wasm|all]
         [--from SELECTOR...] [--since REF]
         [--dependencies] [--dependents]
         [--coverage | --no-coverage] [--sanitize off|address]
@@ -245,6 +245,11 @@ the `@slow` tests instead of the ordinary ones, optionally only those named by
 `--tests`.
 
 `--build-only` and `--special-modes` are mutually exclusive.
+
+`--host CONFIG`, with `--build-only`, builds each selected package's default
+configuration for that host platform, named by its nixpkgs `config`, instead of
+its test root (build-graph BGH2); it may be repeated. Its tests do not run
+(build-graph BGH8), so without `--build-only` it is an error.
 
 **CIC12: Required hits.** `--require-cached KIND...` **must** fail every
 build-graph action of a listed kind (`compile`, `archive`, `link`, `generate`)

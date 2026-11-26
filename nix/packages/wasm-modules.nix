@@ -183,7 +183,16 @@
       packages.dub-manifest-nix-wasm = buildWasmModule (
         wasmModules.dub-manifest-nix-wasm // { pname = "dub-manifest-nix-wasm"; }
       );
-      legacyPackages.wasmModuleHosts = lib.mapAttrs (_: _: wasmModuleHostConfigs) wasmModules;
+      legacyPackages.wasmModuleHosts = lib.mapAttrs (
+        name: _:
+        {
+          # It imports the Nix evaluator's host functions (`env::get_type`, …),
+          # which a wasip2 component cannot leave unresolved: a module for
+          # `builtins.wasm` alone.
+          dub-manifest-nix-wasm = [ wasiPkgs.stdenv.hostPlatform.config ];
+        }
+        .${name} or wasmModuleHostConfigs
+      ) wasmModules;
 
       # The npm package `@sparkles-pkgs/wired` (docs/specs/wired/wasm WW13): its
       # sources with the site's module beside them, as `npm publish` takes it.

@@ -134,27 +134,29 @@ architecture identifiers derived from the host, as dub derives them, by
 compiling a probe of `version` conditions for the host's triple. The build
 platform's are this driver's own. Memoized; the error names what failed.
 +/
-Expected!(BuildPlatform, string) hostPlatform(string config, string compiler = compilerName) @trusted
+string hostPlatform(string config, out BuildPlatform platform, string compiler = compilerName) @safe
 {
     import std.file : remove, tempDir, write;
     import std.process : execute, thisProcessID;
-    import sparkles.base.expected : err, ok;
 
-    __gshared BuildPlatform[string] memo;
+    static BuildPlatform[string] memo; // per thread
     const key = config ~ " " ~ compiler;
     if (auto known = key in memo)
-        return ok(*known);
+    {
+        platform = known.dup;
+        return null;
+    }
     const table = toolchainTable();
     if (table.hasError)
-        return err!BuildPlatform(table.error.idup);
+        return table.error.idup;
     const entry = table.value.host(config);
     if (entry is null)
-        return err!BuildPlatform(text("the toolchain table has no host ", config, "; it has ",
-            table.value.names.join(", ")));
+        return text("the toolchain table has no host ", config, "; it has ",
+            table.value.names.join(", "));
     const isBuild = config == table.value.build;
     const binary = isBuild && compiler == "dmd" ? entry.dmd : entry.ldc;
     if (!binary.length)
-        return err!BuildPlatform(text(config, ": the toolchain table names no ", compiler));
+        return text(config, ": the toolchain table names no ", compiler);
     auto p = platformOf(binary).dup;
     p.config = config;
     if (!isBuild)
@@ -166,12 +168,13 @@ Expected!(BuildPlatform, string) hostPlatform(string config, string compiler = c
         const ran = execute([binary, "-mtriple=" ~ (entry.platform.triple.length ? entry.platform.triple : config),
             "-o-", probe]);
         if (ran.status != 0)
-            return err!BuildPlatform(text(config, ": its compiler could not probe the platform: ", ran.output));
+            return text(config, ": its compiler could not probe the platform: ", ran.output);
         if (!parsePlatformProbe(ran.output, p.platform, p.architecture))
-            return err!BuildPlatform(text(config, ": the platform probe printed no identifiers: ", ran.output));
+            return text(config, ": the platform probe printed no identifiers: ", ran.output);
     }
     memo[key] = p;
-    return ok(p);
+    platform = p;
+    return null;
 }
 
 /// The probe $(LREF hostPlatform) compiles: dub's own `version` lists
@@ -353,7 +356,8 @@ void marker(string name) @trusted
 
 Planned planRepository(string root, bool markers = false, string only = null, Tools tools = Tools.init,
     string toolchain = "dev-shell", bool lint = true, const string[] packages = null, bool coverage = false,
-    const string[] singleFiles = null, const string[] applications = null)
+    const string[] singleFiles = null, const string[] applications = null,
+    const string[][string] hostApplications = null)
 {
     // The platform the tools' compiler builds for (D19).
     auto platform = platformOf(tools.compiler).dup;
@@ -363,7 +367,7 @@ Planned planRepository(string root, bool markers = false, string only = null, To
     // The packages planned: `only`, else `packages`, else every one, unless
     // only single-file packages are asked for.
     bool chosen(string name) => only.length ? name == only : packages.length ? packages.canFind(name)
-        : !singleFiles.length && !applications.length;
+        : !singleFiles.length && !applications.length && !hostApplications.length;
 
     const d = driverEnvironment();
     if (d.sources is null)
@@ -433,6 +437,27 @@ Planned planRepository(string root, bool markers = false, string only = null, To
         if (r.hasError)
             return Planned(fault() ? fault() : text(name, ": ", r.error.message));
         rs ~= r.value;
+    }
+    // BGH2: the same, for another host, against the platform its toolchain's
+    // compiler derives (BGH1). The hosts in order, so the plan is the same in
+    // every run; and over an array, not the AA itself: a `return` of
+    // `Planned` from an AA `foreach` body (a delegate) reached the caller
+    // corrupted.
+    foreach (config; hostApplications.keys.sort.release)
+    {
+        BuildPlatform hp;
+        if (const why = hostPlatform(config, hp))
+            return Planned(why);
+        foreach (name; hostApplications[config])
+        {
+            auto request = ResolveRequest(directory: root, subPackage: name, buildType: "debug", platform: hp.dup);
+            foreach (n, s; registry.value)
+                request.registry[n] = s;
+            auto r = resolve(request, tree);
+            if (r.hasError)
+                return Planned(fault() ? fault() : text(name, " for ", config, ": ", r.error.message));
+            rs ~= r.value;
+        }
     }
     // CIC8: single-file packages (examples), as applications built with
     // dub's `debug` build type, their in-tree dependencies the worktree's.
@@ -544,6 +569,19 @@ Planned planRepository(string root, bool markers = false, string only = null, To
     auto options = PlanOptions(ToolchainIdentity(platform.compiler, toolchain), lint ? layoutLint() : null, registry.value.keys,
         pkgConfig);
     options.build = platform;
+    // BGH6, BGH7: each other host's toolchain, and its libraries through its
+    // own `pkg-config` directory alone.
+    foreach (config, ref h; tools.hosts)
+    {
+        options.hostToolchains[config] = ToolchainIdentity("ldc", h.identity);
+        const entry = table.hasValue ? table.value.host(config) : null;
+        if (entry !is null && entry.pkgConfigLibdir.length)
+        {
+            string[string] vars = ["PKG_CONFIG_LIBDIR": entry.pkgConfigLibdir, "PKG_CONFIG_PATH": ""];
+            options.hostPkgConfigs[config] = new RecordingPkgConfig(
+                new MemoPkgConfig(new SystemPkgConfig(d.pkgConfig, vars.dup)), tree, vars, config);
+        }
+    }
     options.resolveTool = &resolveTool;
     options.root = root;
     auto planned = planVariants(rs, options, tree);
@@ -921,6 +959,10 @@ struct RunOptions
     /// Packages to plan in their default configurations, as `dub build`
     /// builds them (`ci commits build-each`).
     string[] applications;
+    /// Packages to plan in their default configurations for another host,
+    /// by the host's `config` (build-graph SPEC BGH2): as `pkgsCross.<host>`
+    /// builds them, with the toolchain table's entry for the host.
+    string[][string] hostApplications;
     /// The client's own in-process actions, by name.
     InProcessHandler[string] handlers;
     /// BGS8's explain: every action looked up, nothing executed or written;
@@ -989,8 +1031,10 @@ PreparedRun prepareGraph(string root, string only, RunOptions o)
     tools.runtimeEnvironment = o.runtimeEnvironment.dup;
     foreach (pkg, more; o.testArguments)
         tools.testArguments[pkg] = more.dup;
+    if (const why = hostTools(tools, o.hostApplications.keys))
+        return PreparedRun(GraphRun(why));
     g.plan = planRepository(root, false, only, tools, g.toolchain.identity, !o.noLayoutLint, o.packages,
-        o.coverage, o.singleFiles, o.applications);
+        o.coverage, o.singleFiles, o.applications, o.hostApplications);
     if (g.plan.error.length)
         return PreparedRun(GraphRun(g.plan.error));
     // Single files that all failed to plan leave nothing to run but are no
@@ -1054,7 +1098,7 @@ PreparedRun prepareGraph(string root, string only, RunOptions o)
         o.adjustPlan(g.plan);
     // `--build-only`: every test binary's link, with what it needs; with
     // applications planned, all of the plan, their libraries' compiles too.
-    if (o.buildOnly && !o.applications.length)
+    if (o.buildOnly && !o.applications.length && !o.hostApplications.length)
     {
         string[] links;
         foreach (ref a; g.plan.graph.actions)
@@ -1765,6 +1809,43 @@ string[] manifestCompleteness(const ActionGraph g, string root, string runDirect
     return failures;
 }
 
+
+/++
+Adds to `tools` the tools of each host of `configs` other than the build
+platform, from the toolchain table (BGH4, BGH5): its compiler, archiver, C
+driver and linker, the configuration file and source tree its compiler
+reports, whether it writes the dependency output, and its toolchain
+identity (BGT1). The error, or null.
++/
+string hostTools(ref Tools tools, const string[] configs)
+{
+    import std.process : execute;
+    import sparkles.build_graph.actions : HostTools;
+
+    const table = toolchainTable();
+    if (table.hasError)
+        return table.error;
+    // Planning then refuses a variant of any host the run has no tools for.
+    tools.build = table.value.build;
+    foreach (config; configs)
+    {
+        if (config == table.value.build || config in tools.hosts)
+            continue;
+        const entry = table.value.host(config);
+        if (entry is null)
+            return text("the toolchain table has no host ", config, "; it has ", table.value.names.join(", "));
+        const own = Tools(compiler: entry.ldc, archiver: entry.archiver, cc: entry.cc, linker: entry.linker,
+            fail: tools.fail);
+        const t = toolchainOf(own);
+        const help = execute([entry.ldc, "--help-hidden"]);
+        tools.hosts[config] = HostTools(compiler: entry.ldc, archiver: entry.archiver, cc: entry.cc,
+            linker: entry.linker, config: t.config, triple: entry.platform.triple,
+            prefixMaps: t.root.length ? [t.root ~ "=/ldc"] : null,
+            dependencyOutput: help.output.canFind("makedeps-digests") && !noDependencyOutput, identity: t.identity);
+    }
+    return null;
+}
+
 /**
 The tools a run names, by absolute path: the build platform's compiler,
 archiver, C driver and linker from the toolchain table (BGH4), the generator
@@ -1868,7 +1949,9 @@ int explainTask(W)(string root, string cache, string task, ref W writer)
     else
     {
         trace(i"explain: planning the last `ci test`'s $(last.packages.length) package(s)");
-        o.packages = last.packages.dup;
+        o.packages = last.hosts.length ? null : last.packages.dup;
+        foreach (host; last.hosts)
+            o.hostApplications[host] = last.packages.dup;
         o.legs = last.legs.dup;
         o.coverage = last.coverage;
         o.buildOnly = last.buildOnly;
@@ -2001,6 +2084,9 @@ result key.
 struct LastRun
 {
     string[] packages;  ///
+    /// The hosts it built each package's default configuration for (`--host`,
+    /// BGH2), in place of its test root; empty for the build platform's tests.
+    string[] hosts;
     TestLeg[] legs;     ///
     bool coverage;      ///
     bool buildOnly;     ///
@@ -2022,6 +2108,7 @@ void recordLastRun(string cache, const LastRun run)
         keys[t] = k;
     auto j = JSONValue(["packages": JSONValue(run.packages), "legs": JSONValue(legs),
         "coverage": JSONValue(run.coverage), "buildOnly": JSONValue(run.buildOnly), "resultKeys": keys]);
+    j["hosts"] = JSONValue(run.hosts);
     mkdirRecurse(buildPath(cache, "runs"));
     write(buildPath(cache, "runs", "last-ci-test.json"), j.toString);
 }
@@ -2044,6 +2131,9 @@ LastRun lastRun(string cache, out string why)
         const j = parseJSON(readText(file));
         foreach (p; j["packages"].array)
             run.packages ~= p.str;
+        if (auto hosts = "hosts" in j.object)
+            foreach (h; hosts.array)
+                run.hosts ~= h.str;
         foreach (l; j["legs"].array)
             run.legs ~= TestLeg(cast(uint) l["threads"].integer, l["skipSlow"].type == JSONType.true_,
                 l["name"].str);
@@ -2055,6 +2145,30 @@ LastRun lastRun(string cache, out string why)
     catch (JSONException e)
         why = file ~ ": " ~ e.msg;
     return run;
+}
+
+/// A run's hosts survive the round trip, so `ci cache explain` and
+/// `ci cache verify --rerun` re-plan the host's applications (BGH2); a
+/// record written before `hosts` existed reads as the build platform's.
+@("graph_driver.lastRun.hosts")
+@system unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.process : thisProcessID;
+
+    const cache = buildPath(tempDir, text("sparkles-last-run-", thisProcessID));
+    scope (exit)
+        rmdirRecurse(cache);
+    recordLastRun(cache, LastRun(["text-wasm"], ["wasm32-unknown-wasip1"], null, false, true, ["a": "k"]));
+    string why;
+    const back = lastRun(cache, why);
+    assert(!why.length, why);
+    assert(back.packages == ["text-wasm"] && back.hosts == ["wasm32-unknown-wasip1"] && back.buildOnly);
+    mkdirRecurse(buildPath(cache, "runs"));
+    write(buildPath(cache, "runs", "last-ci-test.json"),
+        `{"packages": ["base"], "legs": [], "coverage": false, "buildOnly": false, "resultKeys": {}}`);
+    const older = lastRun(cache, why);
+    assert(!why.length && older.packages == ["base"] && !older.hosts.length, why);
 }
 
 /**
@@ -2087,10 +2201,13 @@ int rerunCheck(W)(string root, string cache, size_t n, const string[] tasks, ref
         say("verify --rerun: the last run has no cacheable action to check");
         return 0;
     }
+    string[][string] hostApplications;
+    foreach (host; run.hosts)
+        hostApplications[host] = run.packages.dup;
     auto g = runGraph(root, null, RunOptions(into: buildPath(cache, "runs",
         text("check-", Clock.currTime.toUnixTime, "-", thisProcessID)), cache: cache, check: true,
-        checkTasks: sample, packages: run.packages.dup, legs: run.legs.dup, coverage: run.coverage,
-        buildOnly: true));
+        checkTasks: sample, packages: run.hosts.length ? null : run.packages.dup,
+        hostApplications: hostApplications, legs: run.legs.dup, coverage: run.coverage, buildOnly: true));
     if (g.error.length)
     {
         say("verify --rerun: " ~ g.error);
