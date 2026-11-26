@@ -294,6 +294,9 @@
         # The LDC with the WASI runtimes: the test runner's `--wasm` and the
         # WebAssembly modules' builds (`ci test --build-only`).
         export SPARKLES_WASI_LDC=${lib.getExe' inputs'.dlang-nix.packages.ldc-sparkles "ldc2"}
+        # The toolchain of every host the build graph builds for here
+        # (build-graph BGH4, nix/packages/toolchains.nix).
+        export SPARKLES_TOOLCHAINS=${config.legacyPackages.toolchainTable}
         # The pinned test runner executable (test-runner process-model TRN2):
         # every test binary started here delegates its run to it.
         export SPARKLES_TEST_RUNNER=${lib.getExe config.packages.test-runner}

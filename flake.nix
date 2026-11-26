@@ -276,6 +276,7 @@
         ./nix/packages/static-apps.nix
         ./nix/packages/shader-compile.nix
         ./nix/packages/test-runner.nix
+        ./nix/packages/toolchains.nix
         ./nix/packages/android-dev-env-probe.nix
         ./nix/packages/media-hw-probe.nix
         ./nix/packages/ui-shaders.nix

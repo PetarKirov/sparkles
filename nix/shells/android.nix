@@ -129,6 +129,8 @@ in
           export ANDROID_CC_ARM64=${androidNdk.targets."arm64-v8a".cc}
           export ANDROID_CC_X86_64=${androidNdk.targets."x86_64".cc}
           export ANDROID_SDK_ROOT=${androidSdk.devSdkRoot}
+          # The build graph's toolchains, Android's included (nix/packages/toolchains.nix).
+          export SPARKLES_TOOLCHAINS=${config.legacyPackages.toolchainTableAndroid}
           export PATH=${ndkClangBin}:${androidSdk.platformTools}:${androidSdk.buildTools}:$PATH
         '';
       };
