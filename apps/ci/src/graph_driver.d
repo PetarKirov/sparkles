@@ -543,7 +543,7 @@ Planned planRepository(string root, bool markers = false, string only = null, To
     // misread a dependency's aggregate.
     auto options = PlanOptions(ToolchainIdentity(platform.compiler, toolchain), lint ? layoutLint() : null, registry.value.keys,
         pkgConfig);
-    options.host = platform;
+    options.build = platform;
     options.resolveTool = &resolveTool;
     options.root = root;
     auto planned = planVariants(rs, options, tree);

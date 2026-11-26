@@ -143,7 +143,7 @@ store step, and a stored result serving both graphs of invariant 7.
 - Typed generators, the test-root module and content-addressed generated
   sources (§7), with the shader compiler's direct invocation mode and its
   specification amended. The shader compiler is keyed by its manifest (BGG5)
-  and built as a host variant (BGG6).
+  and built as a build-platform variant (BGG6).
 - Toolchain identity (§8), with the toolchain's store paths remapped (BGA11).
 - **The LDC fork:** its dependency output is completed, with each addition
   tested by a test that fails without it, and the toolchain is bumped to the

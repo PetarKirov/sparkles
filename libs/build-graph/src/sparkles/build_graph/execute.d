@@ -887,7 +887,7 @@ struct ActionDriver
 
         ResultRecord record;
         record.task = id.text;
-        record.toolchain = layout.toolchain;
+        record.toolchain = a is null ? layout.toolchain : toolchainOf(**a);
         record.declaredKey = declared;
         record.status = status;
         record.outputs = outputsOf(id);
@@ -1081,7 +1081,7 @@ struct ActionDriver
             stats.executedTasks ~= producer;
             ResultRecord record;
             record.task = producer;
-            record.toolchain = layout.toolchain;
+            record.toolchain = toolchainOf(**pa);
             record.declaredKey = rec.declared;
             record.outputs = outputsOf(id);
             const digest = record.outputsDigest;
@@ -1147,9 +1147,13 @@ struct ActionDriver
     directory, and the content digests of the worktree files the arguments
     name. False when a producer's outputs are unknown.
     */
+    // BGH7: the toolchain an action's key and record name: its own, else the run's.
+    private string toolchainOf(ref const Action a) const @safe pure nothrow
+        => a.toolchain.length ? a.toolchain : layout.toolchain;
+
     private bool declaredPreimage(ref const Action a, out string preimage)
     {
-        string s = "format " ~ formatVersion.text ~ "\nkind " ~ text(a.kind) ~ "\ntoolchain " ~ layout.toolchain ~ "\n";
+        string s = "format " ~ formatVersion.text ~ "\nkind " ~ text(a.kind) ~ "\ntoolchain " ~ toolchainOf(a) ~ "\n";
         bool known = true;
         string normalized(string arg)
         {
