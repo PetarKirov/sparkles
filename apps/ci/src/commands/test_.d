@@ -12,7 +12,7 @@ import commands.output :
     RunMonitor, displayTestRunSummary, flushStdout, resultFooterRight, resultVerdict,
     streamResultBox, uiWidth;
 import commands.toolchain :
-    compilerIsLdc, dubTestCommand, findWasiCompiler, mergeEnv, parallelTestThreads,
+    compilerIsLdc, dubTestCommand, mergeEnv, parallelTestThreads,
     resolvedCompiler, sanitizeAsanOptions, sanitizeChildEnv, sanitizeCompilerFlags, sanitizePlatformSupported,
     testBinaryRan, testBuildType, withLdcDflags, withTestArgs;
 import sparkles.build_primitives.task.action : EnvEntry;

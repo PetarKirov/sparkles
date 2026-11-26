@@ -693,10 +693,13 @@ that one's key: the same action and outputs, no in-tree path its arguments
 name changed between the two commits, and every producer it reads predicted
 the same. It is then looked up after the earlier one publishes, and hits;
 every other action **must** start as soon as its own commit allows. A wrong
-prediction **must** cost only time. The packages the graph does not build
-**must** build with dub in one more worktree, walked oldest first, as tasks of
-the same run. A package **must** count as built at a commit when its
-application's link, or its dub build, succeeds there.
+prediction **must** cost only time. Each package the toolchain table lists for
+other hosts (the WebAssembly modules) **must** be planned once per host it
+lists (build-graph BGH2), the rest for the build platform. A package planning
+refuses **must** build with dub in one more worktree, walked oldest first, as
+tasks of the same run, with its host's compiler when it has one. A package
+**must** count as built at a commit for a host when every link of its
+application for that host, or its dub build, succeeds there.
 
 ### 5.9 Maintenance commands
 
