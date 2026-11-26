@@ -11,18 +11,32 @@ Before this mode, that loop was run by hand before every push. The documentation
 site's WebAssembly modules are the same case: their default configuration is a
 `wasm32-unknown-wasip1` reactor, which no native build or test compiles.
 
-The loop is a scratch worktree, detached, walked from the oldest commit to the
-newest. It is one worktree, not one per commit, so each build is incremental
-on the last. Uncommitted changes are not part of any commit and are not built.
+Every commit of the range is checked out in a scratch worktree of its own,
+planned there, and run with the others as one graph against the shared store
+(ci task-DAG CIC21). A commit compiles only the actions whose keys it
+changes, and the commits build at once: an action predicted to share its key
+with the previous commit's ($(LREF reuseEdges)) waits for that one and reuses
+its result, and every other action starts as soon as its own commit allows.
+The packages the graph does not build (the WebAssembly modules) build with
+dub in one more worktree, walked oldest first so each build is incremental
+on the last, as tasks of the same run. Uncommitted changes are not part of
+any commit and are not built.
 
-This module is the planning half: what the range is, which packages. The
-execution lives with the other dub modes in `app.d`.
+This module is the planning half: what the range is, which packages, which
+actions wait for which. The execution is `runBuildEachCommitMode`, in
+`commands/maintenance.d`.
 +/
 module each_commit;
 
-import std.algorithm : canFind;
+import std.algorithm : any, canFind, endsWith, map, startsWith;
+import std.array : array;
+import std.conv : text;
 import std.path : baseName;
 import std.string : indexOf, lineSplitter, strip;
+
+import sparkles.build_graph.actions : ActionGraph;
+import sparkles.build_primitives.task.action : InProcessAction, ProcessAction, TaskAction;
+import sparkles.build_primitives.task.model : TaskEdge, TaskId;
 
 /++
 The packages built when `--packages` names none: the ones whose default
@@ -179,4 +193,175 @@ unittest
     const f = [CommitFailure(RangeCommit("7bf3f4b", "feat: x"), "hue")];
     assert(failureReport(f, 3, 2)
         == "1 build(s) failed across 3 commit(s):\n  7bf3f4b  :hue  feat: x");
+}
+
+/++
+The edges that let an action of `later` reuse the result its namesake in
+`earlier` publishes (ci task-DAG CIC21): one from each action of `earlier`
+to the action of `later` predicted to share its key, so the later one is
+looked up only once the earlier one has published, and hits. Every other
+action of `later` waits for nothing of `earlier`'s, as its key will differ.
+
+An action is predicted to share its key when it has the same id, kind,
+action and outputs in both plans, no in-tree path its arguments name (a
+source, an import root, a working directory) holds a file of `changed` (the
+paths `git diff --name-only` lists between the two commits), and each
+producer it reads (`$IN(<id>)`) is predicted to share its own. A wrong
+prediction costs time, never a result: a key that differs misses after
+waiting, and one that matches without an edge executes twice.
+
+`earlierSuffix` and `laterSuffix` are the parts' id suffixes in the run.
++/
+TaskEdge[] reuseEdges(ref const ActionGraph earlier, string earlierSuffix, ref const ActionGraph later,
+    string laterSuffix, const string[] changed) @safe
+{
+    import sparkles.build_graph.execute : withSuffix;
+    import sparkles.build_primitives.task.model : EdgeCondition, EdgeReason;
+
+    enum Verdict : ubyte { unknown, deciding, same, differs }
+    Verdict[string] verdicts;
+
+    bool shared_(TaskId id)
+    {
+        if (auto v = id.text in verdicts)
+            return *v == Verdict.same;
+        verdicts[id.text] = Verdict.deciding; // an acyclic plan never meets it again
+        const a = later.find(id);
+        const b = earlier.find(id);
+        bool same = a !is null && b !is null && a.kind == b.kind && a.action == b.action
+            && a.outputs == b.outputs;
+        if (same)
+            foreach (arg; argumentsOf(a.action))
+            {
+                foreach (producer; producersIn(arg))
+                    same = same && shared_(producer);
+                foreach (path; inTreePaths(arg))
+                    same = same && !changed.any!(f => f == path || f.startsWith(path ~ "/"));
+                if (!same)
+                    break;
+            }
+        verdicts[id.text] = same ? Verdict.same : Verdict.differs;
+        return same;
+    }
+
+    TaskEdge[] edges;
+    foreach (ref a; later.actions)
+        if (shared_(a.id))
+            edges ~= TaskEdge(withSuffix(a.id, earlierSuffix), withSuffix(a.id, laterSuffix),
+                EdgeCondition.onCompletion, EdgeReason.reuse);
+    return edges;
+}
+
+// Every argument of `action` that may name a path: a process's arguments,
+// working directory and environment values; an in-process action's arguments.
+private string[] argumentsOf(const TaskAction action) @safe
+{
+    import std.sumtype : match;
+
+    return action.match!(
+        (ref const ProcessAction p) => p.argv.dup ~ p.cwd ~ p.envDelta.map!(e => e.value).array,
+        (ref const InProcessAction i) => i.arguments.dup,
+        (ref const _) => string[].init);
+}
+
+// The producers `$IN(<id>)` in `arg` names.
+private TaskId[] producersIn(string arg) @safe pure
+{
+    import std.array : split;
+    import sparkles.build_primitives.task.model : taskId;
+
+    TaskId[] ids;
+    for (auto at = arg.indexOf("$IN("); at >= 0; at = arg.indexOf("$IN("))
+    {
+        arg = arg[at + 4 .. $];
+        const close = arg.indexOf(')');
+        if (close < 0)
+            break;
+        const id = taskId(arg[0 .. close].split(":"));
+        if (id.hasValue)
+            ids ~= id.value;
+        arg = arg[close + 1 .. $];
+    }
+    return ids;
+}
+
+/++
+The in-tree paths `arg` may name, relative to the worktree: each piece of it
+between `=`s, an option's `-I`, `-J`, `-L` or `-P-I` prefix taken off, that
+is `$ROOT/`-relative or relative. A placeholder, an absolute path, an option
+and the root itself (`.`) name none.
++/
+string[] inTreePaths(string arg) @safe pure
+{
+    import std.array : split;
+
+    string[] paths;
+    foreach (piece; arg.split("="))
+    {
+        foreach (prefix; ["-P-I", "-I", "-J", "-L"])
+            if (piece.startsWith(prefix))
+            {
+                piece = piece[prefix.length .. $];
+                break;
+            }
+        if (piece.startsWith("$ROOT/"))
+            piece = piece["$ROOT/".length .. $];
+        while (piece.endsWith("/"))
+            piece = piece[0 .. $ - 1];
+        if (piece.length && piece != "." && piece[0] != '$' && piece[0] != '/' && piece[0] != '-')
+            paths ~= piece;
+    }
+    return paths;
+}
+
+@("each_commit.inTreePaths.sourcesAndRootsNotOptionsOrPlaceholders")
+@safe pure
+unittest
+{
+    assert(inTreePaths("libs/ui/src/sparkles/ui/dock.d") == ["libs/ui/src/sparkles/ui/dock.d"]);
+    assert(inTreePaths("-I=libs/base/src/") == ["libs/base/src"]);
+    assert(inTreePaths("-Ilibs/base/src") == ["libs/base/src"]);
+    assert(inTreePaths("-J=$ROOT/apps/hue/views") == ["apps/hue/views"]);
+    assert(inTreePaths("--ffile-prefix-map=$ROOT=.") is null);
+    assert(inTreePaths("-of=$OUTREL/hue") is null);
+    assert(inTreePaths("$IN(compile:sparkles.ui:library:ldc:abc)/ui.o") is null);
+    assert(inTreePaths("/nix/store/x-ldc/bin/ldc2") is null);
+}
+
+@("each_commit.reuseEdges.anUnchangedClosureWaitsAndAChangedOneRunsAtOnce")
+@safe
+unittest
+{
+    import sparkles.build_graph.actions : Action, ActionKind, DeclaredOutput;
+    import sparkles.build_primitives.task.model : EdgeReason, taskId;
+
+    const base = taskId("compile", "sparkles.base", "library", "ldc", "b1").value;
+    const ui = taskId("compile", "sparkles.ui", "library", "ldc", "u1").value;
+    const link = taskId("link", "sparkles.hue", "application", "ldc", "h1").value;
+    Action compile(TaskId id, string[] argv)
+        => Action(ActionKind.compile, id, 0, TaskAction(ProcessAction(argv: argv)), [DeclaredOutput("o.o")], 2);
+    ActionGraph plan(string uiFlag)
+    {
+        ActionGraph g;
+        g.actions ~= compile(base, ["ldc2", "-I=libs/base/src", "libs/base/src/a.d", "-of=$OUT/o.o"]);
+        g.actions ~= compile(ui, ["ldc2", "-I=libs/ui/src", "libs/ui/src/b.d", uiFlag, "-of=$OUT/o.o"]);
+        g.actions ~= Action(ActionKind.link, link, 0, TaskAction(ProcessAction(argv: ["ldc2",
+            "$IN(" ~ base.text ~ ")/o.o", "$IN(" ~ ui.text ~ ")/o.o", "-of=$OUT/hue"])), [DeclaredOutput("hue")], 2);
+        return g;
+    }
+    const before = plan("-g");
+
+    // A change beneath ui's sources: base waits for its earlier namesake;
+    // ui, and the link reading it, start at once.
+    const same = plan("-g"), optimized = plan("-O");
+    auto edges = reuseEdges(before, "c1", same, "c2", ["libs/ui/src/b.d"]);
+    assert(edges.length == 1, text(edges));
+    assert(edges[0].prerequisite.text == base.text ~ ":c1" && edges[0].dependent.text == base.text ~ ":c2");
+    assert(edges[0].reason == EdgeReason.reuse);
+
+    // Nothing any action reads changed: every action waits.
+    assert(reuseEdges(before, "c1", same, "c2", ["docs/x.md"]).length == 3);
+
+    // ui's flags changed: so did its key, and the link's.
+    assert(reuseEdges(before, "c1", optimized, "c2", null).length == 1);
 }

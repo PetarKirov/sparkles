@@ -625,9 +625,22 @@ read message -> parse subject -> optional staged-path query -> policy check
 
 `ci check commit-scope` uses the common models and summary but defaults to a compact
 reporter suitable for a commit hook. stdin is an explicit input action, not
-inherited by subprocess tasks. `ci commits build-each` plans one build of the
-selected packages per commit of the range, each in its own scratch worktree,
-all on the shared store.
+inherited by subprocess tasks.
+
+**CIC21: Every commit in one run.** `ci commits build-each` **must** check out
+each commit of the range in a scratch worktree of its own, plan the selected
+packages there, and run every commit's plan as one graph against the shared
+store, each action in its own commit's worktree with the key, result and run
+paths a run of that commit alone would give it. An action **must** wait for
+its namesake in the commit before it exactly when it is predicted to share
+that one's key: the same action and outputs, no in-tree path its arguments
+name changed between the two commits, and every producer it reads predicted
+the same. It is then looked up after the earlier one publishes, and hits;
+every other action **must** start as soon as its own commit allows. A wrong
+prediction **must** cost only time. The packages the graph does not build
+**must** build with dub in one more worktree, walked oldest first, as tasks of
+the same run. A package **must** count as built at a commit when its
+application's link, or its dub build, succeeds there.
 
 ### 5.9 Maintenance commands
 

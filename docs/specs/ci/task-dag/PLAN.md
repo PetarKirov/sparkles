@@ -316,10 +316,13 @@ metadata fixtures have the specified outcomes and exits; tokens are absent from
 events and dry runs; commit hook output stays concise.
 
 Progress: `ci stats`, `ci github …`, `ci host probe`, `ci slow-tests list` and
-the cache commands run as one-node graphs; `ci commits build-each` builds
-each commit's packages on the build graph against the shared store, the
-WebAssembly cross-builds and any package planning refuses with dub, named;
-`ci cache gc-r2` fans its requests out on threads. Open: the gate's fixtures.
+the cache commands run as one-node graphs; `ci commits build-each` runs
+every commit of its range as one graph against the shared store (CIC21), a
+worktree per commit, an action a commit shares with the one before it
+waiting to reuse that one's result, and the WebAssembly cross-builds and any
+package planning refuses built by dub as tasks of the same run;
+`ci cache gc-r2` fans its requests out on threads. Open: the gate's fixtures,
+and the WebAssembly modules on the graph, which needs it to cross-compile.
 
 ## M12: `ci pipeline` and removal of the legacy path
 

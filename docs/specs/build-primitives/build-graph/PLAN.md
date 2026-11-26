@@ -249,6 +249,12 @@ package whose recipe the graph cannot model builds with dub, and the report
 names it. It is the store's heaviest user, so it waits for oracles 4 and 7,
 and it replaces no gate item.
 
+Delivered as ci task-DAG CIC21: every commit of the range is one part of a
+single run (`runActionsAcross`), each in its own worktree, and an action
+predicted to share its key with the previous commit's waits for it and hits.
+The WebAssembly modules still build with dub, as tasks of that run, until the
+graph cross-compiles.
+
 ## E4: The Nix backend
 
 - Content-addressed source inputs, and derivations created without evaluation
