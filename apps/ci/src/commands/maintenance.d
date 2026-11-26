@@ -10,6 +10,8 @@ import dub_deps : subPackageDirectories;
 import sparkles.base.expected : Expected, ok;
 import sparkles.base.logger : error, info, warning;
 import sparkles.base.styled_template : styledText;
+import sparkles.build_graph.platforms : HostToolchain;
+import sparkles.build_primitives.task.action : EnvEntry;
 import sparkles.core_cli.args : failRun, ranOk, RunExpected;
 import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
 import std.algorithm : any, canFind, countUntil, filter, map, sort, startsWith;
@@ -276,17 +278,20 @@ RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool fa
             {
                 const id = taskId("dub", unit.name, unit.host.length ? unit.host : "build", commit.sha).value;
                 string[] cross;
+                EnvEntry[] env = dubEnv;
                 if (unit.host.length)
                 {
                     const entry = table.value.host(unit.host);
                     if (entry is null)
                         return failRun(text(i"$(unit.label): the toolchain table has no host $(unit.host)"));
-                    cross = ["--arch=" ~ unit.host, "--compiler=" ~ entry.ldc];
+                    cross = ["--arch=" ~ (entry.platform.triple.length ? entry.platform.triple : unit.host),
+                        "--compiler=" ~ entry.ldc];
+                    env = hostDubEnvironment(*entry);
                 }
                 dubNodes ~= TaskNode(id: id, kind: TaskKind.build, label: "dub " ~ unit.label ~ " " ~ commit.sha,
                     order: PresentationKey(1, id.text, 0, 0), resources: ResourceClaim(jobsWeight: 2),
                     action: TaskAction(ProcessAction(argv: dubBuildCommand(dubWt, unit.path, unit.name, cross),
-                        envDelta: dubEnv, cwd: dubWt)));
+                        envDelta: env, cwd: dubWt)));
                 dubEdges.edges ~= TaskEdge(checkout, id, EdgeCondition.onSuccess, EdgeReason.planning);
                 if (last != checkout)
                     dubEdges.edges ~= TaskEdge(last, id, EdgeCondition.onCompletion, EdgeReason.planning);
@@ -555,3 +560,27 @@ private void fanOut(size_t n, scope void delegate(size_t) work)
         t.join();
 }
 
+/++
+The environment of a dub build for another host (`ci commits build-each`'s
+fallback): the host's variables, its `pkg-config` directory alone, and LDC's
+`-linkonce-templates` as its `DFLAGS`, never the build platform's. Nix's
+`pkg-config` wrapper rebuilds `PKG_CONFIG_PATH` from its role variables, so
+each of those this process has is set empty (build-graph BGH6).
++/
+private EnvEntry[] hostDubEnvironment(const ref HostToolchain entry)
+{
+    import std.algorithm.searching : startsWith;
+    import std.process : environment;
+
+    EnvEntry[] env = [EnvEntry("DFLAGS", "-linkonce-templates")];
+    foreach (name, value; entry.environment)
+        env ~= EnvEntry(name, value);
+    if (entry.pkgConfigLibdir.length)
+    {
+        env ~= [EnvEntry("PKG_CONFIG_LIBDIR", entry.pkgConfigLibdir), EnvEntry("PKG_CONFIG_PATH", "")];
+        foreach (name, _; environment.toAA)
+            if (name.startsWith("PKG_CONFIG_PATH_") || name.startsWith("NIX_PKG_CONFIG_WRAPPER_TARGET_"))
+                env ~= EnvEntry(name, "");
+    }
+    return env;
+}

@@ -451,6 +451,11 @@ Planned planRepository(string root, bool markers = false, string only = null, To
         foreach (name; hostApplications[config])
         {
             auto request = ResolveRequest(directory: root, subPackage: name, buildType: "debug", platform: hp.dup);
+            // The variables its recipes read for this host (`SPARKLES_ANDROID_MIN_SDK`).
+            if (table.hasValue)
+                if (const entry = table.value.host(config))
+                    foreach (variable, value; entry.environment)
+                        request.environment[variable] = value;
             foreach (n, s; registry.value)
                 request.registry[n] = s;
             auto r = resolve(request, tree);
@@ -540,10 +545,16 @@ Planned planRepository(string root, bool markers = false, string only = null, To
                 return Planned(text(file, ": ", e.msg));
         }
     }
-    // The variables the resolved values refer to: the requests pass none.
+    // The variables the resolved values refer to: the build platform's
+    // requests pass none, a host's its entry's (BGH4).
     foreach (ref r; rs)
         foreach (name; r.environmentInputs)
-            tree.noteEnvironment(name, null, false);
+        {
+            const entry = table.hasValue && r.platform.config != table.value.build
+                ? table.value.host(r.platform.config) : null;
+            const value = entry is null ? null : name in entry.environment;
+            tree.noteEnvironment(name, value is null ? null : *value, value !is null);
+        }
 
     auto pkgConfig = new RecordingPkgConfig(answers(d.pkgConfig), tree, d.pkgConfigVariables.dup);
     // A generator's requests (§7): the shader compiler's application and a
