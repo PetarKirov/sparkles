@@ -291,8 +291,8 @@
         # Seed writable sources, preserving any existing user versions. The
         # packaged helper retains the bundle through its runtime closure.
         export SPARKLES_DUB_SOURCES=${config.packages.dub-sources}
-        # The LDC with the WASI runtimes: the test runner's `--wasm` and the
-        # WebAssembly modules' builds (`ci test --build-only`).
+        # The LDC with the WASI runtimes, for the test runner's `--wasm`; the
+        # build graph's WebAssembly builds name it through the table below.
         export SPARKLES_WASI_LDC=${lib.getExe' inputs'.dlang-nix.packages.ldc-sparkles "ldc2"}
         # The toolchain of every host the build graph builds for here
         # (build-graph BGH4, nix/packages/toolchains.nix).

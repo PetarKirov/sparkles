@@ -64,20 +64,36 @@ package string resolvedCompiler(string repoRoot, in string[] subPackages)
 }
 
 /++
-The WASI-enabled `ldc2` that $(MREF each_commit)'s WebAssembly packages build
-with, from `$SPARKLES_WASI_LDC`; `false`, reported, when one of `pkgPaths`
-needs it and it is unset.
+The `dub build` arguments that build `pkg` for the first host the toolchain
+table lists it for (build-graph BGH2): `--arch` with that host's triple, and its
+compiler. None for a package the table lists for no host; without a table,
+or without the host's entry, none either, and a warning says so.
 +/
-bool findWasiCompiler(in string[] pkgPaths, out string compiler)
+string[] targetBuildArgs(string pkg)
 {
-    import std.algorithm.searching : any, canFind;
-    import each_commit : wasiCompilerVariable, wasiPackages;
+    import graph_driver : toolchainTable;
 
-    compiler = environment.get(wasiCompilerVariable, "");
-    if (compiler.length || !pkgPaths.any!(p => wasiPackages.canFind(p.baseName)))
-        return true;
-    error(i"$(wasiCompilerVariable) is unset: the WebAssembly modules need an ldc2 with the WASI runtime (the ci package sets it: nix run .#ci)");
-    return false;
+    import sparkles.base.logger : warning;
+
+    const table = toolchainTable();
+    if (table.hasError)
+    {
+        // Said, not failed: the watch round still builds it, natively.
+        string why = table.error;
+        warning(i"$(pkg): $(why); building it for the build platform");
+        return null;
+    }
+    const hosts = pkg in table.value.packages;
+    if (hosts is null || !(*hosts).length)
+        return null;
+    const entry = table.value.host((*hosts)[0]);
+    if (entry is null)
+    {
+        string host = (*hosts)[0];
+        warning(i"$(pkg): the toolchain table lists it for $(host), which it has no entry for");
+        return null;
+    }
+    return ["--arch=" ~ (entry.platform.triple.length ? entry.platform.triple : (*hosts)[0]), "--compiler=" ~ entry.ldc];
 }
 
 /// True when a sub-package's recipe declares `targetType "sourceLibrary"`.
@@ -484,13 +500,12 @@ PackageCommand[] packageTestCommands(string repoRoot, string pkgDir, uint thread
 uint defaultTestThreads() => parallelTestThreads(hwParallelism());
 
 /// The command `ci test --build-only` runs for the package in the repository-relative
-/// `pkgDir`, with `wasiCompiler` as $(LREF findWasiCompiler) found it.
-PackageCommand packageBuildCommand(string repoRoot, string pkgDir, string wasiCompiler)
+/// `pkgDir`, for the host the toolchain table lists it for ($(LREF targetBuildArgs)).
+PackageCommand packageBuildCommand(string repoRoot, string pkgDir)
 {
-    import each_commit : targetBuildArgs;
 
     const pkgName = pkgDir.baseName;
     return PackageCommand("build",
-        dubBuildCommand(repoRoot, pkgDir, pkgName, targetBuildArgs(pkgName, wasiCompiler)),
+        dubBuildCommand(repoRoot, pkgDir, pkgName, targetBuildArgs(pkgName)),
         withLdcDflags(null));
 }

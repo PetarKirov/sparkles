@@ -17,10 +17,11 @@ planned there, and run with the others as one graph against the shared store
 changes, and the commits build at once: an action predicted to share its key
 with the previous commit's ($(LREF reuseEdges)) waits for that one and reuses
 its result, and every other action starts as soon as its own commit allows.
-The packages the graph does not build (the WebAssembly modules) build with
-dub in one more worktree, walked oldest first so each build is incremental
-on the last, as tasks of the same run. Uncommitted changes are not part of
-any commit and are not built.
+Each WebAssembly module builds there for every host the toolchain table
+lists it for ($(LREF unitsOf)). A package planning refuses builds with dub in
+one more worktree, walked oldest first so each build is incremental on the
+last, as tasks of the same run. Uncommitted changes are not part of any
+commit and are not built.
 
 This module is the planning half: what the range is, which packages, which
 actions wait for which. The execution is `runBuildEachCommitMode`, in
@@ -36,7 +37,7 @@ import std.string : indexOf, lineSplitter, strip;
 
 import sparkles.build_graph.actions : ActionGraph;
 import sparkles.build_primitives.task.action : InProcessAction, ProcessAction, TaskAction;
-import sparkles.build_primitives.task.model : TaskEdge, TaskId;
+import sparkles.build_primitives.task.model : OutcomeKind, TaskEdge, TaskId;
 
 /++
 The packages built when `--packages` names none: the ones whose default
@@ -47,38 +48,132 @@ immutable string[] defaultEachCommitPackages = ["hue", "ui-gallery", "diagram",
     "text-wasm", "table-wasm", "wired-wasm", "dub-manifest-nix-wasm"];
 
 /++
-The packages whose default configuration is a WebAssembly module
-(docs/specs/toolchain/wasm-modules.md, and the Nix module of docs/specs/wired/wasm):
-built for `wasm32-unknown-wasip1` by an
-LDC that has the WASI runtime, which `$SPARKLES_WASI_LDC` names.
+One build of a range's commits: a package, by its path and name, for a host
+platform by its nixpkgs `config`, or for the build platform when `host` is
+empty (build-graph BGH2).
 +/
-immutable string[] wasiPackages = ["text-wasm", "table-wasm", "wired-wasm", "dub-manifest-nix-wasm"];
-
-/// The variable naming the WASI-enabled `ldc2` (the `ci` package sets it).
-enum wasiCompilerVariable = "SPARKLES_WASI_LDC";
-
-/++
-The `dub build` arguments that select `pkg`'s target beyond the defaults:
-the WASI triple and compiler for a $(LREF wasiPackages) member, none otherwise.
-+/
-string[] targetBuildArgs(string pkg, string wasiCompiler) @safe pure
+struct BuildUnit
 {
-    import std.algorithm.searching : canFind;
+    string path; /// the sub-package's directory (`libs/base/text-wasm`)
+    string name; /// its name (`text-wasm`)
+    string host; /// its host's `config`, or empty for the build platform
 
-    if (!wasiPackages.canFind(pkg))
-        return null;
-    return ["--arch=wasm32-unknown-wasip1", "--compiler=" ~ wasiCompiler];
+    /// How a report names it: `text-wasm (wasm32-unknown-wasip1)`, `hue`.
+    string label() const @safe pure => host.length ? name ~ " (" ~ host ~ ")" : name;
 }
 
-@("each_commit.targetBuildArgs.wasiPackagesCrossCompile")
+/++
+The units `packages` (sub-package paths) build as: each package the toolchain
+table lists in `hostsOf` (its `packages`, the WebAssembly modules and their
+previews) once per host, every other one for the build platform.
++/
+BuildUnit[] unitsOf(in string[] packages, in string[][string] hostsOf) @safe pure
+{
+    BuildUnit[] units;
+    foreach (path; packages)
+    {
+        const name = path.baseName;
+        if (auto hosts = name in hostsOf)
+            foreach (host; *hosts)
+                units ~= BuildUnit(path, name, host);
+        else
+            units ~= BuildUnit(path, name, null);
+    }
+    return units;
+}
+
+@("each_commit.unitsOf.aPackageOncePerListedHost")
 @safe pure
 unittest
 {
-    assert(targetBuildArgs("hue", "/w/ldc2") is null);
-    assert(targetBuildArgs("table-wasm", "/w/ldc2")
-        == ["--arch=wasm32-unknown-wasip1", "--compiler=/w/ldc2"]);
-    foreach (pkg; wasiPackages)
-        assert(defaultEachCommitPackages.canFind(pkg), "every module is built by default");
+    const units = unitsOf(["apps/hue", "libs/base/text-wasm"],
+        ["text-wasm": ["wasm32-unknown-wasip1", "wasm32-unknown-wasip2"]]);
+    assert(units == [BuildUnit("apps/hue", "hue", null),
+        BuildUnit("libs/base/text-wasm", "text-wasm", "wasm32-unknown-wasip1"),
+        BuildUnit("libs/base/text-wasm", "text-wasm", "wasm32-unknown-wasip2")]);
+    assert(units[0].label == "hue" && units[1].label == "text-wasm (wasm32-unknown-wasip1)");
+}
+
+/++
+Which of `units` the planning error `why` refuses: the one it names, as
+`<name>: …` for the build platform or `<name> for <host>: …` for a host, or
+`units.length` when it names none of them.
++/
+size_t refusedUnit(in BuildUnit[] units, string why) @safe pure
+{
+    foreach (i, unit; units)
+        if (unit.host.length ? why.startsWith(unit.name ~ " for " ~ unit.host ~ ":") : why.startsWith(unit.name ~ ":"))
+            return i;
+    return units.length;
+}
+
+@("each_commit.refusedUnit.byNameAndHost")
+@safe pure
+unittest
+{
+    const units = [BuildUnit("apps/hue", "hue", null),
+        BuildUnit("libs/base/text-wasm", "text-wasm", "wasm32-unknown-wasip1"),
+        BuildUnit("libs/base/text-wasm", "text-wasm", "wasm32-unknown-wasip2")];
+    assert(refusedUnit(units, "hue: unknown configuration") == 0);
+    assert(refusedUnit(units, "text-wasm for wasm32-unknown-wasip2: no such file") == 2);
+    assert(refusedUnit(units, "SPARKLES_DUB_SOURCES is not set") == 3, "no unit's refusal");
+}
+
+/++
+Whether `name` built for host `config` in a run: it has a compile, archive
+or link of its own package for that host (an application's link, a
+library's compile or archive), and every one succeeded. `variantConfig`
+gives an action's variant's host, and `outcomes` each task's outcome.
++/
+bool unitBuilt(const ActionGraph graph, scope string delegate(size_t variant) @safe variantConfig,
+    const OutcomeKind[string] outcomes, string name, string config) @safe
+{
+    import sparkles.build_graph.actions : ActionKind;
+
+    bool built, failed;
+    foreach (ref a; graph.actions)
+    {
+        if (a.kind != ActionKind.compile && a.kind != ActionKind.archive && a.kind != ActionKind.link)
+            continue;
+        const colon = a.id.text.indexOf(':');
+        if (colon < 0 || !a.id.text[colon + 1 .. $].startsWith("sparkles." ~ name ~ ":") || variantConfig(a.variant) != config)
+            continue;
+        built = true;
+        failed |= outcomes.get(a.id.text, OutcomeKind.skipped) != OutcomeKind.succeeded;
+    }
+    return built && !failed;
+}
+
+/// A library has no link: its compile succeeding builds it; an action of
+/// another host, or of another package, does not count.
+@("each_commit.unitBuilt.librariesAndHosts")
+@safe unittest
+{
+    import sparkles.build_graph.actions : Action, ActionKind;
+    import sparkles.build_primitives.task.model : taskId;
+
+    ActionGraph g;
+    Action act(ActionKind kind, string id, size_t variant)
+    {
+        Action a;
+        a.kind = kind;
+        a.id = TaskId(id);
+        a.variant = variant;
+        return a;
+    }
+    g.actions = [act(ActionKind.compile, "compile:sparkles.base:library:ldc:a", 0),
+        act(ActionKind.compile, "compile:sparkles.hue:application:ldc:b", 1),
+        act(ActionKind.link, "link:sparkles.hue:application:ldc:b", 1),
+        act(ActionKind.compile, "compile:sparkles.base-extra:library:ldc:c", 0)];
+    const configs = ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"];
+    string configOf(size_t v) => configs[v];
+    auto outcomes = ["compile:sparkles.base:library:ldc:a": OutcomeKind.succeeded,
+        "compile:sparkles.hue:application:ldc:b": OutcomeKind.succeeded,
+        "link:sparkles.hue:application:ldc:b": OutcomeKind.failed];
+    assert(unitBuilt(g, &configOf, outcomes, "base", configs[0]), "a library built by its compile");
+    assert(!unitBuilt(g, &configOf, outcomes, "hue", configs[0]), "a failed link");
+    assert(!unitBuilt(g, &configOf, outcomes, "base", "wasm32-unknown-wasip1"), "nothing for that host");
+    assert(!unitBuilt(g, &configOf, outcomes, "base-extra", configs[0]), "a compile that never ran");
 }
 
 /// One commit of the range.

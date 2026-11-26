@@ -198,7 +198,6 @@ private struct Watch
     bool round(const(string)[] changed, const ref InputState state)
     {
         import std.conv : text;
-        import commands.toolchain : findWasiCompiler;
         import sparkles.build_primitives.workspace.select : selectChanged;
         import watch_round : planRound, runRound;
 
@@ -216,12 +215,9 @@ private struct Watch
             info(i"$(n) changed path(s) reach no package");
             return true;
         }
-        string wasiCompiler;
-        if (action == WatchAction.build && !findWasiCompiler(packages, wasiCompiler))
-            return !failFast;
         const listed = joinNames(packages);
         info(i"$(n) changed path(s) select $(packages.length) package(s): $(listed)");
-        auto r = planRound(plan, selected.value, action, state, repoRoot, wasiCompiler, threads);
+        auto r = planRound(plan, selected.value, action, state, repoRoot, threads);
         if (r is null)
             return !failFast;
         const result = runRound(r, *passed, repoRoot, failFast);

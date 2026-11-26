@@ -63,12 +63,11 @@ final class Round
 /**
 The round that runs `action` over the packages `selection` holds, from
 `plan` and the watched input `state`, for the repository at `repoRoot`.
-`wasiCompiler` is $(REF findWasiCompiler, app)'s, for `ci test --build-only`, and
-`threads` the parallel test leg's. Creates each package's `build`
+`threads` is the parallel test leg's. Creates each package's `build`
 directory, as `ci test` and `ci test --build-only` do.
 */
 Round planRound(ClaimPlan plan, const ref Selection selection, RoundAction action,
-    const ref InputState state, string repoRoot, string wasiCompiler, uint threads)
+    const ref InputState state, string repoRoot, uint threads)
 {
     import std.file : mkdirRecurse;
     import std.path : buildPath;
@@ -122,7 +121,7 @@ Round planRound(ClaimPlan plan, const ref Selection selection, RoundAction actio
         mkdirRecurse(buildPath(repoRoot, pkg.path, "build"));
         const commands = action == RoundAction.test
             ? packageTestCommands(repoRoot, pkg.path, threads)
-            : [packageBuildCommand(repoRoot, pkg.path, wasiCompiler)];
+            : [packageBuildCommand(repoRoot, pkg.path)];
         foreach (ci, ref cmd; commands)
         {
             const id = action == RoundAction.test

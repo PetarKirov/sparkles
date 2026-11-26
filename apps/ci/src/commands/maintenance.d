@@ -5,7 +5,7 @@ module commands.maintenance;
 import cache_home : sparklesCache;
 import commands.files : detectRepoRoot;
 import commands.output : flushStdout, uiWidth;
-import commands.toolchain : dubBuildCommand, findWasiCompiler, withLdcDflags;
+import commands.toolchain : dubBuildCommand, withLdcDflags;
 import dub_deps : subPackageDirectories;
 import sparkles.base.expected : Expected, ok;
 import sparkles.base.logger : error, info, warning;
@@ -45,18 +45,19 @@ RunExpected!void runSeedDubCache()
 `ci commits build-each`: build the chosen packages at every commit from
 `base` (exclusive) to `HEAD`, as one run of the build graph (ci task-DAG
 CIC21). Each commit is checked out in a scratch worktree of its own and
-planned there; the plans run together against the shared store, an action a
-commit shares with the one before it waiting for that one's result. The
-packages the graph does not build (the WebAssembly modules, and a recipe
-planning refuses) build with dub in one more worktree, walked oldest first
-so each build is incremental on the last, as tasks of the same run. See
-$(MREF each_commit) for why.
+planned there, each package for every host the toolchain table lists it for
+(the WebAssembly modules' previews; build-graph BGH2), the rest for the build
+platform. The plans run together against the shared store, an action a
+commit shares with the one before it waiting for that one's result. A
+package planning refuses builds with dub in one more worktree, walked oldest
+first so each build is incremental on the last, as tasks of the same run.
+See $(MREF each_commit) for why.
 +/
 RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool failFast)
 {
     import std.file : rmdirRecurse, tempDir;
     import std.process : thisProcessID;
-    import graph_driver : PreparedRun, RunOptions, logicalProcessors, prepareGraph;
+    import graph_driver : PreparedRun, RunOptions, logicalProcessors, prepareGraph, toolchainTable;
     import sparkles.build_graph.actions : ActionGraph, ActionKind;
     import sparkles.build_graph.execute : RunLayout, RunPart, RunReporting, RunStats, runActionsAcross,
         storeOperation;
@@ -69,8 +70,8 @@ RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool fa
     import sparkles.build_primitives.task.process : InProcessHandler;
     import sparkles.ci_provider : CiLog, systemEnvironment;
     import sparkles.event_horizon.sched : Sched;
-    import each_commit : CommitFailure, defaultEachCommitPackages, failureReport, parseCommitRange,
-        reuseEdges, selectPackages, targetBuildArgs, wasiPackages;
+    import each_commit : BuildUnit, CommitFailure, defaultEachCommitPackages, failureReport, parseCommitRange, unitBuilt,
+        refusedUnit, reuseEdges, selectPackages, unitsOf;
 
     // The build graph's store, shared by every commit's builds.
     const graphCache = sparklesCache();
@@ -78,15 +79,16 @@ RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool fa
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
         return failRun("Could not detect repository root");
+    const table = toolchainTable();
+    if (table.hasError)
+        return failRun(table.error);
 
     string[] unknown;
     const pkgs = selectPackages(requested.length ? requested
         : defaultEachCommitPackages.dup, subPackageDirectories(repoRoot), unknown);
     if (unknown.length)
         return failRun(text(i"--packages: no sub-package named $(unknown.join(", "))"));
-    string wasiCompiler;
-    if (!findWasiCompiler(pkgs, wasiCompiler))
-        return failRun("no WebAssembly-capable compiler for a package that needs one");
+    const units = unitsOf(pkgs, table.value.packages);
 
     if (base.length == 0)
     {
@@ -137,7 +139,7 @@ RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool fa
         => [pkg ~ "/dub.sdl", pkg ~ "/dub.json"].any!(recipe =>
             runGit(["-C", repoRoot, "cat-file", "-e", sha ~ ":" ~ recipe]).status == 0);
 
-    i"Building $(pkgs.length) package(s) at $(commits.length) commit(s) after $(base[0 .. base.length < 9 ? $ : 9])".text
+    i"Building $(units.length) package build(s) at $(commits.length) commit(s) after $(base[0 .. base.length < 9 ? $ : 9])".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
         .writeln("\n");
     flushStdout();
@@ -152,38 +154,70 @@ RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool fa
             reporting.live = stdoutLiveView(LiveOptions());
     }
 
-    // Each commit planned in its own worktree. A package planning refuses
-    // joins the WebAssembly modules on dub's walk.
+    // Each commit planned in its own worktree, each package for its hosts.
+    // A unit planning refuses joins dub's walk.
     auto prepared = new PreparedRun[commits.length]; // the parts point into it
-    auto onGraph = new string[][commits.length];
-    auto withDub = new string[][commits.length];
+    auto onGraph = new BuildUnit[][commits.length];
+    auto withDub = new BuildUnit[][commits.length];
     RunPart[] parts;
     size_t[] commitOf; // by part
     foreach (k, commit; commits)
     {
-        foreach (pkg; pkgs)
-            if (!hasPackage(commit.sha, pkg))
-                writeln(styledText(i"{dim $(commit.sha) $(pkg.baseName): not in this commit}"));
+        foreach (unit; units)
+            if (!hasPackage(commit.sha, unit.path))
+                writeln(styledText(i"{dim $(commit.sha) $(unit.label): not in this commit}"));
             else
-                (wasiPackages.canFind(pkg.baseName) ? withDub[k] : onGraph[k]) ~= pkg;
+                onGraph[k] ~= unit;
         if (!onGraph[k].length)
             continue;
         const wt = addWorktree(commit.sha, commit.sha);
         if (wt is null)
             return failRun(text(i"$(commit.sha): no worktree to build it in"));
+        // The commit's units planned as one graph.
+        PreparedRun planUnits(const BuildUnit[] some)
+        {
+            string[] applications;
+            string[][string] hostApplications;
+            foreach (unit; some)
+                if (unit.host.length)
+                    hostApplications[unit.host] ~= unit.name;
+                else
+                    applications ~= unit.name;
+            return prepareGraph(wt, null, RunOptions(into: buildPath(runs, commit.sha), cache: graphCache,
+                applications: applications, hostApplications: hostApplications, buildOnly: true));
+        }
         while (onGraph[k].length)
         {
-            prepared[k] = prepareGraph(wt, null, RunOptions(into: buildPath(runs, commit.sha), cache: graphCache,
-                applications: onGraph[k].map!(p => p.baseName).array, buildOnly: true));
+            prepared[k] = planUnits(onGraph[k]);
             const why = prepared[k].run.error;
             if (!why.length)
                 break;
-            const refused = onGraph[k].filter!(p => why.startsWith(p.baseName ~ ":")).array;
-            if (!refused.length)
-                return failRun(text(i"$(commit.sha): the build graph cannot plan: $(why)"));
-            warning(i"$(commit.sha): the build graph cannot model $(refused[0].baseName) ($(why)); building it with dub");
-            withDub[k] ~= refused[0];
-            onGraph[k] = onGraph[k].filter!(p => p != refused[0]).array;
+            const refused = refusedUnit(onGraph[k], why);
+            if (refused >= onGraph[k].length)
+            {
+                // A refusal that names no unit (a variant's, or a lint's): each unit
+                // planned alone tells which refuse. One every unit meets alone is
+                // the commit's, not a unit's, and fails the run.
+                BuildUnit[] fine;
+                foreach (unit; onGraph[k])
+                {
+                    const alone = planUnits([unit]).run.error;
+                    if (!alone.length)
+                        fine ~= unit;
+                    else
+                    {
+                        warning(i"$(commit.sha): the build graph cannot model $(unit.label) ($(alone)); building it with dub");
+                        withDub[k] ~= unit;
+                    }
+                }
+                if (!fine.length && onGraph[k].length > 1 || fine.length == onGraph[k].length)
+                    return failRun(text(i"$(commit.sha): the build graph cannot plan: $(why)"));
+                onGraph[k] = fine;
+                continue;
+            }
+            warning(i"$(commit.sha): the build graph cannot model $(onGraph[k][refused].label) ($(why)); building it with dub");
+            withDub[k] ~= onGraph[k][refused];
+            onGraph[k] = onGraph[k][0 .. refused] ~ onGraph[k][refused + 1 .. $];
         }
         if (!onGraph[k].length)
             continue;
@@ -191,6 +225,7 @@ RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool fa
         commitOf ~= k;
     }
 
+    info(i"planned $(parts.length) commit(s) on the build graph");
     // An action a commit shares with the one before it waits for that one,
     // and reuses its result.
     TaskEdge[] across;
@@ -204,12 +239,15 @@ RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool fa
             changed);
     }
 
-    // dub's walk: per commit, a checkout of it, then each package's build,
-    // one at a time, as they share the worktree's build directories.
+    // dub's walk: per commit, a checkout of it, then each refused unit's
+    // build, one at a time, as they share the worktree's build directories.
+    // A unit for another host builds with its toolchain's compiler, as dub's
+    // `--arch` takes it.
     enum dubSuffix = "dub";
     ActionGraph dubEdges; // edges only: the walk's tasks are keyless
     TaskNode[] dubNodes;
-    string[][string] dubPackageOf; // a dub build's id: [commit, package]
+    BuildUnit[string] dubUnitOf; // by a dub build's id
+    string[string] dubCommitOf;  // ditto
     InProcessHandler[string] handlers;
     if (withDub.any!(w => w.length > 0))
     {
@@ -225,23 +263,35 @@ RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool fa
             if (!withDub[k].length)
                 continue;
             const checkout = taskId("checkout", commit.sha).value;
+            string[] dirs;
+            foreach (unit; withDub[k])
+                dirs ~= unit.path;
             dubNodes ~= TaskNode(id: checkout, kind: TaskKind.build, label: "checkout " ~ commit.sha,
                 order: PresentationKey(1, checkout.text, 0, 0), resources: ResourceClaim(jobsWeight: 1),
-                action: TaskAction(InProcessAction("build-each:checkout", [dubWt, commit.sha] ~ withDub[k])));
+                action: TaskAction(InProcessAction("build-each:checkout", [dubWt, commit.sha] ~ dirs)));
             if (!last.empty)
                 dubEdges.edges ~= TaskEdge(last, checkout, EdgeCondition.onCompletion, EdgeReason.planning);
             last = checkout;
-            foreach (pkg; withDub[k])
+            foreach (unit; withDub[k])
             {
-                const id = taskId("dub", pkg.baseName, commit.sha).value;
-                dubNodes ~= TaskNode(id: id, kind: TaskKind.build, label: "dub " ~ pkg.baseName ~ " " ~ commit.sha,
+                const id = taskId("dub", unit.name, unit.host.length ? unit.host : "build", commit.sha).value;
+                string[] cross;
+                if (unit.host.length)
+                {
+                    const entry = table.value.host(unit.host);
+                    if (entry is null)
+                        return failRun(text(i"$(unit.label): the toolchain table has no host $(unit.host)"));
+                    cross = ["--arch=" ~ unit.host, "--compiler=" ~ entry.ldc];
+                }
+                dubNodes ~= TaskNode(id: id, kind: TaskKind.build, label: "dub " ~ unit.label ~ " " ~ commit.sha,
                     order: PresentationKey(1, id.text, 0, 0), resources: ResourceClaim(jobsWeight: 2),
-                    action: TaskAction(ProcessAction(argv: dubBuildCommand(dubWt, pkg, pkg.baseName,
-                        targetBuildArgs(pkg.baseName, wasiCompiler)), envDelta: dubEnv, cwd: dubWt)));
+                    action: TaskAction(ProcessAction(argv: dubBuildCommand(dubWt, unit.path, unit.name, cross),
+                        envDelta: dubEnv, cwd: dubWt)));
                 dubEdges.edges ~= TaskEdge(checkout, id, EdgeCondition.onSuccess, EdgeReason.planning);
                 if (last != checkout)
                     dubEdges.edges ~= TaskEdge(last, id, EdgeCondition.onCompletion, EdgeReason.planning);
-                dubPackageOf[id.text] = [commit.sha, pkg.baseName];
+                dubUnitOf[id.text] = unit;
+                dubCommitOf[id.text] = commit.sha;
                 last = id;
             }
         }
@@ -284,6 +334,7 @@ RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool fa
     Echo echo;
     auto stats = new RunStats[parts.length];
     const result = runActionsAcross(parts, across, echo, logicalProcessors, stats, failFast, handlers, reporting);
+    info(i"the run ended (exit $(result.exitCode)); evicting the store down to its bound");
     {
         import std.array : appender;
 
@@ -292,31 +343,30 @@ RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool fa
     }
     writeln();
 
-    // A package built at a commit when its application's link succeeded,
-    // or its dub build did.
+    // A unit built at a commit when every link of its application for its
+    // host succeeded, or its dub build did.
     CommitFailure[] failures;
     foreach (i, ref part; parts)
     {
         if (part.idSuffix == dubSuffix)
         {
-            foreach (id, which; dubPackageOf)
+            foreach (id, unit; dubUnitOf)
                 if (stats[i].outcomes.get(id, OutcomeKind.skipped) != OutcomeKind.succeeded)
-                    failures ~= CommitFailure(commits[commits.countUntil!(c => c.sha == which[0])], which[1]);
+                    failures ~= CommitFailure(commits[commits.countUntil!(c => c.sha == dubCommitOf[id])], unit.label);
             continue;
         }
         const k = commitOf[i];
-        foreach (pkg; onGraph[k])
+        const plan = &prepared[k].run.plan.plan;
+        foreach (unit; onGraph[k])
         {
-            const link = "link:sparkles." ~ pkg.baseName ~ ":application:";
-            const built = part.graph.actions.any!(a => a.kind == ActionKind.link && a.id.text.startsWith(link)
-                && stats[i].outcomes.get(a.id.text, OutcomeKind.skipped) == OutcomeKind.succeeded);
-            if (!built)
-                failures ~= CommitFailure(commits[k], pkg.baseName);
+            string configOf(size_t variant) => variant < plan.variants.length ? plan.variants[variant].platform.config : null;
+            if (!unitBuilt(*part.graph, &configOf, stats[i].outcomes, unit.name, unit.host.length ? unit.host : table.value.build))
+                failures ~= CommitFailure(commits[k], unit.label);
         }
         info(i"$(commits[k].sha): $(stats[i].summary)");
     }
     failures.sort!((a, b) => commits.countUntil(a.commit) < commits.countUntil(b.commit));
-    const report = failureReport(failures, commits.length, pkgs.length);
+    const report = failureReport(failures, commits.length, units.length);
     if (failures.length || result.exitCode != 0)
         return failRun(failures.length ? report : text("the build graph's run failed (exit ", result.exitCode, ")"));
     info(i"✓ $(report)");
@@ -504,3 +554,4 @@ private void fanOut(size_t n, scope void delegate(size_t) work)
     foreach (t; threads)
         t.join();
 }
+

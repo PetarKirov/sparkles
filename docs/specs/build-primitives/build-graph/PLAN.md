@@ -252,8 +252,8 @@ and it replaces no gate item.
 Delivered as ci task-DAG CIC21: every commit of the range is one part of a
 single run (`runActionsAcross`), each in its own worktree, and an action
 predicted to share its key with the previous commit's waits for it and hits.
-The WebAssembly modules still build with dub, as tasks of that run, until the
-graph cross-compiles.
+Since E5 it builds the WebAssembly modules on the graph too, for each host
+the toolchain table lists.
 
 ## E4: The Nix backend
 

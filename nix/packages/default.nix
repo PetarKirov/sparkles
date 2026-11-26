@@ -26,8 +26,8 @@
       # default compiler.
       ciCompiler = if system == "x86_64-linux" then pkgs.dmd else pkgs.ldc;
 
-      # The LDC with the WASI runtimes: `ci test --build-only` and `ci commits build-each`
-      # compile the WebAssembly modules with it (`$SPARKLES_WASI_LDC`).
+      # The LDC with the WASI runtimes: the test runner's `--wasm` finds it as
+      # `$SPARKLES_WASI_LDC`; the build graph names it through the toolchain table.
       wasiLdc = inputs'.dlang-nix.packages.ldc-sparkles;
 
       # The terminal, for one of its dub configurations: the default
