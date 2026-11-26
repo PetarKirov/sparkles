@@ -215,8 +215,8 @@ lexer's output depends on hidden `Id` state (`__EOF__`, `#line`);
 
 ## 4. LDC: `sparkles/main`
 
-[PetarKirov/ldc `sparkles/main`](https://github.com/PetarKirov/ldc/compare/df98a635a7ba665d8907c7cfd7cbd0f2f1aa7810...341bb78fb7d0dee906f5533f0752476d11c1431f)
-is LDC master with 98 commits. The fork review lists each with its
+[PetarKirov/ldc `sparkles/main`](https://github.com/PetarKirov/ldc/compare/df98a635a7ba665d8907c7cfd7cbd0f2f1aa7810...d04661844b331fed5c1e6a6a2c2ab3a0c1a49e51)
+is LDC master with 100 commits. The fork review lists each with its
 regression test and an "Upstreamable" verdict. Here they are grouped by the
 pull request each group would become. Commits are named by short hash within
 that pinned range. The fork has no `fix/*` branches yet, so no LDC entry is
@@ -247,6 +247,7 @@ in upstream form (TCU2); that conversion is the first step of each group.
 | UL21 | A closure's captures after a plain local still escape (no `scope` inferred for them)                                                                 | [`c5b18c33b1`](https://github.com/PetarKirov/ldc/commit/c5b18c33b115950555725376679c2b6373e9bdc9); test parity `873265a00b`                                                                    | `sparkles:test-harness` `benchCase` (O14), any template registering closures          | [dlang/dmd#24243](https://github.com/dlang/dmd/pull/24243) merged (fixes [#24065](https://github.com/dlang/dmd/issues/24065)), not yet in LDC master                                        | `superseded` |
 | UL22 | ImportC: a member of an all-default compound literal of a zero-initialized struct (`f((W){ { } }.wrapped)`)                                          | none: to fix in `gen/llvmhelpers.cpp` `DtoSymbolAddress`                                                                                                                                       | Clay's `CLAY(id, { })` through ImportC (worked around in the UI bench)                | none; DMD compiles it                                                                                                                                                                       | `needs-work` |
 | UL23 | Copy an sret function's `__result` into the return value when a GC closure holds it (a `return` in an associative-array or `opApply` `foreach` body) | [`341bb78fb7`](https://github.com/PetarKirov/ldc/commit/341bb78fb7d0dee906f5533f0752476d11c1431f)                                                                                              | Any function that returns a struct from such a body and captures a local in a closure | none                                                                                                                                                                                        | `ready`      |
+| UL24 | `--makedeps-probes`: the import and string-import searches as their factors (roots, candidates, where each lookup resolved), not their expansion     | [`b4d4cc7c65`](https://github.com/PetarKirov/ldc/commit/b4d4cc7c65df4954e8300e10cf010e35df97ca6b)                                                                                              | The build graph's manifests (BGK2): a compile's expanded list is megabytes            | after UL11's `-makedeps-absent`                                                                                                                                                             | `ready`      |
 
 UL2 and UL3 are blocked on UL1 and on the LLVM entries UV1–UV2. UL14 is
 blocked on LDC adopting LLVM 24, and UL15 on UL14. UL6, UL9 and UL20 change
@@ -310,7 +311,7 @@ ldc-developers/phobos once LDC's Phobos contains dlang/phobos#11011, and
 
 ## 6. dlang.nix
 
-[PetarKirov/dlang.nix `feat/ldc-sparkles`](https://github.com/PetarKirov/dlang.nix/commit/2cb7809ebc5b8c9ac916fc8a0d43c0be1033b49a)
+[PetarKirov/dlang.nix `feat/ldc-sparkles`](https://github.com/PetarKirov/dlang.nix/commit/c146e4d282f99b845bb58fbee72cf76bf0a41cca)
 is dlang.nix's `main` with the toolchain packages: `ldc-vulkan` and
 `ldc-sparkles`, `llvm-spirv-vulkan`, `clang-sparkles`, `lld-sparkles`,
 `ldc-android`, the WASI sysroots and runtimes, `dmd-sparkles`, and their
@@ -344,7 +345,7 @@ Five chains decide the order:
 5. **Drops.** UD4, UL7, UL8, UL16, UL19, UL21 and UP1 leave the forks at their
    next rebase (TCU4).
 
-The rest (UD1, UD5, UD6, UD7, UD10, UL12, UL13, UL17, UL18, UL23, UV5–UV8,
+The rest (UD1, UD5, UD6, UD7, UD10, UL12, UL13, UL17, UL18, UL23, UL24, UV5–UV8,
 and US2, US4–US10) waits only on TCD2 and, for the LDC and LLVM entries, on
 its `fix/*` branch. UD11 is a report to file. UL22 is a fix still to write.
 

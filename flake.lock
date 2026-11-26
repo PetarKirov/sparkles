@@ -21,11 +21,11 @@
         "phobos-master": "phobos-master"
       },
       "locked": {
-        "lastModified": 1795725190,
-        "narHash": "sha256-EpCsavAb4W5L9B7jM7Lw6V6/VWvFXYlWb2NXo1Jphi8=",
+        "lastModified": 1795738261,
+        "narHash": "sha256-VLskSFz+Sr08xG2dq01VntTRQX0P7KOZ4gU2O/344I0=",
         "owner": "PetarKirov",
         "repo": "dlang.nix",
-        "rev": "2cb7809ebc5b8c9ac916fc8a0d43c0be1033b49a",
+        "rev": "c146e4d282f99b845bb58fbee72cf76bf0a41cca",
         "type": "github"
       },
       "original": {
@@ -379,11 +379,11 @@
     "ldc-sparkles": {
       "flake": false,
       "locked": {
-        "lastModified": 1795708993,
-        "narHash": "sha256-SbrVl3Aw27yh9CYgo9iiafLLdV9jypoagqVGM+w+PdE=",
+        "lastModified": 1795738249,
+        "narHash": "sha256-ahAsZDd00YodelUQSQuXL7RAG13ds3hjWCsSkoqZuGQ=",
         "ref": "sparkles/main",
-        "rev": "341bb78fb7d0dee906f5533f0752476d11c1431f",
-        "revCount": 49404,
+        "rev": "d04661844b331fed5c1e6a6a2c2ab3a0c1a49e51",
+        "revCount": 49406,
         "submodules": true,
         "type": "git",
         "url": "https://github.com/PetarKirov/ldc"
