@@ -21,11 +21,11 @@
         "phobos-master": "phobos-master"
       },
       "locked": {
-        "lastModified": 1795485442,
-        "narHash": "sha256-OM15UJIx4JR0GoygxdiRULnquDSB0yPzJ8YV3CufWOg=",
+        "lastModified": 1795572634,
+        "narHash": "sha256-bL+IbKMt0naAw9fLAxezRBwBAG3XgGFM6YMR76gnXbY=",
         "owner": "PetarKirov",
         "repo": "dlang.nix",
-        "rev": "e9a6d1301d98ae204185815b2d3037790c62d93c",
+        "rev": "3f629c49a0380508923bd45100987a895e92f61c",
         "type": "github"
       },
       "original": {
@@ -55,11 +55,11 @@
     "dmd-sparkles": {
       "flake": false,
       "locked": {
-        "lastModified": 1795485427,
-        "narHash": "sha256-A9h263DqQ8nNBbu0vASm01fSnYTcprwu0Oa2BWZ9Hrg=",
+        "lastModified": 1795571516,
+        "narHash": "sha256-V+Py3EkcIEWUOjwBh8jsgd2hsSGNXSbyq8+PbRIkswg=",
         "owner": "PetarKirov",
         "repo": "dmd",
-        "rev": "e0b6e795ff3c9841a1fb5d944b3b422cd8e1c3d3",
+        "rev": "d19ed4c2ecc67ecdbd64f550351fdb3e4dddb1d6",
         "type": "github"
       },
       "original": {
@@ -379,11 +379,11 @@
     "ldc-sparkles": {
       "flake": false,
       "locked": {
-        "lastModified": 1795004856,
-        "narHash": "sha256-3cv2RAdyokpyDWGYE9MNlXqbGTxKkaml2rzr2DpCMtg=",
+        "lastModified": 1795572113,
+        "narHash": "sha256-LqvxWrC4JReRkemJmFjAmZvGBHnMwvLOdRlGnK68A2I=",
         "ref": "sparkles/main",
-        "rev": "4aa7f4a1a98ecf939354ecec233a0dcd52dd0663",
-        "revCount": 49400,
+        "rev": "873265a00bfbcaf5b01ae9c6572325e176c3bc37",
+        "revCount": 49403,
         "submodules": true,
         "type": "git",
         "url": "https://github.com/PetarKirov/ldc"

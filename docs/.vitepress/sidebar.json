@@ -2204,6 +2204,10 @@
             "link": "/specs/toolchain/PLAN"
           },
           {
+            "text": "Upstreaming plan",
+            "link": "/specs/toolchain/upstreaming"
+          },
+          {
             "text": "Acceptance and evidence",
             "link": "/specs/toolchain/testing"
           },
