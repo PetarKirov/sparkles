@@ -701,6 +701,28 @@ tasks of the same run, with its host's compiler when it has one. A package
 **must** count as built at a commit for a host when every link of its
 application for that host, or its dub build, succeeds there.
 
+**CIC22: A heavy run is contained.** On Linux under systemd, `ci test`, `ci
+pipeline`, `ci commits build-each` and the example commands **must** run in a
+transient user scope with the memory controller delegated to them
+(`systemd-run --user --scope -p Delegate=yes`), with `MemoryMax` at 85 % of
+total memory, or as `--memory-max` (falling back to
+`$SPARKLES_CI_MEMORY_MAX`) sets: a byte count, a percentage, or `none`. The
+scope sets no `MemoryHigh`: past it the kernel throttles every allocation, and
+a run that outgrows it crawls instead of failing, where at `MemoryMax` an
+action, its OOM score the highest, is killed. Inside
+it, `ci` moves itself into a leaf so each action's cgroup is accounted (Event
+Horizon §13.7), and reports the limit and controllers the kernel gave it, read
+back. `ci` raises its own `oom_score_adj` to 900, so everything it starts
+inherits at least that, and every supervised action (a build action, a test
+worker, an example) runs at 1000: a shortage takes the run's actions first,
+then `ci`, and an out-of-memory kill at the scope's limit takes nothing outside
+the run. A `ci` in a scope it or a parent `ci` made, or in a cgroup its caller
+already limits, enters no other. Where no scope can be made (no systemd user
+manager, a container, `none`, total memory unknown), the command **must** run
+unconfined and say so. A dry run enters no scope and writes no cgroup. The
+repository's own CI sets `none`: a runner is disposable and runs nothing else,
+and 85 % of a runner's memory is less than its jobs had before containment.
+
 ### 5.9 Maintenance commands
 
 **CIC10: Slow-test listing.** `ci slow-tests list` **must** print the `@slow` tests

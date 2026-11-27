@@ -335,6 +335,7 @@ TaskOutcome runExample(ref TaskContext!Sched ctx, const ref InProcessAction acti
     // when it sees a terminal never does, on CI or a developer's terminal.
     cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
     cfg.sampleInterval = Duration.zero;
+    cfg.oomScoreAdj = 1000; // an example is the OOM killer's first choice (CIC22)
     void onEvent(in ProcessEvent ev)
     {
         if (ev.kind == ProcessEventKind.line)

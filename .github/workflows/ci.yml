@@ -55,6 +55,11 @@ on:
 permissions:
   contents: read
 
+# A runner is disposable and runs nothing else: `ci` takes no systemd scope of
+# its own here (CIC22), so a job keeps the memory it had before containment.
+env:
+  SPARKLES_CI_MEMORY_MAX: none
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
   # Superseded PR pushes are worth cancelling; a dispatched rebuild of `main` is

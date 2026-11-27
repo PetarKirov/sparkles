@@ -112,8 +112,47 @@ struct SigningOptions
     string signingKey;
 }
 
+/// A heavy command's memory containment (task-DAG PLAN M7, item 1).
+struct ContainmentOptions
+{
+    @(Option(`memory-max`, placeholder: "LIMIT", envFallback: "SPARKLES_CI_MEMORY_MAX",
+        description: "Run in a systemd user scope with this memory limit, so running out of memory "
+        ~ "kills only this run's processes: a byte count (K, M, G or T suffix), a percentage of "
+        ~ "total memory, or none to run unconfined. Default: 85% of total memory, reclaiming "
+        ~ "above 75%. Linux under systemd only."))
+    string memoryMax;
+}
+
 /// The program's command line as `ciMain` received it, for the Linux re-exec.
 private string[] programArgs;
+
+/// Runs `run` contained by a systemd user scope (`run_scope`), entering one
+/// first when it is not in one, and saying where it runs when it cannot. On
+/// other systems, and in a dry run, `--memory-max` is only validated.
+private RunExpected!void contained(alias run)(in ContainmentOptions containment, bool dryRun = false)
+{
+    import run_scope : memoryLimits;
+    import sparkles.base.hw_caps : hwMemoryBytes;
+
+    // Validated everywhere, so a bad value fails the same on every host.
+    const limits = memoryLimits(containment.memoryMax, hwMemoryBytes());
+    if (limits.hasError)
+        return failRun(limits.error, 2);
+    // A dry run runs nothing and writes nothing, cgroupfs included.
+    version (linux)
+    if (!dryRun)
+    {
+        import run_scope : adoptScope, enterScope, preferRunForOom;
+        import sparkles.base.logger : info;
+
+        if (const why = enterScope(programArgs, limits.value))
+            info(i"memory: $(why)");
+        else if (const how = adoptScope())
+            info(i"memory: $(how)");
+        preferRunForOom();
+    }
+    return run();
+}
 
 /**
 `run()`, or, when `host` names another system, the same command line re-run
@@ -197,6 +236,7 @@ struct PipelineCommand
     string determinismSample;
 
     @(Flatten) HistoryOptions history;
+    @(Flatten) ContainmentOptions containment;
 
     RunExpected!void run()
     {
@@ -208,10 +248,10 @@ struct PipelineCommand
             return failRun("--jobs takes a positive capacity", 2);
         if (determinismSample.length && !parseCapacity(determinismSample))
             return failRun("--determinism-sample takes a positive count", 2);
-        return runPipeline(PipelineRequest(placement: placement, shard: shard, historyTip: historyTip,
-            historyRemote: history.historyRemote, from: from, failFast: failFast,
+        return contained!(() => runPipeline(PipelineRequest(placement: placement, shard: shard,
+            historyTip: historyTip, historyRemote: history.historyRemote, from: from, failFast: failFast,
             jobs: jobs.length ? parseCapacity(jobs) : 0, interlaced: interlaced,
-            determinismSample: determinismSample.length ? parseCapacity(determinismSample) : 4));
+            determinismSample: determinismSample.length ? parseCapacity(determinismSample) : 4)))(containment);
     }
 }
 
@@ -427,12 +467,13 @@ struct TestCommand
 
     @(Flatten) HistoryOptions history;
     @(Flatten) LinuxHostOptions host;
+    @(Flatten) ContainmentOptions containment;
 
     RunExpected!void run()
     {
         if (const why = conflict())
             return failRun(why);
-        return onHost!(() => runTestCommand(this))(host);
+        return onHost!(() => contained!(() => runTestCommand(this))(containment, dryRun))(host);
     }
 
     /// The combination of options this command cannot run, or `null`.
@@ -608,11 +649,13 @@ struct ExampleOptions
 
     @(Flatten) FileSelection files;
     @(Flatten) LinuxHostOptions host;
+    @(Flatten) ContainmentOptions containment;
 }
 
 /// A markdown example command over `options`.
 private RunExpected!void markdownExamples(ExampleAction action, in ExampleOptions options) =>
-    onHost!(() => runMarkdownExamplesCommand(action, options.files, options.failFast))(options.host);
+    onHost!(() => contained!(() => runMarkdownExamplesCommand(action, options.files, options.failFast))(
+        options.containment))(options.host);
 
 @(Command("examples", shortDescription: "Runnable examples in markdown and in example programs"))
 struct ExamplesCommand
@@ -651,7 +694,8 @@ struct ExamplesCommand
         @(Flatten) ExampleOptions options;
 
         RunExpected!void run() =>
-            onHost!(() => runStandaloneExamplesCommand(options.files, options.failFast))(options.host);
+            onHost!(() => contained!(() => runStandaloneExamplesCommand(options.files, options.failFast))(
+                options.containment))(options.host);
     }
 }
 
@@ -1077,10 +1121,12 @@ struct CommitsCommand
         @(Option(`F|fail-fast`, description: "Stop at the first commit that fails to build."))
         bool failFast;
 
+        @(Flatten) ContainmentOptions containment;
+
         RunExpected!void run()
         {
-            seedDubHome();
-            return runBuildEachCommitMode(base, packages, failFast);
+            return contained!(() { seedDubHome(); return runBuildEachCommitMode(base, packages, failFast); })(
+                containment);
         }
     }
 }
