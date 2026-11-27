@@ -848,6 +848,12 @@ Eviction follows these rules:
 - **Off the publish path:** eviction runs when a bound is exceeded, in a task
   of its own, and evicts down to 90 % of the bound. Publication never waits
   for it.
+- **On a full disk:** a consumer that finds the store's file system under its
+  reserve **may** evict the results down to a lower bound, as far as needed to
+  restore it (`ci`'s CIC23); the same order and the same leases apply. Such an
+  eviction reclaims: each result it moved to `trash/` is removed once no lease
+  raced in, so its bytes are free when it returns, and another evictor's
+  entries in `trash/` are left to it. `ci cache gc` reclaims the same way.
 - **Leased overshoot:** a result with a live lease is never evicted, so the
   store **may** exceed its bound while leases hold it. The overshoot is
   reported, and eviction resumes when the leases end.

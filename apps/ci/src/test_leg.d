@@ -157,6 +157,7 @@ private struct LegRun
     bool driverFailed;    // an extracted mode failed, or was skipped under --require-toolchain
     bool selfRun;         // the binary speaks no runner protocol: it ran its own tests
     bool selfRunOk;       // and exited zero
+    string group;         // Linux: the run group its workers run in, under the leg's limit
 
     // Takes the session's events: renders them and counts results.
     void drain(Worker w)
@@ -227,6 +228,7 @@ private struct LegRun
         cfg.maxLineBytes = 64 * 1024 * 1024; // a frame is one line, and must arrive whole
         cfg.sampleInterval = Duration.zero;
         cfg.oomScoreAdj = 1000; // a test worker is the OOM killer's first choice (CIC22)
+        cfg.runGroup = group;   // the leg's limit bounds its workers together (TDM20)
         void onEvent(in ProcessEvent ev)
         {
             final switch (ev.kind)
@@ -310,6 +312,24 @@ TaskOutcome runTestLeg(ref TaskContext!Sched ctx, const ref InProcessAction acti
     run.emit = &say;
     run.verbose = options.verbose;
     run.callerMerges = leg.druntime.canFind!(o => o.canFind("merge:1"));
+    // TDM20, CIC23: the leg's workers run in one run group under the limit the
+    // driver gives the leg, which counts their peak together and a kill at it.
+    version (linux)
+    {
+        import sparkles.event_horizon.cgroup : RunGroup, createRunGroup, removeRunGroup;
+
+        RunGroup group;
+        if (createRunGroup(group, ctx.memoryLimit) == 0)
+            run.group = group.name[].idup;
+        scope (exit)
+            if (run.group.length)
+            {
+                ctx.memoryPeak = group.peakBytes;
+                ctx.memoryLimitSet = group.memoryLimitSet;
+                ctx.memoryLimitKilled = group.limitKilled;
+                cast(void) removeRunGroup(group);
+            }
+    }
 
     // A phase: workers on demand up to `threads`, each idle one taking the
     // next test, then ended one at a time.

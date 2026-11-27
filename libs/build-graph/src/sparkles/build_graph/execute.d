@@ -368,6 +368,13 @@ __gshared bool dropAbsentCandidates;
 /// executed it.
 struct RunStats
 {
+    /// Per action identity ($(LREF memoryIdentity)): the memory its processes
+    /// peaked at, their run cgroup's `memory.peak` where they were accounted
+    /// and their sampled resident set elsewhere, or the limit they were killed
+    /// at (ci task-DAG CIC23, task-DAG TDM20). Only an action that succeeded
+    /// or was killed at its own limit says how much it needs; the largest of
+    /// the run's is kept.
+    MemoryPeak[string] memoryPeaks;
     size_t[string] reused;   /// by kind
     size_t[string] executed; /// by kind
     size_t[string] misses;   /// by class (BGS8): `declared`, `manifest`, `evicted`
@@ -666,7 +673,8 @@ struct ActionDriver
     whole run's, and the driver runs the ones whose ids end in `idSuffix`,
     the segment that tells its part's actions apart from the others'.
     */
-    this(RunLayout layout, const TaskNode[] nodes, const(ActionGraph)* g = null, string idSuffix = null) @safe
+    this(RunLayout layout, const TaskNode[] nodes, const(ActionGraph)* g = null, string idSuffix = null,
+        uint memoryLimitFactor = 0, ulong memoryLimitCeiling = 0) @safe
     {
         import core.lifetime : move;
         import sparkles.base.vfs.handles : ambientAuthority, openRoot;
@@ -741,7 +749,7 @@ struct ActionDriver
         // compiler that exhausts memory goes before the desktop that ran it.
         process = new ProcessDriver(ProcessDriverOptions(repoRoot: layout.root,
             spillPath: (ref const TaskNode n) => layout.outOf(owned.get(n.id.text, n.id)) ~ "/output.log",
-            oomScoreAdj: 1000),
+            oomScoreAdj: 1000, memoryLimitFactor: memoryLimitFactor, memoryLimitCeiling: memoryLimitCeiling),
             nodes.length);
     }
 
@@ -853,6 +861,23 @@ struct ActionDriver
         const began = MonoTime.currTime;
         auto outcome = process.run(ctx);
         stats.wallTimes[id.text] = MonoTime.currTime - began;
+        {
+            // CIC23: what it needed, from an action that ran to its end or to
+            // its own limit; one that failed early, timed out or was stopped
+            // peaked short of it.
+            const rec = &process.record(ctx.task);
+            const ok = outcome.match!((ref Succeeded _) => true, (ref _) => false);
+            const peak = rec.memoryLimitKilled ? rec.memoryLimit
+                : rec.usage.peakCgroupMemoryBytes > rec.usage.peakRssBytes ? rec.usage.peakCgroupMemoryBytes
+                : rec.usage.peakRssBytes;
+            if (peak && (ok || rec.memoryLimitKilled))
+            {
+                const key = memoryIdentity(ownId.get(id.text, id).text);
+                auto known = key in stats.memoryPeaks;
+                stats.memoryPeaks[key] = MemoryPeak(known && known.bytes > peak ? known.bytes : peak,
+                    rec.memoryLimitKilled || known && known.killed);
+            }
+        }
         stats.startedAt[id.text] = began;
         stats.succeeded[id.text] = outcome.match!((ref Succeeded _) => true, (ref _) => false);
         stats.count(kind, false);
@@ -2148,6 +2173,68 @@ struct ActionDriver
 
 /// How a run reports: the plain reporter's choices, and whether it runs at
 /// all. The default is a deterministic transcript without timings.
+/**
+How a run bounds its memory (ci task-DAG CIC23): the executor's budget and
+gate (task-DAG TDM18, TDM19) and each process's limit (TDM20). The nodes'
+`memoryBytes` are the caller's predictions. The default bounds nothing.
+*/
+struct RunResources
+{
+    import sparkles.build_primitives.task.executor : AdmissionGate;
+
+    ulong memoryBudget;            /// TDM18; zero turns it off
+    AdmissionGate delegate() gate; /// TDM19; null admits by tokens and memory
+    uint memoryLimitFactor;        /// TDM20: a limit at the prediction times this; zero sets none
+    ulong memoryLimitCeiling;      /// TDM20: no limit above this; zero bounds nothing
+}
+
+/// An action's recorded memory (CIC23): its peak, and whether that is the
+/// limit it was killed at.
+struct MemoryPeak
+{
+    ulong bytes; ///
+    bool killed; ///
+}
+
+/// An action's identity across edits: its task id without the key digest,
+/// the segment of 12 hexadecimal digits (`compile:sparkles.base:library:ldc`,
+/// `test:sparkles.wsi:test-root:dmd:parallel`), under which ci predicts its
+/// memory.
+string memoryIdentity(string taskId) @safe pure nothrow
+{
+    static bool digest(scope const(char)[] s) @safe pure nothrow @nogc
+    {
+        if (s.length != 12)
+            return false;
+        foreach (c; s)
+            if (!(c >= '0' && c <= '9' || c >= 'a' && c <= 'f'))
+                return false;
+        return true;
+    }
+
+    size_t start;
+    foreach (i; 0 .. taskId.length + 1)
+        if (i == taskId.length || taskId[i] == ':')
+        {
+            if (start > 0 && digest(taskId[start .. i]))
+                return taskId[0 .. start - 1] ~ taskId[i .. $];
+            start = i + 1;
+        }
+    return taskId;
+}
+
+///
+@("build_graph.execute.memoryIdentity")
+@safe pure nothrow unittest
+{
+    assert(memoryIdentity("compile:sparkles.base:library:ldc:0a7009e2bb3a") == "compile:sparkles.base:library:ldc");
+    assert(memoryIdentity("test:sparkles.wsi:test-root:dmd:8ef20d4bcc5f:parallel")
+        == "test:sparkles.wsi:test-root:dmd:parallel", "a leg's digest goes, its leg stays");
+    assert(memoryIdentity("generate:sparkles.ui:test-root:ldc:8ef20d4bcc5f:2") == "generate:sparkles.ui:test-root:ldc:2");
+    assert(memoryIdentity("plain") == "plain");
+    assert(memoryIdentity("compile:x:library:ldc") == "compile:x:library:ldc", "no digest, unchanged");
+}
+
 struct RunReporting
 {
     import sparkles.build_primitives.task.graph : TaskGraph;
@@ -2165,6 +2252,8 @@ struct RunReporting
     /// A transcript the consumer draws itself (TDO9), made once the graph is
     /// built, in place of the plain reporter's; `null` keeps the plain one.
     Transcript delegate(const(TaskGraph)*) transcript;
+    /// The run's memory bounds (CIC23); the default bounds nothing.
+    RunResources resources;
 }
 
 /**
@@ -2265,7 +2354,8 @@ in (stats.length == parts.length, "one stats slot per part")
     router.partOf = new size_t[graph.nodes.length];
     foreach (k, ref part; parts)
     {
-        auto driver = partDriver(part, nodes, handlers);
+        auto driver = partDriver(part, nodes, handlers, reporting.resources.memoryLimitFactor,
+            reporting.resources.memoryLimitCeiling);
         if (driver is null)
             return RunResult(exitCode: 2);
         router.drivers ~= driver;
@@ -2278,7 +2368,8 @@ in (stats.length == parts.length, "one stats slot per part")
     RunResult result;
     void work()
     {
-        result = runGraph(s, clock, graph, *router, *sink, ExecutorOptions(capacity: capacity, failFast: failFast));
+        result = runGraph(s, clock, graph, *router, *sink, ExecutorOptions(capacity: capacity, failFast: failFast,
+            memoryBudget: reporting.resources.memoryBudget, gate: reporting.resources.gate));
         foreach (driver; router.drivers)
             driver.finish();
     }
@@ -2317,9 +2408,11 @@ in (stats.length == parts.length, "one stats slot per part")
 // The driver of `part`'s actions among the run's `nodes`, its generators
 // and the client's `handlers` registered on it; null when it cannot run.
 // A function of its own, so each closure holds its own part's driver.
-private ActionDriver* partDriver(ref RunPart part, const TaskNode[] nodes, InProcessHandler[string] handlers)
+private ActionDriver* partDriver(ref RunPart part, const TaskNode[] nodes, InProcessHandler[string] handlers,
+    uint memoryLimitFactor = 0, ulong memoryLimitCeiling = 0)
 {
-    auto driver = new ActionDriver(part.layout, nodes, part.graph, part.idSuffix); // the generators' handlers hold its address
+    auto driver = new ActionDriver(part.layout, nodes, part.graph, part.idSuffix,
+        memoryLimitFactor, memoryLimitCeiling); // the generators' handlers hold its address
     if (driver.error.length)
         return null;
     driver.processes.register("generate:test-root-module",
@@ -2832,17 +2925,18 @@ int storeOperation(W)(string cache, string op, ref W writer)
                 line("corrupt: " ~ k);
             line(text(corrupt.length, " corrupt"));
             return corrupt.length ? 1 : 0;
-        case "evict":
+        case "evict", "reclaim":
             ulong bound = 20UL << 30;
             try
                 if (value.length)
                     bound = value.to!ulong;
             catch (Exception)
             {
-                line("evict takes a byte count: " ~ value);
+                line(name ~ " takes a byte count: " ~ value);
                 return 2;
             }
-            const r = store.evict(bound, 1UL << 30, &alive);
+            // `reclaim` frees the evicted results' bytes before it returns.
+            const r = store.evict(bound, 1UL << 30, &alive, name == "reclaim");
             line(text(r.evicted.length, " evicted, ", r.leased.length, " held by leases, ", r.recordsDropped,
                 " records dropped; ", r.resultBytes, " result bytes, ", r.recordBytes, " record bytes"));
             return 0;

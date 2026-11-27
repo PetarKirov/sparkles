@@ -67,7 +67,7 @@ RunExpected!void runPipeline(in PipelineRequest r)
     import commands.files : detectRepoRoot;
     import commands.test_ : runTestCommand, specialModeArguments;
     import dub_deps : subPackageDirectories;
-    import graph_driver : LastRun, logicalProcessors, Planned, recordLastRun, rerunCheck, runGraph, RunOptions;
+    import graph_driver : LastRun, Planned, recordLastRun, rerunCheck, runGraph, RunOptions;
     import placements_run : loadPlacements;
     import sparkles.build_graph.actions : Action, ActionKind, TestLeg;
     import sparkles.build_graph.execute : RunReporting;
@@ -114,7 +114,9 @@ RunExpected!void runPipeline(in PipelineRequest r)
     if (r.from.length)
         subPackages = subPackages.filter!(d => r.from.canFind(d.baseName)).array;
     const names = subPackages.map!(d => d.baseName).array;
-    const capacity = r.jobs ? r.jobs : logicalProcessors;
+    import sparkles.base.hw_caps : hwParallelism;
+
+    const capacity = r.jobs ? r.jobs : hwParallelism(); // TDM10
 
     // The build graph's run: tests, extracted-mode legs, checks, commit scope.
     if (mode == "all" || mode == "test")
