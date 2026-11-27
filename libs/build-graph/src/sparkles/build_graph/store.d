@@ -1066,9 +1066,13 @@ struct Store(D)
     or the records' bytes `recordsBound`, removes the least recently used
     first, down to 90 % of the bound. A result with a live lease is skipped
     and its overshoot reported. An evicted result keeps its record under
-    `records/<key>`: its outputs' digests and sizes and its status.
+    `records/<key>`: its outputs' digests and sizes and its status. With
+    `reclaim`, each result evicted is also removed from `trash/` once no
+    lease raced in, so its bytes are free when this returns; another
+    evictor's entries there are left to it (ci CIC23's disk gate).
     */
-    EvictionReport evict(ulong resultsBound, ulong recordsBound, scope bool delegate(string holder) alive)
+    EvictionReport evict(ulong resultsBound, ulong recordsBound, scope bool delegate(string holder) alive,
+        bool reclaim = false)
     {
         import std.algorithm.sorting : sort;
 
@@ -1112,6 +1116,12 @@ struct Store(D)
                 auto recency = v.walk("recency");
                 if (!recency.hasError)
                     cast(void) recency.value.unlinkAt(e.key);
+                if (reclaim)
+                {
+                    auto trash = v.walk("trash");
+                    if (!trash.hasError)
+                        cast(void) trash.value.removeTree(lastTrashed);
+                }
                 total -= e.bytes;
                 report.evicted ~= e.key;
             }

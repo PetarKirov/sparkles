@@ -19,6 +19,7 @@ import std.algorithm : any, canFind, endsWith, filter, map, sort, startsWith, un
 import std.array : array, join, replace, split;
 import std.conv : octal, text, to;
 import std.file : dirEntries, readText, SpanMode;
+import sparkles.base.hw_caps : hwParallelism;
 import std.path : absolutePath, baseName, buildNormalizedPath, buildPath, dirName;
 import std.process : environment;
 import std.string : indexOf;
@@ -1644,9 +1645,40 @@ GraphRun runGraph(string root, string only, RunOptions o)
     }
     auto log = appender!string;
     auto w = Tee(&log, o.echo);
-    const r = runActions(p.nodes, p.run.plan.graph, p.layout, w, o.jobs ? o.jobs : logicalProcessors,
+    // CIC23: each action's predicted memory, the run's budget, its gate and
+    // limits, and the free space of the file systems it writes.
+    version (linux)
+    {
+        import run_resources : RunWatch, loadPeaks, predict, resourcesFor, savePeaks;
+        import run_scope : actionsAccounted, limitingCgroup;
+        import sparkles.base.logger : error, info;
+
+        RunWatch watch;
+        if (o.cache.length && !p.dry)
+        {
+            const peaks = loadPeaks(o.cache);
+            predict(p.nodes, peaks);
+            const bounding = limitingCgroup();
+            watch = new RunWatch(o.cache, o.cache, o.into, bounding);
+            o.reporting.resources = resourcesFor(watch, bounding, actionsAccounted);
+            info(i"disk at the start: $(watch.report())");
+        }
+    }
+    // TDM10: the host's parallelism, its quotas and load folded in.
+    const r = runActions(p.nodes, p.run.plan.graph, p.layout, w, o.jobs ? o.jobs : hwParallelism(),
         &p.run.stats, o.failFast, p.handlers, o.reporting);
     p.run.exitCode = r.exitCode;
+    version (linux)
+        if (watch !is null)
+        {
+            import sparkles.build_primitives.task.model : CancelCause;
+
+            watch.finish();
+            savePeaks(o.cache, [p.run.stats]);
+            if (r.cancelled && r.cancelCause == CancelCause.resources)
+                error(i"the run stopped: $(r.cancelMessage)");
+            info(i"disk at the end: $(watch.report())");
+        }
     p.run.log = log.data;
     finishRun(p, o);
     return p.run;

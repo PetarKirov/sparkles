@@ -1188,7 +1188,7 @@ struct CacheCommand
         shortDescription: "Collect the store's abandoned staging, leases and older layouts, then evict",
         description: "Collects what crashed builders left (staging entries, dead leases) and the "
         ~ "directories of older store layouts, then evicts the least recently used results down "
-        ~ "to --bound bytes (default 20 GiB) (BGS5, BGS10).",
+        ~ "to --bound bytes (default 20 GiB), freeing their bytes (BGS5, BGS10).",
     ))
     struct Gc
     {
@@ -1200,7 +1200,9 @@ struct CacheCommand
             auto collected = storeCommand("gc");
             if (collected.hasError)
                 return collected;
-            return storeCommand(bound.length ? "evict=" ~ bound : "evict");
+            // `reclaim`: the results it evicts leave `trash/` too, so one gc
+            // frees their bytes.
+            return storeCommand(bound.length ? "reclaim=" ~ bound : "reclaim");
         }
     }
 

@@ -59,7 +59,7 @@ RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool fa
 {
     import std.file : rmdirRecurse, tempDir;
     import std.process : thisProcessID;
-    import graph_driver : PreparedRun, RunOptions, logicalProcessors, prepareGraph, toolchainTable;
+    import graph_driver : PreparedRun, RunOptions, prepareGraph, toolchainTable;
     import sparkles.build_graph.actions : ActionGraph, ActionKind;
     import sparkles.build_graph.execute : RunLayout, RunPart, RunReporting, RunStats, runActionsAcross,
         storeOperation;
@@ -338,7 +338,34 @@ RunExpected!void runBuildEachCommitMode(string base, string[] requested, bool fa
     }
     Echo echo;
     auto stats = new RunStats[parts.length];
-    const result = runActionsAcross(parts, across, echo, logicalProcessors, stats, failFast, handlers, reporting);
+    // CIC23: predictions, the budget, the gate and limits, as `ci test` has.
+    version (linux)
+    {
+        import run_resources : RunWatch, loadPeaks, predict, resourcesFor, savePeaks;
+        import run_scope : actionsAccounted, limitingCgroup;
+
+        const peaks = loadPeaks(graphCache);
+        foreach (ref part; parts)
+            predict(part.nodes, peaks);
+        const bounding = limitingCgroup();
+        auto watch = new RunWatch(graphCache, graphCache, runs, bounding);
+        reporting.resources = resourcesFor(watch, bounding, actionsAccounted);
+        info(i"disk at the start: $(watch.report())");
+    }
+    import sparkles.base.hw_caps : hwParallelism;
+
+    // TDM10: the host's parallelism, its quotas and load folded in.
+    const result = runActionsAcross(parts, across, echo, hwParallelism(), stats, failFast, handlers, reporting);
+    version (linux)
+    {
+        import sparkles.build_primitives.task.model : CancelCause;
+
+        watch.finish();
+        savePeaks(graphCache, stats);
+        if (result.cancelled && result.cancelCause == CancelCause.resources)
+            error(i"the run stopped: $(result.cancelMessage)");
+        info(i"disk at the end: $(watch.report())");
+    }
     info(i"the run ended (exit $(result.exitCode)); evicting the store down to its bound");
     {
         import std.array : appender;

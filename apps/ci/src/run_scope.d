@@ -200,6 +200,14 @@ string enterScope(scope const string[] args, MemoryLimits limits) @system
     return "unconfined: could not execute systemd-run";
 }
 
+/// The cgroup a run adopted ($(LREF adoptScope)) holds its actions beneath.
+/// Empty when it adopted none.
+__gshared string adoptedCgroup;
+
+/// Whether the adopted cgroup's children have the memory and pids
+/// controllers, so each action is accounted and can have a limit (CIC23).
+__gshared bool actionsAccounted;
+
 /**
 Inside the scope this `ci` entered: moves it into a leaf of the scope, so
 each action's cgroup gets the memory and pids controllers (Event Horizon
@@ -225,6 +233,7 @@ string adoptScope() @system
     environment[scopeVariable] = name ~ adoptedSuffix;
     SharedBuffer!(char, 256) parent;
     const failed = delegateRuns(parent);
+    adoptedCgroup = parent[].idup;
     if (!parent.length)
         return text("in ", name, ", but ci could not leave its cgroup (errno ", failed, "): no action is accounted");
     string control(string file)
@@ -237,6 +246,7 @@ string adoptScope() @system
     const limit = control("memory.max");
     const children = control("cgroup.subtree_control").split;
     const accounted = children.canFind("memory") && children.canFind("pids");
+    actionsAccounted = accounted;
     return text("contained by ", name, limit.length && limit != "max" ? ", MemoryMax " ~ limit ~ " bytes"
         : ", with no memory limit enforced", accounted ? ", each action accounted"
         : ", actions not accounted (its children have: " ~ (children.length ? children.join(" ") : "nothing") ~ ")");
@@ -263,6 +273,15 @@ void preferRunForOom() @system
         return;
     cast(void) writeOomScoreAdj(getpid(), 900);
 }
+
+/**
+The cgroup whose `memory.max` bounds this process: the nearest of its own
+and its ancestors below its user manager with a limit — the scope `ci` made,
+a caller's own `systemd-run -p MemoryMax=…`, or the run a parent `ci` started
+this one in. Null when none limits it. A run's memory budget and pressure are
+this cgroup's (CIC23).
+*/
+string limitingCgroup() @system => callerLimit();
 
 // The cgroup this process runs in, when an ancestor of it up to its user
 // manager's limits memory (a caller's own `systemd-run -p MemoryMax=…`):

@@ -1,4 +1,6 @@
+msg-not-in-file
 ---
+
 status: draft
 owner: apps/ci
 reviewed: 2026-11-01
@@ -708,8 +710,9 @@ transient user scope with the memory controller delegated to them
 total memory, or as `--memory-max` (falling back to
 `$SPARKLES_CI_MEMORY_MAX`) sets: a byte count, a percentage, or `none`. The
 scope sets no `MemoryHigh`: past it the kernel throttles every allocation, and
-a run that outgrows it crawls instead of failing, where at `MemoryMax` an
-action, its OOM score the highest, is killed. Inside
+a run whose predictions are too low crawls instead of failing, where at
+`MemoryMax` an action, its OOM score the highest, is killed and its limit kill
+teaches the next run (CIC23). Inside
 it, `ci` moves itself into a leaf so each action's cgroup is accounted (Event
 Horizon §13.7), and reports the limit and controllers the kernel gave it, read
 back. `ci` raises its own `oom_score_adj` to 900, so everything it starts
@@ -722,6 +725,42 @@ manager, a container, `none`, total memory unknown), the command **must** run
 unconfined and say so. A dry run enters no scope and writes no cgroup. The
 repository's own CI sets `none`: a runner is disposable and runs nothing else,
 and 85 % of a runner's memory is less than its jobs had before containment.
+
+**CIC23: A run fits its memory and its disks.** On Linux a run **must** admit
+its actions by memory (task-DAG TDM18). Its budget is the `memory.max` of the
+cgroup that bounds it — the nearest of its own and its ancestors below the user
+manager with one: its scope (CIC22), a caller's limited cgroup, or the run a
+parent `ci` started it in — or, unbounded, the memory available at the start,
+less `ci`'s reserve: the larger of its resident set at the start and 2 GiB,
+which covers what it grows to over a run of every package, never more than half
+the limit. Each action's prediction is the largest peak recorded for it under
+its task identity without the key digest (`<cache>/sparkles/memory/peaks`):
+its processes' cgroup `memory.peak` where they were accounted and their
+sampled resident set elsewhere, from an action that succeeded or was killed at
+its own limit, never one that failed early, timed out or was stopped. A kill
+records the limit, so the next limit is twice that, up to the budget: a leak
+costs a few runs and stops at the budget, and a genuine need is met. Runs
+sharing the cache merge their peaks under a lock on the file, and a run that
+measured nothing new writes nothing. One with no record takes its kind's
+default: 8 GiB for a test root's compile, 2 GiB for another compile or a link,
+4 GiB for a test leg, 512 MiB for the rest. Where the run's actions are
+accounted, each with a recorded peak runs with `memory.max` at twice it, at
+least 512 MiB and at most the budget, and one on its kind's default at the
+budget alone (task-DAG TDM20): a default admits, but a guess must not kill an
+action that would have fit; a test leg's workers run in
+one run group under the leg's limit (Event Horizon §13.7), which counts their
+peak together. The run's gate (TDM19) holds while the bounding cgroup's
+`memory.pressure`, else the host's `/proc/pressure/memory`, reports `some` over
+10 % for the last 10 seconds. It watches the file systems the run writes: the
+store's, the run directory's and the temporary directory's, each at its
+deepest existing directory and told apart by device. Each has a reserve, the
+smaller of 5 GiB and 10 % of its size, and a floor of half that. Under the
+reserve the gate evicts the store's results, when the store is on that file
+system, as far as the deficit, all of them if they are fewer, freeing their
+bytes (build graph BGS5) on a thread of its own, at most every 30 seconds, and
+holds unbounded; under the floor it cancels, naming the file system and its
+free space. The run reports each file system's free space at its start and its
+end. On other systems a run admits by tokens alone.
 
 ### 5.9 Maintenance commands
 
