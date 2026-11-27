@@ -91,6 +91,10 @@ struct ProcessDriverOptions
     Duration terminateGrace = 5.seconds;
     /// Resource-sample interval; zero samples only at the end.
     Duration sampleInterval = 250.msecs;
+    /// Linux: each process's `oom_score_adj` (Event Horizon §13.7), so a
+    /// shortage kills a task before anything else on the host; `int.min`
+    /// leaves the score the processes inherit.
+    int oomScoreAdj = int.min;
 }
 
 /// What a process task left behind, for diagnostics and summaries.
@@ -172,6 +176,7 @@ private:
         cfg.timeout = action.timeout;
         cfg.terminateGrace = options.terminateGrace;
         cfg.sampleInterval = options.sampleInterval;
+        cfg.oomScoreAdj = options.oomScoreAdj;
         cfg.collectOutput = false; // lines arrive as events; the spool keeps them
         cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
         final switch (action.stdin)

@@ -735,8 +735,11 @@ struct ActionDriver
         else
             worktree = move(tree.value);
         const owned = ownId;
+        // An action is the OOM killer's first choice (task-DAG M7 item 2): a
+        // compiler that exhausts memory goes before the desktop that ran it.
         process = new ProcessDriver(ProcessDriverOptions(repoRoot: layout.root,
-            spillPath: (ref const TaskNode n) => layout.outOf(owned.get(n.id.text, n.id)) ~ "/output.log"),
+            spillPath: (ref const TaskNode n) => layout.outOf(owned.get(n.id.text, n.id)) ~ "/output.log",
+            oomScoreAdj: 1000),
             nodes.length);
     }
 
