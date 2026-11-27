@@ -154,6 +154,115 @@ private bool ownCgroupPath(ref SharedBuffer!(char, 256) into) @trusted nothrow
     return false;
 }
 
+// The cgroup run cgroups are made beneath once $(LREF delegateRuns) moved this
+// process into a leaf of it; empty: the process's own cgroup.
+private __gshared SharedBuffer!(char, 256) runParent;
+
+/// The leaf $(LREF delegateRuns) moves the supervising process into.
+enum supervisorLeaf = "supervisor";
+
+/**
+Delegated containment (SPEC §13.7): run where this process's cgroup was
+delegated to it, as a systemd scope with `Delegate=yes` is. A cgroup that holds
+processes cannot give its children controllers (the no-internal-process
+rule), so this moves the process, every thread, into a leaf of its own
+(`<own>/supervisor`), enables the memory and pids controllers for the cgroup's
+children, and makes every later run cgroup one of them: each run then
+reaches the `accounted` tier, and a scope's memory limits bound its runs and
+this process together.
+
+Call it before any child is spawned, and once: a second call returns
+`EALREADY` and changes nothing. Returns 0, or the errno of the step that
+failed: before the move, nothing changed (a leaf it made is removed again);
+after it, runs go beneath the scope with whatever controllers it could
+enable, so a host that delegates no memory controller still gets `owned`
+runs. `parent` names the cgroup the runs go beneath; which controllers its
+children got is in its `cgroup.subtree_control`.
+*/
+int delegateRuns(ref SharedBuffer!(char, 256) parent) @trusted nothrow
+{
+    import core.stdc.errno : EALREADY;
+    import core.sys.posix.fcntl : O_CLOEXEC, O_WRONLY, open;
+
+    if (runParent.length)
+    {
+        parent.length = 0;
+        parent ~= runParent[];
+        return EALREADY;
+    }
+    SharedBuffer!(char, 256) own;
+    if (!ownCgroupPath(own))
+        return ENOENT;
+    SharedBuffer!(char, 320) sys;
+    sys ~= "/sys/fs/cgroup";
+    sys ~= own[];
+    BlockingVfs vfs;
+    auto dir = openRoot!(Rights.all)(&vfs, sys[], ambientAuthority());
+    if (dir.hasError)
+        return dir.error.code;
+    auto made = dir.value.mkdirAt(supervisorLeaf, PosixMode(493 /* 0o755 */));
+    if (made.hasError && made.error.code != 17 /* EEXIST */)
+        return made.error.code;
+    const createdLeaf = !made.hasError;
+    // "0" names the writing process: every thread of it moves (cgroup v2).
+    static int writeAt(const(char)[] path, const(char)[] text) nothrow @nogc
+    {
+        char[4096] z = void; // PATH_MAX
+        if (path.length >= z.length)
+            return EINVAL;
+        z[0 .. path.length] = path;
+        z[path.length] = 0;
+        const fd = open(z.ptr, O_WRONLY | O_CLOEXEC);
+        if (fd < 0)
+            return errno;
+        scope (exit) close(fd);
+        return write(fd, text.ptr, text.length) == cast(ptrdiff_t) text.length ? 0 : errno;
+    }
+    SharedBuffer!(char, 400) path;
+    path ~= sys[];
+    path ~= "/" ~ supervisorLeaf ~ "/cgroup.procs";
+    if (const err = writeAt(path[], "0"))
+    {
+        if (createdLeaf)
+            cast(void) dir.value.rmdirAt(supervisorLeaf);
+        return err;
+    }
+    runParent.length = 0;
+    runParent ~= own[];
+    parent.length = 0;
+    parent ~= own[];
+    path.length = 0;
+    path ~= sys[];
+    path ~= "/cgroup.subtree_control";
+    // Each controller alone: a host that delegates one but not the other
+    // still enables the one it has.
+    const memory = writeAt(path[], "+memory");
+    const pids = writeAt(path[], "+pids");
+    return memory ? memory : pids;
+}
+
+/// Writes `value` to `/proc/<pid>/oom_score_adj` (SPEC §13.7): the adjustment the
+/// kernel adds to a process's OOM badness, 1000 its largest. Raising a score
+/// needs no privilege; lowering one below the process's minimum does.
+/// 0 or errno.
+int writeOomScoreAdj(int pid, int value) @trusted nothrow @nogc
+{
+    import core.sys.posix.fcntl : O_CLOEXEC, O_WRONLY, open;
+
+    char[64] path = void;
+    char[16] text = void;
+    if (snprintf(path.ptr, path.length, "/proc/%d/oom_score_adj", pid) <= 0)
+        return EINVAL;
+    const n = snprintf(text.ptr, text.length, "%d", value);
+    if (n <= 0)
+        return EINVAL;
+    const fd = open(path.ptr, O_WRONLY | O_CLOEXEC);
+    if (fd < 0)
+        return errno;
+    scope (exit) close(fd);
+    return write(fd, text.ptr, n) == n ? 0 : errno;
+}
+
 /// Opens the control file `name` in `dir` and keeps its descriptor for the
 /// run's lifetime; -1 with `err` set on failure.
 private int openControl(OpenMode mode, D)(ref D dir, string name, out int err)
@@ -184,7 +293,9 @@ package void createRun(ref CgroupRun run, uint runId,
     }
 
     SharedBuffer!(char, 256) own;
-    if (!ownCgroupPath(own))
+    if (runParent.length)
+        own ~= runParent[];
+    else if (!ownCgroupPath(own))
         return degrade(run, ENOENT, "cgroup: no v2 path for this process");
 
     run.sysPath.length = 0;

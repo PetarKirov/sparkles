@@ -739,6 +739,14 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
     // it. Failure degrades sampling (and `wait`) only; the pgid is armed.
     version (linux)
     {
+        // Before the migration: the score is what an OOM kill reads, and a
+        // failure to set it changes nothing else about the run.
+        if (cfg.oomScoreAdj != int.min)
+        {
+            import sparkles.event_horizon.cgroup : writeOomScoreAdj;
+
+            cast(void) writeOomScoreAdj(child.pid, cfg.oomScoreAdj);
+        }
         if (run.cgroupOwned)
         {
             const err = migrateInto(run.cgroup, child.pid);
@@ -2461,6 +2469,37 @@ unittest
         assert(got.value.end == ProcessEnd.exited && got.value.status.ok);
     });
     assert(!r.hasError);
+}
+
+/// Linux: `oomScoreAdj` reaches the child before it would read its score; the
+/// child sleeps so the write, made as soon as it is spawned, has landed. A
+/// test process already at 1000 would pass without the write, so it skips.
+@("supervise.oomScoreAdjReachesTheChild")
+@safe
+unittest
+{
+    version (linux)
+    {
+        import std.file : readText;
+        import std.string : strip;
+        import sparkles.test_runner.skip : skipTest;
+
+        if ((() @trusted => readText("/proc/self/oom_score_adj").strip)() == "1000")
+            return skipTest("this process already has oom_score_adj 1000, which a child inherits");
+        Sched s;
+        schedOrSkip(s);
+
+        auto r = s.run(() {
+            EventLog log;
+            SupervisedProcessConfig cfg;
+            cfg.oomScoreAdj = 1000;
+            auto got = supervise(s, ["sh", "-c", "sleep 0.2; cat /proc/self/oom_score_adj"], cfg, null,
+                log.sink());
+            assert(got.hasValue, got.hasError ? got.error.context : "");
+            assert(got.value.stdout_[] == cast(const(ubyte)[]) "1000\n", cast(string) got.value.stdout_[].idup);
+        });
+        assert(!r.hasError);
+    }
 }
 
 @("supervise.naturalExitLinesCollectAndUsage")
