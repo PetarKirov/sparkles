@@ -202,6 +202,10 @@
         "link": "/guidelines/android-release-runbook"
       },
       {
+        "text": "Keeping a Developer Host Responsive Under Builds",
+        "link": "/guidelines/developer-host-memory"
+      },
+      {
         "text": "Move Semantics & __rvalue",
         "link": "/guidelines/move-semantics/"
       },
