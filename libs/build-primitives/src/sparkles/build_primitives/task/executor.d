@@ -108,6 +108,17 @@ struct TaskContext(X)
     /// Whether the run asked this task to stop: a cancellation checkpoint
     /// for in-process actions.
     bool cancelRequested() => interruptRequested(*exec.currentContext());
+
+    /// TDM20: the memory limit the driver gives this task's processes, zero
+    /// for none; an in-process action that starts processes runs them under
+    /// it together.
+    ulong memoryLimit;
+    /// TDM20: what an in-process action reports of the processes it ran:
+    /// their peak together, whether `memoryLimit` was set on them, and
+    /// whether they were killed at it.
+    ulong memoryPeak;
+    bool memoryLimitSet;    /// ditto
+    bool memoryLimitKilled; /// ditto
 }
 
 /// The admission gate's answer (TDM19).

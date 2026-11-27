@@ -62,6 +62,12 @@ struct ProcessConfig
 
     const(char)[] cwd = null;     /// null = inherit
     bool newProcessGroup = false; /// `setpgid(0, 0)` in the child (kill the tree)
+    /// Linux: a cgroup directory's descriptor the child starts in
+    /// (`CLONE_INTO_CGROUP`, through glibc's `posix_spawnattr_setcgroup_np`),
+    /// so nothing it runs ever ran outside it; where libc or the kernel
+    /// cannot, it starts where its parent is, and `ChildProcess.inCgroup`
+    /// says which. -1: where its parent is.
+    int cgroupFd = -1;
 }
 
 /// One environment edit (SPEC §13.1, target M19). Applied in array order:
@@ -413,6 +419,14 @@ struct SupervisedProcessConfig
     /// forks first keeps the score it inherited, so a supervisor that wants
     /// its whole tree preferred raises its own first. `int.min` leaves it.
     int oomScoreAdj = int.min;
+    /// Linux, `accounted` tier: the run cgroup's `memory.max`, with
+    /// `memory.oom.group`, so a run past it is killed whole and alone
+    /// (SPEC §13.7); zero sets none.
+    ulong memoryMax;
+    /// Linux: the `RunGroup` (its `name`) the run cgroup is made in, whose
+    /// limit bounds this run and the group's others together (§13.7); empty:
+    /// beneath the run parent.
+    const(char)[] runGroup;
 }
 
 /// The outcome of one supervised run (SPEC §13.5). `stdout_`/`stderr_`
@@ -438,6 +452,13 @@ struct SupervisedProcessResult
     bool residualPolicyDegraded; /// `wait` fell back to `bounded`
     IoError residualPolicyError; /// why
     bool cgroupCleanupLeaked;   /// the run's cgroup directory remained (removal only)
+    bool memoryLimitSet;    /// `memoryMax` was set on the run cgroup (§13.7)
+    /// Linux: the child started in its run cgroup, rather than being moved
+    /// there once spawned (§13.7).
+    bool startedInCgroup;
+    /// The run cgroup was killed at its own limit: its `memory.events.local`
+    /// counts the `oom` and it counts the kill (§13.7).
+    bool memoryLimitKilled;
     /// Windows: the graceful stage found no console control channel to the
     /// tree (§13.9), so the grace ran without a soft signal. Never set on POSIX.
     bool softSignalUndelivered;
