@@ -407,6 +407,12 @@ struct SupervisedProcessConfig
     /// holding an output pipe after the root exited.
     Duration outputGrace = 5.seconds;
     Duration killDrainWindow = 1.seconds; /// post-kill / detach drain budget before forced EOF
+    /// Linux: the child's `oom_score_adj`, written as soon as it is spawned,
+    /// before its migration into the run cgroup (SPEC §13.7): the adjustment
+    /// the kernel adds to its OOM badness, 1000 the largest. A descendant it
+    /// forks first keeps the score it inherited, so a supervisor that wants
+    /// its whole tree preferred raises its own first. `int.min` leaves it.
+    int oomScoreAdj = int.min;
 }
 
 /// The outcome of one supervised run (SPEC §13.5). `stdout_`/`stderr_`

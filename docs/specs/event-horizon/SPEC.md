@@ -2055,6 +2055,7 @@ struct SupervisedProcessConfig
     size_t maxLineBytes = 1024 * 1024;     /// framer cap per line; 0 = unbounded
     size_t maxCapturedBytes = 64 * 1024 * 1024; /// per raw stream; 0 = unbounded
     ResidualPolicy residualPolicy = ResidualPolicy.bounded; /// after root exit (§13.7)
+    int oomScoreAdj = int.min;   /// Linux: written to the child right after spawn (§13.7)
     Duration outputGrace = 5.seconds;     /// bounded (and wait's fallback): output grace
     Duration killDrainWindow = 1.seconds; /// post-kill / detach drain budget before forced EOF
 }
@@ -2183,6 +2184,16 @@ termination request is an idempotent no-op where cleanup calls need it, or
 `ECHILD`/`ESRCH` on the explicit low-level API. PID/handle reuse can never make
 a stale operation target another process.
 
+**OOM priority (Linux).** A run whose `oomScoreAdj` is not `int.min` writes it
+to the child's `/proc/<pid>/oom_score_adj` as soon as the child is spawned,
+before its migration into the run cgroup. The score is what the kernel adds to
+a process's OOM badness, 1000 the largest, so a run at 1000 is the likeliest
+victim of a shortage the kernel resolves by score; one confined by a cgroup
+limit chooses only among that cgroup's processes. A descendant the child forks
+before the write keeps the score it inherited, so a supervisor that wants its
+whole tree preferred raises its own score first. Raising a score needs no
+privilege. A failure to write it changes nothing else about the run.
+
 **Containment tiers (Linux).** A supervised run owns one cgroup v2 directory
 beneath the process's own cgroup, `<own>/eh-run-<pid>-<id>`, and what that
 directory can do decides the tier:
@@ -2196,7 +2207,14 @@ directory can do decides the tier:
 The probe reports what exists: `cgroup.subtree_control` cannot be written on a
 cgroup that has processes (the no-internal-process rule), so a library that
 finds itself in a populated delegated cgroup — the ordinary case — gets
-`owned`, and `accounted` only where the host prepared the controllers. Every
+`owned`, and `accounted` only where the host prepared the controllers. A
+process that runs where a cgroup was delegated to it (a systemd scope with
+`Delegate=yes`) prepares them with `delegateRuns`: it moves itself, every
+thread, into a leaf of that cgroup, `<own>/supervisor`, enables the memory
+and pids controllers for the cgroup's children, and every later run cgroup is
+made beside the leaf, `<own>/eh-run-<pid>-<id>`, so each reaches `accounted`
+and the scope's limits bound the runs and their supervisor together. It is
+called once, before the first spawn. Every
 tier keeps the private process group; the cgroup adds recursion (a `setsid`
 escapee that stayed in the cgroup) and, on every hard kill, `cgroup.kill` is
 written whenever the capability is owned — an empty subtree is an idempotent
