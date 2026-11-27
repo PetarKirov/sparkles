@@ -191,10 +191,12 @@ and the build graph's BGS5, before any code.
    can be read and no `memory.max` set. It is also the backstop for their
    prediction errors: at `MemoryMax` its OOM killer chooses only among the
    run's processes, its actions first. A `MemoryHigh` below it was dropped:
-   past it the kernel throttled every allocation, and in CI an AddressSanitizer
-   compile of hue's test root that takes a minute crawled into its 30-minute
-   timeout instead of failing. Without systemd or cgroup v2 the run proceeds
-   unconfined, and its report names the tier.
+   past it the kernel throttled every allocation, and a run outgrowing it
+   crawled instead of failing: in CI an AddressSanitizer compile of hue's
+   test root that takes a minute ran into its 30-minute timeout, and the
+   gate's cold run, its predictions too low, crawled for 15 minutes. Without
+   systemd or cgroup v2 the run proceeds unconfined, and its report names the
+   tier.
 2. **OOM priority.** `ci` raises its own `oom_score_adj` to 900, so every
    process it starts inherits at least that, a descendant an action forks
    before its own score is written included; every supervised action (a
@@ -216,12 +218,13 @@ and the build graph's BGS5, before any code.
    host. It is recorded with the run's records under the task's identity
    without its key digest, so an edited package keeps its history; an action
    with none takes a default per kind (a compile of a test root more than a
-   library's). The budget is item 1's `MemoryMax`, or, unconfined, the
-   memory available at the start, less `ci`'s own reserve: the larger of its
-   resident set as the run goes and 1 GiB, and never more than half the
-   budget, so a small `--memory-max` still admits one action. A claim above
-   the budget runs alone, as TDM7 clamps an oversized weight. TDM10's memory
-   unit per job goes.
+   library's). The budget is the `memory.max` of the cgroup that bounds the
+   run (item 1's scope, a caller's, or a parent `ci`'s run), or, unbounded,
+   the memory available at the start, less `ci`'s own reserve: the larger of
+   its resident set at the start and 2 GiB, what it grows to over a run of
+   every package, and never more than half the limit, so a small
+   `--memory-max` still admits one action. A claim above the budget runs
+   alone, nothing beside it. TDM10's memory unit per job goes.
 5. **Back-off under pressure.** While the run cgroup's `memory.pressure`
    (unconfined: `/proc/pressure/memory`) reports `some` over a threshold for
    the last 10 seconds, the executor admits no further node, and resumes once
@@ -232,12 +235,15 @@ and the build graph's BGS5, before any code.
 6. **A limit per action.** In the `accounted` tier, each action's run cgroup
    gets `memory.max` at twice its predicted peak (with a floor), and
    `memory.oom.group`, so a runaway action is killed whole and alone. A kill
-   at its own limit, which the run cgroup's `memory.events` counts as
-   `oom_kill`, fails the action as a memory-limit failure that names its peak
-   and limit, distinct from a signal and from a kill at the scope's limit,
-   which the scope's own `memory.events` counts. Its next prediction is the
-   limit it was killed at, not more, so a leak does not raise its own limit
-   from run to run; a second limit kill in a row leaves the limit as it is.
+   at its own limit, which the run cgroup's `memory.events.local` tells apart
+   by its own `oom`, fails the action as a memory-limit failure that names its
+   peak and limit, distinct from a signal and from a kill at the scope's
+   limit, whose `oom` only the scope counts. Its next prediction is the limit
+   it was killed at, so its next limit is twice that, and never above the
+   run's budget: a leak costs a few runs and stops there, and a genuine need
+   is met. (The first draft left the limit as it was after a second kill in a
+   row; an action that needs more than two doublings would then never pass.)
+   A test leg's workers share one limit, in a run group.
 7. **Disk space.** The executor watches the free space of the file systems
    a run writes: the store, the run directory and the temporary directory.
    Each has a reserve, the smaller of 5 GiB and 10 % of its size, and a floor
@@ -283,11 +289,47 @@ Gate:
   run, and comparable to a large compile in a cold one, so the scope contains
   it too.
 
-Status: items 1 and 2 partial: `ci`'s CIC22 (`apps/ci/src/run_scope.d`), Event
-Horizon's `delegateRuns` and `writeOomScoreAdj`
-(`libs/event-horizon/src/sparkles/event_horizon/cgroup.d`) and `oomScoreAdj` through
-`ProcessDriverOptions`, checked by hand on a systemd host; entering and
-adopting a scope have no automated test yet. Items 3 to 7 not started.
+Status: every item delivered, the gate partly verified.
+
+- Items 1 and 2: `ci`'s CIC22 (`apps/ci/src/run_scope.d`), Event Horizon's
+  `delegateRuns` and `writeOomScoreAdj`, `oomScoreAdj` through
+  `ProcessDriverOptions`.
+- Item 3: [Keeping a Developer Host Responsive Under
+  Builds](../../../guidelines/developer-host-memory.md).
+- Items 4 to 7: the task-DAG SPEC's TDM18 to TDM20, Event Horizon §13.7's limit
+  per run, BGS5's eviction on a full disk, and `ci`'s CIC23
+  (`apps/ci/src/run_resources.d`).
+
+The gate, bullet by bullet:
+
+- Memory admission: `executor.admission.memoryBudget`, over one run of a fake
+  graph; the two-run form, in a real scope, is not automated.
+- A limit per action: `process.run.memoryLimitFailure` and
+  `supervise.memoryLimitKillsTheRunAlone`, each re-running itself in a
+  delegated user scope; that the next run predicts the limit is `ci`'s
+  (`RunStats.memoryPeaks`), not tested automatically.
+- OOM scores: `supervise.oomScoreAdjReachesTheChild` and a check by hand (`ci`
+  at 900, its `ldc2` at 1000); a test worker's and an example's are not
+  tested automatically.
+- Pressure: `executor.gate.boundedHold`, the pressure injected.
+- Disk: `run_resources.decideGate` (reserve, floor, a 1 GiB `tmpfs`) and
+  `executor.gate.diskCancels`; the eviction a gate starts is not tested
+  automatically.
+- The developer host, simulated on pc2-local (32 cores) in a 24 GiB scope
+  (`--memory-max=24G`), every package's `ci test --build-only` from an empty
+  cache (2026-11-27): it completed in 219 s against 137 s unbounded, the
+  kernel logged no OOM kill in either, and a warm run in the scope took 15 s.
+  With the first default of 4 GiB for a test root's compile, the same run
+  admitted four of them at once; their 23 GB passed the scope's `MemoryHigh`,
+  and the kernel's throttling slowed the run to a crawl for 15 minutes rather
+  than failing it. The default is 8 GiB since; the largest recorded peak is
+  hue's test root, 9.2 GB. After the review fixes (no `MemoryHigh`, children
+  started in their cgroups, test legs in run groups), the same cold run in the
+  same scope: 213 s, no OOM line in the kernel log, `ci` at 1.8 GiB resident
+  and 46 s of CPU; warm 15.8 s; a `ci test --from versions` in the scope
+  passed and recorded its parallel leg's run-group peak (27 MiB).
+- `ci`'s own footprint, the same runs: 1.9 GiB resident at its peak in both,
+  with 49 s of CPU in the scope and 82 s unbounded.
 
 ## Progress
 
@@ -300,4 +342,4 @@ adopting a scope have no automated test yet. Items 3 to 7 not started.
 | M6        | delivered   |
 | M6a       | delivered   |
 | M6b       | in progress |
-| M7        | in progress |
+| M7        | delivered   |
