@@ -858,9 +858,22 @@ struct Store(D)
         auto f = dir.value.openFile!mode(holder);
         if (!f.hasError)
             leased ~= resultKey;
+        // Recency only orders eviction (D38), so it is a truncating create
+        // and a one-byte write, not an atomic write: an fsync per lookup was
+        // most of a warm run's time, and a crash only reorders eviction. The
+        // byte makes every touch change the size, from one to none and back,
+        // which moves the mtime on every file system: truncating an empty
+        // file moves it on Linux, not on APFS.
         auto recency = v.walkAll("recency");
         if (!recency.hasError)
-            cast(void) recency.value.writeFileAtomic(resultKey, "");
+        {
+            auto touched = recency.value.openFile!mode(resultKey);
+            if (!touched.hasError)
+            {
+                static immutable ubyte[1] mark = ['\n'];
+                cast(void) touched.value.write(mark[]);
+            }
+        }
     }
 
     /// Every published result, with its output bytes and recency (BGS7).
@@ -1514,15 +1527,29 @@ bool readBytes(D)(ref D dir, scope const(char)[] path, out ubyte[] bytes)
         --slash;
     bool from(E)(ref E d, scope const(char)[] name)
     {
+        import std.array : uninitializedArray;
+
         auto file = d.openFile!(OpenMode.read)(name);
         if (file.hasError)
             return false;
-        ubyte[] buffer = new ubyte[64 * 1024];
+        // Sized from the open file, one byte over so the read that finds the
+        // end needs no growth, and never zeroed: an archive is megabytes.
+        static ubyte[] fresh(size_t n) @trusted => uninitializedArray!(ubyte[])(n);
+        enum size_t initial = 64 * 1024;
+        const st = file.value.stat();
+        ubyte[] buffer = fresh(st.hasError || st.value.size >= size_t.max / 2 ? initial
+            : cast(size_t) st.value.size + 1);
         size_t n;
         for (;;)
         {
             if (n == buffer.length)
-                buffer.length *= 2;
+            {
+                if (buffer.length > size_t.max / 2)
+                    return false;
+                auto grown = fresh(buffer.length * 2);
+                grown[0 .. n] = buffer[0 .. n];
+                buffer = grown;
+            }
             auto r = file.value.read(buffer[n .. $]);
             if (r.hasError)
                 return false;

@@ -1359,13 +1359,17 @@ struct ActionDriver
     `lib<name>.so` and `lib<name>.a` along its `-L-L<dir>` directories, in
     order, as `library <name> <path> after <n> absent`, or
     `library <name> unresolved` when none holds it (the toolchain's own
-    directories, which its identity covers, then serve it).
+    directories, which its identity covers, then serve it). An object or
+    archive whose names cannot be read is `library names unread from <path>`,
+    so the key claims nothing of what it would name.
     */
+    private string[][string] dependentLibrariesOf; // each object and archive's `pragma(lib)` names, by path
+
     private string[] librarySearch(const string[] argv, const string[] concrete = null)
     {
         import sparkles.build_graph.deplibs : dependentLibraries;
 
-        string[] dirs, names, lines;
+        string[] dirs, names, lines, unread;
         foreach (arg; argv)
             if (arg.startsWith("-L-L") && arg.length > 4)
                 dirs ~= arg[4 .. $];
@@ -1375,11 +1379,26 @@ struct ActionDriver
             if ((arg.endsWith(".o") || arg.endsWith(".a")) && layout.cache.length
                     && arg.startsWith(layout.cache ~ "/"))
             {
-                string bytes;
-                if (readAll(cacheRoot, arg[layout.cache.length + 1 .. $], bytes))
-                    foreach (name; dependentLibraries(cast(const(ubyte)[]) bytes))
-                        if (!names.canFind(name))
-                            names ~= name;
+                // Once per input in a run: its path names one result, which no
+                // action rewrites, and an archive is read by every link above it.
+                // One that cannot be read is named in the key as unread, and
+                // read again by the next link that needs it.
+                auto known = arg in dependentLibrariesOf;
+                if (known is null)
+                {
+                    string bytes;
+                    if (!readAll(cacheRoot, arg[layout.cache.length + 1 .. $], bytes))
+                    {
+                        unread ~= "library names unread from " ~ (arg.startsWith(layout.runDirectory ~ "/")
+                            ? "$RUN" ~ arg[layout.runDirectory.length .. $] : arg);
+                        continue;
+                    }
+                    dependentLibrariesOf[arg] = dependentLibraries(cast(const(ubyte)[]) bytes);
+                    known = arg in dependentLibrariesOf;
+                }
+                foreach (name; *known)
+                    if (!names.canFind(name))
+                        names ~= name;
             }
         foreach (name; names)
         {
@@ -1403,7 +1422,7 @@ struct ActionDriver
             lines ~= found.length ? text("library ", name, " ", found, " after ", absentBefore, " absent")
                 : "library " ~ name ~ " unresolved";
         }
-        return lines;
+        return lines ~ unread;
     }
 
     // The worktree import roots of the device configuration a shader
