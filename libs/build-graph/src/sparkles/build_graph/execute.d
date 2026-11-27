@@ -759,6 +759,7 @@ struct ActionDriver
     {
         if (stored)
             store.releaseLeases();
+        listings.close();
     }
 
     /**
@@ -820,6 +821,7 @@ struct ActionDriver
                 ctx.reused();
                 recorded[id.text] = Recorded(declared, preimage);
                 outputsDigestOf[id.text] = r.outputsDigest;
+                noteLibraries(id, *r);
                 stats.count(kind, true);
                 stats.miss("record-served");
                 ctx.output(OutputStream.stderr, "served from its digest record (BGS5)");
@@ -897,6 +899,7 @@ struct ActionDriver
         record.status = status;
         record.outputs = outputsOf(id);
         outputsDigestOf[id.text] = record.outputsDigest;
+        noteLibraries(id, record);
         if (checking)
         {
             // Cold and unshared: compared, never published (BGS9).
@@ -962,6 +965,7 @@ struct ActionDriver
         {
             recorded[id] = Recorded(declared, preimage);
             outputsDigestOf[id] = r.outputsDigest;
+            noteLibraries(task, *r);
             say("served from its digest record (BGS5)");
             return TaskOutcome(Succeeded());
         }
@@ -1093,6 +1097,7 @@ struct ActionDriver
             if (digest != outputsDigestOf.get(producer, digest))
                 note("nondeterministic: " ~ producer ~ " differs from its digest record (BGS5)");
             outputsDigestOf[producer] = digest;
+            noteLibraries(id, record);
             if (!publishRun(id, **pa, rec.declared, rec.preimage, record, note))
                 return producer ~ " read outside its declared roots";
         }
@@ -1365,6 +1370,18 @@ struct ActionDriver
     */
     private string[][string] dependentLibrariesOf; // each object and archive's `pragma(lib)` names, by path
 
+    // The `pragma(lib)` names `r`'s outputs carry, as `id`'s outputs are
+    // named in its consumers' arguments: published with the result, so a link
+    // above it reads no archive, in this run or a later one, and a result only
+    // its digest record holds keys its links rightly before its bytes exist.
+    private void noteLibraries(TaskId id, const ref ResultRecord r)
+    {
+        const at = layout.outOf(id) ~ "/";
+        foreach (ref o; r.outputs)
+            if (o.librariesKnown)
+                dependentLibrariesOf[at ~ o.path] = o.libraries.dup;
+    }
+
     private string[] librarySearch(const string[] argv, const string[] concrete = null)
     {
         import sparkles.build_graph.deplibs : dependentLibraries;
@@ -1381,8 +1398,9 @@ struct ActionDriver
             {
                 // Once per input in a run: its path names one result, which no
                 // action rewrites, and an archive is read by every link above it.
-                // One that cannot be read is named in the key as unread, and
-                // read again by the next link that needs it.
+                // A producer's record names them (`noteLibraries`); any other
+                // is read. One that cannot be read is named in the key as
+                // unread, and read again by the next link that needs it.
                 auto known = arg in dependentLibrariesOf;
                 if (known is null)
                 {
@@ -1611,22 +1629,62 @@ struct ActionDriver
     */
     private bool listed(string path)
     {
-        import std.datetime.systime : Clock;
-        import std.string : lastIndexOf;
-        import sparkles.build_graph.listings : Presence;
+        import std.algorithm.iteration : filter;
+        import std.array : array, join, split;
+        import sparkles.build_graph.listings : ListingClock, Presence;
 
         if (path.startsWith("$RUN/"))
             return present(path);
-        const slash = path.lastIndexOf('/');
-        const dir = slash < 0 ? "" : path[0 .. slash];
-        const name = path[slash + 1 .. $];
-        const now = (Clock.currStdTime - 621_355_968_000_000_000L) * 100;
-        const answer = dir.startsWith("/") ? listings.of(system, dir[1 .. $], name, now)
-            : path.startsWith("/") ? listings.of(system, "", name, now) : listings.of(worktree, dir, name, now);
+        // Normalized, as the listings key directories: no empty or `.`
+        // component, and a `..` one is looked up itself. Most candidates are
+        // normalized already and are sliced, not copied: a warm run checks
+        // millions.
+        const body = path.startsWith("/") ? path[1 .. $] : path;
+        string dir, name;
+        if (normalized(body))
+        {
+            size_t slash = body.length;
+            while (slash > 0 && body[slash - 1] != '/')
+                --slash;
+            dir = slash ? body[0 .. slash - 1] : "";
+            name = body[slash .. $];
+        }
+        else
+        {
+            const parts = path.split('/').filter!(c => c.length && c != ".").array;
+            if (!parts.length || parts.canFind(".."))
+                return present(path);
+            dir = parts[0 .. $ - 1].join("/");
+            name = parts[$ - 1];
+        }
+        // Dated by the store's clock probe (BGK5): the file system's, not
+        // this process's.
+        const clock = ListingClock(clocked, clockNs, clockDevice);
+        const answer = path.startsWith("/") ? listings.of(system, dir, name, clock, "/")
+            : listings.of(worktree, dir, name, clock, ".");
         return answer == Presence.unknown ? present(path) : answer == Presence.present;
     }
 
-    private DirectoryListings listings; // BGK2: the directories this run listed
+    // Whether `p` is a non-empty relative path with no empty, `.` or `..`
+    // component.
+    private static bool normalized(string p) @safe pure nothrow @nogc
+    {
+        if (!p.length)
+            return false;
+        size_t start;
+        foreach (i; 0 .. p.length + 1)
+            if (i == p.length || p[i] == '/')
+            {
+                const c = p[start .. i];
+                if (!c.length || c == "." || c == "..")
+                    return false;
+                start = i + 1;
+            }
+        return true;
+    }
+
+    // BGK2: the directories this run listed, closed by `finish`.
+    private DirectoryListings!(Dir!(BlockingVfs, Rights.readOnly)) listings;
 
     // Links `id`'s output directory to a published result and takes its
     // outputs' digest for the consumers' keys.
@@ -1639,6 +1697,7 @@ struct ActionDriver
         if (parent.value.symlinkAt(baseNameOf(name), linkTo(name).replace("{}", r.resultKey)).hasError)
             return false;
         outputsDigestOf[id.text] = r.outputsDigest;
+        noteLibraries(id, r);
         return true;
     }
 
@@ -1676,7 +1735,24 @@ struct ActionDriver
                         continue;
                     ubyte[] bytes;
                     if (readBytes(dir, n, bytes))
-                        records ~= OutputRecord(path, bytes.length, st.value.executable, blake3(bytes));
+                    {
+                        auto o = OutputRecord(path, bytes.length, st.value.executable, blake3(bytes));
+                        // BGK9: an object's or archive's library names, from the
+                        // bytes in hand, for the links above it.
+                        if (path.endsWith(".o") || path.endsWith(".a"))
+                        {
+                            import sparkles.build_graph.deplibs : dependentLibraries;
+
+                            o.libraries = dependentLibraries(bytes);
+                            o.librariesKnown = true;
+                            foreach (name; o.libraries)
+                                if (name.canFind('\t') || name.canFind('\n'))
+                                    o.librariesKnown = false; // not kept: read again
+                            if (!o.librariesKnown)
+                                o.libraries = null;
+                        }
+                        records ~= o;
+                    }
                 }
             }
             foreach (d; dirs)

@@ -615,13 +615,24 @@ The manifest comes from the compiler's dependency output. On LDC, that is
   candidates are still absent from directory listings, rather than probing
   each path. A listing **must** be reused only while the directory's
   identity, modification time and status-change time are those it was read
-  with, and its modification time predates the listing by BGK5's two
-  seconds; otherwise the directory is listed again. A missing directory
-  **must** be looked up again on every check. A walk, open or listing that
-  fails leaves the directory unknown, and each candidate in it is looked up
-  itself, as is every path in the run directory, which the run's own actions
-  write. On other systems, whose file systems may fold case, every candidate
-  is looked up itself.
+  with, the directory lies on the file system whose clock the run read
+  (BGK5's probe), and both times predate that clock reading, taken before the
+  listing, by BGK5's two seconds; otherwise the directory is listed again.
+  Each check validates a directory after its parent, and a directory **may**
+  be validated through a handle kept open since it was listed while its
+  parent's listing is the one it was opened from: renaming a directory into
+  place changes its parent's modification time. A directory **must** be
+  opened from its parent's handle, entry by entry, and never through a
+  symbolic link: a link on the way leaves the directory unknown, since a
+  change beneath the link's target changes nothing the walk validates. A
+  directory that its parent's current listing lacks is absent; any other
+  missing directory **must** be looked up again on every check, and a
+  directory gone or unknown vouches for nothing beneath it. Candidates are
+  normalized first; one with a `..` component is looked up itself. A walk,
+  open or listing that fails leaves the directory unknown, and each candidate
+  in it is looked up itself, as is every path in the run directory, which the
+  run's own actions write. On other systems, whose file systems may fold
+  case, every candidate is looked up itself.
 
 **BGK3: Several manifests per declared key.** The store **must** keep, under one
 declared key, a bounded list of manifests. Each manifest leads to its own
@@ -743,8 +754,11 @@ what their searches did not find, as compiles do (BGK2):
   before it in that order. Each library is resolved over the search order as
   the linker does: a `-l` library at planning, and a library that
   `pragma(lib)` names when the link is keyed, once the objects naming it
-  exist. The toolchain's own library directories are covered by toolchain
-  identity (§8).
+  exist. The names an object or archive carries are read from its bytes when
+  it is published and kept in its result's record, so a link reads them from
+  the record, its digest record included, rather than from the file. One whose
+  names can be read from neither is covered as unread. The toolchain's own
+  library directories are covered by toolchain identity (§8).
 
 _Rationale:_ a `.pc` file or a library created earlier on a search path changes
 what an action uses without changing anything it read.
@@ -838,8 +852,9 @@ Eviction follows these rules:
   store **may** exceed its bound while leases hold it. The overshoot is
   reported, and eviction resumes when the leases end.
 - **Digest records:** evicting a result removes its output bytes but keeps a
-  record under its result key: its output digests and sizes, its diagnostics
-  and its exit status. A consumer whose key needs only those digests (BGK1)
+  record under its result key: its output digests and sizes, the library
+  names its objects and archives carry (BGK9), its diagnostics and its exit
+  status. A consumer whose key needs only those digests (BGK1)
   reads them from the record, and a lookup that needs the bytes is a miss. An
   action whose result is only recorded is executed only when an action that
   misses needs its bytes. If that execution's output digests differ from the
