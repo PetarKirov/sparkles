@@ -47,7 +47,7 @@ import sparkles.doc_view.viewer_model : ScrollAnchor, ViewerModel;
 import sparkles.ui.components.scroll_view : OverlayBar;
 import sparkles.ui.scroll_motion : ScrollMotion;
 import sparkles.doc_view.scroll_latch : ScrollLatch;
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 
 /**
 What every pane of one application shares: the grammars, the highlighting
@@ -1569,12 +1569,21 @@ version (unittest)
 
 version (unittest)
 {
+    // Every relayout lays out some rows; `path` names the document when not.
+    private void checkRowsLaidOut(size_t rows, string path) @safe
+    {
+        import std.conv : text;
+
+        assert(rows > 0, text("no rows laid out for ", path));
+    }
+
     // One relayout per timed call, alternating between two widths the way a
-    // drag that settles back and forth would. Heap state bound as a method
-    // delegate, so the deferred case reads storage that outlives this body.
-    private static struct RelayoutState
+    // drag that settles back and forth would. The pane is opened before the
+    // case is registered; the case holds it by pointer.
+    private static struct RelayoutCase
     {
         DocViewPane* pane;
+        string path;
         int width = 100;
         // Each call at a width no earlier call used: a drag settles on a new
         // width, so a cache warmed by the last two must not answer for it.
@@ -1583,7 +1592,7 @@ version (unittest)
         // measured, as the frames after the resize would.
         bool settled;
 
-        size_t run() @system
+        size_t timed() @system
         {
             import core.time : Duration;
             import sparkles.test_runner.bench : blackBox;
@@ -1595,16 +1604,19 @@ version (unittest)
                 while (pane.vm.settleLayout(Duration.max)) {}
             return blackBox(pane.vm.rows.length);
         }
+
+        void after(ref size_t rows) @safe => checkRowsLaidOut(rows, path);
     }
 
     // A windowed model scrolled a third of the document each call: the
     // pane leaves the window, which is built again where it now is.
-    private static struct ScrollState
+    private static struct ScrollCase
     {
         DocViewPane* pane;
+        string path;
         long step;
 
-        size_t run() @system
+        size_t timed() @system
         {
             import core.time : Duration;
             import sparkles.test_runner.bench : blackBox;
@@ -1615,6 +1627,8 @@ version (unittest)
             vm.settleLayout(Duration.zero);
             return blackBox(vm.rows.length);
         }
+
+        void after(ref size_t rows) @safe => checkRowsLaidOut(rows, path);
     }
 }
 
@@ -1623,10 +1637,9 @@ version (unittest)
 // highlighting, parsing) is setup; only the relayout is timed. The file is
 // hue's own window module (5k lines), or `HUE_BENCH_FILE`.
 @("pane.relayout.largeCodeFile")
-@benchmark
+@benchCases
 @system unittest
 {
-    import std.conv : text;
     import std.file : exists;
     import std.path : baseName, buildPath, dirName;
     import std.process : environment;
@@ -1642,7 +1655,7 @@ version (unittest)
         skipTest("bench file not found: " ~ path ~ " (set HUE_BENCH_FILE)");
 
     auto env = DocViewEnv.create(GrammarRegistry.fromEnvironment());
-    auto st = new RelayoutState(new DocViewPane);
+    auto st = RelayoutCase(new DocViewPane, path);
     assert(st.pane.open(env, path, chromeTheme(RgbColor(200, 200, 200), RgbColor(20, 20, 20))));
     assert(!st.pane.vm.showPreview, "the raw code view");
     // The whole document's relayout, the baseline the windowed ones beat.
@@ -1650,20 +1663,16 @@ version (unittest)
     st.pane.vm.relayout(st.width);
     // Mid-document, so the scroll anchor has a real line to keep.
     st.pane.vm.top = cast(long) st.pane.vm.rows.length / 2;
-    benchCase(name: path.baseName, labels: ["op": "relayout"],
-        timed: &st.run, after: (ref size_t rows) {
-            assert(rows > 0, text("no rows laid out for ", path));
-        });
+    benchCase(st, name: path.baseName, labels: ["op": "relayout"]);
 }
 
 // The same reflow in the markdown preview of a large document: the paragraphs
 // re-wrap at the new width, which the code view's tree reuse does not reach.
 // The document is the event-horizon spec (2.7k lines), or `HUE_BENCH_MD_FILE`.
 @("pane.relayout.largeMarkdownFile")
-@benchmark
+@benchCases
 @system unittest
 {
-    import std.conv : text;
     import std.file : exists;
     import std.path : baseName, buildPath, dirName;
     import std.process : environment;
@@ -1680,7 +1689,7 @@ version (unittest)
         skipTest("bench file not found: " ~ path ~ " (set HUE_BENCH_MD_FILE)");
 
     auto env = DocViewEnv.create(GrammarRegistry.fromEnvironment());
-    auto st = new RelayoutState(new DocViewPane, freshWidths: true);
+    auto st = RelayoutCase(new DocViewPane, path, freshWidths: true);
     assert(st.pane.open(env, path, chromeTheme(RgbColor(200, 200, 200), RgbColor(20, 20, 20))));
     assert(st.pane.vm.showPreview && st.pane.vm.preview.present, "the markdown preview");
     // The whole document's relayout, the baseline the windowed ones beat.
@@ -1688,21 +1697,17 @@ version (unittest)
     st.pane.vm.relayout(st.width);
     // Mid-document, so the scroll anchor has a real line to keep.
     st.pane.vm.top = cast(long) st.pane.vm.rows.length / 2;
-    benchCase(name: path.baseName, labels: ["op": "relayout"],
-        timed: &st.run, after: (ref size_t rows) {
-            assert(rows > 0, text("no rows laid out for ", path));
-        });
+    benchCase(st, name: path.baseName, labels: ["op": "relayout"]);
 }
 
 // The same reflow with the preview laid out as a window around the pane
 // (`ViewerModel.windowed`, 50 rows): the frame a resize costs, and the
 // work it leaves to the frames after it, settled to the end.
 @("pane.relayout.largeMarkdownFileWindowed")
-@benchmark
+@benchCases
 @system unittest
 {
     import core.time : Duration;
-    import std.conv : text;
     import std.file : exists;
     import std.path : baseName, buildPath, dirName;
     import std.process : environment;
@@ -1720,7 +1725,7 @@ version (unittest)
     auto env = DocViewEnv.create(GrammarRegistry.fromEnvironment());
     foreach (settled; [false, true])
     {
-        auto st = new RelayoutState(new DocViewPane, freshWidths: true, settled: settled);
+        auto st = RelayoutCase(new DocViewPane, path, freshWidths: true, settled: settled);
         assert(st.pane.open(env, path, chromeTheme(RgbColor(200, 200, 200), RgbColor(20, 20, 20))));
         st.pane.vm.windowed = true;
         st.pane.vm.viewRows = 50;
@@ -1728,17 +1733,12 @@ version (unittest)
         while (st.pane.vm.settleLayout(Duration.max)) {}
         st.pane.vm.top = cast(long) st.pane.vm.rows.length / 2;
         st.pane.vm.settleLayout(Duration.zero);
-        benchCase(name: path.baseName, labels: ["op": settled ? "settled" : "resize"],
-            timed: &st.run, after: (ref size_t rows) {
-                assert(rows > 0, text("no rows laid out for ", path));
-            });
+        benchCase(st, name: path.baseName, labels: ["op": settled ? "settled" : "resize"]);
         if (!settled)
             continue;
-        auto sc = new ScrollState(st.pane, cast(long) st.pane.vm.rows.length / 3);
-        benchCase(name: path.baseName, labels: ["op": "scroll"],
-            timed: &sc.run, after: (ref size_t rows) {
-                assert(rows > 0, text("no rows laid out for ", path));
-            });
+        // Scrolls the settled case's pane, measured after it.
+        benchCase(ScrollCase(st.pane, path, cast(long) st.pane.vm.rows.length / 3),
+            name: path.baseName, labels: ["op": "scroll"]);
     }
 }
 
@@ -1787,11 +1787,10 @@ version (unittest)
 // The raw code view's reflow with the source laid out as a window around a
 // 50-row pane: what a resize costs on hue's own window module.
 @("pane.relayout.largeCodeFileWindowed")
-@benchmark
+@benchCases
 @system unittest
 {
     import core.time : Duration;
-    import std.conv : text;
     import std.file : exists;
     import std.path : baseName, buildPath, dirName;
     import std.process : environment;
@@ -1806,7 +1805,7 @@ version (unittest)
         skipTest("bench file not found: " ~ path ~ " (set HUE_BENCH_FILE)");
 
     auto env = DocViewEnv.create(GrammarRegistry.fromEnvironment());
-    auto st = new RelayoutState(new DocViewPane, freshWidths: true);
+    auto st = RelayoutCase(new DocViewPane, path, freshWidths: true);
     assert(st.pane.open(env, path, chromeTheme(RgbColor(200, 200, 200), RgbColor(20, 20, 20))));
     assert(!st.pane.vm.showPreview, "the raw code view");
     st.pane.vm.windowed = true;
@@ -1814,13 +1813,8 @@ version (unittest)
     st.pane.vm.relayout(st.width);
     st.pane.vm.top = cast(long) st.pane.vm.rows.length / 2;
     st.pane.vm.settleLayout(Duration.zero);
-    benchCase(name: path.baseName, labels: ["op": "resize"],
-        timed: &st.run, after: (ref size_t rows) {
-            assert(rows > 0, text("no rows laid out for ", path));
-        });
-    auto sc = new ScrollState(st.pane, cast(long) st.pane.vm.rows.length / 3);
-    benchCase(name: path.baseName, labels: ["op": "scroll"],
-        timed: &sc.run, after: (ref size_t rows) {
-            assert(rows > 0, text("no rows laid out for ", path));
-        });
+    benchCase(st, name: path.baseName, labels: ["op": "resize"]);
+    // Scrolls the resize case's pane, measured after it.
+    benchCase(ScrollCase(st.pane, path, cast(long) st.pane.vm.rows.length / 3),
+        name: path.baseName, labels: ["op": "scroll"]);
 }

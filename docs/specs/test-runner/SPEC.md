@@ -101,7 +101,7 @@ benchmark-measurement layer under `--bench`.
 
 The measurement layer has **two measurement models**:
 
-- **`@benchmark`** — per-iteration statistics: the timed body runs many times;
+- **`@benchmark`** / **`@benchCases`** — per-iteration statistics: the timed body (or each registered case) runs many times;
   the runner reports median / median-absolute-deviation / min / max
   nanoseconds per iteration, plus per-iteration counter averages.
 - **`@workload`** — window statistics: the body runs once (or a few reps);
@@ -150,7 +150,7 @@ harness and `sparkles:profiling` both depend on it (TRD13):
 
 | Module           | Package              | Role                                                                   |
 | ---------------- | -------------------- | ---------------------------------------------------------------------- |
-| `bench.d`        | `test-harness`       | protocol driver, `benchIter`/`benchCase`/`blackBox`, `BenchStats`      |
+| `bench.d`        | `test-harness`       | protocol driver, `benchCase`/`BenchTiming`/`blackBox`, `BenchStats`    |
 | `perf.d`         | `profiling-counters` | hardware-counter tier (`perf_event` group)                             |
 | `perf_group.d`   | `profiling-counters` | shared counting bracket + multiplex-delta scaling                      |
 | `tier0.d`        | `test-harness`       | no-privilege tier (`getrusage` + `/proc/self/io`)                      |
@@ -181,21 +181,92 @@ Marker UDAs live in `sparkles.test_runner.attributes` and must be imported
 unconditionally (not under `version (unittest)`).
 
 - **`@benchmark`** — the test is skipped by normal runs and measured by
-  `--bench`. **`@benchmark(iterations: N)`** pins the iteration count instead
-  of auto-scaling: per sample for batched timing; a per-call `benchCase` runs
-  exactly N timed calls, one sample each.
-- **`benchIter(scope void delegate())`** — measure only the closure; the rest
-  of the body is setup. Outside `--bench` the closure runs exactly once.
-- **`benchCase(name:, labels:, timed:, after:, setup:, teardown:, metrics:)`**
-  — register one row of a matrix benchmark. Under `--bench` the case is
-  _registered_ and measured after the body returns (deferred execution:
-  varying state must be captured by value); outside `--bench` it runs once
-  immediately. `timed`'s result flows to `after`, which runs untimed to
-  verify/release it; a throwing `after` or an `Expected` error isolates into
-  a single in-table error row while the rest of the matrix measures. A soft
+  `--bench`; its body is the measured unit. **`@benchmark(iterations: N)`**
+  pins the per-sample iteration count instead of auto-scaling.
+- **`@benchCases`** — the test is skipped by normal runs and measured by
+  `--bench`; its body registers its rows with `benchCase` and is never
+  measured itself. **`@benchCases(iterations: N)`** runs exactly N timed calls
+  per per-call case, one sample each, and pins a batched case's per-sample
+  count.
+- **`benchCase(aCase, name:, labels:, metrics:)`** — register one row. The
+  case is a struct: `timed()` is the measured call, and
+  the optional `setup()`, `after(ref result)` (or `after()`) and `teardown()`
+  run untimed around it. Under `--bench` the case is _registered_ and
+  measured after the body returns; outside `--bench` it runs once
+  immediately. `timed`'s result flows to `after`, which verifies/releases it;
+  a throw from any hook, or an `Expected` error from `after`, isolates into a
+  single in-table error row while the rest of the matrix measures. A soft
   error returned on the inert (non-`--bench`) path is re-raised as an
   exception. Label keys/values and `name` must not contain `\x1f` (the group
-  separator) — violation is a registration-time error.
+  separator) — violation is a registration-time error. Without `name`, the
+  row is named after the test. A case whose type declares
+  `enum timing = BenchTiming.batched` is timed in batches (TRB6).
+
+  Deferred execution is what makes a case's state outlive the body that
+  registered it, so the API leaves the state nowhere else to live:
+
+  **TRB1: The runner owns the case.** `benchCase` **must** move the case into
+  memory the runner owns (a GC block, so the references it holds stay alive)
+  and erase it to a block of state plus `function` pointers over it. No part of
+  a registered case, the apparatus included, is a delegate over the
+  registering frame.
+
+  **TRB2: A case cannot reach the registering frame.** A case type that is a
+  nested (non-`static`) struct, or holds a delegate directly or through a
+  struct, union or static-array field, **must** be rejected at compile time.
+  A case type without `timed` **must** be rejected too.
+
+  **TRB3: Every registration is its own value.** What a case needs is a field,
+  set when the case is built, so each `benchCase` call in a loop **must**
+  measure the values it was given, whatever the loop does after it.
+
+  **TRB4: The lifecycle brackets the measurement.** For each measured case
+  the runner **must** call `setup` once, then `timed` per call with `after`
+  after each, then `teardown` once, and then destroy the case — its
+  destructor runs once, even when a hook throws. A case the run never
+  measures **must** still be destroyed once, when the worker shuts down.
+  Registration runs no hook. Outside `--bench` the same sequence runs once.
+
+  **TRB5: The body's role is declared.** A `@benchmark` body **must** be
+  measured whole; a `benchCase` call from one **must** fail its registration
+  with a message naming the test. A `@benchCases` body **must** only register:
+  it is never measured, and a body that registers no case **must** fail with
+  "`<test>` registered no cases" unless it skipped (`skipTest`), which leaves
+  the test skipped with no rows. The two markers are exclusive, and each is
+  exclusive with `@workload`. Both set the listing's `isBenchmark`, so the
+  runner executable schedules them alike.
+
+  _Rationale:_ the role used to be inferred: a body that registered no case
+  was measured whole. An empty matrix — an environment filter, a loop bound —
+  then silently benchmarked its own registration loop, so suites registered a
+  `(filtered out)` no-op case to avoid it.
+
+  **TRB6: A case declares its timing.** A case **must** be timed per call —
+  each `timed()` alone, with `after` between calls, one call per sample —
+  unless its type declares `enum timing = BenchTiming.batched`. A batched case
+  **must** be timed by the batched protocol a whole `@benchmark` body is (§4,
+  item 3), its counting pass bracketing many calls at once (§6.1). A batched
+  case type with an `after` **must** be rejected at compile time: nothing runs
+  between its calls.
+
+  _Rationale (TRB6):_ a nanosecond-scale operation needs batched timing, a
+  per-call clock read being larger than the operation. That used to be
+  `benchIter`'s job, which measured a closure after the body returned — the
+  one closure left after the case struct replaced the delegate form, with
+  the same flaw: a DQL engine, a `DefaultLoop` and a `Buffer` it captured
+  were destroyed before it ran. As a property of the case, batched timing
+  inherits TRB1–TRB4, and the API takes no closure at all.
+
+  _Rationale (TRB1–TRB4):_ the delegate form this replaces registered closures, and every
+  way a closure's captured state can be gone by measurement time happened, to
+  authors who had read the warning: a `foreach` variable shared by every case;
+  an fd a `scope (exit)` closed, so the loop wedged in `io_cqring_wait`; a
+  `Sched` destroyed under a pending case (SIGSEGV); a dangling `RootScope`
+  that produced plausible numbers, which were committed; and a helper's frame
+  LDC 1.43 kept on the stack because it inferred the parameters `scope`, so
+  every case crashed. None showed outside `--bench`, where the case runs
+  inline. A value the runner owns has no frame to lose.
+
 - **`blackBox(x)`** — identity the optimizer cannot see through; route
   measured inputs and results through it.
 - **`@wasm`** ([W1](./PLAN.md#w1--wasm-on-wasi)) — the test also
@@ -223,7 +294,7 @@ unconditionally (not under `version (unittest)`).
   per-iteration amount as-is. `Unit` is an open-basis symbol (`"B"`, `"req"`,
   …); see §5.3.
 - **`@workload`** / **`@workload(reps: N)`** — window-model marker (`reps`
-  clamps to ≥ 1; combining with `@benchmark` is a discovery-time error — the
+  clamps to ≥ 1; combining with `@benchmark` or `@benchCases` is a discovery-time error — the
   models are exclusive). The in-body **`workloadWindow(dg)`** /
   `workloadWindow(name, dg)` primitive measures only the closure (× reps) as
   one window; without any call the whole body is the window. Outside a
@@ -245,7 +316,7 @@ unconditionally (not under `version (unittest)`).
 
 ## 4. Measurement protocol
 
-Normative for `@benchmark`:
+Normative for `@benchmark` and `@benchCases`:
 
 1. **Auto-scaling** — the per-sample iteration count doubles until one sample
    takes at least `BenchConfig.minSampleTime` (default 5 ms;
@@ -254,11 +325,12 @@ Normative for `@benchmark`:
    quantization).
 2. **Statistics** — median, median absolute deviation, min, max ns/iter. No
    mean is reported.
-3. **Per-call vs batched** — `benchCase` times each call individually (one
-   sample per call; `--bench-min-time` is the minimum _total_ measured time,
-   samples accumulate past 32 until met); `benchIter`/whole-body timing is
-   batched (`--bench-min-time` is the per-sample auto-scale target).
-   `@benchmark(iterations: N)` pins both shapes and makes the budget inert.
+3. **Per-call vs batched** — a per-call `benchCase` case times each call
+   individually (one sample per call; `--bench-min-time` is the minimum
+   _total_ measured time, samples accumulate past 32 until met); a whole body
+   and a `BenchTiming.batched` case are timed in batches (`--bench-min-time`
+   is the per-sample auto-scale target). `iterations: N` on either marker
+   pins its shape and makes the budget inert.
 4. **Counting passes** — after timing, each _available_ source re-runs the
    body under its counters, capped at `perfMaxIters` (100 000) iterations,
    with the untimed release/verify hook outside the enabled window. Counter
@@ -420,8 +492,8 @@ report the apparatus instead of the body. `count` therefore takes a `batch`:
 it brackets `batch` iterations together, running exactly `iterations`
 `timed()` calls either way, so the divisor is unchanged and the bracket's cost
 amortizes by `batch`. Batching reorders `between()` to after its batch, so it
-is used **only for batched rows** (`benchIter`/whole-body, where `between` is a
-no-op); per-call `benchCase` rows keep `batch == 1`, which is exactly the
+is used **only for batched rows** (a whole body or a batched case, where
+`between` is a no-op); per-call `benchCase` rows keep `batch == 1`, which is exactly the
 original per-iteration bracket. The runner auto-sizes `batch` from the timing
 pass so one bracket spans ~1 ms (`--perf-batch=N` pins it; `1` disables).
 Measured effect, three ~10–14 ns codec rows: `instr/iter` 3.52k/3.55k/3.57k

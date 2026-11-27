@@ -141,6 +141,10 @@ private struct Server
 
     void close()
     {
+        import sparkles.test_runner.bench : disposeCases;
+
+        // Cases a filter kept from being measured are still destroyed once.
+        disposeCases(cases);
         if (sessionOpen)
             session.close();
         if (workloadSourcesOpen)

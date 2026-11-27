@@ -11,7 +11,7 @@ import std.meta : AliasSeq;
 
 import sparkles.base.hash.blake3;
 import sparkles.base.hash.blake3_vectors;
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 
 private:
 
@@ -289,8 +289,8 @@ unittest
 
 // Throughput of each backend on one input size: `dub test :base -b bench --
 // --bench -i blake3.bench --group-by=size`. A case runs after its test body
-// returns, so its state lives on the heap, not in a closure frame.
-final class ThroughputCase
+// returns, so it holds its input and expected digest by value.
+struct ThroughputCase
 {
     Blake3Backend backend;
     ubyte[] input;
@@ -323,12 +323,9 @@ void registerThroughput(Blake3Backend backend, string sizeLabel, size_t size) @s
     import std.conv : to;
     import sparkles.test_runner.bench : benchCase, Metric, Unit;
 
-    auto c = new ThroughputCase(backend, size);
-    benchCase(
+    benchCase(ThroughputCase(backend, size),
         name: backend.to!string,
         labels: ["size": sizeLabel],
-        timed: &c.timed,
-        after: &c.after,
         metrics: [Metric(Unit("B"), size, Metric.Mode.rate)]);
 }
 
@@ -341,7 +338,7 @@ ubyte[32] blake3With(Blake3Backend backend, scope const(ubyte)[] input) @safe pu
 }
 
 @("blake3.bench.throughput")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
     static foreach (name; concreteBackendNames)

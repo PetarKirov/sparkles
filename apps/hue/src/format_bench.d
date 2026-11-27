@@ -10,7 +10,7 @@ same buffer twice in a row, which is what keeps every retained parse cold).
 
 Run with `dub test :hue -- --bench -i format_preview.bench`.
 
-Test-only module: `@benchmark` lives in the test-runner shim, a dependency of
+Test-only module: `@benchCases` lives in the test-runner shim, a dependency of
 the unittest configuration alone.
 */
 module format_bench;
@@ -25,8 +25,8 @@ import sparkles.syntax : GrammarRegistry, HighlightEvent,
     highlightInjected, LabelSet, TsConfigCache;
 import sparkles.ui.themes : builtinDark;
 import sparkles.syntax.ts.highlighter : ParsedLayer;
-import sparkles.test_runner.attributes : benchmark;
-import sparkles.test_runner.bench : benchIter, blackBox;
+import sparkles.test_runner.attributes : benchCases;
+import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
 import sparkles.test_runner.skip : skipTest;
 
 import format_dmd : formatDSource;
@@ -91,23 +91,31 @@ private bool grammarsAvailable() @safe
 // ── phase 1: the provider (runs OFF the UI thread) ──────────────────────────
 
 @("format_preview.bench.format-2kloc")
-@benchmark @system unittest
+@benchCases @system unittest
 {
-    const source = bigSource();
-    ushort w = 72;
-    benchIter({
-        w = cast(ushort)(w == 128 ? 72 : w + 8);
-        auto out_ = formatDSource(source, "bench.d", w);
-        blackBox(out_.length);
-    }, ["phase": "provider", "thread": "format-service", "corpus": "2kloc-d"]);
+    static struct Format
+    {
+        enum timing = BenchTiming.batched;
+        string source;
+        ushort w = 72;
+
+        void timed() @system
+        {
+            w = cast(ushort)(w == 128 ? 72 : w + 8);
+            auto out_ = formatDSource(source, "bench.d", w);
+            blackBox(out_.length);
+        }
+    }
+
+    benchCase(Format(bigSource()),
+        labels: ["phase": "provider", "thread": "format-service", "corpus": "2kloc-d"]);
 }
 
 // ── the grammar-backed fixture ─────────────────────────────────────────────
 
 // A class, so the registry, the config cache that points at it and the model
-// all live at stable heap addresses: `benchIter`'s body is a delegate, and a
-// closure that reaches a `TsConfigCache` whose registry sits in the enclosing
-// stack frame crashes under the GC traffic these loops generate.
+// all live at stable heap addresses: the cache and the model hold pointers to
+// the registry, which a move of a struct fixture would leave dangling.
 private final class BenchFixture
 {
     GrammarRegistry reg;
@@ -170,102 +178,152 @@ private final class BenchFixture
 // ── phase 2: re-highlight (UI thread) ───────────────────────────────────────
 
 @("format_preview.bench.rehighlight-2kloc")
-@benchmark @system unittest
+@benchCases @system unittest
 {
     if (!grammarsAvailable)
         return skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
 
     auto fx = new BenchFixture;
-    size_t i;
-    benchIter({
-        // A fresh allocation per iteration: the real path idups the
-        // provider's buffer, and slice identity is what keeps every retained
-        // parse honest.
-        ParsedLayer*[] layers;
-        auto ev = fx.highlight(fx.texts[i++ % fx.texts.length].idup, layers);
-        blackBox(ev.length);
-    }, ["phase": "rehighlight", "thread": "ui", "corpus": "2kloc-d"]);
+    static struct Rehighlight
+    {
+        enum timing = BenchTiming.batched;
+        BenchFixture fx;
+        size_t i;
+
+        void timed() @system
+        {
+            // A fresh allocation per iteration: the real path idups the
+            // provider's buffer, and slice identity is what keeps every retained
+            // parse honest.
+            ParsedLayer*[] layers;
+            auto ev = fx.highlight(fx.texts[i++ % fx.texts.length].idup, layers);
+            blackBox(ev.length);
+        }
+    }
+
+    benchCase(Rehighlight(fx),
+        labels: ["phase": "rehighlight", "thread": "ui", "corpus": "2kloc-d"]);
 }
 
 // ── phase 3: the buffer swap (UI thread) ────────────────────────────────────
 
 @("format_preview.bench.swapContent-2kloc")
-@benchmark @system unittest
+@benchCases @system unittest
 {
     if (!grammarsAvailable)
         return skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
 
     auto fx = new BenchFixture;
     fx.precomputeEvents();
-    size_t i;
-    benchIter({
-        const k = i++ % fx.texts.length;
-        fx.vm.swapContent(fx.texts[k].idup, fx.events[k]);
-        blackBox(fx.vm.rows.length);
-    }, ["phase": "swap-rebuild", "thread": "ui", "corpus": "2kloc-d"]);
+    static struct SwapContent
+    {
+        enum timing = BenchTiming.batched;
+        BenchFixture fx;
+        size_t i;
+
+        void timed() @system
+        {
+            const k = i++ % fx.texts.length;
+            fx.vm.swapContent(fx.texts[k].idup, fx.events[k]);
+            blackBox(fx.vm.rows.length);
+        }
+    }
+
+    benchCase(SwapContent(fx),
+        labels: ["phase": "swap-rebuild", "thread": "ui", "corpus": "2kloc-d"]);
 }
 
 // The same rebuild with the parse handed over — a cache hit's redisplay, and
 // what every applied width costs once `rehighlight`'s layers travel with it.
 @("format_preview.bench.swapContent-adopted-2kloc")
-@benchmark @system unittest
+@benchCases @system unittest
 {
     if (!grammarsAvailable)
         return skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
 
     auto fx = new BenchFixture;
     fx.precomputeEvents();
-    size_t i;
-    benchIter({
-        const k = i++ % fx.texts.length;
-        fx.vm.swapContent(fx.texts[k], fx.events[k], fx.layers[k]);
-        blackBox(fx.vm.rows.length);
-    }, ["phase": "swap-adopted", "thread": "ui", "corpus": "2kloc-d"]);
+    static struct SwapContentAdopted
+    {
+        enum timing = BenchTiming.batched;
+        BenchFixture fx;
+        size_t i;
+
+        void timed() @system
+        {
+            const k = i++ % fx.texts.length;
+            fx.vm.swapContent(fx.texts[k], fx.events[k], fx.layers[k]);
+            blackBox(fx.vm.rows.length);
+        }
+    }
+
+    benchCase(SwapContentAdopted(fx),
+        labels: ["phase": "swap-adopted", "thread": "ui", "corpus": "2kloc-d"]);
 }
 
 // ── the whole UI-thread stall, as `pump` actually spends it ─────────────────
 
 @("format_preview.bench.applyWidth-2kloc")
-@benchmark @system unittest
+@benchCases @system unittest
 {
     if (!grammarsAvailable)
         return skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
 
     auto fx = new BenchFixture;
-    size_t i;
-    benchIter({
-        const text = fx.texts[i++ % fx.texts.length].idup;
-        ParsedLayer*[] layers;
-        auto ev = fx.highlight(text, layers);
-        fx.vm.swapContent(text, ev, layers);
-        blackBox(fx.vm.rows.length);
-    }, ["phase": "ui-apply-total", "thread": "ui", "corpus": "2kloc-d"]);
+    static struct ApplyWidth
+    {
+        enum timing = BenchTiming.batched;
+        BenchFixture fx;
+        size_t i;
+
+        void timed() @system
+        {
+            const text = fx.texts[i++ % fx.texts.length].idup;
+            ParsedLayer*[] layers;
+            auto ev = fx.highlight(text, layers);
+            fx.vm.swapContent(text, ev, layers);
+            blackBox(fx.vm.rows.length);
+        }
+    }
+
+    benchCase(ApplyWidth(fx),
+        labels: ["phase": "ui-apply-total", "thread": "ui", "corpus": "2kloc-d"]);
 
 }
 
 // The same apply with the parse thrown away — what the path cost before the
 // layers were carried through, kept as the standing comparison leg.
 @("format_preview.bench.applyWidth-reparsing-2kloc")
-@benchmark @system unittest
+@benchCases @system unittest
 {
     if (!grammarsAvailable)
         return skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
 
     auto fx = new BenchFixture;
-    size_t i;
-    benchIter({
-        const text = fx.texts[i++ % fx.texts.length].idup;
-        ParsedLayer*[] layers;
-        auto ev = fx.highlight(text, layers);
-        fx.vm.swapContent(text, ev);
-        blackBox(fx.vm.rows.length);
-    }, ["phase": "ui-apply-reparse", "thread": "ui", "corpus": "2kloc-d"]);
+    static struct ApplyWidthReparsing
+    {
+        enum timing = BenchTiming.batched;
+        BenchFixture fx;
+        size_t i;
+
+        void timed() @system
+        {
+            const text = fx.texts[i++ % fx.texts.length].idup;
+            ParsedLayer*[] layers;
+            auto ev = fx.highlight(text, layers);
+            fx.vm.swapContent(text, ev);
+            blackBox(fx.vm.rows.length);
+        }
+    }
+
+    benchCase(ApplyWidthReparsing(fx),
+        labels: ["phase": "ui-apply-reparse", "thread": "ui", "corpus": "2kloc-d"]);
 }
 
 // ── the parse itself, the cost the two apply legs differ by ────────────────
 
 @("format_preview.bench.parseLayers-2kloc")
-@benchmark @system unittest
+@benchCases @system unittest
 {
     import sparkles.syntax.ts.highlighter : parseLayers;
 
@@ -273,12 +331,22 @@ private final class BenchFixture
         return skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
 
     auto fx = new BenchFixture;
-    size_t i;
-    benchIter({
-        const text = fx.texts[i++ % fx.texts.length].idup;
-        ParsedLayer*[] layers;
-        const failed = parseLayers(fx.cache, "d", text, layers).hasError;
-        assert(!failed);
-        blackBox(layers.length);
-    }, ["phase": "retained-parse", "thread": "ui", "corpus": "2kloc-d"]);
+    static struct ParseLayers
+    {
+        enum timing = BenchTiming.batched;
+        BenchFixture fx;
+        size_t i;
+
+        void timed() @system
+        {
+            const text = fx.texts[i++ % fx.texts.length].idup;
+            ParsedLayer*[] layers;
+            const failed = parseLayers(fx.cache, "d", text, layers).hasError;
+            assert(!failed);
+            blackBox(layers.length);
+        }
+    }
+
+    benchCase(ParseLayers(fx),
+        labels: ["phase": "retained-parse", "thread": "ui", "corpus": "2kloc-d"]);
 }

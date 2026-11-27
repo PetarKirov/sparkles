@@ -1082,7 +1082,7 @@ unittest
 unittest
 {
     // Outside a workload measurement the closure runs exactly once — not
-    // `reps` times — matching `benchIter`'s inert contract under foreign
+    // `reps` times — matching `benchCase`'s inert contract under foreign
     // runners.
     int calls;
     workloadWindow(() { calls++; });

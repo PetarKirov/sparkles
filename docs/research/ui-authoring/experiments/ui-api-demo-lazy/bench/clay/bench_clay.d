@@ -21,7 +21,7 @@ module bench_clay;
 
 import std.format : format;
 
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 import sparkles.test_runner.bench : benchCase, blackBox, Metric, Unit;
 
 import model;
@@ -64,15 +64,27 @@ private Built reference(Input input)
     return r;
 }
 
-private __gshared const(void)*[] keepAlive;
-
-private void register(Variant v)(Input input, Built expected)
+/// One Clay case on variant `v`, its `ClayUi` heap-owned.
+private struct ClayCase(Variant v)
 {
     enum side = v == Variant.side;
-    auto ui = new ClayUi!side;
-    ui.setup(cast(int) expected.count + 16);
-    const stats = Stats(true, 300);
-    auto timed = () {
+
+    Input input;
+    Built expected;
+    ClayUi!side* ui;
+    Stats stats;
+
+    this(Input input, Built expected)
+    {
+        this.input = input;
+        this.expected = expected;
+        stats = Stats(true, 300);
+        ui = new ClayUi!side;
+        ui.setup(cast(int) expected.count + 16);
+    }
+
+    size_t timed()
+    {
         ui.begin();
         if (input.shape == "stats")
             views_clay.statsPane(*ui, blackBox(stats), blackBox(input.ids));
@@ -82,15 +94,21 @@ private void register(Variant v)(Input input, Built expected)
             return blackBox(cast(size_t) ui.end().length);
         else
             return blackBox(ui.elementCount);
-    };
-    auto check = () {
+    }
+
+    Built check()
+    {
         Built r;
         ui.checksum(ui.viewRoot, r.hash, r.count);
         if (ui.errorCount)
             throw new Exception(format("Clay reported %s errors", ui.errorCount));
         return r;
-    };
-    auto after = (ref size_t _) {
+    }
+
+    /// Untimed after every build: the tree must be the reference's; the
+    /// frame is ended (unless timed) and the `ClayUi` reset.
+    void after(ref size_t)
+    {
         const got = check();
         if (got.hash != expected.hash || got.count != expected.count)
             throw new Exception(format("tree mismatch: %s nodes #%016x, expected %s #%016x",
@@ -98,27 +116,28 @@ private void register(Variant v)(Input input, Built expected)
         static if (v != Variant.full)
             cast(void) ui.end();
         ui.reset();
-    };
+    }
+}
+
+private void register(Variant v)(Input input, Built expected)
+{
+    auto c = ClayCase!v(input, expected);
     // the tree once, before registering
-    cast(void) timed();
-    const got = check();
+    cast(void) c.timed();
+    const got = c.check();
     assert(got == expected, format("clay %s/%s: %s vs %s", input.shape, input.size, got, expected));
     static if (v != Variant.full)
-        cast(void) ui.end();
-    ui.reset();
+        cast(void) c.ui.end();
+    c.ui.reset();
 
-    keepAlive ~= [cast(const(void)*) ui, timed.ptr, check.ptr, after.ptr];
-    benchCase(
+    benchCase(c,
         name: v == Variant.build ? "clay-build" : v == Variant.full ? "clay-full" : "clay-side",
         labels: ["shape": input.shape, "size": format("%s=%s", input.shape == "stats" ? "rows" : "depth", input.size),
             "nodes": format("%s", expected.count), "pass": v == Variant.full ? "build+end" : "build"],
-        timed: timed,
-        after: after,
-        metrics: [Metric(Unit("node"), expected.count, Metric.Mode.rate)],
-    );
+        metrics: [Metric(Unit("node"), expected.count, Metric.Mode.rate)]);
 }
 
-@("ui.build.clay") @benchmark @system
+@("ui.build.clay") @benchCases @system
 unittest
 {
     Input[] inputs;

@@ -60,7 +60,7 @@ module ratatui_colors_rgb_example;
 // width) and the row builders are `@nogc`, so the compiler proves the hot loop
 // performs no GC allocation.
 //
-// The bottom of this file also carries a `@benchmark` (under `version (unittest)`)
+// The bottom of this file also carries a `@benchCases` (under `version (unittest)`)
 // that measures the uncapped frame-render fps at several terminal sizes — see it
 // for the `dub test … -b bench` invocation.
 //
@@ -341,8 +341,10 @@ void hsvToRgb(double h, double s, double v, out ubyte r, out ubyte g, out ubyte 
 // ─────────────────────────────────────────────────────────────────────────────
 version (unittest)
 {
-    import sparkles.test_runner.attributes : benchmark;
+    import sparkles.test_runner.attributes : benchCases;
+    import sparkles.test_runner.skip : skipTest;
     import sparkles.test_runner.bench : benchCase, blackBox, Metric, Unit;
+    import core.lifetime : move;
     import std.stdio : File;
 
     private struct BenchSize { uint width, height; string label; }
@@ -358,23 +360,67 @@ version (unittest)
     version (Posix) private enum nullPath = "/dev/null";
     else            private enum nullPath = "NUL";
 
-    /// Reusable per-case state: heap-allocated so the deferred `benchCase`
-    /// closures all share one instance (the frame buffer and fd persist, and
-    /// `frameIdx` advances between iterations to animate and defeat caching).
-    private struct St
+    /// One size × sink case. Its state persists across timed calls: the frame
+    /// buffer and fd are reused, and `frameIdx` advances between iterations to
+    /// animate and defeat caching.
+    private struct FrameCase
     {
-        @disable this(this); // holds a File; only ever used via `new St` + pointer
-
         uint width, height;
         RowBuffer buf;      // reserved once; `clear()` keeps the block → render is allocation-free
         SpectrumCache cache; // built once per case (fixed size), then lookups only
         size_t frameIdx;
         bool toFd;
         File sink;          // /dev/null, opened once (when toFd)
+
+        // Moved into the runner, never copied (and a generated postblit
+        // would hide `RowBuffer`'s copy constructor).
+        @disable this(this);
+
+        this(BenchSize sz, bool toFd)
+        {
+            buf.reserve(rowCapacity);
+            width = sz.width;
+            height = sz.height;
+            this.toFd = toFd;
+            if (toFd)
+                sink = File(nullPath, "wb");
+            const rows0 = sz.height >= 2 ? sz.height - 1 : sz.height;
+            cache.resize(sz.width, cast(uint)(rows0 * 2)); // untimed per-case setup
+        }
+
+        /// Render one full frame (title + `H-1` spectrum rows) into the reused
+        /// inline buffer, writing each row to the sink. Allocation-free in
+        /// steady state.
+        void timed()
+        {
+            const rows = height >= 2 ? height - 1 : height;
+
+            buf.clear();
+            writeTitle(buf, width, 60.0);
+            emit();
+            foreach (ry; 0 .. rows)
+            {
+                buf.clear();
+                writeSpectrumRow(buf, cache, cast(uint) ry, frameIdx, ColorDepth.trueColor);
+                emit();
+            }
+            if (toFd)
+                sink.flush();
+            ++frameIdx;
+            blackBox(frameIdx);
+        }
+
+        private void emit()
+        {
+            if (toFd)
+                sink.rawWrite(buf[]);
+            else
+                blackBox(buf[]);
+        }
     }
 
     @("colors-rgb.render")
-    @benchmark
+    @benchCases
     @system
     unittest
     {
@@ -392,64 +438,21 @@ version (unittest)
             }
         }
         if (!any)
-            benchCase(name: "(filtered out)", timed: () {}, after: () {});
+            skipTest("RGB_BENCH_SIZES/RGB_BENCH_SINKS removed every case");
     }
 
     private void registerFrame(BenchSize sz, bool toFd)
     {
-        auto st = new St;
-        st.buf.reserve(rowCapacity);
-        st.width = sz.width;
-        st.height = sz.height;
-        st.toFd = toFd;
-        if (toFd)
-            st.sink = File(nullPath, "wb");
-        const rows0 = sz.height >= 2 ? sz.height - 1 : sz.height;
-        st.cache.resize(sz.width, cast(uint)(rows0 * 2)); // untimed per-case setup
-
+        auto c = FrameCase(sz, toFd);
         const frameBytes = probeFrameBytes(sz.width, sz.height);
 
-        benchCase(
-            name: sz.label,
-            labels: ["sink": toFd ? "/dev/null" : "mem"],
-            timed: () { renderFrame(st); },
-            after: () {},
+        benchCase(move(c), name: sz.label, labels: ["sink": toFd ? "/dev/null" : "mem"],
             metrics: [
                 // One frame per timed call → the rate column IS frames/sec (fps).
                 Metric(unit: Unit("frame"), amount: 1.0, mode: Metric.Mode.rate),
                 Metric(unit: Unit("B"), amount: cast(double) frameBytes, mode: Metric.Mode.rate),
                 Metric(unit: Unit("B"), amount: cast(double) frameBytes, mode: Metric.Mode.level),
-            ],
-        );
-    }
-
-    /// Render one full frame (title + `H-1` spectrum rows) into the reused inline
-    /// buffer, writing each row to the sink. Allocation-free in steady state.
-    private void renderFrame(St* st)
-    {
-        const rows = st.height >= 2 ? st.height - 1 : st.height;
-
-        st.buf.clear();
-        writeTitle(st.buf, st.width, 60.0);
-        emit(st);
-        foreach (ry; 0 .. rows)
-        {
-            st.buf.clear();
-            writeSpectrumRow(st.buf, st.cache, cast(uint) ry, st.frameIdx, ColorDepth.trueColor);
-            emit(st);
-        }
-        if (st.toFd)
-            st.sink.flush();
-        ++st.frameIdx;
-        blackBox(st.frameIdx);
-    }
-
-    private void emit(St* st)
-    {
-        if (st.toFd)
-            st.sink.rawWrite(st.buf[]);
-        else
-            blackBox(st.buf[]);
+            ]);
     }
 
     /// Total bytes one frame writes at this size (trueColor) — for the B/s and

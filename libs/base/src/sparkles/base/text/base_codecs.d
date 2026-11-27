@@ -18,7 +18,7 @@ import sparkles.base.text.errors :
 
 // Unconditional import (phobos-style, cf. std.internal.attributes): unittest
 // UDAs are resolved even in builds where the unittest bodies are not compiled.
-import sparkles.test_runner.attributes : benchmark, betterC;
+import sparkles.test_runner.attributes : benchCases, betterC;
 
 /**
 A positional digit vocabulary: `digits[i]` is the character for symbol
@@ -1092,57 +1092,56 @@ version (unittest)
 
 }
 
-/// Per-cell bench state on the GC heap. The timed/after callbacks are
-/// member delegates (context = this instance), NOT frame closures:
-/// `base` source-includes the runner impl, so under this package's
-/// -preview=dip1000 the harness's delegate parameters scope-infer and a
-/// frame closure passed to benchCase is stack-allocated — dangling by
-/// the time the deferred measurement runs (stack-use-after-return).
-private final class StreamingBenchCase(Alphabet a)
+/// One cell's input: `size` pseudo-random bytes.
+private ubyte[] streamingBenchData(size_t size) @safe pure nothrow
 {
-    ubyte[] data;
-    char[] encoded;
-    ubyte[] decoded;
-
-    this(size_t size) @safe
+    auto data = new ubyte[](size);
+    uint x = 0x9E3779B9 ^ cast(uint) size;
+    foreach (ref b; data)
     {
-        data = new ubyte[](size);
-        uint x = 0x9E3779B9 ^ cast(uint) size;
-        foreach (ref b; data)
-        {
-            x = x * 1664525 + 1013904223;
-            b = cast(ubyte)(x >> 24);
-        }
-        encoded = new char[](encodedLen(a, size));
-        decoded = new ubyte[](size);
-        auto w = CharSink(encoded);
-        encodeBase!a(w, data); // seed `encoded` for the decode case
+        x = x * 1664525 + 1013904223;
+        b = cast(ubyte)(x >> 24);
     }
+    return data;
+}
 
-    size_t timedEncode() @safe
+/// Encodes `data` into `encoded`, which is exactly its encoded length.
+private struct StreamingEncodeCase(Alphabet a)
+{
+    const(ubyte)[] data;
+    char[] encoded;
+
+    size_t timed() @safe
     {
         auto w = CharSink(encoded);
         encodeBase!a(w, data);
         return w.n;
     }
 
-    void afterEncode(ref size_t n) @safe
+    void after(ref size_t n) @safe
     {
         if (n != encoded.length)
             throw new Exception("encoded length mismatch");
     }
+}
+
+/// Decodes `encoded` into `decoded`, which is exactly its decoded length.
+private struct StreamingDecodeCase(Alphabet a)
+{
+    const(char)[] encoded;
+    ubyte[] decoded;
 
     // The timed result must be default-constructible for the harness,
     // which ParseExpected deliberately is not — collapse it to the
     // byte count (size_t.max signals an error).
-    size_t timedDecode() @safe
+    size_t timed() @safe
     {
         auto w = ByteSink(decoded);
         auto r = decodeBase!a(w, encoded);
         return r.hasError ? size_t.max : r.value;
     }
 
-    void afterDecode(ref size_t n) @safe
+    void after(ref size_t n) @safe
     {
         if (n != decoded.length)
             throw new Exception("decode mismatch");
@@ -1156,23 +1155,23 @@ private void registerStreamingBench(Alphabet a)(
 {
     import sparkles.test_runner.bench : benchCase, Metric, Unit;
 
-    auto c = new StreamingBenchCase!a(size);
-    benchCase(
+    auto data = streamingBenchData(size);
+    auto encoded = new char[](encodedLen(a, size));
+    auto w = CharSink(encoded);
+    encodeBase!a(w, data); // the decode case's input
+
+    benchCase(StreamingEncodeCase!a(data, new char[](encoded.length)),
         name: "scalar",
         labels: ["preset": preset, "op": "encode", "size": sizeLabel],
-        timed: &c.timedEncode,
-        after: &c.afterEncode,
         metrics: [Metric(Unit("B"), size, Metric.Mode.rate)]);
-    benchCase(
+    benchCase(StreamingDecodeCase!a(encoded, new ubyte[](size)),
         name: "scalar",
         labels: ["preset": preset, "op": "decode", "size": sizeLabel],
-        timed: &c.timedDecode,
-        after: &c.afterDecode,
         metrics: [Metric(Unit("B"), size, Metric.Mode.rate)]);
 }
 
 @("text.base_codecs.bench.streaming")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
     registerStreamingBench!base16("base16", "1KiB", 1 << 10);
@@ -1183,14 +1182,27 @@ unittest
     registerStreamingBench!base64("base64", "64KiB", 1 << 16);
 }
 
-/// The fixed-length encoders are tens of nanoseconds — measure them with
-/// `benchIter` (batched timing), not per-call `benchCase` rows.
+/// The fixed-length encoders are tens of nanoseconds — measure them as
+/// batched cases (`BenchTiming.batched`), not per-call rows.
 @("text.base_codecs.bench.fixed32")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
     import std.meta : AliasSeq;
-    import sparkles.test_runner.bench : benchIter, blackBox;
+    import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
+
+    static struct Fixed32(alias a)
+    {
+        enum timing = BenchTiming.batched;
+        ubyte[32] src;
+        char[encodedLen(a, 32)] dst = void;
+
+        void timed() @safe
+        {
+            encodeBase!a(blackBox(src), dst);
+            blackBox(dst);
+        }
+    }
 
     ubyte[32] src = void;
     uint x = 0xDEADBEEF;
@@ -1203,10 +1215,7 @@ unittest
     static foreach (i, a; AliasSeq!(base16, base32, base64))
     {{
         enum names = ["base16", "base32", "base64"];
-        char[encodedLen(a, 32)] dst = void;
-        benchIter({
-            encodeBase!a(blackBox(src), dst);
-            blackBox(dst);
-        }, ["preset": names[i], "op": "encode", "size": "32B-fixed"]);
+        benchCase(Fixed32!a(src),
+            labels: ["preset": names[i], "op": "encode", "size": "32B-fixed"]);
     }}
 }

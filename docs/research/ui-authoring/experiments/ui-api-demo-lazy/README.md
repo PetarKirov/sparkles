@@ -97,7 +97,7 @@ nix develop -c bash -c "cd $D && dub run --compiler=ldc2 -c app -b checked --ski
 nix develop -c bash -c "cd $D/probes && dmd -preview=dip1000 -o- typed_node.d"
 # Clay's header, for the benchmark and bench/clay (git-ignored there):
 curl -fL -o $D/bench/clay/clay.h https://raw.githubusercontent.com/nicbarker/clay/e6cc36941ab2af5d81107617039d6f527a1c660b/clay.h
-# benchmark (configurations: unittest = HeapBuffer, unittest-rawbuf, unittest-nocache)
+# benchmark (`@benchCases`, case structs; configurations: unittest = HeapBuffer, unittest-rawbuf, unittest-nocache)
 nix develop -c bash -c "cd $D/bench && dub test -b bench --compiler=ldc2 --skip-registry=all && ./build/ui-build-bench-test-unittest --bench --perf --group-by=size"
 nix develop -c bash -c "cd $D/bench && dub test -b bench -c unittest-rawbuf --compiler=ldc2 --skip-registry=all && ./build/ui-build-bench-test-unittest-rawbuf --bench --perf --group-by=size"
 # … and the same with --compiler=dmd
@@ -464,6 +464,8 @@ tables: `bench/results/tables.md`.
   That is a `sparkles.base.buffer` fix (skip `ensureUniqueStorage` for
   `unique` storage, or hoist a `T[]` view in the builder), not a property of
   any API; RawBuf shows the builders' own cost.
+  (Fixed since, as BUF16: mutable access on unique storage no longer
+  checks uniqueness. The tables here predate the fix.)
 - What dominates everywhere is per-leaf work shared by all three: text
   interning, `ui.on` (SumType construction + `InSituRegion.allocate` + an
   array copy with `-checkaction` conformance checks): ~800 instr/node for a

@@ -19,7 +19,7 @@ import std.traits : hasElaborateAssign, hasElaborateDestructor,
 import std.experimental.allocator.building_blocks.affix_allocator : AffixAllocator;
 import std.experimental.allocator.common : platformAlignment;
 
-import sparkles.test_runner.attributes : benchmark, betterC;
+import sparkles.test_runner.attributes : benchCases, betterC;
 
 version (unittest) import std.range : iota;
 
@@ -602,8 +602,8 @@ pure nothrow @nogc
     // ─────────────────────────────────────────────────────────────────────────
     // element access — const path shares; mutable path clones if shared
     //
-    // The mutable `opSlice`/`opIndex`/`front`/`back` overloads call
-    // `ensureUniqueStorage()`, so on a shared (heap, refcount > 1) buffer they trigger a
+    // The mutable `opSlice`/`opIndex`/`front`/`back` overloads of a copy-on-write
+    // policy clone a shared (heap, refcount > 1) block, so they trigger a
     // copy-on-write clone *even when you only read* the returned reference —
     // overload resolution cannot tell read from write. To share a heap buffer
     // without cloning, read through `const`/`borrow` (which select the const
@@ -633,10 +633,16 @@ pure nothrow @nogc
         const(T)[] opSlice() const return scope => view();
 
         /// Returns a mutable slice of all elements (clones if shared).
+        // Every mutable accessor funnels through here, so this is the one place
+        // a write pays for copy-on-write. A `unique` buffer is its sole owner by
+        // construction and an inline-only one owns its slots, so neither does
+        // anything; a copy-on-write buffer tests its reference count inline and
+        // calls out only to clone (`BUF16`).
         T[] opSlice() return scope
         {
-            static if (hasHeap)
-                ensureUniqueStorage();   // no shared block to clone otherwise
+            static if (hasHeap && !unique)
+                if (onHeap && (() @trusted => ctrl().refCount)() != 1)
+                    unshare();
             return view();
         }
 
@@ -1327,6 +1333,15 @@ pure nothrow @nogc
                 if (p !is null)
                     pureGcRemoveRange(p);
         }
+
+        static if (!unique)
+            // The mutable accessors' slow path: this block is shared, so clone it.
+            // Outlined, so the accessors inline to a test of the reference count.
+            pragma(inline, false)
+            private void unshare() scope @safe
+            {
+                ensureUniqueStorage();
+            }
 
         // Ensure this buffer has unique mutable storage with room for `extraLen`
         // additional elements (and at least `minCapacity` total slots). `_length`
@@ -2277,53 +2292,94 @@ unittest
 /// buffer of known size either grows it a step at a time — every step a
 /// realloc that may move and copy everything written so far — or does not.
 @("Buffer.bench.reserveVsGrow")
-@benchmark @system
+@benchCases @system
 unittest
 {
-    import sparkles.test_runner.bench : benchIter, blackBox;
+    import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
 
     enum n = 1 << 16;
 
-    benchIter({
-        Buffer!(int, 16) buf;
-        foreach (i; 0 .. n)
-            buf ~= cast(int) i;
-        blackBox(buf.length);
-    }, ["fill": "grown", "elements": "65536"]);
+    static struct Grown
+    {
+        enum timing = BenchTiming.batched;
 
-    benchIter({
-        Buffer!(int, 16) buf;
-        buf.reserve(n);
-        foreach (i; 0 .. n)
-            buf ~= cast(int) i;
-        blackBox(buf.length);
-    }, ["fill": "reserved", "elements": "65536"]);
+        void timed()
+        {
+            Buffer!(int, 16) buf;
+            foreach (i; 0 .. n)
+                buf ~= cast(int) i;
+            blackBox(buf.length);
+        }
+    }
+
+    benchCase(Grown(), labels: ["fill": "grown", "elements": "65536"]);
+
+    static struct Reserved
+    {
+        enum timing = BenchTiming.batched;
+
+        void timed()
+        {
+            Buffer!(int, 16) buf;
+            buf.reserve(n);
+            foreach (i; 0 .. n)
+                buf ~= cast(int) i;
+            blackBox(buf.length);
+        }
+    }
+
+    benchCase(Reserved(), labels: ["fill": "reserved", "elements": "65536"]);
 
     // The reuse the reservation is really for: one allocation, many fills.
-    Buffer!(int, 16) reused;
-    reused.reserve(n);
-    benchIter({
-        reused.clear(releaseStorage: false);
-        foreach (i; 0 .. n)
-            reused ~= cast(int) i;
-        blackBox(reused.length);
-    }, ["fill": "reserved+reused", "elements": "65536"]);
+    static struct Reused
+    {
+        enum timing = BenchTiming.batched;
+        Buffer!(int, 16) reused;
+
+        void setup() { reused.reserve(n); }
+
+        void timed()
+        {
+            reused.clear(releaseStorage: false);
+            foreach (i; 0 .. n)
+                reused ~= cast(int) i;
+            blackBox(reused.length);
+        }
+    }
+
+    benchCase(Reused(), labels: ["fill": "reserved+reused", "elements": "65536"]);
 
     // The reservation on its own, at a size where what it does to the pages
     // matters: 8M ints is 32 MB of address space, and writing `T.init` over
     // all of it before the caller has stored anything is both a memset and
     // 8k first-touch faults for capacity that is not part of the value.
-    benchIter({
-        Buffer!(int, 16) buf;
-        buf.reserve(8_000_000);
-        blackBox(buf.capacity);
-    }, ["fill": "reserve-only", "elements": "8M-reserved-untouched"]);
+    static struct ReserveOnly
+    {
+        enum timing = BenchTiming.batched;
 
-    benchIter({
-        Buffer!(string, 4) buf;
-        buf.reserve(8_000_000);
-        blackBox(buf.capacity);
-    }, ["fill": "reserve-only", "elements": "8M-reserved-untouched-with-references"]);
+        void timed()
+        {
+            Buffer!(int, 16) buf;
+            buf.reserve(8_000_000);
+            blackBox(buf.capacity);
+        }
+    }
+
+    benchCase(ReserveOnly(), labels: ["fill": "reserve-only", "elements": "8M-reserved-untouched"]);
+
+    static struct ReserveOnlyReferences
+    {
+        enum timing = BenchTiming.batched;
+
+        void timed()
+        {
+            Buffer!(string, 4) buf;
+            buf.reserve(8_000_000);
+            blackBox(buf.capacity);
+        }
+    }
+
+    benchCase(ReserveOnlyReferences(), labels: ["fill": "reserve-only", "elements": "8M-reserved-untouched-with-references"]);
 
     // An element type carrying a reference cannot grow in place: the block is
     // not GC-scanned, so `realloc` would move the elements into memory the
@@ -2332,20 +2388,85 @@ unittest
     // that is where not growing pays.
     static immutable string[4] words = ["alpha", "beta", "gamma", "delta"];
 
-    benchIter({
-        Buffer!(string, 4) buf;
-        foreach (i; 0 .. n)
-            buf ~= words[i & 3];
-        blackBox(buf.length);
-    }, ["fill": "grown", "elements": "65536-with-references"]);
+    static struct GrownReferences
+    {
+        enum timing = BenchTiming.batched;
 
-    benchIter({
-        Buffer!(string, 4) buf;
-        buf.reserve(n);
-        foreach (i; 0 .. n)
-            buf ~= words[i & 3];
-        blackBox(buf.length);
-    }, ["fill": "reserved", "elements": "65536-with-references"]);
+        void timed()
+        {
+            Buffer!(string, 4) buf;
+            foreach (i; 0 .. n)
+                buf ~= words[i & 3];
+            blackBox(buf.length);
+        }
+    }
+
+    benchCase(GrownReferences(), labels: ["fill": "grown", "elements": "65536-with-references"]);
+
+    static struct ReservedReferences
+    {
+        enum timing = BenchTiming.batched;
+
+        void timed()
+        {
+            Buffer!(string, 4) buf;
+            buf.reserve(n);
+            foreach (i; 0 .. n)
+                buf ~= words[i & 3];
+            blackBox(buf.length);
+        }
+    }
+
+    benchCase(ReservedReferences(), labels: ["fill": "reserved", "elements": "65536-with-references"]);
+}
+
+/// Mutable element access in a hot loop: what a write through `buf[i]` costs
+/// each policy. A `unique` buffer is its sole owner by construction, so the
+/// access is a bounds check and a load — the bare slice is the floor it must
+/// meet. A copy-on-write buffer additionally tests its reference count, inline,
+/// and calls out only to clone a shared block.
+@("Buffer.bench.mutableIndex")
+@benchCases @system
+unittest
+{
+    import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
+
+    enum n = 4096;
+
+    // A prefix sum: two mutable `opIndex` calls per element, a dependent
+    // chain the optimizer cannot vectorize away.
+    static struct PrefixSum(B)
+    {
+        enum timing = BenchTiming.batched;
+        B buf;
+
+        void setup()
+        {
+            static if (is(B : int[]))
+                buf = new int[n];
+            else
+                foreach (i; 0 .. n)
+                    buf ~= 1;
+        }
+
+        void timed()
+        {
+            foreach (i; 1 .. blackBox(n))
+                buf[i] += buf[i - 1];
+            blackBox(buf[n - 1]);
+        }
+    }
+
+    static void measure(B)(string policy)
+    {
+        benchCase(PrefixSum!B(), labels: ["policy": policy, "elements": "4096"]);
+    }
+
+    measure!(int[])("int[] (floor)");
+    measure!(HeapBuffer!(int, Storage.unique))("HeapBuffer!(int, Storage.unique)");
+    measure!(UniqueBuffer!(int, 4))("UniqueBuffer!(int, 4)");
+    measure!(HeapBuffer!int)("HeapBuffer!int (copy-on-write)");
+    measure!(SharedBuffer!(int, 4))("SharedBuffer!(int, 4)");
 }
 
 /// A reservation must not write to what it reserved. Capacity beyond `length`
@@ -2855,6 +2976,79 @@ private Buffer!(int, 2) makeHeapBuffer() @safe pure nothrow @nogc
     return r;
 }
 
+/// Every mutable accessor clones a shared block before handing out a
+/// reference, and leaves an unshared one where it is (`BUF8`, `BUF16`).
+@("Buffer.cow.mutableAccessorsCloneOnlyWhenShared")
+@safe pure nothrow @nogc
+unittest
+{
+    static void writeThrough(string how)(ref Buffer!(int, 2) b)
+    {
+        static if (how == "index")
+            b[1] = 10;
+        else static if (how == "indexOp")
+            b[1] += 10;
+        else static if (how == "slice")
+            b[][1] = 10;
+        else static if (how == "subSlice")
+            b[1 .. 2][0] = 10;
+        else static if (how == "front")
+            b.front = 10;
+        else
+            b.back = 10;
+    }
+
+    static foreach (how; ["index", "indexOp", "slice", "subSlice", "front", "back"])
+    {{
+        Buffer!(int, 2) a;
+        a ~= iota(5); // heap: [0, 1, 2, 3, 4]
+
+        // Unshared: the write lands in place.
+        const block = (() @trusted => (cast(const) a)[].ptr)();
+        writeThrough!how(a);
+        assert((() @trusted => (cast(const) a)[].ptr)() is block);
+        assert(a.refCount == 1);
+
+        // Shared: the writer clones, the other copy keeps the old values.
+        const before = (cast(const) a)[1];
+        auto b = a;
+        assert(a.refCount == 2);
+        writeThrough!how(b);
+        assert(a.refCount == 1 && b.refCount == 1);
+        assert((cast(const) a)[1] == before);
+        assert((() @trusted => (cast(const) a)[].ptr)() is block);
+        assert((() @trusted => (cast(const) b)[].ptr)() !is block);
+    }}
+}
+
+/// A `unique` buffer's mutable accessors touch nothing but the element: no
+/// reallocation, no residency change, whichever residency it is in (`BUF16`).
+@("Buffer.unique.mutableAccessorsLeaveStorageAlone")
+@safe pure nothrow @nogc
+unittest
+{
+    static void check(B)()
+    {
+        B b;
+        b ~= iota(5);
+        const block = (() @trusted => (cast(const) b)[].ptr)();
+        const onHeap = b.onHeap;
+        b[0] = 7;
+        b[1] += 1;
+        b.front += 1;
+        b.back = 9;
+        b[][2] = 3;
+        b[3 .. 4][0] = 4;
+        assert((cast(const) b)[] == [8, 2, 3, 4, 9]);
+        assert((() @trusted => (cast(const) b)[].ptr)() is block);
+        assert(b.onHeap == onHeap);
+    }
+
+    check!(UniqueBuffer!(int, 8))();             // inline
+    check!(UniqueBuffer!(int, 2))();             // spilled to the heap
+    check!(HeapBuffer!(int, Storage.unique))();
+}
+
 @("Buffer.cow.refCountLifetime")
 @safe pure nothrow @nogc
 unittest
@@ -3188,8 +3382,8 @@ unittest
     // A container that owns a `unique` Buffer and exposes `return scope` views
     // into it — the `sparkles.tui.cell.Grid` pattern. Under `-dip1000` the accessor
     // body indexes/slices a `scope this._buf`, which only type-checks because the
-    // buffer's element accessors (and the `ensureUniqueStorage` the mutable path
-    // calls) are `return`-qualified. Dropping that `return` regresses right here:
+    // buffer's element accessors are `return`-qualified. Dropping that `return`
+    // regresses right here:
     // "scope variable `this._buf` calling non-scope member function ...".
     static struct Holder
     {

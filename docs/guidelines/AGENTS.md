@@ -198,8 +198,11 @@ The project's own runner (silly's successor, same core CLI; `dub test :x -- --he
 lists every flag, [docs](../libs/test-runner/index.md)). Beyond `-i`/`-e`/`-v`/
 `-t`/`-l`, it runs special modes selected by marker UDAs from
 `sparkles.test_runner.attributes` — `@ctfe`, `@betterC` (`--better-c`), `@wasm`
-(`--wasm`), `@benchmark`/`@workload` (`--bench`), `@slow` (`--skip-slow`/
-`--only-slow`). Mark a test that takes minutes `@slow`, with a `@("name")`:
+(`--wasm`), `@benchmark`/`@benchCases`/`@workload` (`--bench`), `@slow`
+(`--skip-slow`/`--only-slow`). A benchmark whose body is the measured unit
+is `@benchmark`; one that registers `benchCase` rows (a matrix, or one case
+that keeps setup out of the timing) is `@benchCases`, and registering none is
+an error unless it `skipTest`s. Mark a test that takes minutes `@slow`, with a `@("name")`:
 `ci test` skips it and CI runs it as a job of its own. Mark a test that must
 run alone `@serial` (process-wide state): it runs after the parallel tests,
 whatever `-t` says; `@serial(threadAffinity: ThreadAffinity.mainThread)` also

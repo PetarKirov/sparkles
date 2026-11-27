@@ -36,7 +36,7 @@ Its archive must carry its own copies of `base` and the toolkit beside the
 copies under test. Isolating those copies needs object-file symbol rewriting,
 which has no equivalent for Windows' object format. Even with that rewriting,
 the test process would hold two copies of `base`'s global state. And
-consumers call the runner's D API, such as `skipTest` and `benchIter`, so the
+consumers call the runner's D API, such as `skipTest` and `benchCase`, so the
 interface the two copies share is far wider than one `extern(C)` entry point.
 
 The approach is the one cargo-nextest takes for Rust: keep the runner out of

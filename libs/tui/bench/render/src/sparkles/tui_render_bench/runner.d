@@ -1,5 +1,5 @@
 /++
-The `@benchmark` matrix: renderer × profile × terminal-size.
+The `@benchCases` matrix: renderer × profile × terminal-size.
 
 `name` is the renderer (the varying dimension compared per row); `profile` and
 `size` are labels (`--group-by=profile,size` gives one table per group). Each case
@@ -17,9 +17,11 @@ level); `--perf` adds instructions/frame + IPC. Subset with `$TUI_BENCH_POCS`,
 +/
 module sparkles.tui_render_bench.runner;
 
+import core.lifetime : move;
 import std.meta : AliasSeq;
 
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
+import sparkles.test_runner.skip : skipTest;
 import sparkles.test_runner.bench : benchCase, blackBox, Metric, Unit;
 
 import sparkles.tui_render_bench.cell : Grid;
@@ -55,7 +57,7 @@ private immutable SizeSpec[] sizes = [
 ];
 
 @("render")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -71,49 +73,48 @@ unittest
                             any = true;
                         }
     if (!any)
-        benchCase(name: "(filtered out)", timed: () {}, after: () {});
+        skipTest("TUI_BENCH_POCS/TUI_BENCH_PROFILES/TUI_BENCH_SIZES removed every case");
+}
+
+/// One scenario replay through renderer `R`.
+private struct RenderCase(R)
+{
+    Scenario scn;
+    Model m;
+    Grid target;
+    Sink sink;
+    R renderer;
+
+    void setup() { initModel(m, scn); }
+
+    void timed()
+    {
+        resetModelState(m, scn);
+        renderer.reset(scn.cols, scn.rows);
+        foreach (const ref fr; scn.frames)
+        {
+            foreach (const ref e; fr)
+                apply(m, e);
+            renderScene(m, target);
+            sink.reset();
+            renderer.renderFrame(target, sink);
+        }
+        blackBox(sink.length);
+    }
 }
 
 private void registerCase(R)(Profile p, in SizeSpec sz)
 {
-    // Per-case state on the heap so the deferred timed/setup closures share it.
-    static struct St
-    {
-        Scenario scn;
-        Model m;
-        Grid target;
-        Sink sink;
-        R renderer;
-    }
+    RenderCase!R c;
+    c.scn = generateScenario(p, sz.cols, sz.rows, benchFrames);
+    const K = c.scn.frameCount;
+    const bytesPerFrame = measureBytesPerFrame!R(c.scn);
 
-    auto st = new St;
-    st.scn = generateScenario(p, sz.cols, sz.rows, benchFrames);
-    const K = st.scn.frameCount;
-    const bytesPerFrame = measureBytesPerFrame!R(st.scn);
-
-    benchCase(
-        name: R.label,
-        timed: () {
-        resetModelState(st.m, st.scn);
-        st.renderer.reset(st.scn.cols, st.scn.rows);
-        foreach (const ref fr; st.scn.frames)
-        {
-            foreach (const ref e; fr)
-                apply(st.m, e);
-            renderScene(st.m, st.target);
-            st.sink.reset();
-            st.renderer.renderFrame(st.target, st.sink);
-        }
-        blackBox(st.sink.length);
-    },
-        after: () {},
+    benchCase(move(c), name: R.label, labels: ["profile": profileNames[p], "size": sz.label],
         metrics: [
-        Metric(Unit("frame"), cast(double) K, Metric.Mode.rate),
-        Metric(Unit("B"), cast(double) bytesPerFrame, Metric.Mode.level),
-    ],
-        labels: ["profile": profileNames[p], "size": sz.label],
-        setup: () { initModel(st.m, st.scn); },
-    );
+            Metric(Unit("frame"), cast(double) K, Metric.Mode.rate),
+            Metric(Unit("B"), cast(double) bytesPerFrame, Metric.Mode.level),
+        ]);
 }
 
 /// Replay once (untimed, registration-time) to get the deterministic byte output.

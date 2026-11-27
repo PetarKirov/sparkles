@@ -45,6 +45,9 @@ if (isHandle!H)
     /// The live handles, in index order. See `SlotTable.byLive`.
     auto byLive() const return => table_.byLive;
 
+    /// Scratch of at least `liveCount` indices. See `SlotTable.spareFreeListEntries`.
+    package uint[] spareFreeListEntries() return => table_.spareFreeListEntries;
+
     /**
     Issues a handle whose record is `Record.init`, for a caller that must know
     the identity before the record can be built. Finish with `commit`, or undo

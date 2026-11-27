@@ -271,7 +271,9 @@ Two rules follow, and they generalize past this table:
 > the leg silently measures nothing. Plain scalars survive (freed stack memory
 > keeps its bytes), which is what makes it look like a data bug rather than a
 > lifetime one. Every fixture here is a `class` so the GC keeps it alive, and the
-> legs assert their row counts.
+> legs assert their row counts. The trap has since gone by construction: a
+> benchmark registers case structs the runner owns (test-runner SPEC
+> TRB1–TRB6), and the closure form is removed.
 
 ## Analysis against the spine
 

@@ -5,7 +5,7 @@ import std.conv : to;
 import std.process : environment;
 import std.algorithm.iteration : splitter;
 import std.algorithm.searching : canFind, startsWith;
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 import sparkles.test_runner.bench : benchCase, blackBox, Metric, Unit;
 import sparkles.utf_bench.corpus : Corpus, corpora, DisplayCorpus, displayCorpora;
 import sparkles.utf_bench.engines;
@@ -28,9 +28,9 @@ private bool selected(string name)
 
 private enum Operation { offset, boolean, to16, to8 }
 
-// All retained callbacks bind a heap object's methods: no deferred stack delegates,
-// loop-variable capture, or DIP1000 closure-lifetime dependence.
-private final class UtfRow(E, Operation op)
+// One row: the corpus, preallocated output buffers and expected results, held by
+// value. `registerCase` hands a copy to the runner; `sweep` checks it in place.
+private struct UtfRow(E, Operation op)
 {
     Corpus corpus;
     wchar[] output16;
@@ -158,7 +158,7 @@ private final class UtfRow(E, Operation op)
     void registerCase()
     {
         const bytes = op == Operation.to8 ? corpus.wide.length * 2 : corpus.text.length;
-        benchCase(name: E.name, timed: &timed, after: &after,
+        benchCase(this, name: E.name,
             metrics: [Metric(unit: Unit("B"), amount: double(bytes * batch), mode: Metric.Mode.rate)],
             labels: ["corpus": corpus.name, "operation": op.to!string,
                 "contract": op == Operation.offset ? "first-invalid-sequence-byte" :
@@ -190,20 +190,20 @@ private void matrix(Operation op)(bool measure)
             static foreach (E; AliasSeq!(Scalar, Sparkles))
                 if (enabled("UTF_BENCH_ENGINES", E.name))
                 {
-                    auto row = new UtfRow!(E, op)(c);
+                    auto row = UtfRow!(E, op)(c);
                     if (measure) row.registerCase(); else row.sweep();
                 }
             version (UtfBenchSimdutf)
                 if (enabled("UTF_BENCH_ENGINES", Simdutf.name))
                 {
-                    auto row = new UtfRow!(Simdutf, op)(c);
+                    auto row = UtfRow!(Simdutf, op)(c);
                     if (measure) row.registerCase(); else row.sweep();
                 }
             version (UtfBenchRust)
                 static if (op == Operation.offset || op == Operation.boolean)
                     if (enabled("UTF_BENCH_ENGINES", Simdutf8.name))
                     {
-                        auto row = new UtfRow!(Simdutf8, op)(c);
+                        auto row = UtfRow!(Simdutf8, op)(c);
                         if (measure) row.registerCase(); else row.sweep();
                     }
         }
@@ -211,10 +211,10 @@ private void matrix(Operation op)(bool measure)
 
 import std.meta : AliasSeq;
 
-@("utf.offset") @benchmark @system unittest { matrix!(Operation.offset)(true); }
-@("utf.boolean") @benchmark @system unittest { matrix!(Operation.boolean)(true); }
-@("utf.to16") @benchmark @system unittest { matrix!(Operation.to16)(true); }
-@("utf.to8") @benchmark @system unittest { matrix!(Operation.to8)(true); }
+@("utf.offset") @benchCases @system unittest { matrix!(Operation.offset)(true); }
+@("utf.boolean") @benchCases @system unittest { matrix!(Operation.boolean)(true); }
+@("utf.to16") @benchCases @system unittest { matrix!(Operation.to16)(true); }
+@("utf.to8") @benchCases @system unittest { matrix!(Operation.to8)(true); }
 
 // Explicit non-benchmark correctness command: never times and never produces a
 // misleading benchmark baseline. Includes error and output-guard verification.
@@ -227,7 +227,7 @@ import std.meta : AliasSeq;
     displayMatrix(false);
 }
 
-private final class DisplayRow(bool rust, bool segmentation)
+private struct DisplayRow(bool rust, bool segmentation)
 {
     DisplayCorpus corpus;
     size_t[] boundaries;
@@ -290,7 +290,7 @@ private final class DisplayRow(bool rust, bool segmentation)
 
     void registerCase()
     {
-        benchCase(name: rust ? "xutf" : "sparkles", timed: &timed, after: &after,
+        benchCase(this, name: rust ? "xutf" : "sparkles",
             metrics: [Metric(unit: Unit("B"), amount: double(corpus.text.length * batch), mode: Metric.Mode.rate)],
             labels: ["corpus": corpus.name, "operation": segmentation ? "cluster-boundaries" : "visible-width",
                 "contract": "matched-printable-fixtures-no-ANSI",
@@ -315,16 +315,16 @@ private void displayMatrix(bool measure)
             {
                 if (enabled("UTF_BENCH_ENGINES", "sparkles"))
                 {
-                    auto row = new DisplayRow!(false, segmentation)(c);
+                    auto row = DisplayRow!(false, segmentation)(c);
                     if (measure) row.registerCase(); else row.sweep();
                 }
                 version (UtfBenchRust)
                     if (enabled("UTF_BENCH_ENGINES", "xutf"))
                     {
-                        auto row = new DisplayRow!(true, segmentation)(c);
+                        auto row = DisplayRow!(true, segmentation)(c);
                         if (measure) row.registerCase(); else row.sweep();
                     }
             }
 }
 
-@("utf.display") @benchmark @system unittest { displayMatrix(true); }
+@("utf.display") @benchCases @system unittest { displayMatrix(true); }

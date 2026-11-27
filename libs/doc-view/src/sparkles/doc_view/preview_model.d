@@ -13,7 +13,7 @@ import sparkles.syntax : MdDecoration, MdDoc, MdBlock, MdBlockKind, HighlightEve
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.source_view.markdown : MdTableExtras;
 import sparkles.base.term_color : mix;
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 
 // ── Presentation model ───────────────────────────────────────────────────────
 
@@ -199,26 +199,21 @@ version (unittest)
     private enum RgbColor tPageFg = RgbColor(0xcd, 0xd6, 0xf4);
     private enum RgbColor tPageBg = RgbColor(0x1e, 0x1e, 0x2e);
 
-    // Register one relayout case. The state lives in a heap struct captured by
-    // pointer, so the deferred `benchCase` closure shares stable storage (a
-    // body-local / `foreach` variable is one shared slot under deferred
-    // execution; capturing the large model/theme aggregates by value segfaults).
-    // Heap state whose measured `run` is bound as a method delegate — its context
-    // pointer IS the GC-owned `St`, so (unlike a stack-captured closure literal,
-    // which `benchCase`'s deferred execution turns into a dangling stack read) it
-    // stays valid until the case is measured.
     // Times the widget-path resize rebuild — view → layout → display list at
     // one width, exactly what the interactive backends re-run per settled
     // resize (`rebuildMd`).
-    private static struct RebuildState
+    private static struct RebuildCase
     {
         import sparkles.syntax.md.model : MdDoc;
         import sparkles.source_view.markdown : MdViewOptions;
 
         MdDoc doc;
-        MdViewOptions opt;
+        // By pointer: the options carry a delegate field (`fenceRenderer`, unset
+        // here), which a case may not hold. `viewMarkdown` copies them per call.
+        MdViewOptions* opt;
         int w;
-        size_t run()
+
+        size_t timed()
         {
             import sparkles.source_view.markdown : viewMarkdown;
             import sparkles.test_runner.bench : blackBox;
@@ -227,23 +222,11 @@ version (unittest)
             import sparkles.ui.layout : layout;
             import sparkles.ui.style : defaultTwoslashPalette;
 
-            auto tree = viewMarkdown(doc, opt);
+            auto tree = viewMarkdown(doc, *opt);
             auto frames = layout(tree, Constraints(maxW: w));
             return blackBox(buildDisplayList(tree, frames,
                 defaultTwoslashPalette(), tPageFg, tPageBg).length);
         }
-    }
-
-    private void registerRebuildCase(PreviewModel m, ResolvedTheme theme, int w)
-    {
-        import sparkles.source_view.markdown : MdViewOptions, MdViewTheme;
-        import sparkles.test_runner.bench : benchCase;
-        import std.conv : text;
-
-        MdViewOptions opt = {theme: MdViewTheme.derive(theme, tPageFg, tPageBg)};
-        auto st = new RebuildState(m.doc, opt, w);
-        benchCase(name: text("w=", st.w), labels: ["op": "rebuild"],
-            timed: &st.run, after: (ref size_t _) {});
     }
 }
 
@@ -253,14 +236,17 @@ version (unittest)
 // (`HUE_BENCH_FILE`, else the committed `docs/specs/base/text/index.md`). The
 // tree-sitter model build is setup (not measured).
 @("gui_preview.layout.resizeSweep")
-@benchmark
+@benchCases
 @system
 unittest
 {
     import std.process : environment;
+    import std.conv : text;
     import std.file : exists, readText;
     import sparkles.test_runner.skip : skipTest;
     import sparkles.syntax : GrammarRegistry, TsConfigCache, LabelSet;
+    import sparkles.source_view.markdown : MdViewOptions, MdViewTheme;
+    import sparkles.test_runner.bench : benchCase;
 
     if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
         skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
@@ -277,8 +263,10 @@ unittest
 
     // A resize drag walks the column count; each settled stop rebuilds the
     // widget pipeline at the new width.
+    auto opt = new MdViewOptions;
+    opt.theme = MdViewTheme.derive(theme, tPageFg, tPageBg);
     foreach (w; [40, 60, 80, 100, 120, 160])
-        registerRebuildCase(model, theme, w);
+        benchCase(RebuildCase(model.doc, opt, w), name: text("w=", w), labels: ["op": "rebuild"]);
 }
 
 @("gui_preview.build.fencesAndBands")

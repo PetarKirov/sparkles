@@ -471,12 +471,14 @@ Two cautions for whoever picks this up:
   the corrections in `benchmarks.md` §1). They are believed right but were
   measured on a machine also running builds; one clean confirmation run on an
   idle host before treating them as final is warranted.
-- The suite's own `benchIter`/`benchCase` closures must build everything they
-  need **inside** the closure — the runner defers them past the test body.
+- The suite's own benchmarks once had to build everything they need inside
+  the deferred closure, because the runner runs a case past the test body.
   Getting this wrong cost a deadlock, a segfault, and one silently-wrong
-  published number here. The API fix is decided and specified in
-  [test-runner O14](../test-runner/open-issues.md) but **not implemented**; until
-  it is, this is a live footgun for anyone adding a benchmark.
+  published number here. Resolved by
+  test-runner SPEC §3 ([TRB1–TRB4](../test-runner/SPEC.md)):
+  a `benchCase` case is now a struct the runner owns, with its own
+  `setup`/`teardown`, and a batched row is such a case too (TRB6), so no
+  benchmark closure runs deferred any more.
 
 **Options:** (A) retire `loop-bench.d` + `bench/perf/` after a confirmation run
 (the intent); (B) keep `loop-bench.d` indefinitely as an independent

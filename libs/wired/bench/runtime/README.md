@@ -2,7 +2,7 @@
 
 Step 1 of replacing `std.json` inside `sparkles:wired` with a
 state-of-the-art JSON parser: measure the field. The benchmark is a set of
-`@benchmark` unittests driven by `sparkles:test-runner`'s `benchCase` —
+`@benchCases` unittests driven by `sparkles:test-runner`'s `benchCase` —
 engines × datasets × ops, one row per case.
 
 | Ecosystem | Engines                                                | Integration      |
@@ -71,7 +71,7 @@ dub test -b bench-unchecked -- --bench --perf --bench-min-time=2000 \
     --bench-json=results/$(date -I)-<host>-$WIRED_BENCH_ISA.json
 ```
 
-Each op is its own `@benchmark` test (`wired.parse`, `wired.parse-stream`,
+Each op is its own `@benchCases` test (`wired.parse`, `wired.parse-stream`,
 `wired.validate`, `wired.serialize`, `wired.decode`), so the runner's
 `-i`/`-e` select ops. Engines and datasets subset via `--datasets` (or
 `$WIRED_BENCH_ENGINES` / `$WIRED_BENCH_DATASETS` comma lists). An empty engine
@@ -280,7 +280,7 @@ the row instead of producing a throughput number.
 ## SDL rows
 
 The SDL backend's benchmark ([performance SDP1](../../../../docs/specs/wired/sdl/performance.md#1-measurement))
-lives in `src/sparkles/wired_bench/sdl.d`: six `@benchmark` tests,
+lives in `src/sparkles/wired_bench/sdl.d`: six `@benchCases` tests,
 `sdl.parse`, `sdl.decode`, `sdl.encode`, `sdl.edit`, `sdl.commit` and `sdl.commit-unchanged`, written against the public
 `sparkles.wired.sdl` API only, so they compile unchanged across changes to
 the backend's internal representation.

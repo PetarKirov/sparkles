@@ -48,19 +48,36 @@ The test is WebAssembly-compatible.
 
 ## `@benchmark` / `@benchmark(iterations: N)`
 
-The test is a benchmark.
+The test is a benchmark whose **body is the measured unit**.
 
 - Skipped by normal runs (counted in the summary); measured by `--bench`.
-- `iterations` pins the count; `0` (default) auto-scales. Batched timing
-  (`benchIter`/whole-body) pins the per-sample iteration count; a per-call
-  `benchCase` runs exactly N timed calls, one sample each.
-- The whole body is the measured unit by default. From
-  `sparkles.test_runner.bench`: `benchIter` measures a sub-section, `benchCase`
-  emits many rows from one test (a matrix, with `Metric` throughput columns),
-  and `blackBox` is the optimizer barrier.
+- `iterations` pins the per-sample iteration count; `0` (default)
+  auto-scales.
+- The whole body is measured. To keep setup out of the timing, register the
+  measured part as a `benchCase` from a `@benchCases` test instead (a
+  `BenchTiming.batched` case is timed the way a whole body is). `blackBox` is
+  the optimizer barrier.
+- Calling `benchCase` from a `@benchmark` body fails the test's
+  registration: a matrix is `@benchCases`.
 - `--perf` adds hardware-counter columns to the `--bench` table: Linux
   `perf_event` (IPC, instructions/iter, cache/branch miss rates) or macOS
   `proc_pid_rusage` fixed counters (IPC + instructions/iter, process-wide).
+
+## `@benchCases` / `@benchCases(iterations: N)`
+
+The test **registers its rows** with `benchCase` — a matrix, or one case that
+keeps setup out of the timing (case structs the runner owns, with `Metric`
+throughput columns) — and its body is never measured itself.
+
+- Skipped by normal runs; measured by `--bench`, case by case. `--list` shows
+  it with the `@benchmark` marker, which is the runner's word for "measured by
+  `--bench`".
+- `iterations` runs exactly N timed calls per per-call case, one sample each,
+  and pins a `BenchTiming.batched` case's per-sample count; `0`
+  (default) samples until the time budget is met.
+- A body that registers no case fails with "`<test>` registered no cases",
+  unless it called `skipTest` (an environment filter left nothing to measure),
+  which leaves the test skipped with no rows.
 
 ## `@workload` / `@workload(reps: N)`
 
@@ -130,6 +147,7 @@ workers, then the `@serial` ones, one at a time.
 ## Combining
 
 Attributes compose freely — e.g. `@betterC @wasm` opts one test into both
-extra environments; `@("name")` string UDAs keep naming the test. The one
-exclusion: `@benchmark` and `@workload` are different measurement models for
+extra environments; `@("name")` string UDAs keep naming the test. The
+exclusions: `@benchmark` and `@benchCases` declare different roles for a body,
+and either with `@workload` names different measurement models for
 the same body, and combining them is a discovery-time error.

@@ -39,11 +39,12 @@ Summary: 12 passed, 0 failed, 1 skipped in 4.1ms
   skip there is a compile error, not a skip. The extracted
   `--better-c`/`--wasm` programs have no druntime classes; guard those bodies
   by other means.
-- **`@benchmark` bodies: prefer skipping at registration.** `skipTest` at the
-  top of the body marks the whole benchmark skipped (a `⊘` line, no rows).
-  Inside a deferred `benchIter`/`benchCase` closure it skips only that case —
-  a yellow row in its table — while the rest of the matrix measures and the
-  run stays green.
+- **`@benchmark`/`@benchCases` bodies: prefer skipping at registration.**
+  `skipTest` in the body marks the whole benchmark skipped (a `⊘` line, no
+  rows). That is also how a `@benchCases` body whose environment filters left
+  no case says so: registering none without skipping is an error. Inside a
+  `benchCase` case's members `skipTest` skips only that case — a yellow row in
+  its table — while the rest of the matrix measures and the run stays green.
 - The mode-level toolchain skips (`--better-c`/`--wasm`/`@ctfe` with no
   compiler) remain stderr notes with exit 0; `skipTest` is for per-test
   environment probes.

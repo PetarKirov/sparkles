@@ -111,8 +111,8 @@ The test filter intentionally excludes dependency-package tests.
 
 Buffers, fixtures, expected conversions, dispatch warmup, provenance strings,
 and row-owned state are allocated before timing. `blackBox` covers inputs and
-outputs. Retained runner callbacks are bound class methods, avoiding DIP1000
-stack-delegate lifetimes. `benchCase` verifies each timed invocation afterward.
+outputs. Each row is a case struct the runner owns, holding its state, and
+its `after` verifies each timed invocation.
 Inputs under 256 bytes use a labelled **64-operation batch** to amortize per-call
 clock overhead; large inputs use one operation. Time and counters per row are
 per **batch**, while the B/s metric includes all input bytes in the batch. Divide

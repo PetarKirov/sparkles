@@ -11,7 +11,7 @@ The price is that text is read only inside a borrow (`withText`). While any
 borrow is open the pool does not move bytes, so the slice a callback receives
 stays valid for exactly as long as the callback runs.
 
-See `docs/specs/base/pool.md` §5 (`POOL12`–`POOL18`).
+See `docs/specs/base/pool.md` §5 (`POOL12`–`POOL18`, `POOL22`).
 */
 module sparkles.base.pool.text_pool;
 
@@ -196,27 +196,29 @@ if (slots > 0 && bytes > 0 && bytes < uint.max && maxText > 0
     // Moves every live text to the front of the arena, in increasing offset
     // order so no move overwrites a text not yet moved (`POOL15`). Slot order
     // is not offset order once slots have been reused.
+    //
+    // The order is built in the id table's spare free-list entries, never
+    // fewer than the live texts, not on the stack: an array of `slots` indices
+    // is 512 KiB at 2^17 slots, past a test worker's whole stack (`POOL22`).
     private void compact() @safe pure nothrow @nogc
     in (borrows_ == 0, "TextPool: compacting under a borrow")
     {
-        uint[slots] order;
+        import std.algorithm.sorting : sort;
+
+        uint[] spare = entries_.spareFreeListEntries;
+        assert(spare.length >= entries_.liveCount,
+            "TextPool: fewer spare free-list entries than live texts");
         size_t count;
         foreach (id; entries_.byLive)
-        {
-            // Insertion sort by start offset: `slots` is a small constant.
-            size_t at = count++;
-            const start = entries_[id].span.startOffset;
-            while (at > 0
-                && entries_.at(order[at - 1]).span.startOffset > start)
-            {
-                order[at] = order[at - 1];
-                --at;
-            }
-            order[at] = id.index;
-        }
+            spare[count++] = id.index;
+        uint[] order = spare[0 .. count];
+        // Spans are disjoint, so only an empty text can share a start offset,
+        // and an empty text moves nothing: the order among equals is free.
+        order.sort!((a, b) => entries_.at(a).span.startOffset
+            < entries_.at(b).span.startOffset);
 
         uint cursor = 0;
-        foreach (index; order[0 .. count])
+        foreach (index; order)
         {
             auto entry = &entries_.at(index);
             const span = entry.span;
@@ -399,6 +401,72 @@ unittest
     assert(pool.holds(d, "DDDDDDDD"));
     assert(pool.holds(e, "EEEE"));
     assert(pool.usedBytes == 16 && pool.deadBytes == 0);
+}
+
+// Compaction at a capacity whose index array alone would not fit a test
+// worker's stack (2^17 × 4 B = 512 KiB against a 384 KiB budget), under both
+// reuse orders, after reuse has scrambled slot order against offset order.
+@("pool.text_pool.compactsAtLargeCapacityOffTheStack")
+@safe
+unittest
+{
+    enum slots = 1 << 17;
+    enum width = 6; // six digits label every count used below
+
+    static char[width] label(size_t n) @safe pure nothrow @nogc
+    {
+        char[width] digits;
+        foreach_reverse (ref c; digits)
+        {
+            c = cast(char)('0' + n % 10);
+            n /= 10;
+        }
+        return digits;
+    }
+
+    static void check(Reuse reuse)()
+    {
+        alias Big = TextPool!(TestTag, slots, slots * width, width, reuse);
+        auto pool = new Big; // the pool itself is megabytes: heap, not frame
+        auto ids = new Big.Id[](slots);
+        auto texts = new size_t[](slots); // the label slot `i` holds
+
+        foreach (i; 0 .. slots)
+        {
+            const l = label(i);
+            ids[i] = pool.intern(l[]).value;
+            texts[i] = i;
+        }
+        assert(pool.usedBytes == slots * width);
+
+        // Two rounds of: free every other text, then refill. The arena is
+        // full, so each round's first intern compacts; the second round's
+        // compaction sees reused slots whose offsets no longer follow their
+        // indices.
+        size_t next = slots;
+        foreach (round; 0 .. 2)
+        {
+            for (size_t i = round; i < slots; i += 2)
+                assert(pool.release(ids[i]).hasValue);
+            for (size_t i = round; i < slots; i += 2)
+            {
+                const l = label(next);
+                const id = pool.intern(l[]).value;
+                ids[id.index] = id;
+                texts[id.index] = next++;
+            }
+            assert(pool.deadBytes == 0 && pool.usedBytes == slots * width);
+        }
+
+        foreach (i; 0 .. slots)
+        {
+            const l = label(texts[i]);
+            assert(pool.holds(ids[i], l[]));
+        }
+    }
+
+    check!(Reuse.lifo)();
+    check!(Reuse.fifo)();
 }
 
 @("pool.text_pool.noCompactionWhileBorrowed")

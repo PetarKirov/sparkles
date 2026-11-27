@@ -8,8 +8,8 @@
  * them, and a skip there is a compile error) nor in the extracted
  * `--better-c`/`--wasm` programs (no druntime classes there). Inside a
  * `@benchmark` body, prefer skipping at registration time (the top of the
- * body) — a `skipTest` inside a deferred `benchIter`/`benchCase` closure
- * skips only that case's row.
+ * body) — a `skipTest` inside a `benchCase` case's members skips only that
+ * case's row.
  */
 module sparkles.test_runner.skip;
 

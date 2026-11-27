@@ -13,7 +13,7 @@ import sparkles.fuzzy.common : AnalysisProfile, AnalysisProfileKind, CandidateVi
 import sparkles.fuzzy.query : QueryCase, QueryParseOptions, QueryStorage,
     parseQuery, resolveQueryCase;
 
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 import std.traits : hasIndirections;
 
 /// Admission/ranking tier selected for one candidate.
@@ -1488,12 +1488,12 @@ unittest
 }
 
 @("fuzzy.match.bench.reusedWorkspace")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
-    import sparkles.test_runner.bench : benchIter, blackBox;
+    import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
 
-    class Context
+    static final class Context
     {
         bool upper;
         CandidateView candidate;
@@ -1506,15 +1506,27 @@ unittest
     context.candidate.filenameOffset = 33;
     auto warmup = match(query, context.candidate, context.workspace);
     assert(warmup.hasValue && warmup.value.kind == MatchKind.matched);
-    benchIter({
-        context.upper = !context.upper;
-        context.candidate.path = context.upper
-            ? "Libs/base/src/sparkles/base/text/unicode_tables.d"
-            : "libs/base/src/sparkles/base/text/unicode_tables.d";
-        auto result = match(blackBox(query), blackBox(context.candidate),
-            context.workspace);
-        assert(result.hasValue && result.value.kind == MatchKind.matched);
-        blackBox(result.value.score);
-    }, ["profile": "codePath", "tier": "score+positions",
+
+    static struct ReusedWorkspace
+    {
+        enum timing = BenchTiming.batched;
+        Context context;
+        QueryStorage!DefaultFuzzyCaps query;
+
+        void timed() @safe
+        {
+            context.upper = !context.upper;
+            context.candidate.path = context.upper
+                ? "Libs/base/src/sparkles/base/text/unicode_tables.d"
+                : "libs/base/src/sparkles/base/text/unicode_tables.d";
+            auto result = match(blackBox(query), blackBox(context.candidate),
+                context.workspace);
+            assert(result.hasValue && result.value.kind == MatchKind.matched);
+            blackBox(result.value.score);
+        }
+    }
+
+    benchCase(ReusedWorkspace(context, query),
+        labels: ["profile": "codePath", "tier": "score+positions",
         "construction": "excluded", "corpus": "single-path"]);
 }

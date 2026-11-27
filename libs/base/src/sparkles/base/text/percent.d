@@ -27,7 +27,7 @@ import sparkles.base.text.errors :
 
 // Unconditional import (phobos-style, cf. std.internal.attributes): unittest
 // UDAs are resolved even in builds where the unittest bodies are not compiled.
-import sparkles.test_runner.attributes : benchmark, betterC;
+import sparkles.test_runner.attributes : benchCases, betterC;
 
 /**
 Which bytes survive percent-encoding unescaped.
@@ -561,55 +561,55 @@ version (unittest)
 
 }
 
-/// Per-cell bench state on the GC heap, with member-delegate callbacks —
-/// `base` source-includes the runner impl, so a frame closure passed to
-/// `benchCase` would be stack-allocated under this package's dip1000 and
-/// dangle by the time the deferred measurement runs.
-private final class PercentBenchCase(PercentSet s)
+/// One cell's input: `size` pseudo-random bytes. "text" is mostly unreserved
+/// ASCII (a few escapes); "binary" is uniform bytes, so ~3/4 of it escapes.
+private ubyte[] percentBenchData(size_t size, bool mostlySafe) @safe pure nothrow
 {
-    ubyte[] data;
-    char[] encoded;
-    ubyte[] decoded;
-
-    this(size_t size, bool mostlySafe) @safe
+    auto data = new ubyte[](size);
+    uint x = 0x9E3779B9 ^ cast(uint) size;
+    foreach (ref b; data)
     {
-        data = new ubyte[](size);
-        uint x = 0x9E3779B9 ^ cast(uint) size;
-        foreach (ref b; data)
-        {
-            x = x * 1664525 + 1013904223;
-            // "text" is mostly unreserved ASCII (a few escapes); "binary"
-            // is uniform bytes, so ~3/4 of it escapes.
-            b = mostlySafe
-                ? cast(ubyte)('a' + (x >> 24) % 30) : cast(ubyte)(x >> 24);
-        }
-        encoded = new char[](percentEncodedLength!s(data));
-        decoded = new ubyte[](size);
-        auto w = PercentCharSink(encoded);
-        encodePercent!s(w, data); // seed `encoded` for the decode case
+        x = x * 1664525 + 1013904223;
+        b = mostlySafe
+            ? cast(ubyte)('a' + (x >> 24) % 30) : cast(ubyte)(x >> 24);
     }
+    return data;
+}
 
-    size_t timedEncode() @safe
+/// Encodes `data` into `encoded`, which is exactly its encoded length.
+private struct PercentEncodeCase(PercentSet s)
+{
+    const(ubyte)[] data;
+    char[] encoded;
+
+    size_t timed() @safe
     {
         auto w = PercentCharSink(encoded);
         encodePercent!s(w, data);
         return w.n;
     }
 
-    void afterEncode(ref size_t n) @safe
+    void after(ref size_t n) @safe
     {
         if (n != encoded.length)
             throw new Exception("encoded length mismatch");
     }
+}
 
-    size_t timedDecode() @safe
+/// Decodes `encoded` into `decoded`, which is exactly its decoded length.
+private struct PercentDecodeCase(PercentSet s)
+{
+    const(char)[] encoded;
+    ubyte[] decoded;
+
+    size_t timed() @safe
     {
         auto w = PercentByteSink(decoded);
         auto r = decodePercent!s(w, encoded);
         return r.hasError ? size_t.max : r.value;
     }
 
-    void afterDecode(ref size_t n) @safe
+    void after(ref size_t n) @safe
     {
         if (n != decoded.length)
             throw new Exception("decode mismatch");
@@ -621,25 +621,25 @@ private void registerPercentBench(PercentSet s)(
 {
     import sparkles.test_runner.bench : benchCase, Metric, Unit;
 
-    auto c = new PercentBenchCase!s(size, mostlySafe);
-    benchCase(
+    auto data = percentBenchData(size, mostlySafe);
+    auto encoded = new char[](percentEncodedLength!s(data));
+    auto w = PercentCharSink(encoded);
+    encodePercent!s(w, data); // the decode case's input
+
+    benchCase(PercentEncodeCase!s(data, new char[](encoded.length)),
         name: "scalar",
         labels: ["set": setName, "op": "encode", "data": dataName],
-        timed: &c.timedEncode,
-        after: &c.afterEncode,
         metrics: [Metric(Unit("B"), size, Metric.Mode.rate)]);
-    benchCase(
+    benchCase(PercentDecodeCase!s(encoded, new ubyte[](size)),
         name: "scalar",
         labels: ["set": setName, "op": "decode", "data": dataName],
-        timed: &c.timedDecode,
-        after: &c.afterDecode,
         metrics: [Metric(Unit("B"), size, Metric.Mode.rate)]);
 }
 
 /// Percent-encoding throughput depends heavily on how much of the input
 /// escapes, so the matrix varies the data profile as well as the set.
 @("text.percent.bench")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
     enum size = 1 << 16;

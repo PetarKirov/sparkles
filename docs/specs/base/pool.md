@@ -293,6 +293,17 @@ _Rationale:_ A queue that drains fully then never needs to compact.
 the text of `id` into `dst`, carrying its truncation flag, and return the new
 id or `dst`'s error.
 
+**POOL22: Compaction needs no stack in proportion to capacity.** Compaction
+**must** not take stack space in proportion to `slots`, and must allocate
+nothing: the order it moves texts in is built in storage the pool already
+owns (the id table's free-list entries not holding a freed slot, never fewer
+than the live texts) and sorted in O(live · log live).
+
+_Rationale:_ A pool sized for 2^17 texts needs 512 KiB to hold one index per
+slot. On the stack that is past a test worker's whole 512 KiB stack, so a
+pool that worked in a test of four slots crashed a benchmark of a hundred
+thousand.
+
 ## 6. Requirements and evidence
 
 | ID     | Requirement                   | Status                  | Traces to                                                                                                                                                  |
@@ -318,6 +329,7 @@ id or `dst`'s error.
 | POOL19 | growable slot-table contract  | full                    | `HeapSlotTable`, tests `pool.heap_slot_table.slotTableContract`, `pool.heap_slot_table.retireAndSkipZero`, `pool.heap_slot_table.emptyOwnsNothingAndGrows` |
 | POOL20 | growth preserves identity     | full                    | `HeapSlotTable.reserve`, test `pool.heap_slot_table.growthPreservesHandlesAndOrder`                                                                        |
 | POOL21 | reuse order with growth       | full                    | `HeapSlotTable.insert`, tests `pool.heap_slot_table.growthPreservesHandlesAndOrder`, `pool.heap_slot_table.fifoQueueCompacts`                              |
+| POOL22 | compaction off the stack      | full                    | `TextPool.compact`, `SlotTable.spareFreeListEntries`, test `pool.text_pool.compactsAtLargeCapacityOffTheStack`                                             |
 
 ## 7. Outside this contract
 

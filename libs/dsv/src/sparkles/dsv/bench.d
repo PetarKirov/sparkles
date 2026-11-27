@@ -7,7 +7,7 @@ module sparkles.dsv.bench;
 version (unittest)  :
 
 import sparkles.base.buffer : SharedBuffer;
-import sparkles.test_runner.attributes : benchmark, workload;
+import sparkles.test_runner.attributes : benchCases, workload;
 import sparkles.dsv.dialect : sniff, sniffMaxRecords;
 import sparkles.dsv.model : ColumnType, Dialect, DsvDoc, inferColumnTypes;
 import sparkles.dsv.parse : parseDsv;
@@ -35,29 +35,42 @@ private string makeCsv(size_t rows) @safe
 }
 
 @("dsv.bench.parse")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
-    import sparkles.test_runner.bench : benchIter, blackBox;
+    import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
 
-    const csv1k = makeCsv(1_000);
-    const csv10k = makeCsv(10_000);
-    benchIter({ blackBox(parseDsv(blackBox(csv1k), Dialect(',')).value.records.length); },
-        ["op": "parse", "rows": "1k"]);
-    benchIter({ blackBox(parseDsv(blackBox(csv10k), Dialect(',')).value.records.length); },
-        ["op": "parse", "rows": "10k"]);
+    static struct Parse
+    {
+        enum timing = BenchTiming.batched;
+        string csv;
+
+        void timed() @safe
+        {
+            blackBox(parseDsv(blackBox(csv), Dialect(',')).value.records.length);
+        }
+    }
+
+    benchCase(Parse(makeCsv(1_000)), labels: ["op": "parse", "rows": "1k"]);
+    benchCase(Parse(makeCsv(10_000)), labels: ["op": "parse", "rows": "10k"]);
 }
 
 @("dsv.bench.sniff")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
-    import sparkles.test_runner.bench : benchIter, blackBox;
+    import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
+
+    static struct Sniff
+    {
+        enum timing = BenchTiming.batched;
+        string sample;
+
+        void timed() @safe { blackBox(sniff(blackBox(sample))); }
+    }
 
     // The recommended sample shape: ~100 records (`sniffMaxRecords`).
-    const sample = makeCsv(100);
-    benchIter({ blackBox(sniff(blackBox(sample))); },
-        ["op": "sniff", "rows": "100"]);
+    benchCase(Sniff(makeCsv(100)), labels: ["op": "sniff", "rows": "100"]);
 }
 
 // ── `DSN6` scale: the 100 MB / 1M-row target ───────────────────────────────

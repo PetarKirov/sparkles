@@ -11,7 +11,7 @@ import sparkles.fuzzy.common : AnalysisProfile, AnalysisProfileKind,
 import sparkles.fuzzy.glob : GlobInstruction, GlobMatchState, GlobProgram,
     GlobProgramView, GlobRange, compileGlob, globMatch;
 
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 
 version (unittest) import sparkles.base.unique : makeUnique;
 
@@ -1562,25 +1562,34 @@ unittest
 }
 
 @("fuzzy.query.bench.parseAndAnalyze")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
-    import sparkles.test_runner.bench : benchIter, blackBox;
+    import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
 
-    class Context
+    static final class Context
     {
         bool alternate;
         FuzzyTextWorkspace!() workspace;
     }
-    auto context = new Context;
-    benchIter({
-        context.alternate = !context.alternate;
-        const source = context.alternate
-            ? `src controller ext:d !glob:**/generated/** git:m`
-            : `src controller ext:d !glob:**/vendor/** git:m`;
-        auto parsed = parseQuery(blackBox(source), context.workspace);
-        assert(parsed.hasValue);
-        blackBox(parsed.value.diagnostics.droppedParts);
-    }, ["profile": "codePath", "tier": "parse+analyze+glob-compile",
+    static struct ParseAndAnalyze
+    {
+        enum timing = BenchTiming.batched;
+        Context context;
+
+        void timed() @safe
+        {
+            context.alternate = !context.alternate;
+            const source = context.alternate
+                ? `src controller ext:d !glob:**/generated/** git:m`
+                : `src controller ext:d !glob:**/vendor/** git:m`;
+            auto parsed = parseQuery(blackBox(source), context.workspace);
+            assert(parsed.hasValue);
+            blackBox(parsed.value.diagnostics.droppedParts);
+        }
+    }
+
+    benchCase(ParseAndAnalyze(new Context),
+        labels: ["profile": "codePath", "tier": "parse+analyze+glob-compile",
         "construction": "included", "corpus": "interactive-query"]);
 }

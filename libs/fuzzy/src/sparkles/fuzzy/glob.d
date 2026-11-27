@@ -7,7 +7,7 @@ import sparkles.base.text.analysis : AnalysisCase, AnalysisError,
 import sparkles.fuzzy.common : DefaultFuzzyCaps, FuzzyError, FuzzyErrorCode,
     FuzzyExpected, PathFlavor, fuzzyErr, fuzzyOk;
 
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 version (unittest) import sparkles.base.unique : makeUnique;
 
 /// NFA instruction kind.
@@ -734,30 +734,40 @@ private bool slowSimpleGlob(scope const(char)[] pattern,
 }
 
 @("fuzzy.glob.bench.reusedProgram")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
-    import sparkles.test_runner.bench : benchIter, blackBox;
+    import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
 
     GlobProgram!(64, 16) program;
     auto compileOwner = makeUnique!(GlobCompileWorkspace!(64, 16))();
     assert(!compileGlob("**/{src,libs}/**/[a-z]*.{d,md}",
         PathFlavor.unix, false, program, compileOwner.get()).hasError);
-    class Context
+    static final class Context
     {
         bool alternate;
         GlobMatchWorkspace!(64, 128, 32) workspace;
     }
-    auto context = new Context;
-    benchIter({
-        context.alternate = !context.alternate;
-        const path = context.alternate
-            ? "workspace/libs/fuzzy/src/sparkles/fuzzy/match.d"
-            : "workspace/src/generated/parser/readme.md";
-        auto result = globMatch(program, blackBox(path), context.workspace);
-        assert(result.hasValue);
-        blackBox(result.value);
-    }, ["profile": "codePath", "tier": "glob-execute",
+    static struct ReusedProgram
+    {
+        enum timing = BenchTiming.batched;
+        GlobProgram!(64, 16) program;
+        Context context;
+
+        void timed() @safe
+        {
+            context.alternate = !context.alternate;
+            const path = context.alternate
+                ? "workspace/libs/fuzzy/src/sparkles/fuzzy/match.d"
+                : "workspace/src/generated/parser/readme.md";
+            auto result = globMatch(program, blackBox(path), context.workspace);
+            assert(result.hasValue);
+            blackBox(result.value);
+        }
+    }
+
+    benchCase(ReusedProgram(program, new Context),
+        labels: ["profile": "codePath", "tier": "glob-execute",
         "construction": "compiled-program-excluded",
         "corpus": "single-path"]);
 }

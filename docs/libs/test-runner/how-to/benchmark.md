@@ -1,7 +1,9 @@
 # Benchmark with `@benchmark`
 
 `@benchmark` tests are skipped by normal `dub test` runs and measured by
-`--bench`:
+`--bench`; the whole test body is what is measured. A test that registers its
+rows instead — to keep setup out of the timing, or to build a matrix — is
+[`@benchCases`](#many-rows-from-one-test-benchcases-and-benchcase):
 
 ```bash
 dub test :yourpkg -- --bench
@@ -55,8 +57,9 @@ count doubles until one sample takes at least 5 ms (so fast operations are
 timed over millions of iterations), then 32 samples are collected and
 summarized as median, median-absolute-deviation, min, and max
 nanoseconds-per-iteration. `@benchmark(iterations: 1000)` pins the count
-instead of auto-scaling — per sample for batched (`benchIter`/whole-body)
-timing; a per-call `benchCase` runs exactly N timed calls, one sample each.
+instead of auto-scaling — per sample for batched (whole-body or
+`BenchTiming.batched`) timing; under `@benchCases(iterations: N)` each
+per-call `benchCase` runs exactly N timed calls, one sample each.
 `--bench-min-time=MS` overrides the 5 ms budget: for per-call cases it is
 the minimum total measured time per case (samples keep accumulating past 32
 until it is met), for batched ones the per-sample auto-scale target.
@@ -86,55 +89,80 @@ configuration; select it with
 selections apply only to direct dependencies. The
 [UTF matrix](https://github.com/PetarKirov/sparkles/blob/878ee7e3ce1b8586d3dbf08d0132cfe568016ac6/libs/base/bench/utf/README.md) exercises this route.
 
-## Excluding setup: `benchIter`
+## Excluding setup: a batched case
 
-To time only part of the body, call `benchIter` — the runner invokes the
-test once, and `benchIter` runs the measurement loop over just the closure:
+To keep setup out of the timing, move the measured part into a case struct
+and register it from a `@benchCases` test. The body builds the case — setup,
+not measured — and the runner times the case's `timed()`:
 
 ```d
-import sparkles.test_runner.attributes : benchmark;
-import sparkles.test_runner.bench : benchIter, blackBox;
+import sparkles.test_runner.attributes : benchCases;
+import sparkles.test_runner.bench : BenchTiming, benchCase, blackBox;
+
+static struct SortCopy
+{
+    enum timing = BenchTiming.batched; // calls run back to back
+    int[] data;
+
+    void timed() @safe { blackBox(sortCopy(blackBox(data))); } // measured
+}
 
 @("sort.bench")
-@benchmark @safe
+@benchCases @safe
 unittest
 {
-    auto data = makeInput(10_000);              // setup — not measured
-    benchIter({ blackBox(sortCopy(blackBox(data))); }); // measured
+    benchCase(SortCopy(makeInput(10_000))); // setup — not measured
 }
 ```
 
-Outside `--bench` (e.g. when another runner executes the test), `benchIter`
-invokes the closure exactly once, so the test still works as a plain test.
+The case owns what it reads, so nothing it needs can be destroyed with the
+body that built it. Without a `name`, the row is named after the test, as a
+whole-body row is. `BenchTiming.batched` times the calls the way a whole body
+is timed — back to back, the count per sample auto-scaled — which a
+nanosecond-scale operation needs; without it each call is timed alone
+([below](#many-rows-from-one-test-benchcases-and-benchcase)). Outside
+`--bench` (e.g. when another runner executes the test) the case runs once, so
+the test still works as a plain test.
 
-## Many rows from one test: `benchCase`
+## Many rows from one test: `@benchCases` and `benchCase`
 
-`benchIter` measures one thing. To benchmark a **matrix** — several
-implementations across several inputs — call `benchCase` repeatedly; each call
-emits its own row, so ordinary D loops (and a `static foreach` over a
-compile-time list) build the table:
+One `benchCase` call is one row. To benchmark a **matrix** — several
+implementations across several inputs — mark the test **`@benchCases`** and
+call `benchCase` repeatedly; each call emits its own row, so ordinary D loops
+(and a `static foreach` over a compile-time list) build the table. The case is
+a struct: its fields are what the case needs, and its members are what the
+runner calls. A `@benchCases` body only registers: it is never measured
+itself. A body that registers no case fails with "`<test>` registered no
+cases" — when an environment filter can leave nothing to measure, say so with
+`skipTest`, which leaves the test skipped. Calling `benchCase` from a
+`@benchmark` body fails too.
 
 ```d
 import sparkles.test_runner.bench : benchCase, Metric, Unit;
 
-@("json.parse") @benchmark
+static struct Parse(Engine)
+{
+    Dataset ds;
+    Engine e;                                        // a class
+
+    void setup() { e = new Engine; }                 // untimed, once
+    auto timed() => e.parse(ds.text);                // measured; the result flows to `after`
+    void after(ref Doc doc)                          // untimed, after every call
+    {
+        enforce(doc.matches(reference), "mismatch");
+        e.free(doc);
+    }
+}
+
+@("json.parse") @benchCases
 unittest
 {
     static foreach (Engine; Engines)
         foreach (ds; datasets)
-            registerParse!Engine(ds);   // ds by value → each case captures its own copy
-}
-
-void registerParse(Engine)(Dataset ds)
-{
-    auto e = new Engine;   // heap: this case owns it, kept alive until it runs
-    benchCase(
-        name:    Engine.name,              // the varying dimension (the implementation)
-        labels:  ["dataset": ds.name, "operation": "parse"],  // group/filter dimensions
-        timed:   () => e.parse(ds.text),   // measured; its result flows to `after`
-        after:   (ref doc) { enforce(doc.matches(reference), "mismatch"); e.free(doc); },
-        metrics: [Metric(Unit("B"), ds.text.length, Metric.Mode.rate)],  // a B/s column
-    );
+            benchCase(Parse!Engine(ds),
+                name:    Engine.name,                // the varying dimension (the implementation)
+                labels:  ["dataset": ds.name, "operation": "parse"],  // group/filter dimensions
+                metrics: [Metric(Unit("B"), ds.text.length, Metric.Mode.rate)]);  // a B/s column
 }
 ```
 
@@ -153,28 +181,38 @@ in the table's top border:
 ```
 
 - Under `--bench`, `benchCase` **registers** the case; the runner measures it
-  later (grouped, so each table streams as its group finishes). The closures run
-  after the body returns, so register each case from a helper taking its varying
-  state **by value** (a `foreach` variable is one shared slot under deferred
-  execution), give it its own state, and put untimed per-case setup/release in the
-  optional **`setup`/`teardown`** (which bracket the case's measurement) — not
-  around the call. Outside `--bench` the case runs once immediately.
-- **`timed`** returns a result that flows to **`after`**, which runs _untimed_
-  after each iteration to verify and release it. `after` may **throw** — under
-  `--bench` the case becomes an in-table error row with its trace printed, the
-  matrix continues, and the run reports failure — or return an
+  later (grouped, so each table streams as its group finishes). It **moves the
+  case into memory it owns**, so a case built from a loop value keeps that
+  value, and nothing around the call needs to outlive the body. In that memory
+  it calls the optional **`setup()`** once, **`timed()`** and the optional
+  **`after`** once per measured call, the optional **`teardown()`** once, and
+  then destroys the case: its destructor runs once, after `teardown`, even when
+  a member throws. A case a filter keeps from being measured is destroyed when
+  the worker shuts down. Outside `--bench` the same sequence runs once,
+  immediately.
+- A case must be a `static struct` (a nested one could reach the registering
+  frame, which is gone when the case runs) and hold no delegate; either is a
+  compile error. Classes, pointers, slices and move-only fields are fine.
+- **`timed`** may return a result, which flows to **`after(ref result)`**; an
+  `after()` without a parameter is fine too. `after` verifies and releases,
+  _untimed_. It reports a failure by **throwing** — under `--bench` the case
+  becomes an in-table error row with its trace printed, the matrix continues,
+  and the run reports failure — or by returning an
   [`Expected`](../../../guidelines/idioms/expected/index.md) error (the same
-  isolated error row, without a trace). A case with nothing to release/verify
-  passes a no-op `after` (`() {}` for a `void` body). Error rows sort last in
-  their table under every `--sort-by` order.
+  isolated error row, without a trace). A throw from `setup`, `timed` or
+  `teardown` makes the same error row. Outside `--bench` both kinds of failure
+  throw from `benchCase`. A case with nothing to verify omits `after`. Error
+  rows sort last in their table under every `--sort-by` order.
 - **`metrics`** add throughput columns: `Metric(unit, amount, mode)` with `mode`
   `rate` (`amount ÷ iteration-time` → `<unit>/s`) or `level` (as-is). Units are
   open-basis names (`"B"`, `"req"`, `"tweet"`, …), vocabulary aligned to the
   forthcoming `sparkles:quantities` library.
 
-`benchCase` times each call individually so the result can be released between
-iterations — suited to µs-and-up work; keep `benchIter` for the finest
-micro-benchmarks.
+By default `benchCase` times each call individually, so the result can be
+released between iterations — suited to µs-and-up work. A case that declares
+`enum timing = BenchTiming.batched;` is timed in back-to-back batches instead,
+as a whole body is — the choice for nanosecond-scale work. A batched case has
+no `after` (nothing runs between its calls; a compile error otherwise).
 
 ## Defeating the optimizer: `blackBox`
 

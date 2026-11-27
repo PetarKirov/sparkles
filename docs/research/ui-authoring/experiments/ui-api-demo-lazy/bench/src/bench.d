@@ -7,7 +7,7 @@ module bench;
 
 import std.format : format;
 
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 import sparkles.test_runner.bench : benchCase, blackBox, Metric, Unit;
 
 import model;
@@ -36,87 +36,111 @@ private struct Built { ulong hash; size_t count; }
 /// Builds `input` once on builder `b` into a heap-owned `Ui`, checksums it.
 private Built buildOnce(Builder b)(Input input)
 {
-    auto t = makeTimed!b(input);
-    t.timed();
-    auto r = t.check();
-    t.reset();
+    auto c = BuildCase!b(input);
+    c.timed();
+    auto r = c.check();
+    c.ui.reset();
     return r;
 }
 
-/// The per-case closures for builder `b`: the `Ui` is heap-owned (its text
-/// pool and argument arena are ~20 MiB; test workers have 512 KiB stacks).
-private auto makeTimed(Builder b)(Input input)
+/// One build case on builder `b`, also the reference build. The `Ui` is
+/// heap-owned (its text pool and argument arena are ~20 MiB; test workers
+/// have 512 KiB stacks).
+private struct BuildCase(Builder b)
 {
-    static struct Case
-    {
-        size_t delegate() timed;
-        Built delegate() check;
-        void delegate() reset;
-    }
-    const stats = Stats(true, 300);
-    const env = Env!b(comfortable: true);
     static if (b == Builder.insideOut)
     {
-        auto ui = new insideout.Ui;
-        insideout.Node root;
-        return Case(
-            timed: () {
-                root = input.shape == "stats"
-                    ? views_insideout.statsPane(*ui, blackBox(stats), blackBox(input.ids))
-                    : views_insideout.panel(*ui, blackBox(cast(uint) input.size));
-                return blackBox(root.index);
-            },
-            check: () { Built r; ui.checksum(root, r.hash, r.count); return r; },
-            reset: () { ui.reset(); });
+        alias UiT = insideout.Ui;
+        alias NodeT = insideout.Node;
     }
     else static if (b == Builder.lazyVariadic)
     {
-        auto ui = new ui_sketch.Ui;
-        ui.expectMsg!StatsMsg;
-        ui_sketch.Node root;
-        return Case(
-            timed: () {
-                root = input.shape == "stats"
-                    ? ui.frame(env, views_lazy.statsPane(*ui, blackBox(stats), blackBox(input.ids)))
-                    : ui.frame(env, views_lazy.panel(*ui, blackBox(cast(uint) input.size)));
-                return blackBox(root.index);
-            },
-            check: () { Built r; ui.checksum(root, r.hash, r.count); return r; },
-            reset: () { ui.reset(); });
+        alias UiT = ui_sketch.Ui;
+        alias NodeT = ui_sketch.Node;
     }
     else static if (b == Builder.lazyStack || b == Builder.lazySplit || b == Builder.lazySoa)
     {
-        alias M = StackModule!b;
-        alias V = StackViews!b;
-        auto ui = new M.Ui;
-        ui.expectMsg!StatsMsg;
-        M.Node root;
-        return Case(
-            timed: () {
-                root = input.shape == "stats"
-                    ? ui.frame(env, V.statsPane(*ui, blackBox(stats), blackBox(input.ids)))
-                    : ui.frame(env, V.panel(*ui, blackBox(cast(uint) input.size)));
-                return blackBox(root.index);
-            },
-            check: () { Built r; ui.checksum(root, r.hash, r.count); return r; },
-            reset: () { ui.reset(); });
+        alias UiT = StackModule!b.Ui;
+        alias NodeT = StackModule!b.Node;
     }
     else
+        alias UiT = scoped.Ui!StatsMsg;
+
+    Input input;
+    Built expected; // what `after` checks against (unused by `buildOnce`)
+    UiT* ui;
+    Stats stats;
+    typeof(Env!b(comfortable: true)) env;
+    static if (b != Builder.scopedWith)
+        NodeT root;
+
+    this(Input input, Built expected = Built.init)
     {
-        auto ui = new scoped.Ui!StatsMsg;
-        return Case(
-            timed: () {
-                with (ui.frame(env))
-                {
-                    if (input.shape == "stats")
-                        views_scoped.statsPane(*ui, blackBox(stats), blackBox(input.ids));
-                    else
-                        views_scoped.panel(*ui, blackBox(cast(uint) input.size));
-                }
-                return blackBox(cast(size_t) ui.viewRoot);
-            },
-            check: () { Built r; ui.checksum(ui.viewRoot, r.hash, r.count); return r; },
-            reset: () { ui.reset(); });
+        this.input = input;
+        this.expected = expected;
+        stats = Stats(true, 300);
+        env = Env!b(comfortable: true);
+        ui = new UiT;
+        static if (b != Builder.insideOut && b != Builder.scopedWith)
+            ui.expectMsg!StatsMsg;
+    }
+
+    size_t timed()
+    {
+        static if (b == Builder.insideOut)
+        {
+            root = input.shape == "stats"
+                ? views_insideout.statsPane(*ui, blackBox(stats), blackBox(input.ids))
+                : views_insideout.panel(*ui, blackBox(cast(uint) input.size));
+            return blackBox(root.index);
+        }
+        else static if (b == Builder.lazyVariadic)
+        {
+            root = input.shape == "stats"
+                ? ui.frame(env, views_lazy.statsPane(*ui, blackBox(stats), blackBox(input.ids)))
+                : ui.frame(env, views_lazy.panel(*ui, blackBox(cast(uint) input.size)));
+            return blackBox(root.index);
+        }
+        else static if (b == Builder.scopedWith)
+        {
+            with (ui.frame(env))
+            {
+                if (input.shape == "stats")
+                    views_scoped.statsPane(*ui, blackBox(stats), blackBox(input.ids));
+                else
+                    views_scoped.panel(*ui, blackBox(cast(uint) input.size));
+            }
+            return blackBox(cast(size_t) ui.viewRoot);
+        }
+        else
+        {
+            alias V = StackViews!b;
+            root = input.shape == "stats"
+                ? ui.frame(env, V.statsPane(*ui, blackBox(stats), blackBox(input.ids)))
+                : ui.frame(env, V.panel(*ui, blackBox(cast(uint) input.size)));
+            return blackBox(root.index);
+        }
+    }
+
+    Built check()
+    {
+        Built r;
+        static if (b == Builder.scopedWith)
+            ui.checksum(ui.viewRoot, r.hash, r.count);
+        else
+            ui.checksum(root, r.hash, r.count);
+        return r;
+    }
+
+    /// Untimed after every build: the tree must be the reference's, and the
+    /// `Ui` is reset for the next one.
+    void after(ref size_t)
+    {
+        const got = check();
+        if (got.hash != expected.hash || got.count != expected.count)
+            throw new Exception(format("tree mismatch: %s nodes #%016x, expected %s #%016x",
+                got.count, got.hash, expected.count, expected.hash));
+        ui.reset();
     }
 }
 
@@ -171,6 +195,27 @@ private ulong placeOnce(Builder b)(Input input)
     return ui.positionsHash();
 }
 
+/// The positions pass on a tree built at registration (untimed): `place` is
+/// timed, and `after` checks the positions against the reference.
+private struct PlaceCase(Builder b)
+{
+    StackModule!b.Ui* ui;
+    ulong expected;
+
+    size_t timed()
+    {
+        ui.place();
+        return blackBox(cast(size_t) 0);
+    }
+
+    void after(ref size_t)
+    {
+        const got = ui.positionsHash();
+        if (got != expected)
+            throw new Exception(format("positions mismatch: #%016x, expected #%016x", got, expected));
+    }
+}
+
 private void registerPlace(Builder b)(Input input, size_t nodes, ulong expected)
 {
     alias M = StackModule!b;
@@ -181,21 +226,11 @@ private void registerPlace(Builder b)(Input input, size_t nodes, ulong expected)
     cast(void) (input.shape == "stats"
         ? ui.frame(env, StackViews!b.statsPane(*ui, stats, input.ids))
         : ui.frame(env, StackViews!b.panel(*ui, cast(uint) input.size)));
-    auto timed = () { ui.place(); return blackBox(cast(size_t) 0); };
-    auto after = (ref size_t _) {
-        const got = ui.positionsHash();
-        if (got != expected)
-            throw new Exception(format("positions mismatch: #%016x, expected #%016x", got, expected));
-    };
-    keepAlive ~= [cast(const(void)*) ui, timed.ptr, after.ptr];
-    benchCase(
+    benchCase(PlaceCase!b(ui, expected),
         name: builderName(b),
         labels: ["shape": input.shape, "size": format("%s=%s", input.shape == "stats" ? "rows" : "depth", input.size),
             "nodes": format("%s", nodes), "pass": "place"],
-        timed: timed,
-        after: after,
-        metrics: [Metric(Unit("node"), nodes, Metric.Mode.rate)],
-    );
+        metrics: [Metric(Unit("node"), nodes, Metric.Mode.rate)]);
 }
 
 /// Each builder's own `Env`, comfortable and wide.
@@ -212,34 +247,16 @@ private auto Env(Builder b)(bool comfortable)
         return scoped.Env(scoped.Layout.wide, scoped.Density.comfortable);
 }
 
-/// Roots for the cases' closures. The runner keeps registered cases where the
-/// GC does not scan them, and this suite allocates enough (hundreds of MiB) for
-/// a collection to run between registration and measurement: without these
-/// roots the closures are freed and the measurement crashes (SIGSEGV).
-private __gshared const(void)*[] keepAlive;
-
 private void register(Builder b)(Input input, Built expected)
 {
-    auto t = makeTimed!b(input);
-    auto after = (ref size_t _) {
-        const got = t.check();
-        if (got.hash != expected.hash || got.count != expected.count)
-            throw new Exception(format("tree mismatch: %s nodes #%016x, expected %s #%016x",
-                got.count, got.hash, expected.count, expected.hash));
-        t.reset();
-    };
-    keepAlive ~= [t.timed.ptr, t.check.ptr, t.reset.ptr, after.ptr];
-    benchCase(
+    benchCase(BuildCase!b(input, expected),
         name: builderName(b),
         labels: ["shape": input.shape, "size": format("%s=%s", input.shape == "stats" ? "rows" : "depth", input.size),
             "nodes": format("%s", expected.count), "pass": "build"],
-        timed: t.timed,
-        after: after,
-        metrics: [Metric(Unit("node"), expected.count, Metric.Mode.rate)],
-    );
+        metrics: [Metric(Unit("node"), expected.count, Metric.Mode.rate)]);
 }
 
-@("ui.build") @benchmark @system
+@("ui.build") @benchCases @system
 unittest
 {
     Input[] inputs;

@@ -14,6 +14,8 @@ See `docs/specs/base/pool.md` §3 (`POOL1`–`POOL7`).
 */
 module sparkles.base.pool.slot_table;
 
+import std.algorithm.mutation : bringToFront;
+
 public import sparkles.base.pool.handle : Handle, PoolError, PoolResult,
     Reuse, Wrap, isHandle, poolErr, poolOk;
 
@@ -193,6 +195,26 @@ if (isHandle!H && capacity > 0 && capacity < uint.max && generationLimit > 0)
             freedHead_ = cast(uint)((freedHead_ + 1) % capacity);
             return index;
         }
+    }
+
+    /*
+    The entries of the free list that hold no freed slot, for a caller in this
+    package that needs one `uint` per live slot without a stack array the size
+    of the capacity (`TextPool.compact`). A slot is live, freed, retired or
+    never issued, and only freed ones occupy the list, so the span is at least
+    `liveCount` long. Writing it disturbs nothing; the next `remove` overwrites
+    whatever is left. A fifo ring is rotated to start at 0 first, so its spare
+    entries are contiguous: O(capacity), once per call.
+    */
+    package uint[] spareFreeListEntries() return @safe pure nothrow @nogc
+    {
+        static if (reuse == Reuse.fifo)
+            if (freedHead_ != 0)
+            {
+                bringToFront(freed_[0 .. freedHead_], freed_[freedHead_ .. $]);
+                freedHead_ = 0;
+            }
+        return freed_[freedCount_ .. $];
     }
 
     private void pushFreed(uint index) @safe pure nothrow @nogc

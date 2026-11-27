@@ -43,7 +43,7 @@ Deliverable 2 exists to resolve.
 
 A cross-language render-cost benchmark that decides the rendering core (spec §3.1)
 by measurement. It mirrors the established `libs/wired/bench/runtime/` pattern:
-`@benchmark` unittests driven by `sparkles:test-runner`'s `benchCase`, run via
+`@benchCases` unittests driven by `sparkles:test-runner`'s `benchCase`, run via
 `dub test -b bench -- --bench --perf --group-by=…`; JSON snapshots under
 `results/<date>-<host>-<isa>.json`; per-case verification against a reference so a
 wrong-but-fast implementation fails the run; ISA presets for `-mcpu=native`
@@ -87,7 +87,7 @@ full-repaint reference. A mismatch is an isolated error row that fails the run.
 
 - `pocs/line_diff.d` (byte-line buffer + line diff) and `pocs/cell_grid.d`
   (flat `Cell[]` + cell diff, double-buffered), both passing the fingerprint gate.
-- `runner.d`: `@benchmark` matrix (PoCs × profiles × terminal-sizes) via `benchCase`,
+- `runner.d`: `@benchCases` matrix (PoCs × profiles × terminal-sizes) via `benchCase`,
   reusing wired's `isolated`/`markFilteredOut`/env-subset (`TUI_BENCH_POCS`,
   `TUI_BENCH_PROFILES`) and `traits.d` capability pattern.
 - Bench across all profiles × 3 sizes with `--perf` + allocation counters; first

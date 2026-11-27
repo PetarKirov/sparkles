@@ -15,9 +15,11 @@ assumes a constant frame stride).
 +/
 module sparkles.tui_render_bench.calibration;
 
+import core.lifetime : move;
+
 import sparkles.base.term_control : writeCursorTo;
 
-import sparkles.test_runner.attributes : benchmark;
+import sparkles.test_runner.attributes : benchCases;
 import sparkles.test_runner.bench : benchCase, blackBox, Metric, Unit;
 
 import sparkles.tui_render_bench.cell : calibFillStyle, encodeUtf8, Grid;
@@ -269,7 +271,7 @@ unittest
 }
 
 @("render-calibration")
-@benchmark
+@benchCases
 @system
 unittest
 {
@@ -281,72 +283,73 @@ unittest
     }
 }
 
+/// The D `cell_grid` renderer over the precomputed grids.
+private struct DCase
+{
+    Frames fr;
+    CellGrid r;
+    Sink sink;
+
+    void timed()
+    {
+        renderD(r, fr.grids, sink);
+        blackBox(sink.length);
+    }
+}
+
+/// The D port of the C shim's packed-cell renderer.
+private struct PackedDCase
+{
+    Frames fr;
+    Sink sink;
+    TuiCell[] prev;
+
+    void timed()
+    {
+        renderPackedD(fr, sink, prev);
+        blackBox(sink.length);
+    }
+}
+
+/// The C shim.
+private struct CCase
+{
+    Frames fr;
+    char[] buf;
+
+    void timed()
+    {
+        const n = tui_cellgrid_render(fr.flat.ptr, fr.nframes, fr.cols, fr.rows, buf.ptr,
+            buf.length);
+        blackBox(n);
+    }
+}
+
 private void registerD(Profile p)
 {
-    static struct St
-    {
-        Frames fr;
-        CellGrid r;
-        Sink sink;
-    }
-
-    auto st = new St;
-    st.fr = precompute(generateScenario(p, calibCols, calibRows, calibFrames));
-    const K = st.fr.nframes;
-
-    benchCase(
-        name: "cell_grid",
-        timed: () { renderD(st.r, st.fr.grids, st.sink); blackBox(st.sink.length); },
-        after: () {},
-        metrics: [Metric(Unit("frame"), cast(double) K, Metric.Mode.rate)],
-        labels: ["profile": profileNames[p], "lang": "D"],
-    );
+    DCase c;
+    c.fr = precompute(generateScenario(p, calibCols, calibRows, calibFrames));
+    const K = c.fr.nframes;
+    benchCase(move(c), name: "cell_grid", labels: ["profile": profileNames[p], "lang": "D"],
+        metrics: [Metric(Unit("frame"), cast(double) K, Metric.Mode.rate)]);
 }
 
 private void registerPackedD(Profile p)
 {
-    static struct St
-    {
-        Frames fr;
-        Sink sink;
-        TuiCell[] prev;
-    }
-
-    auto st = new St;
-    st.fr = precompute(generateScenario(p, calibCols, calibRows, calibFrames));
-    const K = st.fr.nframes;
-
-    benchCase(
-        name: "cell_grid_packed",
-        timed: () { renderPackedD(st.fr, st.sink, st.prev); blackBox(st.sink.length); },
-        after: () {},
-        metrics: [Metric(Unit("frame"), cast(double) K, Metric.Mode.rate)],
+    PackedDCase c;
+    c.fr = precompute(generateScenario(p, calibCols, calibRows, calibFrames));
+    const K = c.fr.nframes;
+    benchCase(move(c), name: "cell_grid_packed",
         labels: ["profile": profileNames[p], "lang": "D-packed"],
-    );
+        metrics: [Metric(Unit("frame"), cast(double) K, Metric.Mode.rate)]);
 }
 
 private void registerC(Profile p)
 {
-    static struct St
-    {
-        Frames fr;
-        char[] buf;
-    }
-
-    auto st = new St;
-    st.fr = precompute(generateScenario(p, calibCols, calibRows, calibFrames));
-    st.buf.length = 1 << 22;
-    const K = st.fr.nframes;
-
-    benchCase(
-        name: "cell_grid_c",
-        timed: () {
-        const n = tui_cellgrid_render(st.fr.flat.ptr, st.fr.nframes, st.fr.cols, st.fr.rows,
-            st.buf.ptr, st.buf.length);
-        blackBox(n);
-    },
-        after: () {},
-        metrics: [Metric(Unit("frame"), cast(double) K, Metric.Mode.rate)],
-        labels: ["profile": profileNames[p], "lang": "C"],
-    );
+    CCase c;
+    c.fr = precompute(generateScenario(p, calibCols, calibRows, calibFrames));
+    c.buf.length = 1 << 22;
+    const K = c.fr.nframes;
+    benchCase(move(c), name: "cell_grid_c", labels: ["profile": profileNames[p], "lang": "C"],
+        metrics: [Metric(Unit("frame"), cast(double) K, Metric.Mode.rate)]);
 }
