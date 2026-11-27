@@ -353,8 +353,15 @@ Its timer is one fiber for the whole run, taken before any task's.
 
 **TDM20: A memory-limit failure.** A process task killed at its own memory
 limit (Event Horizon §13.7) **must** end as `Failed(memoryLimit)`, its output
-naming the limit and its peak. A kill by a limit above it, such as its run's
-scope, stays a signal failure.
+naming the limit and its peak, even when its leader exited zero, since the
+limit killed the rest of its tree. A kill by a limit above it, such as its
+run's scope, stays a signal failure. The limit is the task's prediction times
+the run's factor, saturating, at least a floor and at most a ceiling, when the
+prediction is measured (`ResourceClaim.memoryMeasured`); an unmeasured one, a
+kind's default, gets the ceiling alone. An
+in-process action that starts processes is told the same limit
+(`TaskContext.memoryLimit`) and runs them under it together; it reports their
+peak and a kill at it, and the kill fails it the same way.
 
 Exclusive keys protect semantic resources, not implementation mutexes, and
 resources that are not files: `coverage-publish` and a publication slot. A

@@ -2056,6 +2056,8 @@ struct SupervisedProcessConfig
     size_t maxCapturedBytes = 64 * 1024 * 1024; /// per raw stream; 0 = unbounded
     ResidualPolicy residualPolicy = ResidualPolicy.bounded; /// after root exit (§13.7)
     int oomScoreAdj = int.min;   /// Linux: written to the child right after spawn (§13.7)
+    ulong memoryMax;              /// Linux, `accounted` tier: the run cgroup's `memory.max` (§13.7)
+    const(char)[] runGroup;       /// Linux: the `RunGroup` the run cgroup is made in (§13.7)
     Duration outputGrace = 5.seconds;     /// bounded (and wait's fallback): output grace
     Duration killDrainWindow = 1.seconds; /// post-kill / detach drain budget before forced EOF
 }
@@ -2077,6 +2079,9 @@ struct SupervisedProcessResult
     bool residualPolicyDegraded; /// `wait` fell back to `bounded`
     IoError residualPolicyError;
     bool cgroupCleanupLeaked;   /// the run's cgroup directory remained (removal only)
+    bool memoryLimitSet;        /// Linux: `memoryMax` was set on the run cgroup (§13.7)
+    bool startedInCgroup;       /// Linux: the child started in its run cgroup (§13.7)
+    bool memoryLimitKilled;     /// Linux: killed at its own limit (§13.7)
     ReapOutcome reap;           /// `status` is valid ONLY when reap == reaped
 }
 
@@ -2185,14 +2190,34 @@ termination request is an idempotent no-op where cleanup calls need it, or
 a stale operation target another process.
 
 **OOM priority (Linux).** A run whose `oomScoreAdj` is not `int.min` writes it
-to the child's `/proc/<pid>/oom_score_adj` as soon as the child is spawned,
-before its migration into the run cgroup. The score is what the kernel adds to
+to the child's `/proc/<pid>/oom_score_adj` as soon as the child is spawned.
+The score is what the kernel adds to
 a process's OOM badness, 1000 the largest, so a run at 1000 is the likeliest
 victim of a shortage the kernel resolves by score; one confined by a cgroup
 limit chooses only among that cgroup's processes. A descendant the child forks
 before the write keeps the score it inherited, so a supervisor that wants its
 whole tree preferred raises its own score first. Raising a score needs no
 privilege. A failure to write it changes nothing else about the run.
+
+**A memory limit per run (Linux).** A run whose `memoryMax` is not zero, in
+the `accounted` tier, gets `memory.oom.group` set to 1, `memory.swap.max` set
+to 0 and then that `memory.max` on its run cgroup before its child starts, so
+a run past its limit is killed whole instead of swapping; a cgroup that takes
+only part of that has its `memory.max` put back, and the result says the limit
+is not set (`memoryLimitSet`), as it does below the `accounted` tier. The
+result reports `memoryLimitKilled` when the limit that ran out was the run
+cgroup's own: its `memory.events.local` counts an `oom`, and it counts the kill
+(`oom_kill` in `memory.events`, or its own `oom_group_kill`). A limit above it,
+such as a scope's, counts its `oom` in that ancestor alone, while the victim's
+cgroup still counts the `oom_kill`, so such a kill, and any the files cannot
+attribute, is reported as the signal it delivered.
+
+**Run groups (Linux).** A `RunGroup` holds several runs under one limit: a
+cgroup beneath the run parent of `delegateRuns` with the memory and pids
+controllers for its children and the limit above, in which each run naming
+it (`runGroup`) makes its run cgroup. Its `memory.peak` is the runs' together,
+and `limitKilled` attributes a kill as a run's own is. A test runner's workers
+are one.
 
 **Containment tiers (Linux).** A supervised run owns one cgroup v2 directory
 beneath the process's own cgroup, `<own>/eh-run-<pid>-<id>`, and what that
@@ -2241,14 +2266,15 @@ nested cgroups bottom-up and the run directory; a directory that remained is
 reported as `cgroupCleanupLeaked`, which describes directory removal only,
 never a failed kill. Cleanup completes before the final result is read.
 
-A process the root forks before the post-spawn `cgroup.procs` migration lands
-is outside the run cgroup: the write is issued inline the moment the spawn
-returns (a bounded in-memory kernfs operation, microseconds against the
-hundreds a fresh program needs to reach its first fork), which closes the
-window in practice but not by construction — the private process group still
-covers such a fork for termination; `wait` and the cgroup roster do not see it.
-Containment by construction needs `clone3(CLONE_INTO_CGROUP)`, a planned spawn
-path.
+The child of an owned run starts in its run cgroup (`ProcessConfig.cgroupFd`:
+`clone3`'s `CLONE_INTO_CGROUP` through glibc's
+`posix_spawnattr_setcgroup_np`, glibc 2.39 and Linux 5.7), so nothing it runs
+or forks is ever outside it, and the result says so (`startedInCgroup`).
+Where libc or the kernel cannot, the child is moved by a `cgroup.procs` write
+issued inline the moment the spawn returns, and a process it forks before that
+write lands stays outside the run cgroup: the private process group still
+covers it for termination; `wait`, the cgroup roster and the run's memory
+limit do not.
 
 **The control plane.** Every worker of a run — the two drains, the stdin
 feeder, the root observer, the clock, the sampler and (under `wait`) the

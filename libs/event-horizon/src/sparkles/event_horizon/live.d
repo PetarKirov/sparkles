@@ -395,6 +395,8 @@ struct ChildProcess
     OwnedFd stdoutR;    /// read end of the child's stdout  (piped only)
     OwnedFd stderrR;    /// read end of the child's stderr  (piped only)
     OwnedFd ptyMaster;    /// the PTY master (`spawnPty` only)
+    /// Linux: it started in `ProcessConfig.cgroupFd`'s cgroup.
+    bool inCgroup;
 
     /// `true` while the child is reapable.
     bool opCast(T : bool)() const @safe pure nothrow @nogc => pid > 0;
@@ -433,6 +435,32 @@ struct ChildProcess
     }
 
 }
+
+version (linux)
+{
+    // glibc's `POSIX_SPAWN_SETCGROUP` (2.39).
+    private enum short spawnSetCgroupFlag = 0x100;
+
+    private alias SetCgroup = extern (C) int function(void* attr, int fd) nothrow @nogc;
+
+    // `posix_spawnattr_setcgroup_np`, looked up once: present from glibc
+    // 2.39, so a binary that names it would not load on an older one.
+    private SetCgroup spawnSetCgroup() @trusted nothrow @nogc
+    {
+        import core.sys.linux.dlfcn : RTLD_DEFAULT, dlsym;
+
+        __gshared SetCgroup found;
+        __gshared bool looked;
+        if (!looked)
+        {
+            found = cast(SetCgroup) dlsym(RTLD_DEFAULT, "posix_spawnattr_setcgroup_np");
+            looked = true;
+        }
+        return found;
+    }
+}
+else
+    private enum short spawnSetCgroupFlag = 0;
 
 /**
 Spawns `argv` (PATH-searched) per `cfg` (SPEC §13.1–§13.2): per-stream
@@ -558,11 +586,20 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
     posix_spawnattr_t attr;
     posix_spawnattr_init(&attr);
     scope (exit) posix_spawnattr_destroy(&attr);
+    short flags;
     if (cfg.newProcessGroup)
     {
-        posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+        flags |= POSIX_SPAWN_SETPGROUP;
         posix_spawnattr_setpgroup(&attr, 0);
     }
+    // The child starts in its cgroup (§13.7): glibc 2.39+ and Linux 5.7+;
+    // otherwise where the parent is, and the caller migrates it.
+    bool intoCgroup;
+    version (linux)
+        if (cfg.cgroupFd >= 0)
+            if (auto setCgroup = spawnSetCgroup())
+                intoCgroup = setCgroup(&attr, cfg.cgroupFd) == 0;
+    posix_spawnattr_setflags(&attr, cast(short) (flags | (intoCgroup ? spawnSetCgroupFlag : 0)));
 
     auto cargv = cstrings(argv);
     // Bound to a named local rather than used as a bare `.ptr`: the slice is
@@ -575,9 +612,20 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
     // The child's own PATH search (§13.1): never `posix_spawnp`, whose
     // search consults the parent's PATH and retries scripts via /bin/sh.
     int pid;
-    const rc = spawnSearchingPath(argv[0], searchPath, cfg.cwd,
+    auto rc = spawnSearchingPath(argv[0], searchPath, cfg.cwd,
         (const(char)[] candidate) => posix_spawn(&pid, zstring(candidate),
             &actions, &attr, cargv.ptr, cenv));
+    // A kernel without `clone3`'s cgroup placement, or a cgroup that refuses
+    // it: start where the parent is.
+    if (rc != 0 && intoCgroup && (rc == 38 /* ENOSYS */ || rc == 95 /* EOPNOTSUPP */ || rc == 22 /* EINVAL */
+        || rc == 1 /* EPERM */ || rc == 13 /* EACCES */ || rc == 16 /* EBUSY */))
+    {
+        intoCgroup = false;
+        posix_spawnattr_setflags(&attr, flags);
+        rc = spawnSearchingPath(argv[0], searchPath, cfg.cwd,
+            (const(char)[] candidate) => posix_spawn(&pid, zstring(candidate),
+                &actions, &attr, cargv.ptr, cenv));
+    }
 
     // Parent keeps only its own ends; the child-side ends close now.
     closeIf(cfg.stdinSpec, inPipe[0]);
@@ -600,6 +648,7 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
 
     ChildProcess child;
     child.pid = pid;
+    child.inCgroup = intoCgroup;
     child.stdinW = OwnedFd(inPipe[1]);
     child.stdoutR = OwnedFd(outPipe[0]);
     child.stderrR = OwnedFd(errPipe[0]);

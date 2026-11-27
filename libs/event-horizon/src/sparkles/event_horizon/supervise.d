@@ -118,7 +118,7 @@ import sparkles.event_horizon.scope_ : protect, withScope;
 version (linux)
     import sparkles.event_horizon.cgroup : CgroupRun, CgroupTier, EvidenceJob,
         TreeEvidence, cgroupCleanup, cgroupCreate, cgroupKill, evidenceCall,
-        migrateInto;
+        memoryLimitKilled, migrateInto;
 
 static if (canWaitProcesses)  :
 
@@ -319,6 +319,8 @@ private struct Run
         CgroupRun cgroup;
         bool cgroupOwned;   /// the run owns a directory with the kill capability
         bool migrated;      /// the root moved into the run cgroup
+        bool memoryLimitKilled; /// §13.7
+        bool startedInCgroup;   /// §13.7
     }
     int processGroup;       /// pinned by the WNOWAIT zombie until the reap
     bool collect;
@@ -677,7 +679,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
     version (linux)
     {
         const runId = atomicOp!"+="(runCounter, 1);
-        auto created = cgroupCreate(s, pool, run.cgroup, runId);
+        auto created = cgroupCreate(s, pool, run.cgroup, runId, false, cfg.memoryMax, cfg.runGroup);
         if (created.hasError)
             return ioErr!SupervisedProcessResult(created.error);
         run.cgroupOwned = run.cgroup.canKill;
@@ -708,6 +710,11 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
         spawnCfg.stdinSpec = StdioSpec(StdioMode.pipe);
     if (stdinFeed !is null)
         spawnCfg.stdinSpec = StdioSpec(StdioMode.pipe);
+    // §13.7: the child starts in its run cgroup, so nothing it forks runs
+    // outside it, even before the supervisor is scheduled again.
+    version (linux)
+        if (run.cgroupOwned)
+            spawnCfg.cgroupFd = run.cgroup.dirFd;
 
     auto spawned = spawnProcess(argv, spawnCfg);
     if (spawned.hasError)
@@ -747,8 +754,13 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
 
             cast(void) writeOomScoreAdj(child.pid, cfg.oomScoreAdj);
         }
-        if (run.cgroupOwned)
+        if (run.cgroupOwned && child.inCgroup)
+            run.migrated = run.startedInCgroup = true;
+        else if (run.cgroupOwned)
         {
+            // Where libc or the kernel cannot start a child in its cgroup, a
+            // migration as soon as it is spawned: a child it forked first
+            // stays where it began (§13.7).
             const err = migrateInto(run.cgroup, child.pid);
             run.migrated = err == 0;
             if (err != 0 && cfg.residualPolicy == ResidualPolicy.wait)
@@ -1650,6 +1662,8 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
     cast(void) protect!(() {
         version (linux)
         {
+            // §13.7: read before cleanup closes it.
+            rp3.memoryLimitKilled = memoryLimitKilled(rp3.cgroup);
             if (rp3.cgroup.dirCreated)
             {
                 // Under `detach` the residual may legitimately outlive the
@@ -1709,6 +1723,12 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
     result.status = run.status;
     result.reap = run.reap;
     result.usage = run.lastUsage;
+    version (linux)
+    {
+        result.memoryLimitSet = run.cgroup.memoryLimitSet;
+        result.startedInCgroup = run.startedInCgroup;
+        result.memoryLimitKilled = run.memoryLimitKilled;
+    }
     result.stdout_ = move(run.stdout_);
     result.stderr_ = move(run.stderr_);
     result.truncatedLines = run.stdoutFramer.truncatedLines
@@ -2469,6 +2489,151 @@ unittest
         assert(got.value.end == ProcessEnd.exited && got.value.status.ok);
     });
     assert(!r.hasError);
+}
+
+/// Linux, §13.7: a run past its `memoryMax` is killed whole and alone, and its
+/// own `memory.events` says so; one within it is not. It needs the memory
+/// controller for its runs, which a cgroup shared with other processes cannot
+/// give, so it re-runs itself alone in a delegated user scope
+/// (`systemd-run --user --scope -p Delegate=yes`), and skips without one.
+@("supervise.memoryLimitKillsTheRunAlone")
+@system
+unittest
+{
+    version (linux)
+    {
+        import std.algorithm.searching : canFind;
+        import std.file : readText, thisExePath;
+        import std.process : environment, execute;
+        import sparkles.base.buffer : SharedBuffer;
+        import sparkles.event_horizon.cgroup : delegateRuns;
+        import sparkles.test_runner.skip : skipTest;
+
+        enum marker = "SPARKLES_EH_TEST_SCOPED";
+        if (environment.get(marker, "") != "1")
+        {
+            string[] scopeArgs = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--no-ask-password",
+                "-p", "Delegate=yes"];
+            typeof(execute(scopeArgs)) probe;
+            try
+                probe = execute(scopeArgs ~ ["--", "true"]);
+            catch (Exception)
+                return skipTest("no systemd-run here");
+            if (probe.status != 0)
+                return skipTest("systemd-run --user cannot make a delegated scope here");
+            auto child = execute(scopeArgs ~ ["--", thisExePath, "--no-runner", "-i",
+                "supervise.memoryLimitKillsTheRunAlone"], [marker: "1"]);
+            assert(child.status == 0, child.output);
+            if (child.output.canFind("⊘ supervise.memoryLimitKillsTheRunAlone"))
+                return skipTest("no delegated memory controller here (run it under a contained ci test)");
+            assert(child.output.canFind("✓ supervise.memoryLimitKillsTheRunAlone"), child.output);
+            return;
+        }
+        SharedBuffer!(char, 256) parent;
+        cast(void) delegateRuns(parent);
+        string controllers;
+        try
+            controllers = parent.length ? readText("/sys/fs/cgroup" ~ parent[].idup ~ "/cgroup.subtree_control") : null;
+        catch (Exception)
+        {
+        }
+        if (!controllers.canFind("memory") || !controllers.canFind("pids"))
+            return skipTest("no delegated memory controller here (run it under a contained ci test)");
+        Sched s;
+        schedOrSkip(s);
+        auto r = s.run(() {
+            SupervisedProcessConfig cfg;
+            cfg.memoryMax = 64UL << 20;
+            // The shell holds 256 MB in a variable: past the limit.
+            auto big = supervise(s, ["sh", "-c", "x=$(head -c 268435456 /dev/zero | tr '\\0' a); echo ${#x}"], cfg);
+            assert(big.hasValue && big.value.memoryLimitSet, "the limit is set in the accounted tier");
+            assert(big.value.memoryLimitKilled && !big.value.status.ok, "killed at its own limit");
+            cfg.memoryMax = 1UL << 30;
+            auto small = supervise(s, ["sh", "-c", "echo fits"], cfg);
+            assert(small.hasValue && small.value.status.ok && !small.value.memoryLimitKilled);
+            // Started in its run cgroup: what it reads first is already it.
+            cfg.collectOutput = true;
+            auto placed = supervise(s, ["cat", "/proc/self/cgroup"], cfg);
+            assert(placed.hasValue && placed.value.startedInCgroup, "started in it, with glibc 2.39 and Linux 5.7");
+            assert((cast(const(char)[]) placed.value.stdout_[]).canFind("/eh-run-"),
+                cast(const(char)[]) placed.value.stdout_[]);
+            // A run group: two runs under one limit, killed together at it.
+            import sparkles.event_horizon.cgroup : RunGroup, createRunGroup, removeRunGroup;
+
+            RunGroup group;
+            assert(createRunGroup(group, 96UL << 20) == 0 && group.memoryLimitSet);
+            SupervisedProcessConfig member;
+            member.runGroup = group.name[];
+            auto fits = supervise(s, ["sh", "-c", "x=$(head -c 33554432 /dev/zero | tr '\\0' a); echo ${#x}"], member);
+            assert(fits.hasValue && fits.value.status.ok && !group.limitKilled);
+            assert(group.peakBytes >= 32UL << 20, "the group's peak counts its members");
+            auto over = supervise(s, ["sh", "-c", "x=$(head -c 268435456 /dev/zero | tr '\\0' a); echo ${#x}"], member);
+            assert(over.hasValue && !over.value.status.ok && group.limitKilled, "killed at the group's limit");
+            assert(removeRunGroup(group) == 0);
+        });
+        assert(!r.hasError);
+    }
+}
+
+/// Linux, §13.7: a run killed by a limit above its own, its scope's, is not
+/// killed at its own: the kill stays a signal. Re-runs itself in a delegated
+/// user scope of 160 MiB, and skips without one.
+@("supervise.anAncestorLimitStaysASignal")
+@system
+unittest
+{
+    version (linux)
+    {
+        import std.algorithm.searching : canFind;
+        import std.file : readText, thisExePath;
+        import std.process : environment, execute;
+        import sparkles.base.buffer : SharedBuffer;
+        import sparkles.event_horizon.cgroup : delegateRuns;
+        import sparkles.test_runner.skip : skipTest;
+
+        enum marker = "SPARKLES_EH_TEST_SCOPED_SMALL";
+        if (environment.get(marker, "") != "1")
+        {
+            string[] scopeArgs = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--no-ask-password",
+                "-p", "Delegate=yes", "-p", "MemoryMax=160M", "-p", "MemorySwapMax=0"];
+            typeof(execute(scopeArgs)) probe;
+            try
+                probe = execute(scopeArgs ~ ["--", "true"]);
+            catch (Exception)
+                return skipTest("no systemd-run here");
+            if (probe.status != 0)
+                return skipTest("systemd-run --user cannot make a delegated scope here");
+            auto child = execute(scopeArgs ~ ["--", thisExePath, "--no-runner", "-i",
+                "supervise.anAncestorLimitStaysASignal"], [marker: "1"]);
+            assert(child.status == 0, child.output);
+            if (child.output.canFind("⊘ supervise.anAncestorLimitStaysASignal"))
+                return skipTest("no delegated memory controller here");
+            assert(child.output.canFind("✓ supervise.anAncestorLimitStaysASignal"), child.output);
+            return;
+        }
+        SharedBuffer!(char, 256) parent;
+        cast(void) delegateRuns(parent);
+        string controllers;
+        try
+            controllers = parent.length ? readText("/sys/fs/cgroup" ~ parent[].idup ~ "/cgroup.subtree_control") : null;
+        catch (Exception)
+        {
+        }
+        if (!controllers.canFind("memory") || !controllers.canFind("pids"))
+            return skipTest("no delegated memory controller here");
+        Sched s;
+        schedOrSkip(s);
+        auto r = s.run(() {
+            SupervisedProcessConfig cfg;
+            cfg.memoryMax = 1UL << 30; // far above the scope's 160 MiB
+            cfg.oomScoreAdj = 1000;    // the scope's OOM kill picks it
+            auto big = supervise(s, ["sh", "-c", "x=$(head -c 268435456 /dev/zero | tr '\\0' a); echo ${#x}"], cfg);
+            assert(big.hasValue && big.value.memoryLimitSet);
+            assert(big.value.status.signaled, "killed by the scope's limit");
+            assert(!big.value.memoryLimitKilled, "not at its own limit");
+        });
+        assert(!r.hasError);
+    }
 }
 
 /// Linux: `oomScoreAdj` reaches the child before it would read its score; the

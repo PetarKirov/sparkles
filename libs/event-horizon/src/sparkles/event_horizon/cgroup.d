@@ -89,6 +89,12 @@ struct CgroupRun
     int cpuStatFd = -1;    /// `cpu.stat`, read (present on every v2 cgroup)
     int memoryPeakFd = -1; /// `memory.peak` (`accounted` only)
     int pidsPeakFd = -1;   /// `pids.peak` (`accounted` only)
+    int memoryEventsFd = -1;      /// `memory.events`, read, when a memory limit is set
+    int memoryEventsLocalFd = -1; /// `memory.events.local`, read, ditto
+    /// The run directory itself, for a child spawned into it (`CLONE_INTO_CGROUP`).
+    int dirFd = -1;
+    /// Whether the run's `memory.max` and `memory.oom.group` were set (§13.7).
+    bool memoryLimitSet;
 
     /// The run's path as `/proc/<pid>/cgroup` spells it — the membership
     /// boundary: a member's line equals it or continues with `/` right after.
@@ -116,6 +122,9 @@ struct CgroupRun
         drop(cpuStatFd);
         drop(memoryPeakFd);
         drop(pidsPeakFd);
+        drop(memoryEventsFd);
+        drop(memoryEventsLocalFd);
+        drop(dirFd);
     }
 }
 
@@ -241,6 +250,252 @@ int delegateRuns(ref SharedBuffer!(char, 256) parent) @trusted nothrow
     return memory ? memory : pids;
 }
 
+/**
+Whether the cgroup was killed at its own memory limit (§13.7): its own
+`memory.events.local` counts an `oom` — the limit that ran out was this
+cgroup's — and the cgroup counts a kill, an `oom_kill` beneath it
+(`memory.events`, hierarchical) or an `oom_group_kill` of its own. A limit
+above it, such as its scope's, counts its `oom` in that ancestor alone,
+while the victim's cgroup still counts the `oom_kill`: without the local
+`oom` the kill is not the cgroup's own. False without a limit, and when
+either file cannot be read, so an ambiguous kill stays a signal.
+*/
+package bool memoryLimitKilled(ref CgroupRun run) @trusted nothrow @nogc
+    => run.memoryLimitSet && limitKilledAt(run.memoryEventsLocalFd, run.memoryEventsFd);
+
+// The verdict of $(LREF memoryLimitKilled) over the two event files.
+private bool limitKilledAt(int localFd, int allFd) @trusted nothrow @nogc
+{
+    char[512] local = void, all = void;
+    const l = readControl(localFd, local[]);
+    const a = readControl(allFd, all[]);
+    return l.length && a.length && memoryEventsKilled(l, a);
+}
+
+// The text of a small control file, from its start, in `buf`; empty on failure.
+private const(char)[] readControl(int fd, return scope char[] buf) @trusted nothrow @nogc
+{
+    if (fd < 0)
+        return null;
+    const n = pread(fd, buf.ptr, buf.length, 0);
+    return n > 0 ? buf[0 .. n] : null;
+}
+
+/// The counter `key` of a `memory.events`-style text; zero when absent.
+ulong eventCounter(scope const(char)[] text, scope const(char)[] key) @safe pure nothrow @nogc
+{
+    while (text.length)
+    {
+        size_t eol;
+        while (eol < text.length && text[eol] != '\n')
+            ++eol;
+        const line = text[0 .. eol];
+        text = eol < text.length ? text[eol + 1 .. $] : null;
+        if (line.length > key.length && line[0 .. key.length] == key && line[key.length] == ' ')
+        {
+            ulong v;
+            foreach (c; line[key.length + 1 .. $])
+            {
+                if (c < '0' || c > '9')
+                    break;
+                v = v * 10 + (c - '0');
+            }
+            return v;
+        }
+    }
+    return 0;
+}
+
+/// Whether a cgroup's `memory.events.local` (`local`) and `memory.events`
+/// (`all`) say it was killed at its own limit: see $(LREF memoryLimitKilled).
+bool memoryEventsKilled(scope const(char)[] local, scope const(char)[] all) @safe pure nothrow @nogc
+    => eventCounter(local, "oom") > 0
+    && (eventCounter(all, "oom_kill") > 0 || eventCounter(local, "oom_group_kill") > 0);
+
+///
+@("cgroup.memoryEventsKilled")
+@safe pure nothrow @nogc unittest
+{
+    enum quiet = "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n";
+    // Its own limit: the local `oom`, and the kill.
+    assert(memoryEventsKilled("low 0\nhigh 0\nmax 2\noom 1\noom_kill 1\noom_group_kill 1\n",
+        "low 0\nhigh 0\nmax 2\noom 1\noom_kill 1\noom_group_kill 1\n"));
+    // A group: its `oom`, a member's kill counted beneath it.
+    assert(memoryEventsKilled("max 3\noom 1\noom_kill 0\noom_group_kill 1\n", "max 3\noom 1\noom_kill 2\n"));
+    assert(!memoryEventsKilled("low 0\nhigh 3\nmax 5\noom 1\noom_kill 0\noom_group_kill 0\n",
+        "low 0\nhigh 3\nmax 5\noom 1\noom_kill 0\noom_group_kill 0\n"), "a limit reached without a kill");
+    // The scope's limit: the victim counts the kill, even a group kill, but
+    // no `oom` of its own.
+    assert(!memoryEventsKilled("max 0\noom 0\noom_kill 1\noom_group_kill 1\n", "max 0\noom 0\noom_kill 1\n"));
+    assert(!memoryEventsKilled(quiet, quiet));
+    assert(!memoryEventsKilled("", ""));
+    assert(eventCounter("oom 12\noom_kill 3", "oom") == 12 && eventCounter("oom_kill 3", "oom") == 0);
+}
+
+// §13.7: sets `memoryMax` on the cgroup `dir`, killing it whole at it, with
+// no swap past it, and opens its two event files for the kill's
+// attribution. Everything that tells a kill apart is opened and written
+// first; `memory.max` last, and put back to `max` if that fails, so a
+// cgroup either has the whole limit or none. Whether it was set.
+private bool setMemoryLimit(D)(ref D dir, ulong memoryMax, ref int localFd, ref int allFd) @trusted nothrow
+{
+    static bool put(ref D dir, string name, scope const(char)[] text) nothrow
+    {
+        int e;
+        const fd = openControl!(OpenMode.write)(dir, name, e);
+        if (fd < 0)
+            return false;
+        scope (exit) close(fd);
+        return write(fd, text.ptr, text.length) == cast(ptrdiff_t) text.length;
+    }
+
+    static void drop(ref int fd) nothrow @nogc
+    {
+        if (fd >= 0)
+            close(fd);
+        fd = -1;
+    }
+
+    char[24] value = void;
+    const n = snprintf(value.ptr, value.length, "%llu", cast(ulong) memoryMax);
+    int e;
+    localFd = openControl!(OpenMode.read)(dir, "memory.events.local", e);
+    allFd = openControl!(OpenMode.read)(dir, "memory.events", e);
+    if (n > 0 && localFd >= 0 && allFd >= 0 && put(dir, "memory.oom.group", "1"))
+    {
+        // No swap past the limit: a run swapping at its limit crawls instead
+        // of failing. Absent where the host has no swap accounting.
+        cast(void) put(dir, "memory.swap.max", "0");
+        if (put(dir, "memory.max", value[0 .. n]))
+            return true;
+        cast(void) put(dir, "memory.max", "max");
+    }
+    drop(localFd);
+    drop(allFd);
+    return false;
+}
+
+/**
+Several supervised runs under one memory limit (§13.7): a cgroup beneath the
+run parent of $(LREF delegateRuns), with the memory and pids controllers for
+its children, whose `memory.max` bounds every run made in it
+(`SupervisedProcessConfig.runGroup`), killing them all at it. A test leg's
+workers are one. Non-copyable: the descriptors are owned.
+*/
+struct RunGroup
+{
+    @disable this(this);
+
+    /// The group's directory name beneath the run parent; empty until made.
+    SharedBuffer!(char, 64) name;
+    /// Whether its limit is set; the group exists without one.
+    bool memoryLimitSet;
+    private int peakFd = -1, localFd = -1, allFd = -1;
+    private SharedBuffer!(char, 320) sysPath;
+
+    /// The memory its runs peaked at together (`memory.peak`); zero unread.
+    ulong peakBytes() @trusted nothrow @nogc
+    {
+        char[32] buf = void;
+        ulong v;
+        foreach (c; readControl(peakFd, buf[]))
+        {
+            if (c < '0' || c > '9')
+                break;
+            v = v * 10 + (c - '0');
+        }
+        return v;
+    }
+
+    /// Whether it was killed at its own limit, as $(LREF memoryLimitKilled).
+    bool limitKilled() @trusted nothrow @nogc => memoryLimitSet && limitKilledAt(localFd, allFd);
+}
+
+/**
+Makes `group` beneath the run parent, with `memoryMax` as its limit (zero:
+none). Blocking, small: a `mkdir` and a few control writes. Needs
+$(LREF delegateRuns) to have made a run parent whose children have the memory
+and pids controllers; 0 or the errno of the step that failed, and then
+nothing is left behind.
+*/
+int createRunGroup(ref RunGroup group, ulong memoryMax) @trusted nothrow
+{
+    import core.atomic : atomicOp;
+    import core.stdc.errno : ENOTSUP;
+
+    static shared uint groups;
+    if (!runParent.length)
+        return ENOTSUP;
+    SharedBuffer!(char, 320) parentPath;
+    parentPath ~= "/sys/fs/cgroup";
+    parentPath ~= runParent[];
+    BlockingVfs vfs;
+    auto parent = openRoot!(Rights.all)(&vfs, parentPath[], ambientAuthority());
+    if (parent.hasError)
+        return parent.error.code;
+    char[64] name = void;
+    const len = snprintf(name.ptr, name.length, "eh-group-%d-%u", cast(int) getpid(), atomicOp!"+="(groups, 1));
+    if (len <= 0 || len >= name.length)
+        return EINVAL;
+    auto made = parent.value.mkdirAt(name[0 .. len], PosixMode(493 /* 0o755 */));
+    if (made.hasError)
+        return made.error.code;
+    int fail(int err)
+    {
+        group.closeAll();
+        cast(void) parent.value.rmdirAt(name[0 .. len]);
+        return err;
+    }
+    auto dir = parent.value.openDir(name[0 .. len]);
+    if (dir.hasError)
+        return fail(dir.error.code);
+    int e;
+    const control = openControl!(OpenMode.write)(dir.value, "cgroup.subtree_control", e);
+    if (control < 0)
+        return fail(e);
+    const memory = write(control, "+memory".ptr, 7) == 7;
+    const pids = write(control, "+pids".ptr, 5) == 5;
+    const writeErr = errno;
+    close(control);
+    if (!memory || !pids)
+        return fail(writeErr ? writeErr : EINVAL);
+    group.peakFd = openControl!(OpenMode.read)(dir.value, "memory.peak", e);
+    if (group.peakFd < 0)
+        return fail(e);
+    group.memoryLimitSet = memoryMax && setMemoryLimit(dir.value, memoryMax, group.localFd, group.allFd);
+    group.name.length = 0;
+    group.name ~= name[0 .. len];
+    group.sysPath.length = 0;
+    group.sysPath ~= parentPath[];
+    return 0;
+}
+
+/// Removes `group` once its runs are gone; a group a run still holds is left
+/// (`EBUSY`) for the scope's teardown. 0 or errno.
+int removeRunGroup(ref RunGroup group) @trusted nothrow
+{
+    group.closeAll();
+    if (!group.name.length)
+        return 0;
+    BlockingVfs vfs;
+    auto parent = openRoot!(Rights.all)(&vfs, group.sysPath[], ambientAuthority());
+    if (parent.hasError)
+        return parent.error.code;
+    auto removed = parent.value.rmdirAt(group.name[]);
+    group.name.length = 0;
+    return removed.hasError ? removed.error.code : 0;
+}
+
+private void closeAll(ref RunGroup group) @trusted nothrow @nogc
+{
+    foreach (fd; [&group.peakFd, &group.localFd, &group.allFd])
+    {
+        if (*fd >= 0)
+            close(*fd);
+        *fd = -1;
+    }
+}
+
 /// Writes `value` to `/proc/<pid>/oom_score_adj` (SPEC §13.7): the adjustment the
 /// kernel adds to a process's OOM badness, 1000 its largest. Raising a score
 /// needs no privilege; lowering one below the process's minimum does.
@@ -283,7 +538,7 @@ first — so any failure leaves a truthful partial state whose cleanup the
 caller owns.
 */
 package void createRun(ref CgroupRun run, uint runId,
-    bool injectControlOpenFailure = false) @trusted nothrow
+    bool injectControlOpenFailure = false, ulong memoryMax = 0, scope const(char)[] group = null) @trusted nothrow
 {
     static void degrade(ref CgroupRun run, int err, string why) nothrow @nogc
     {
@@ -297,6 +552,15 @@ package void createRun(ref CgroupRun run, uint runId,
         own ~= runParent[];
     else if (!ownCgroupPath(own))
         return degrade(run, ENOENT, "cgroup: no v2 path for this process");
+    if (group.length)
+    {
+        // A run group's member (§13.7): beneath the group, which only a
+        // run parent can hold.
+        if (!runParent.length || own.length + 1 + group.length > 200)
+            return degrade(run, EINVAL, "cgroup: no run group here");
+        own ~= '/';
+        own ~= group;
+    }
 
     run.sysPath.length = 0;
     run.sysPath ~= "/sys/fs/cgroup";
@@ -328,6 +592,14 @@ package void createRun(ref CgroupRun run, uint runId,
     auto dir = parent.value.openDir(runName);
     if (dir.hasError)
         return degrade(run, dir.error.code, "cgroup: cannot open the run directory");
+    {
+        import core.sys.posix.fcntl : O_CLOEXEC, O_DIRECTORY, O_RDONLY, open;
+
+        char[321] z = void;
+        z[0 .. run.sysPath.length] = run.sysPath[];
+        z[run.sysPath.length] = 0;
+        run.dirFd = open(z.ptr, O_RDONLY | O_DIRECTORY | O_CLOEXEC); // optional
+    }
 
     // Fault injection (tests): the "dirCreated but degraded" state.
     if (injectControlOpenFailure)
@@ -354,7 +626,14 @@ package void createRun(ref CgroupRun run, uint runId,
     run.memoryPeakFd = openControl!(OpenMode.read)(dir.value, "memory.peak", err);
     run.pidsPeakFd = openControl!(OpenMode.read)(dir.value, "pids.peak", err);
     if (run.memoryPeakFd >= 0 && run.pidsPeakFd >= 0)
+    {
         run.tier = CgroupTier.accounted;
+        // §13.7: a limit per run, in the accounted tier only, before the
+        // child enters; `memory.oom.group` kills the whole run at it.
+        if (memoryMax)
+            run.memoryLimitSet = setMemoryLimit(dir.value, memoryMax, run.memoryEventsLocalFd,
+                run.memoryEventsFd);
+    }
     else
     {
         // Half an accounted tier is no tier: keep both or neither.
@@ -599,12 +878,14 @@ private struct CreateJob
     CgroupRun* run;
     uint runId;
     bool injectControlOpenFailure;
+    ulong memoryMax;
+    const(char)[] group;
 }
 
 private void createCall(void* p) nothrow
 {
     auto job = cast(CreateJob*) p;
-    createRun(*job.run, job.runId, job.injectControlOpenFailure);
+    createRun(*job.run, job.runId, job.injectControlOpenFailure, job.memoryMax, job.group);
 }
 
 private struct MigrateJob
@@ -653,10 +934,11 @@ the supervision; only a pool that cannot be used at all (`EPIPE`, or a
 caller already interrupted) is returned as one.
 */
 package IoResult!void cgroupCreate(ref Sched s, BlockingPool* pool,
-    ref CgroupRun run, uint runId, bool injectControlOpenFailure = false) @trusted
+    ref CgroupRun run, uint runId, bool injectControlOpenFailure = false, ulong memoryMax = 0,
+    const(char)[] group = null) @trusted
 {
     CreateJob job = {run: &run, runId: runId,
-        injectControlOpenFailure: injectControlOpenFailure};
+        injectControlOpenFailure: injectControlOpenFailure, memoryMax: memoryMax, group: group};
     auto r = pool.run(s, &createCall, &job);
     if (r.hasError && r.error.code == EAGAIN)
     {

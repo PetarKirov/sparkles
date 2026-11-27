@@ -221,6 +221,10 @@ struct ResourceClaim
     /// Resources that are not files: `coverage-publish`, a publication slot.
     /// A file is claimed by $(LREF FileClaims).
     string[] exclusiveKeys;
+    /// Whether `memoryBytes` is a recorded peak rather than a kind's
+    /// default: only a measured prediction sets a limit below the run's
+    /// ceiling (TDM20).
+    bool memoryMeasured;
 
     /// The weight actually taken from `capacity` tokens: a claim larger than
     /// the capacity is clamped, so it runs alone rather than deadlocking.

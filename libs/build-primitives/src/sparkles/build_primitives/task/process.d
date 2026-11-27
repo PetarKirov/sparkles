@@ -95,6 +95,61 @@ struct ProcessDriverOptions
     /// shortage kills a task before anything else on the host; `int.min`
     /// leaves the score the processes inherit.
     int oomScoreAdj = int.min;
+    /// TDM20, Linux in the `accounted` tier: each process task's memory
+    /// limit is its claim's `memoryBytes` times this, and at least
+    /// `memoryLimitFloor`; zero sets no limit, and so does a claim of zero.
+    uint memoryLimitFactor;
+    ulong memoryLimitFloor = 512UL << 20; /// ditto
+    /// TDM20: no limit above this, the most the run may use at all; zero
+    /// bounds nothing.
+    ulong memoryLimitCeiling;
+}
+
+/// TDM20: the memory limit of `node`'s processes under `options`: a measured
+/// prediction times the factor, saturating, at least the floor and at most
+/// the ceiling; an unmeasured one (a kind's default) the ceiling alone, since
+/// a guess must not kill an action that would have fit; zero for none.
+ulong memoryLimitOf(const ref TaskNode node, const ref ProcessDriverOptions options) @safe pure nothrow @nogc
+{
+    import core.checkedint : mulu;
+
+    if (!options.memoryLimitFactor || !node.resources.memoryBytes)
+        return 0;
+    if (!node.resources.memoryMeasured)
+        return options.memoryLimitCeiling;
+    bool overflow;
+    ulong limit = mulu(node.resources.memoryBytes, ulong(options.memoryLimitFactor), overflow);
+    if (overflow)
+        limit = ulong.max;
+    if (limit < options.memoryLimitFloor)
+        limit = options.memoryLimitFloor;
+    if (options.memoryLimitCeiling && limit > options.memoryLimitCeiling)
+        limit = options.memoryLimitCeiling;
+    return limit;
+}
+
+///
+@("build_primitives.task.process.memoryLimitOf")
+@safe pure nothrow @nogc unittest
+{
+    TaskNode n;
+    n.resources.memoryBytes = 1UL << 30;
+    n.resources.memoryMeasured = true;
+    auto o = ProcessDriverOptions(memoryLimitFactor: 2);
+    assert(memoryLimitOf(n, o) == 2UL << 30);
+    n.resources.memoryBytes = 1UL << 20;
+    assert(memoryLimitOf(n, o) == 512UL << 20, "at least the floor");
+    n.resources.memoryBytes = 1UL << 63;
+    assert(memoryLimitOf(n, o) == ulong.max, "saturating, never wrapping to a small limit");
+    o.memoryLimitCeiling = 24UL << 30;
+    assert(memoryLimitOf(n, o) == 24UL << 30, "at most the ceiling");
+    n.resources.memoryBytes = 0;
+    assert(memoryLimitOf(n, o) == 0, "no prediction, no limit");
+    n.resources.memoryBytes = 4UL << 30;
+    n.resources.memoryMeasured = false;
+    assert(memoryLimitOf(n, o) == 24UL << 30, "a default prediction: the ceiling alone");
+    o.memoryLimitCeiling = 0;
+    assert(memoryLimitOf(n, o) == 0, "a default prediction and no ceiling: no limit");
 }
 
 /// What a process task left behind, for diagnostics and summaries.
@@ -110,6 +165,10 @@ struct ProcessRecord
     /// metadata, never an outcome change ([SPEC TDM11]).
     bool usageUnavailable;
     IoError spawnError;           /// valid for `ProcessEnd.spawnFailed`
+    /// TDM20: the memory limit the task ran under, and whether it was killed
+    /// at it; zero when none was set.
+    ulong memoryLimit;
+    bool memoryLimitKilled; /// ditto
     OutputSpool output;           /// the task's lines, bounded
 }
 
@@ -149,7 +208,23 @@ struct ProcessDriver
             (const ref ProcessAction p) => runProcess(ctx, p),
             (const ref InProcessAction c) {
                 if (auto handler = c.handler in handlers)
-                    return (*handler)(ctx, c);
+                {
+                    // TDM20: an action that starts processes runs them under
+                    // the limit a process task would get, and reports their
+                    // peak and a kill at it.
+                    ctx.memoryLimit = memoryLimitOf(*ctx.node, options);
+                    auto outcome = (*handler)(ctx, c);
+                    auto rec = &records[ctx.task.value];
+                    rec.usage.peakCgroupMemoryBytes = ctx.memoryPeak;
+                    rec.memoryLimit = ctx.memoryLimitSet ? ctx.memoryLimit : 0;
+                    rec.memoryLimitKilled = ctx.memoryLimitKilled;
+                    if (ctx.memoryLimitKilled)
+                    {
+                        ctx.output(OutputStream.stderr, killedLine(ctx.memoryLimit, ctx.memoryPeak), false);
+                        return TaskOutcome(Failed(FailureReason.memoryLimit));
+                    }
+                    return outcome;
+                }
                 return TaskOutcome(Failed(FailureReason.contract));
             },
             (const ref InertAction _) => TaskOutcome(Succeeded()),
@@ -206,6 +281,7 @@ private:
             cfg.process.env = none[0 .. 0];
         }
         cfg.process.envOverlay = overlay;
+        cfg.memoryMax = memoryLimitOf(*ctx.node, options);
 
         void onEvent(in ProcessEvent ev)
         {
@@ -229,6 +305,13 @@ private:
         }
 
         auto got = supervise(*ctx.exec, action.argv, cfg, null, &onEvent);
+        // TDM20: a kill at the task's own limit says so among its lines.
+        if (!got.hasError && got.value.memoryLimitKilled)
+        {
+            const line = killedLine(cfg.memoryMax, got.value.usage.peakCgroupMemoryBytes);
+            rec.output.append(OutputStream.stderr, line);
+            ctx.output(OutputStream.stderr, line, false);
+        }
         rec.output.close(); // the output is complete; `replay` reopens it by path
         if (got.hasError)
         {
@@ -241,6 +324,13 @@ private:
         rec.status = result.status;
         rec.usage = result.usage;
         rec.usageUnavailable = !result.usage.sampled;
+        rec.memoryLimit = result.memoryLimitSet ? cfg.memoryMax : 0;
+        rec.memoryLimitKilled = result.memoryLimitKilled;
+        // A kill at its own limit fails the task even when the leader exited
+        // zero: `memory.oom.group` killed the rest of its tree, whose output
+        // and work are incomplete.
+        if (result.memoryLimitKilled)
+            return TaskOutcome(Failed(FailureReason.memoryLimit, result.status.code));
         final switch (result.end)
         {
             case ProcessEnd.exited:
@@ -274,6 +364,17 @@ its root. The map is injective — distinct ids never share a sandbox, and so
 never truncate each other's spill file — and an ordinary id reads as itself.
 (A case-insensitive file system still folds ids that differ only in case.)
 */
+// TDM20: the line a task killed at its own limit adds to its output.
+private string killedLine(ulong limit, ulong peak) @safe pure nothrow
+{
+    import std.conv : text;
+
+    try
+        return text("killed at its memory limit of ", limit >> 20, " MiB (peak ", peak >> 20, " MiB)");
+    catch (Exception)
+        return "killed at its memory limit";
+}
+
 string sandboxPath(const TaskId id) @safe pure nothrow
 {
     static immutable hexDigits = "0123456789ABCDEF";
@@ -471,7 +572,8 @@ version (unittest)
             ResourceClaim(1), TaskAction(ProcessAction(argv, env, null, StdinPolicy.empty, timeout)));
 
     private LiveRun runLive(TaskNode[] nodes, TaskEdge[] edges, ExecutorOptions options,
-        string sandboxRoot = null, size_t budget = 1024 * 1024) @system
+        string sandboxRoot = null, size_t budget = 1024 * 1024, uint memoryLimitFactor = 0,
+        ulong memoryLimitFloor = 512UL << 20, InProcessHandler[string] handlers = null) @system
     {
         import sparkles.test_runner.skip : skipTest;
         TaskGraphBuilder b;
@@ -487,8 +589,11 @@ version (unittest)
             skipTest("no Event Horizon backend: " ~ created.error.context);
 
         auto driver = ProcessDriver(ProcessDriverOptions(sandboxRoot: sandboxRoot,
-            outputMemoryBudget: budget, terminateGrace: 200.msecs, sampleInterval: Duration.zero),
+            outputMemoryBudget: budget, terminateGrace: 200.msecs, sampleInterval: Duration.zero,
+            memoryLimitFactor: memoryLimitFactor, memoryLimitFloor: memoryLimitFloor),
             graph.nodes.length);
+        foreach (name, h; handlers)
+            driver.register(name, h);
         MonotonicClock clock;
         EventChannel sink;
         LiveRun run;
@@ -545,6 +650,75 @@ version (unittest)
             Thread.sleep(20.msecs);
         }
         return false;
+    }
+}
+
+/// TDM20: a task past its memory limit, twice its prediction, fails as a
+/// memory-limit failure naming the limit, and one within it succeeds. The
+/// limit needs a delegated memory controller, so the test re-runs itself
+/// alone in a delegated user scope, and skips without one.
+@("build_primitives.task.process.run.memoryLimitFailure")
+@serial
+@system
+unittest
+{
+    version (linux)
+    {
+        import std.array : join;
+        import std.algorithm.searching : canFind;
+        import std.file : readText, thisExePath;
+        import std.process : environment, execute;
+        import sparkles.base.buffer : SharedBuffer;
+        import sparkles.event_horizon.cgroup : delegateRuns;
+        import sparkles.test_runner.skip : skipTest;
+
+        enum marker = "SPARKLES_TASK_TEST_SCOPED";
+        if (environment.get(marker, "") != "1")
+        {
+            string[] scopeArgs = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--no-ask-password",
+                "-p", "Delegate=yes"];
+            typeof(execute(scopeArgs)) probe;
+            try
+                probe = execute(scopeArgs ~ ["--", "true"]);
+            catch (Exception)
+                return skipTest("no systemd-run here");
+            if (probe.status != 0)
+                return skipTest("systemd-run --user cannot make a delegated scope here");
+            auto child = execute(scopeArgs ~ ["--", thisExePath, "--no-runner", "-i",
+                "build_primitives.task.process.run.memoryLimitFailure"], [marker: "1"]);
+            assert(child.status == 0, child.output);
+            if (child.output.canFind("⊘ build_primitives.task.process.run.memoryLimitFailure"))
+                return skipTest("no delegated memory controller here");
+            assert(child.output.canFind("✓ build_primitives.task.process.run.memoryLimitFailure"), child.output);
+            return;
+        }
+        SharedBuffer!(char, 256) parent;
+        cast(void) delegateRuns(parent);
+        string controllers;
+        try
+            controllers = parent.length ? readText("/sys/fs/cgroup" ~ parent[].idup ~ "/cgroup.subtree_control") : null;
+        catch (Exception)
+        {
+        }
+        if (!controllers.canFind("memory") || !controllers.canFind("pids"))
+            return skipTest("no delegated memory controller here");
+        auto big = processNode("big", ["sh", "-c", "x=$(head -c 268435456 /dev/zero | tr '\\0' a); echo ${#x}"]);
+        big.resources.memoryBytes = 32UL << 20;
+        big.resources.memoryMeasured = true;
+        auto small = processNode("small", ["sh", "-c", "echo fits"]);
+        small.resources.memoryBytes = 32UL << 20;
+        small.resources.memoryMeasured = true;
+        auto run = runLive([big, small], null, ExecutorOptions(capacity: 2), null, 1024 * 1024, 2, 0);
+        assert(kindOf(run.result.outcomes[0]) == OutcomeKind.failed);
+        assert(run.result.outcomes[0].match!((Failed f) => f.reason == FailureReason.memoryLimit, _ => false));
+        assert(run.spooledText[0].canFind!(l => l.canFind("killed at its memory limit of 64 MiB")), run.spooledText[0].join("|"));
+        assert(kindOf(run.result.outcomes[1]) == OutcomeKind.succeeded);
+    }
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+
+        return skipTest("a memory limit per process is Linux's");
     }
 }
 
@@ -728,4 +902,38 @@ unittest
         ~ "summary: 3 tasks: 2 succeeded, 1 failed, 0 degraded, 0 skipped, 0 blocked, 0 unneeded, 0 cancelled\n"
         ~ "failed: b\n"
         ~ "exit: 1\n", w[]);
+}
+
+/// TDM20: an in-process action is told its processes' limit, and one that
+/// reports them killed at it fails as a memory-limit failure naming it, its
+/// peak recorded, whatever outcome it returned.
+@("build_primitives.task.process.run.inProcessMemoryLimit")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    auto node(string name) => TaskNode(taskId(name).value, TaskKind.test, name, PresentationKey(0, name),
+        ResourceClaim(1), TaskAction(InProcessAction("leg", [name])));
+    auto killed = node("a-killed");
+    killed.resources.memoryBytes = 1UL << 30;
+    killed.resources.memoryMeasured = true;
+    auto fits = node("b-fits");
+    fits.resources.memoryBytes = 1UL << 30;
+    fits.resources.memoryMeasured = true;
+    ulong[string] told;
+    TaskOutcome leg(ref TaskContext!Sched ctx, const ref InProcessAction a)
+    {
+        told[a.arguments[0]] = ctx.memoryLimit;
+        ctx.memoryPeak = 3UL << 30;
+        ctx.memoryLimitSet = true;
+        ctx.memoryLimitKilled = a.arguments[0] == "a-killed";
+        return TaskOutcome(Succeeded());
+    }
+    auto run = runLive([killed, fits], null, ExecutorOptions(capacity: 2), null, 1024 * 1024, 2, 512UL << 20,
+        ["leg": &leg]);
+    assert(told["a-killed"] == 2UL << 30 && told["b-fits"] == 2UL << 30, "twice the prediction");
+    assert(run.result.outcomes[0].match!((Failed f) => f.reason == FailureReason.memoryLimit, _ => false));
+    assert(run.linesOf[0].canFind!(l => l.canFind("killed at its memory limit of 2048 MiB (peak 3072 MiB)")));
+    assert(kindOf(run.result.outcomes[1]) == OutcomeKind.succeeded);
 }
