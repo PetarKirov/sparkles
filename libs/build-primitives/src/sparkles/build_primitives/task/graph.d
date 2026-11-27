@@ -1417,10 +1417,10 @@ void writePlan(Writer)(ref Writer w, const ref TaskGraph graph, uint capacity)
         writeEnumMemberName!AnyFormat(w, n.kind);
         put(w, " weight=");
         writeValue(w, n.resources.jobsWeight);
-        if (n.resources.memoryHintBytes)
+        if (n.resources.memoryBytes)
         {
             put(w, " memory=");
-            writeValue(w, n.resources.memoryHintBytes);
+            writeValue(w, n.resources.memoryBytes);
         }
         foreach (i, key; n.resources.exclusiveKeys)
         {

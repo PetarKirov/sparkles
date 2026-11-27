@@ -366,6 +366,9 @@ private:
             case CancelCause.terminate:
                 message("Stopping", Tone.warning, plain("terminated"));
                 break;
+            case CancelCause.resources:
+                message("Stopping", Tone.failure, plain("a file system the run writes is nearly full"));
+                break;
         }
     }
 

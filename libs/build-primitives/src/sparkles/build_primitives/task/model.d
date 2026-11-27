@@ -214,7 +214,10 @@ own is running (TDM15), and `jobsWeight` tokens are available.
 struct ResourceClaim
 {
     uint jobsWeight = 1;    /// >= 1 for runnable work
-    ulong memoryHintBytes;  /// a planning and reporting hint, not a second scheduler
+    /// The predicted peak, in bytes: admission's second dimension when the
+    /// run has a memory budget (TDM18), and the base of a process's memory
+    /// limit (TDM20). Zero predicts nothing.
+    ulong memoryBytes;
     /// Resources that are not files: `coverage-publish`, a publication slot.
     /// A file is claimed by $(LREF FileClaims).
     string[] exclusiveKeys;
@@ -392,6 +395,7 @@ enum FailureReason
     spawnFailed, /// the process, or the task's fiber (`ENOBUFS`), could not start
     planning,    /// a planning node found an error (a missing selected file)
     contract,    /// an in-process action's contract does not hold
+    memoryLimit, /// the process was killed at its own memory limit (TDM20)
 }
 
 /// Work ran, or could not start, and its authoritative contract does not hold.
@@ -679,6 +683,7 @@ enum CancelCause
     failFast,  /// an authoritative failure under `--fail-fast`
     interrupt, /// SIGINT
     terminate, /// SIGTERM
+    resources, /// the admission gate: a file system under its floor (TDM19)
 }
 
 /// The run's scope was cancelled; emitted exactly once.
