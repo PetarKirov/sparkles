@@ -355,7 +355,11 @@ Stages, each measured as it lands:
    right after a heavy one can plan again.
 3. **The run's cost per hit.** What each of the 406 lookups still costs: the
    lease, the manifest check, linking the outputs into the run directory, the
-   preimage, and the run's records.
+   preimage, and the run's records. Listings validated parent first through kept
+   handles, a missing directory answered by its parent's listing, and each
+   archive's `pragma(lib)` names kept in its result's record: the run 3.7 s →
+   2.3 s, a warm total of 3.1 s (2.1 s and 2.7 s before the review fixes, which
+   made the listings sound; the 0.2 s is not yet attributed).
 4. **No spinning.** The event loop's idle workers park on a futex instead of
    yielding in a loop (`raw_pool.d`, `job_queue.d`).
 5. **Less allocation.** The GC's lock stops being contended: the hot paths

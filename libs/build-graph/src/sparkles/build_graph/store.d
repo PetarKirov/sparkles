@@ -96,6 +96,10 @@ struct OutputRecord
     ulong size;      ///
     bool executable; ///
     ubyte[32] digest; /// BLAKE3 (D48)
+    /// An object's or archive's `pragma(lib)` names (BGK9), read from its
+    /// bytes when it was published, so a link's key needs no read of it.
+    string[] libraries;
+    bool librariesKnown; /// whether `libraries` was read; false for a record that predates them
 }
 
 /// One file a compile read, with the digest of what it read (BGK2).
@@ -152,8 +156,18 @@ struct ResultRecord
         string s = "format " ~ formatVersion.text ~ "\ntask " ~ task ~ "\ntoolchain " ~ toolchain ~ "\ndeclared " ~ declaredKey
             ~ "\nresult " ~ resultKey ~ "\nstatus " ~ status.text ~ "\n";
         foreach (ref o; outputs)
+        {
             s ~= "output " ~ hexOf(o.digest) ~ " " ~ o.size.text ~ " " ~ (o.executable ? "x" : "-")
                 ~ " " ~ o.path ~ "\n";
+            // `libraries`, then each name after a tab: the output's above.
+            if (o.librariesKnown)
+            {
+                s ~= "libraries";
+                foreach (name; o.libraries)
+                    s ~= "\t" ~ name;
+                s ~= "\n";
+            }
+        }
         return s;
     }
 
@@ -216,6 +230,20 @@ bool parseRecord(scope const(char)[] source, out ResultRecord r) @safe pure
             o.executable = rest[space + 1] == 'x';
             o.path = rest[space + 3 .. $];
             r.outputs ~= o;
+        }
+        else if (line == "libraries" || line.startsWith("libraries\t"))
+        {
+            if (!r.outputs.length || r.outputs[$ - 1].librariesKnown)
+                return false;
+            string[] names;
+            if (line.length > 10)
+            {
+                const string tail = line[10 .. $].idup;
+                foreach (name; tail.splitter('\t'))
+                    names ~= name;
+            }
+            r.outputs[$ - 1].libraries = names;
+            r.outputs[$ - 1].librariesKnown = true;
         }
     }
     return formatSeen && r.resultKey.length;
@@ -1615,6 +1643,14 @@ private bool word(scope const(char)[] line, string keyword, out string rest) @sa
     ResultRecord back;
     assert(parseRecord(r.text, back) && back == r);
     assert(!parseRecord("format 0\nresult k\n", back));
+    // An archive's library names (BGK9) round-trip, none included; a record
+    // without them leaves them unknown, and a stray line fails it.
+    r.outputs = [OutputRecord("a.o", 1, false, digestOf(1), null, true),
+        OutputRecord("libleaf.a", 12, false, digestOf(3), ["z", "ssl"], true)];
+    assert(parseRecord(r.text, back) && back == r && back.outputs[1].libraries == ["z", "ssl"]);
+    r.outputs = [OutputRecord("libleaf.a", 12, false, digestOf(3))];
+    assert(parseRecord(r.text, back) && !back.outputs[0].librariesKnown);
+    assert(!parseRecord(r.text ~ "libraries\tz\nlibraries\tz\n", back), "two lines for one output");
 
     Manifest m;
     m.files = [ManifestEntry("libs/a.d", digestOf(9))];
