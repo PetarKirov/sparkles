@@ -225,7 +225,7 @@ RunResult runRound(Round round, ref bool[Digest][string] passed, string repoRoot
 
     auto region = stdoutLiveRegion();
     auto reporter = TtyReporter(&region, makeTheme(detectTermCaps()), &round.graph, TtyOptions());
-    auto process = ProcessDriver(ProcessDriverOptions(repoRoot: repoRoot), round.graph.nodes.length);
+    auto process = ProcessDriver(ProcessDriverOptions(repoRoot: repoRoot, oomScoreAdj: 1000), round.graph.nodes.length);
     auto driver = RoundDriver(&process, round, &passed);
     auto sink = new EventChannel;
     MonotonicClock clock;

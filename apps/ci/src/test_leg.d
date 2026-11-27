@@ -226,6 +226,7 @@ private struct LegRun
         cfg.collectOutput = false;
         cfg.maxLineBytes = 64 * 1024 * 1024; // a frame is one line, and must arrive whole
         cfg.sampleInterval = Duration.zero;
+        cfg.oomScoreAdj = 1000; // a test worker is the OOM killer's first choice (CIC22)
         void onEvent(in ProcessEvent ev)
         {
             final switch (ev.kind)

@@ -175,28 +175,33 @@ by measurement and contains what is left over, and keeps a run from filling
 the disks it writes.
 
 Items 1 and 2 need no change to the executor's admission and land first;
-items 4 to 6 amend the SPEC (TDM7, TDM10 and §3.3's `memoryHintBytes`, which
-becomes a second admission dimension) and Event Horizon §13.7, before any
-code.
+items 4 to 7 amend the SPEC (TDM7, TDM10 and §3.3's `memoryHintBytes`, which
+becomes a second admission dimension, and the disk rules), Event Horizon §13.7
+and the build graph's BGS5, before any code.
 
 1. **Containment.** A run's actions execute inside one cgroup the run owns,
    with the memory controller delegated to it: under systemd, `ci` re-executes
    itself in a transient user scope (`systemd-run --user --scope
 -p Delegate=yes`) unless it already runs in a delegated cgroup, with
-   `MemoryHigh` and `MemoryMax` (defaults 75 % and 85 % of total memory;
-   `--memory-max` overrides, `--memory-max=none` opts out). `ci`'s own process
+   `MemoryMax` (default 85 % of total memory; `--memory-max` overrides,
+   `--memory-max=none` opts out) and no `MemoryHigh`. `ci`'s own process
    moves to a leaf of its own, so the no-internal-process rule lets each
    action's run cgroup reach Event Horizon's `accounted` tier. The scope is
    what items 4 to 6 stand on: without delegation no action's `memory.peak`
    can be read and no `memory.max` set. It is also the backstop for their
-   prediction errors: past `MemoryHigh` the kernel reclaims and throttles
-   inside the run, and at `MemoryMax` its OOM killer chooses only among the
-   run's processes. Without systemd or cgroup v2 the run proceeds
+   prediction errors: at `MemoryMax` its OOM killer chooses only among the
+   run's processes, its actions first. A `MemoryHigh` below it was dropped:
+   past it the kernel throttled every allocation, and in CI an AddressSanitizer
+   compile of hue's test root that takes a minute crawled into its 30-minute
+   timeout instead of failing. Without systemd or cgroup v2 the run proceeds
    unconfined, and its report names the tier.
-2. **OOM priority.** Each action's process sets its `oom_score_adj` to 1000
-   before it executes the action, so an OOM kill outside a scope (item 1's
-   fallback, or a host-wide shortage) takes a compile before anything else.
-   No privilege is needed to raise one's own score. `ci` keeps its own.
+2. **OOM priority.** `ci` raises its own `oom_score_adj` to 900, so every
+   process it starts inherits at least that, a descendant an action forks
+   before its own score is written included; every supervised action (a
+   build action, a test worker, an example) is raised to 1000 as soon as it
+   is spawned. A shortage the kernel resolves by score takes the run's
+   actions first, then `ci`, before any other program. No privilege is
+   needed to raise a score.
 3. **Host configuration.** A how-to for developer hosts: `systemd-oomd` with
    user slices managed (NixOS `systemd.oomd.enableUserSlices`), or `earlyoom`
    preferring the toolchain's processes and avoiding the desktop's, and
@@ -205,47 +210,66 @@ code.
 4. **Admission by memory.** Every action's claim carries a predicted peak,
    and a node starts only when the predicted peaks of the running nodes and
    its own fit the run's memory budget (TDM7 gains the dimension, TDM8's order
-   holds across both). The prediction is the action's last measured
-   `memory.peak`, recorded with the run's records under the task's identity
+   holds across both). The prediction is the action's last measured peak:
+   its run cgroup's `memory.peak` in the `accounted` tier, else the peak
+   resident set of its process tree that Event Horizon samples on every
+   host. It is recorded with the run's records under the task's identity
    without its key digest, so an edited package keeps its history; an action
    with none takes a default per kind (a compile of a test root more than a
-   library's). The budget is item 1's `MemoryHigh` less `ci`'s own peak, or,
-   unconfined, available memory less a reserve and that peak. A claim above the budget runs alone, as TDM7 clamps
-   an oversized weight. TDM10's memory unit per job goes.
+   library's). The budget is item 1's `MemoryMax`, or, unconfined, the
+   memory available at the start, less `ci`'s own reserve: the larger of its
+   resident set as the run goes and 1 GiB, and never more than half the
+   budget, so a small `--memory-max` still admits one action. A claim above
+   the budget runs alone, as TDM7 clamps an oversized weight. TDM10's memory
+   unit per job goes.
 5. **Back-off under pressure.** While the run cgroup's `memory.pressure`
    (unconfined: `/proc/pressure/memory`) reports `some` over a threshold for
    the last 10 seconds, the executor admits no further node, and resumes once
-   it falls; nothing running is stopped. Predictions are wrong on a cold host
-   and after an edit; pressure is what the kernel measures.
+   it falls or after 30 seconds without a node finishing; nothing running is
+   stopped, and when nothing runs one node is always admitted, so the run
+   cannot stall. Predictions are wrong on a cold host and after an edit;
+   pressure is what the kernel measures.
 6. **A limit per action.** In the `accounted` tier, each action's run cgroup
    gets `memory.max` at twice its predicted peak (with a floor), and
-   `memory.oom.group`, so a runaway action is killed whole and alone. It fails
-   as a memory-limit failure that names its peak and limit, distinct from a
-   signal, and its next prediction is the peak it reached.
+   `memory.oom.group`, so a runaway action is killed whole and alone. A kill
+   at its own limit, which the run cgroup's `memory.events` counts as
+   `oom_kill`, fails the action as a memory-limit failure that names its peak
+   and limit, distinct from a signal and from a kill at the scope's limit,
+   which the scope's own `memory.events` counts. Its next prediction is the
+   limit it was killed at, not more, so a leak does not raise its own limit
+   from run to run; a second limit kill in a row leaves the limit as it is.
 7. **Disk space.** The executor watches the free space of the file systems
    a run writes: the store, the run directory and the temporary directory.
-   Below a reserve (the larger of 5 GiB and 5 % of the file system), it admits
-   no node that writes there and evicts the store down to what fits; below a
-   floor of half the reserve, it cancels the run, naming the file system and
-   its free space, before an action fails part-way with `ENOSPC` and leaves
-   the host's other programs without room. The report states each file
-   system's free space at the start and the end.
+   Each has a reserve, the smaller of 5 GiB and 10 % of its size, and a floor
+   of half the reserve, so a small `tmpfs` gets a small one. Below the reserve
+   it evicts the store, when the store is on that file system, and admits no
+   node that writes there while another node runs; with none running and the
+   free space still under the reserve, or below the floor at any time, it
+   cancels the run, naming the file system and its free space, before an
+   action fails part-way with `ENOSPC` and leaves the host's other programs
+   without room. The report states each file system's free space at the start
+   and the end. The task-DAG SPEC and the build graph's BGS5 gain these rules.
 
 Gate:
 
 - An executor test over a fixture graph of actions that each allocate and
-  touch a known amount, run in a scope of known size: the running actions'
-  predicted peaks never exceed the budget, none is OOM-killed, and a node
-  larger than the budget runs alone.
+  touch a known amount, run twice in a scope of known size: in the second run
+  the running actions' predicted peaks never exceed the budget, none is
+  OOM-killed, and a node larger than the budget runs alone.
 - The same graph with one action that grows past its limit: only that action
-  fails, as a memory-limit failure, and the next run predicts its peak.
-- A test that an action's process runs with `oom_score_adj` 1000.
-- A pressure test: with the threshold forced low, admission pauses and
-  resumes, and every node completes.
+  fails, as a memory-limit failure counted by its run cgroup's
+  `memory.events`, and the next run predicts the limit it was killed at.
+- Tests that a build action's, a test worker's and an example's process run
+  with `oom_score_adj` 1000, and `ci` with 900, each from a starting score
+  below it.
+- A pressure test with the pressure it reads injected: above the threshold,
+  admission pauses with nodes running and still admits one with none, resumes
+  below it and after the bound, and every node completes.
 - A disk test with the free space it reads injected: under the reserve the
-  executor evicts and admits nothing that writes there, under the floor the
-  run is cancelled with a message naming the file system, and above both it
-  runs unchanged.
+  executor evicts and admits nothing that writes there while a node runs,
+  with none running and no room made it cancels, under the floor it cancels
+  with a message naming the file system, a 1 GiB `tmpfs` gets a reserve of
+  100 MiB, and above both it runs unchanged.
 - On the 29 GiB, 32-core developer host, a cold `ci test --build-only` from an
   empty store completes, and the journal shows no process outside the run's
   scope killed for memory; its wall time is recorded against the unbounded
@@ -259,6 +283,12 @@ Gate:
   run, and comparable to a large compile in a cold one, so the scope contains
   it too.
 
+Status: items 1 and 2 partial: `ci`'s CIC22 (`apps/ci/src/run_scope.d`), Event
+Horizon's `delegateRuns` and `writeOomScoreAdj`
+(`libs/event-horizon/src/sparkles/event_horizon/cgroup.d`) and `oomScoreAdj` through
+`ProcessDriverOptions`, checked by hand on a systemd host; entering and
+adopting a scope have no automated test yet. Items 3 to 7 not started.
+
 ## Progress
 
 | Milestone | State       |
@@ -270,4 +300,4 @@ Gate:
 | M6        | delivered   |
 | M6a       | delivered   |
 | M6b       | in progress |
-| M7        | planned     |
+| M7        | in progress |
