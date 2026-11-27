@@ -283,24 +283,25 @@ Cleanup nodes are idempotent and run under a cancellation protection region.
 ```d
 struct ResourceClaim
 {
-    uint jobsWeight;       // >= 1 for runnable work
-    ulong memoryHintBytes; // planning/reporting hint, not a second scheduler
+    uint jobsWeight;   // >= 1 for runnable work
+    ulong memoryBytes; // the predicted peak: the second dimension under a memory budget (TDM18)
     string[] exclusiveKeys;
 }
 ```
 
 **TDM7: Weighted admission.** The executor **must** own `--jobs N` weighted tokens.
 A node starts only when all its exclusive keys are free, no node whose file
-claims conflict with its own is running (TDM15), and `jobsWeight` tokens are
-available. A claim larger than total capacity is clamped to total capacity,
-so it runs alone rather than deadlocking. A node whose fiber cannot be spawned
+claims conflict with its own is running (TDM15), `jobsWeight` tokens are
+available, and, under a memory budget, its `memoryBytes` fit (TDM18). A claim
+larger than total capacity, or than the budget, is clamped to it, so it runs
+alone rather than deadlocking. A node whose fiber cannot be spawned
 fails at once as `Failed(spawnFailed)`, releasing what it claimed (T12).
 
 **TDM8: Admission order.** Ready nodes **must** be admitted in presentation order.
 A node that waits only for an exclusive key or a conflicting writer does not
 hold back later nodes. A
-node that waits for capacity stops admission of every later node until it
-starts. There is no backfilling past it, so a stream of light nodes cannot
+node that waits for capacity, tokens or memory, stops admission of every later
+node until it starts. There is no backfilling past it, so a stream of light nodes cannot
 starve a heavy one.
 
 **TDM9: Default weights.** Default weights are declared by work kind. A planner
@@ -314,13 +315,46 @@ starve a heavy one.
 | Known DMD-frontend-heavy package task  | 4                           |
 | Mutating docs rewrite                  | 1, writing its file (TDM15) |
 
-**TDM10: Capacity.** Without `--jobs`, capacity **must** be the smaller of
+**TDM10: Capacity.** Without `--jobs`, capacity **must** be
 `sparkles.base.hw_caps.hwParallelism()`, which already folds in CPU quotas,
-available memory, load and swap, and one unit per GiB of total memory, so a
-weight-2 compile has 2 GiB. Explicit `--jobs` sets capacity exactly. Work that
+available memory, load and swap. Tokens count parallelism only: memory is
+admitted by its own dimension (TDM18), never by a unit per GiB. Explicit `--jobs` sets capacity exactly. Work that
 starts its own threads, such as the test runner's `-t N` or a linker, takes its
 thread count from its claim, so task-level parallelism does not multiply into
 unbounded threads. A single LDC compile is single-threaded and needs no cap.
+
+**TDM18: Admission by memory.** When the run has a memory budget, a node
+**must** start only when the `memoryBytes` of the running nodes and its own
+fit it. A claim above the budget runs alone: it starts only on an idle
+executor, and nothing else starts while it runs, a claim of zero included.
+With nothing running, the first ready node is always admitted, so a wrong
+prediction costs time and never stalls the run. Without a budget the dimension is off. The
+predictions are the planner's: `ci` records each action's measured peak and
+predicts from it ([CIC23](../../ci/task-dag/SPEC.md#_5-8-commit-checks)).
+
+**TDM19: The admission gate.** A run **may** have a gate the executor asks
+before it admits a node, which answers open, hold or cancel:
+
+- **Hold, bounded (memory pressure):** no further node starts while one runs,
+  for at most 30 seconds since the hold began or a node last finished; with
+  nothing running, one node is admitted. Nothing running is stopped.
+- **Hold, unbounded (a file system under its reserve):** no further node starts
+  while one runs; with nothing running, the run is cancelled with the gate's
+  message.
+- **Cancel (a file system under its floor):** the run is cancelled with the
+  gate's message, as `CancelCause.resources`, which fails the command; running
+  nodes are stopped as any cancellation stops them.
+
+A cancellation by the gate, like any other, still starts each cleanup node
+once it is ready. The executor asks at most once per admission pass, and,
+while nodes run, at least four times a second whether or not a node is ready,
+so a file system that fills while every token is taken still cancels the run.
+Its timer is one fiber for the whole run, taken before any task's.
+
+**TDM20: A memory-limit failure.** A process task killed at its own memory
+limit (Event Horizon §13.7) **must** end as `Failed(memoryLimit)`, its output
+naming the limit and its peak. A kill by a limit above it, such as its run's
+scope, stays a signal failure.
 
 Exclusive keys protect semantic resources, not implementation mutexes, and
 resources that are not files: `coverage-publish` and a publication slot. A

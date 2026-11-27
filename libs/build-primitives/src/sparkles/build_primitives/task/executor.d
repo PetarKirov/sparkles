@@ -110,13 +110,40 @@ struct TaskContext(X)
     bool cancelRequested() => interruptRequested(*exec.currentContext());
 }
 
+/// The admission gate's answer (TDM19).
+struct AdmissionGate
+{
+    /// What the gate allows.
+    enum Kind : ubyte
+    {
+        open,          /// admit by tokens and memory
+        holdBounded,   /// memory pressure: hold while a node runs, for a bound
+        holdUnbounded, /// a file system under its reserve: hold while a node runs, else cancel
+        cancel,        /// a file system under its floor: cancel the run
+    }
+
+    Kind kind; ///
+    string message; /// why, for a hold or a cancel
+}
+
 /// Executor settings.
 struct ExecutorOptions
 {
+    import core.time : seconds;
+
     /// Total weighted capacity (`--jobs`); at least 1.
     uint capacity = 1;
     /// Stop admission and cancel on the first authoritative failure.
     bool failFast;
+    /// TDM18: what the running nodes' `memoryBytes` may add up to; zero
+    /// turns the dimension off.
+    ulong memoryBudget;
+    /// TDM19: asked once per admission pass while a node is ready; null
+    /// admits by tokens and memory alone.
+    AdmissionGate delegate() gate;
+    /// TDM19: how long a bounded hold keeps a ready node waiting, since it
+    /// began or a node last finished, before one more is admitted.
+    Duration holdBound = 30.seconds;
 }
 
 /// What a run produced.
@@ -130,6 +157,8 @@ struct RunResult
     /// Why the run was cancelled, when it was.
     bool cancelled;
     CancelCause cancelCause; /// meaningful when `cancelled`
+    /// The admission gate's reason, when it cancelled the run (TDM19).
+    string cancelMessage;
     /// `0` success, `1` failure, `130` SIGINT, `143` SIGTERM ([SPEC TDC5]).
     int exitCode;
 }
@@ -201,8 +230,23 @@ struct TaskExecutor(X, C, D, S)
     {
         emit(TaskEventPayload(GraphPlanned(graph.nodes.length, graph.edges.length, options.capacity)));
         free = options.capacity;
+        freeMemory = options.memoryBudget;
+        lastFinish = clock.now();
 
         auto scoped = withScope!((ref sc) {
+            // TDM19: while nodes run, the gate is asked on a timer whether or
+            // not one is ready, so a file system filling mid-run cancels it
+            // and a hold is reconsidered. One daemon fiber for the whole run,
+            // taken before any task's: it never competes for a slot, and the
+            // scope reaps it when the run ends.
+            if (options.gate !is null)
+                cast(void) sc.spawnDaemon(() {
+                    while (!runOver && napBeforeAsking())
+                        if (!runOver && running > 0)
+                            cast(void) completions.tryPut(Completion(TaskIndex.init));
+                });
+            scope (exit)
+                runOver = true;
             for (;;)
             {
                 if (externalRequested && !cancelling)
@@ -265,6 +309,7 @@ struct TaskExecutor(X, C, D, S)
         }
         result.cancelled = cancelling;
         result.cancelCause = cancelCause;
+        result.cancelMessage = gateMessage;
         result.primaryFailure = primaryCause;
         // TDC3: the lowest-index authoritative failure, never a task blocked
         // by one (a dependent can sort before its prerequisite); a block
@@ -283,7 +328,8 @@ struct TaskExecutor(X, C, D, S)
         else if (cancelling && cancelCause == CancelCause.terminate)
             result.exitCode = 143;
         else
-            result.exitCode = result.primaryFailure.valid || scoped.hasError ? 1 : 0;
+            result.exitCode = result.primaryFailure.valid || scoped.hasError
+                || cancelling && cancelCause == CancelCause.resources ? 1 : 0;
         emit(TaskEventPayload(RunFinished(result.exitCode)));
         return result;
     }
@@ -316,6 +362,13 @@ private:
     uint[] conflictHeld;   // per task: how many running tasks conflict with it
     bool[] ran;            // per task: its action ran (it was not fresh)
     uint free;
+    ulong freeMemory;   // TDM18: the budget less the running nodes' memory
+    bool holding;       // TDM19: the gate holds a ready node back
+    bool runOver;       // the gate's timer stops
+    bool aloneRunning;  // TDM18: a claim above the budget runs, so nothing else starts
+    MonoTime holdSince; // when the hold began
+    MonoTime lastFinish;
+    string gateMessage; // why the gate cancelled the run
     size_t running;
     ulong sequence;
     bool sinkGone;
@@ -455,9 +508,66 @@ private:
         }
     }
 
+    // TDM18: what a claim takes from the memory budget: clamped to it, so a
+    // claim above the budget runs alone; nothing without a budget.
+    ulong memoryOf(const ref ResourceClaim claim) const @safe pure nothrow @nogc
+        => !options.memoryBudget ? 0 : claim.memoryBytes < options.memoryBudget ? claim.memoryBytes
+        : options.memoryBudget;
+
+    // TDM19: the wait before the gate is asked again: the clock's, where it
+    // sleeps (a test's virtual time), else the scheduler's timer.
+    // Whether the nap ended on time, not interrupted.
+    bool napBeforeAsking()
+    {
+        import core.time : msecs;
+
+        // Often enough to keep a short bound, at most four times a second.
+        const nap = options.holdBound / 4 < 250.msecs ? options.holdBound / 4 : 250.msecs;
+        static if (__traits(compiles, clock.sleep(nap)))
+            return !clock.sleep(nap).hasError;
+        else
+        {
+            import sparkles.event_horizon.io : sleep;
+
+            return !sleep(*exec, nap).hasError;
+        }
+    }
+
+    // TDM19: the gate holds a ready node back.
+    void hold()
+    {
+        if (!holding)
+            holdSince = clock.now();
+        holding = true;
+    }
+
+    // TDM19: the gate cancels the run, saying why.
+    void gateCancel(string message)
+    {
+        if (cancelling)
+            return;
+        gateMessage = message;
+        holding = false;
+        requestCancellation(CancelCause.resources, TaskIndex.init);
+    }
+
+    AdmissionGate gate;
+    bool gateAsked;
+
     // Starts ready tasks in index (presentation) order.
     void admit(scope void delegate(TaskIndex) spawn)
     {
+        gateAsked = false;
+        // TDM19: while nodes run the gate is asked each pass, ready node or
+        // not, so a file system under its floor cancels a run whose ready
+        // nodes all wait on tokens.
+        if (options.gate !is null && !cancelling && running > 0)
+        {
+            gate = options.gate();
+            gateAsked = true;
+            if (gate.kind == AdmissionGate.Kind.cancel)
+                gateCancel(gate.message);
+        }
         foreach (i; 0 .. cast(uint) state.length)
         {
             if (state[i] != TaskState.ready)
@@ -478,7 +588,63 @@ private:
             const weight = claim.admittedWeight(options.capacity);
             if (weight > free)
                 break; // no backfilling past a task waiting for capacity
+            // TDM18: with nothing running, the first ready node starts, so a
+            // prediction above the budget runs alone and never stalls the run;
+            // while it runs, nothing else starts, a zero claim included.
+            const memory = memoryOf(claim);
+            const alone = options.memoryBudget && claim.memoryBytes > options.memoryBudget;
+            if (running > 0 && (memory > freeMemory || alone || aloneRunning))
+                break;
+            if (options.gate !is null && !cancelling)
+            {
+                if (!gateAsked)
+                {
+                    gate = options.gate();
+                    gateAsked = true;
+                }
+                final switch (gate.kind)
+                {
+                case AdmissionGate.Kind.open:
+                    holding = false;
+                    break;
+                case AdmissionGate.Kind.cancel:
+                    // The rest of this pass turns every ready node away, as
+                    // any cancellation does, so their dependents are decided;
+                    // a cleanup node still runs, protected, as it would under
+                    // any cancellation.
+                    gateCancel(gate.message);
+                    if (!isCleanup(t))
+                    {
+                        finish(t, TaskOutcome(Cancelled(CancelReason.notAdmitted)));
+                        continue;
+                    }
+                    break;
+                case AdmissionGate.Kind.holdUnbounded:
+                    if (running > 0)
+                        return hold();
+                    gateCancel(gate.message);
+                    if (!isCleanup(t))
+                    {
+                        finish(t, TaskOutcome(Cancelled(CancelReason.notAdmitted)));
+                        continue;
+                    }
+                    break;
+                case AdmissionGate.Kind.holdBounded:
+                    if (running > 0)
+                    {
+                        if (!holding)
+                            return hold();
+                        const since = holdSince > lastFinish ? holdSince : lastFinish;
+                        if (clock.now() - since < options.holdBound)
+                            return;
+                        holdSince = clock.now(); // one more, then hold again
+                    }
+                    break;
+                }
+            }
             free -= weight;
+            freeMemory -= memory < freeMemory ? memory : freeMemory;
+            aloneRunning |= alone;
             foreach (key; claim.exclusiveKeys)
                 heldKeys[key] = true;
             foreach (other; graph.conflicts(t))
@@ -591,6 +757,12 @@ private:
                 outcome = TaskOutcome(Failed(FailureReason.contract));
             const claim = (*graph)[c.task].resources;
             free += claim.admittedWeight(options.capacity);
+            freeMemory += memoryOf(claim);
+            if (freeMemory > options.memoryBudget)
+                freeMemory = options.memoryBudget;
+            if (options.memoryBudget && claim.memoryBytes > options.memoryBudget)
+                aloneRunning = false;
+            lastFinish = clock.now();
             foreach (key; claim.exclusiveKeys)
                 heldKeys.remove(key);
             foreach (other; graph.conflicts(c.task))
@@ -660,7 +832,7 @@ private:
 
 version (unittest)
 {
-    import core.time : msecs;
+    import core.time : msecs, seconds;
     import std.algorithm.iteration : filter, map;
     import std.array : array;
 
@@ -1384,4 +1556,154 @@ unittest
         else
             assert(kindOf(result.outcomes[g.indexOf(tid("a")).value]) == OutcomeKind.succeeded);
     }
+}
+
+// The memory in use at its peak: the running nodes' `memoryBytes` summed over
+// every instant one starts.
+version (unittest) private ulong peakMemory(const ref TaskGraph g, const ref Run run) @safe
+{
+    ulong peak;
+    foreach (ref n; g.nodes)
+    {
+        const at = run.startedAt[n.id.text];
+        ulong sum;
+        foreach (ref m; g.nodes)
+            if (run.startedAt[m.id.text] <= at && run.finishedAt[m.id.text] > at)
+                sum += m.resources.memoryBytes;
+        if (sum > peak)
+            peak = sum;
+    }
+    return peak;
+}
+
+/// TDM18: the running nodes' predicted memory never exceeds the budget, a
+/// claim above it runs alone, and order holds across both dimensions.
+@("build_primitives.task.executor.admission.memoryBudget")
+@system
+unittest
+{
+    auto nodes = [tnode("a"), tnode("b"), tnode("c"), tnode("d"), tnode("e")];
+    foreach (ref n; nodes[0 .. 4])
+        n.resources.memoryBytes = 4;
+    nodes[4].resources.memoryBytes = 15;
+    const g = graphOf(nodes, null);
+    Script[string] scripts;
+    foreach (name; ["a", "b", "c", "d", "e"])
+        scripts[name] = Script(10.msecs);
+    auto run = runFake(g, scripts, ExecutorOptions(capacity: 8, memoryBudget: 10));
+    assert(run.result.exitCode == 0);
+    assert(peakMemory(g, run) <= 15, "only the oversized claim exceeds the budget, and alone");
+    foreach (name; ["a", "b", "c", "d"])
+        assert(run.startedAt["e"] >= run.finishedAt[name] || run.startedAt[name] >= run.finishedAt["e"],
+            "the oversized claim runs alone");
+    assert(run.startedAt["c"] >= run.finishedAt["a"], "two of 4 fit 10; the third waits");
+    auto unbounded = runFake(g, scripts, ExecutorOptions(capacity: 8));
+    assert(unbounded.startedAt["e"] == MonoTime.zero, "without a budget the dimension is off");
+}
+
+/// TDM19: a bounded hold keeps nodes waiting while one runs, admits one with
+/// none running, admits one more after the bound, and every node completes.
+@("build_primitives.task.executor.gate.boundedHold")
+@system
+unittest
+{
+    const g = graphOf([tnode("a"), tnode("b"), tnode("c")], null);
+    auto scripts = ["a": Script(200.msecs), "b": Script(10.msecs), "c": Script(10.msecs)];
+    AdmissionGate held() => AdmissionGate(AdmissionGate.Kind.holdBounded, "pressure");
+    auto run = runFake(g, scripts, ExecutorOptions(capacity: 4, gate: &held, holdBound: 50.msecs));
+    assert(run.result.exitCode == 0, "nothing is stopped and every node completes");
+    assert(run.startedAt["a"] == MonoTime.zero, "with none running, one is admitted");
+    const b = run.startedAt["b"] - MonoTime.zero;
+    assert(b >= 50.msecs && b < 200.msecs, "after the bound, one more");
+    // Below the threshold again, admission resumes at once.
+    int asked;
+    AdmissionGate falls() => ++asked <= 2 ? AdmissionGate(AdmissionGate.Kind.holdBounded) : AdmissionGate.init;
+    auto resumed = runFake(g, scripts, ExecutorOptions(capacity: 4, gate: &falls, holdBound: 10.seconds));
+    assert(resumed.result.exitCode == 0);
+    assert(resumed.startedAt["c"] - MonoTime.zero < 1.seconds, "resumed once the pressure fell, long before the bound");
+}
+
+/// TDM19: an unbounded hold cancels when nothing runs, and a cancel fails the
+/// run with the gate's message.
+@("build_primitives.task.executor.gate.diskCancels")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // `b` and `c` become ready when `a` ends, while `d` still runs: held; once
+    // `d` ends with nothing running, the run is cancelled.
+    const g = graphOf([tnode("a"), tnode("b"), tnode("c"), tnode("d")], [tedge("a", "b"), tedge("a", "c")]);
+    auto scripts = ["a": Script(20.msecs), "b": Script(10.msecs), "c": Script(10.msecs), "d": Script(80.msecs)];
+    int asked;
+    AdmissionGate filling() => ++asked == 1 ? AdmissionGate.init
+        : AdmissionGate(AdmissionGate.Kind.holdUnbounded, "/tmp: 1 GiB free, under its 2 GiB reserve");
+    auto run = runFake(g, scripts, ExecutorOptions(capacity: 4, gate: &filling));
+    assert(run.outcomeOf(g, "a") == "succeeded" && run.outcomeOf(g, "d") == "succeeded",
+        "a running node is not stopped");
+    assert(run.outcomeOf(g, "b") == "cancelled" && run.outcomeOf(g, "c") == "cancelled", "held, then not admitted");
+    assert(run.result.cancelled && run.result.cancelCause == CancelCause.resources);
+    assert(run.result.exitCode == 1 && run.result.cancelMessage.canFind("/tmp"));
+
+    AdmissionGate full() => AdmissionGate(AdmissionGate.Kind.cancel, "/: 100 MiB free, under its floor");
+    auto cancelled = runFake(g, scripts, ExecutorOptions(capacity: 4, gate: &full));
+    assert(cancelled.result.exitCode == 1 && cancelled.result.cancelMessage.canFind("floor"));
+    assert(cancelled.outcomeOf(g, "a") == "cancelled");
+}
+
+/// TDM18: a claim above the budget runs alone, whatever the others claim: a
+/// zero claim neither starts beside it nor lets it start beside itself.
+@("build_primitives.task.executor.admission.aloneBesideZeroClaims")
+@system
+unittest
+{
+    foreach (first; [true, false])
+    {
+        auto big = tnode("big");
+        big.resources.memoryBytes = 15;
+        auto zero = tnode("zero"); // claims nothing
+        const g = graphOf(first ? [big, zero] : [zero, big], null);
+        auto run = runFake(g, ["big": Script(10.msecs), "zero": Script(10.msecs)],
+            ExecutorOptions(capacity: 8, memoryBudget: 10));
+        assert(run.result.exitCode == 0);
+        assert(run.startedAt["zero"] >= run.finishedAt["big"] || run.startedAt["big"] >= run.finishedAt["zero"],
+            first ? "nothing starts beside the oversized claim" : "the oversized claim waits for an idle executor");
+    }
+}
+
+/// TDM19: the gate is asked while nodes run even when no ready node fits its
+/// tokens, so a file system falling under its floor mid-node cancels the run
+/// and the waiting node never starts.
+@("build_primitives.task.executor.gate.floorWhileFull")
+@system
+unittest
+{
+    const g = graphOf([tnode("a-writer"), tnode("b-next")], null);
+    auto scripts = ["a-writer": Script(5.seconds), "b-next": Script(10.msecs)];
+    int asked;
+    AdmissionGate filling() => ++asked == 1 ? AdmissionGate.init
+        : AdmissionGate(AdmissionGate.Kind.cancel, "/tmp: under its floor");
+    auto run = runFake(g, scripts, ExecutorOptions(capacity: 1, gate: &filling));
+    assert(run.result.cancelled && run.result.cancelCause == CancelCause.resources);
+    assert(run.outcomeOf(g, "a-writer") == "cancelled", "the run is cancelled while the writer runs");
+    assert(run.outcomeOf(g, "b-next") == "cancelled");
+    foreach (ref e; run.events)
+        if (e.payload.match!((CancellationRequested _) => true, _ => false))
+            assert(e.at - MonoTime.zero < 1.seconds, "asked to stop long before the writer would end");
+}
+
+/// TDM19: a cleanup node that becomes ready while the gate cancels the run
+/// still runs, as it does under any cancellation.
+@("build_primitives.task.executor.gate.cancelStillRunsCleanup")
+@system
+unittest
+{
+    const g = graphOf([tnode("a"), tnode("z", 1, TaskKind.cleanup)], [tedge("a", "z", EdgeCondition.always)]);
+    int asked;
+    AdmissionGate filling() => ++asked == 1 ? AdmissionGate.init
+        : AdmissionGate(AdmissionGate.Kind.holdUnbounded, "/tmp: under its reserve");
+    auto run = runFake(g, ["a": Script(10.msecs), "z": Script(1.msecs)], ExecutorOptions(capacity: 2, gate: &filling));
+    assert(run.result.cancelled && run.result.cancelCause == CancelCause.resources);
+    assert(run.outcomeOf(g, "a") == "succeeded");
+    assert(run.outcomeOf(g, "z") == "succeeded", "the cleanup ran");
 }
