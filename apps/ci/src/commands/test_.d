@@ -299,7 +299,7 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
     {
         auto e = runGraph(repoRoot, null, RunOptions(into: into, cache: cache,
             packages: cmd.hosts.length ? null : names.dup, hostApplications: hostApplications, legs: legs,
-            coverage: coverage, buildOnly: buildOnly, explain: true));
+            coverage: coverage, buildOnly: buildOnly, explain: true, reusePlan: true));
         if (e.error.length)
             return failRun(e.error);
         size_t failing;
@@ -320,7 +320,8 @@ private RunExpected!void runTestsOnGraph(bool failFast, bool coverage, in string
         legs: legs, coverage: coverage, buildOnly: buildOnly, failFast: failFast, echo: true, jobs: jobs,
         reporting: reporting, requireCached: cmd.requireCached.dup,
         extraFlags: sanitize ? [sanitizeCompilerFlags] : null,
-        runtimeEnvironment: sanitize ? [EnvEntry("ASAN_OPTIONS", sanitizeAsanOptions)] : null));
+        runtimeEnvironment: sanitize ? [EnvEntry("ASAN_OPTIONS", sanitizeAsanOptions)] : null,
+        reusePlan: true));
     if (cmd.dryRun)
         return g.error.length ? failRun(g.error) : ranOk();
     if (g.error.length)

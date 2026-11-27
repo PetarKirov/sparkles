@@ -9,7 +9,7 @@
     dependency "sparkles:test-runner-core" path="../../.."
     // ci's statement of the workspace inputs, for the CIC5 check.
     // (single-file packages take no sourceFiles: `-i=` compiles the import)
-    dflags "-I=$PACKAGE_DIR/../src" "-i=repository_inputs" "-i=graph_driver" "-i=test_leg" platform="ldc"
+    dflags "-I=$PACKAGE_DIR/../src" "-i=repository_inputs" "-i=graph_driver" "-i=plan_reuse" "-i=test_leg" platform="ldc"
 
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"

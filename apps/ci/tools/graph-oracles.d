@@ -9,7 +9,7 @@
     dependency "sparkles:test-runner-core" path="../../.."
     // The driver the oracles run the graph through, and ci's statement of
     // the workspace inputs it plans against.
-    dflags "-I=$PACKAGE_DIR/../src" "-i=repository_inputs" "-i=graph_driver" "-i=test_leg" platform="ldc"
+    dflags "-I=$PACKAGE_DIR/../src" "-i=repository_inputs" "-i=graph_driver" "-i=plan_reuse" "-i=test_leg" platform="ldc"
 
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"
@@ -135,6 +135,7 @@ immutable Oracle[] oracles = [
     Oracle("19", &oracle19),
     Oracle("21", &oracle21),
     Oracle("21-replay", &oracle21Replay),
+    Oracle("bgp2", &oracleBgp2),
     Oracle("24", &oracle24),
     Oracle("cic11", &oracleCic11),
     Oracle("m8", &oracleM8),
@@ -1888,6 +1889,156 @@ Verdict[] oracle8()
         : !executed(unlinted, link) || !stored(unlinted, link) ? "without the lint, the test did not link:" ~ tailOf(unlinted.log)
         : !executed(unlinted, t) || unlinted.exitCode == 0 ? "without the lint, the test read the aggregate right" : null,
         "the lint fails planning at the field; without it the test links and misreads the aggregate")];
+}
+
+// === Oracle BGP2: a plan reused while nothing it read changes ===
+
+/// BGP2: a request planned twice takes the kept plan the second time, the
+/// same as the fresh one; an edited module, a new one in a listed directory,
+/// a path planning probed and found absent, a changed variable and a changed
+/// answer to a `pkg-config` query whose search path is outside the Nix store
+/// each plan again. Every run plans successfully, and each mutation follows
+/// a run that took the kept plan. The plans are kept by plan-only runs: a dry
+/// run keeps none.
+Verdict[] oracleBgp2()
+{
+    import std.file : mkdirRecurse, remove, rmdirRecurse;
+    import std.process : environment;
+    import sparkles.build_primitives.workspace.discovery : ReadKind;
+
+    auto pkg = Fixture.add("op2", [
+        "dub.sdl": recipeOf("op2"),
+        "src/sparkles/zz_op2/m.d": "module sparkles.zz_op2.m;\n\nunittest\n{\n}\n",
+    ]);
+    const cache = freshCache("bgp2");
+    RunOptions o;
+    o.reusePlan = true;
+    o.planOnly = true;
+    Verdict[] vs;
+    static string differs(ref const GraphRun a, ref const GraphRun b)
+        => a.plan.text != b.plan.text ? "the rendered plans differ"
+        : a.plan.graph.actions != b.plan.graph.actions ? "the actions differ"
+        : a.plan.graph.edges != b.plan.graph.edges ? "the edges differ"
+        : a.plan.requests != b.plan.requests || a.plan.targets != b.plan.targets ? "the counts differ" : null;
+    static string failed(ref const GraphRun g, string what) => g.error.length ? what ~ " failed: " ~ g.error : null;
+    // A run that takes the kept plan, right before a mutation, after one that
+    // keeps a plan for the tree as it is; null when it does.
+    string reusedNow(string name)
+    {
+        cast(void) run(name, cache, o);
+        auto g = run(name, cache, o);
+        return failed(g, "the run before the change") ? failed(g, "the run before the change")
+            : !g.planReused ? "the run before the change planned again" : null;
+    }
+
+    // A dry run keeps no plan (CIC1).
+    {
+        RunOptions dry = o;
+        dry.planOnly = false;
+        dry.reporting.dryRun = true;
+        const dryCache = freshCache("bgp2-dry");
+        auto d = run(pkg.name, dryCache, dry);
+        vs ~= Verdict("step 0, a dry run", failed(d, "the dry run") ? failed(d, "the dry run")
+            : exists(buildPath(dryCache, "plans")) ? "the dry run wrote " ~ buildPath(dryCache, "plans") : null,
+            "a dry run planned and kept no plan");
+    }
+
+    auto fresh = run(pkg.name, cache, o);
+    auto again = run(pkg.name, cache, o);
+    vs ~= Verdict("step 1", failed(fresh, "planning") ? failed(fresh, "planning") : failed(again, "the second request")
+        ? failed(again, "the second request") : fresh.planReused ? "the first request found a kept plan"
+        : !again.planReused ? "the second request planned again" : differs(fresh, again),
+        "the second request took the kept plan, equal to the fresh one");
+
+    pkg.put("src/sparkles/zz_op2/m.d", "module sparkles.zz_op2.m;\n\nunittest\n{\n    assert(true);\n}\n");
+    auto edited = run(pkg.name, cache, o);
+    auto editedAgain = run(pkg.name, cache, o);
+    vs ~= Verdict("step 2, a file", failed(edited, "the edited request") ? failed(edited, "the edited request")
+        : edited.planReused ? "an edited module's request took the kept plan"
+        : !editedAgain.planReused ? "the request after it planned again" : differs(edited, editedAgain),
+        "an edited module planned again, and its plan was kept");
+
+    const before3 = reusedNow(pkg.name);
+    pkg.put("src/sparkles/zz_op2/n.d", "module sparkles.zz_op2.n;\n");
+    auto listed = run(pkg.name, cache, o);
+    vs ~= Verdict("step 3, a listing", before3 ? before3 : failed(listed, "the request") ? failed(listed, "the request")
+        : listed.planReused ? "a new module's request took the kept plan"
+        : !listed.plan.text.canFind("n.d") ? "the new plan does not compile the new module" : null,
+        "a module added to a listed directory planned again, and the plan compiles it");
+
+    string probed;
+    bool asDirectory;
+    foreach (ref e; listed.plan.reads.entries)
+        if (e.kind == ReadKind.probe && !e.found && e.path.startsWith(pkg.dir ~ "/"))
+        {
+            probed = e.path;
+            asDirectory = e.names == "directory" || e.path.endsWith("/");
+            break;
+        }
+    if (!probed.length)
+        vs ~= Verdict("step 4, a probe", "planning probed no absent path beneath the fixture");
+    else
+    {
+        const before4 = reusedNow(pkg.name);
+        if (asDirectory)
+            mkdirRecurse(probed);
+        else
+            write(probed, "");
+        auto appeared = run(pkg.name, cache, o);
+        if (asDirectory)
+            rmdirRecurse(probed);
+        else
+            remove(probed);
+        vs ~= Verdict("step 4, a probe", before4 ? before4 : failed(appeared, "the request")
+            ? failed(appeared, "the request") : appeared.planReused ? probed ~ " appeared, and the kept plan was taken"
+            : null, "a path planning found absent appeared, and it planned again");
+    }
+
+    const before5 = reusedNow(pkg.name);
+    {
+        auto env = Environment.set(["PKG_CONFIG_PATH": environment.get("PKG_CONFIG_PATH", "")
+            ~ ":/nix/store/zz-oracle-bgp2"]);
+        auto variable = run(pkg.name, cache, o);
+        vs ~= Verdict("step 5, a variable", before5 ? before5 : failed(variable, "the request")
+            ? failed(variable, "the request") : variable.planReused ? "a changed PKG_CONFIG_PATH took the kept plan"
+            : null, "a changed variable planning reads planned again");
+    }
+
+    // A recorded query against a search root outside the Nix store: asked
+    // again on reuse, and a changed answer plans again.
+    {
+        const pcDir = buildPath(cache, "bgp2-pc");
+        mkdirRecurse(pcDir);
+        enum pcOf = (string lib) => "Name: zzbgp2pc\nDescription: oracle bgp2\nVersion: 1\nLibs: -l" ~ lib
+            ~ "\nCflags:\n";
+        write(buildPath(pcDir, "zzbgp2pc.pc"), pcOf("zzbgp2old"));
+        const path = pcDir ~ ":" ~ environment.get("PKG_CONFIG_PATH", "");
+        auto env = Environment.set(["PKG_CONFIG_PATH": path, "PKG_CONFIG_PATH_x86_64_unknown_linux_gnu": path]);
+        forgetPkgConfigAnswers();
+        scope (exit)
+            forgetPkgConfigAnswers();
+        auto q = Fixture.add("op2q", [
+            "dub.sdl": recipeOf("op2q", null, null, null, (ref DubManifest m) {
+                m.libs = [platformValues("zzbgp2pc")];
+            }),
+            "src/sparkles/zz_op2q/m.d": "module sparkles.zz_op2q.m;\n\nunittest\n{\n}\n",
+        ]);
+        auto first = run(q.name, cache, o);
+        forgetPkgConfigAnswers();
+        auto second = run(q.name, cache, o);
+        write(buildPath(pcDir, "zzbgp2pc.pc"), pcOf("zzbgp2new"));
+        forgetPkgConfigAnswers();
+        auto changed = run(q.name, cache, o);
+        vs ~= Verdict("step 6, a query", failed(first, "planning") ? failed(first, "planning")
+            : !first.plan.text.canFind("zzbgp2old") ? "the plan does not link the .pc file's library"
+            : failed(second, "the second request") ? failed(second, "the second request")
+            : !second.planReused ? "an unchanged answer outside the Nix store planned again"
+            : failed(changed, "the changed request") ? failed(changed, "the changed request")
+            : changed.planReused ? "a changed .pc file's answer took the kept plan"
+            : !changed.plan.text.canFind("zzbgp2new") ? "the new plan does not link the changed library" : null,
+            "a query outside the Nix store was asked again: an unchanged answer reused the plan, a changed one planned again");
+    }
+    return vs;
 }
 
 // === Oracle 5: relocation ===

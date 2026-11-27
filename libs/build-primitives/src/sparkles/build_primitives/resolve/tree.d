@@ -17,7 +17,7 @@ module sparkles.build_primitives.resolve.tree;
 
 import sparkles.base.vfs.handles : Dir;
 import sparkles.base.vfs.types : EntryKind, OpenMode, Rights;
-import sparkles.base.vfs.types : Stat;
+import sparkles.base.vfs.types : Stat, StatMask;
 import sparkles.build_primitives.task.model : PlanExpected;
 import sparkles.build_primitives.workspace.discovery : ReadEntry, ReadKind, ReadSet, Workspace;
 import sparkles.build_primitives.workspace.package_graph : DiscoveryError;
@@ -75,6 +75,28 @@ interface ResolveTree
     /// What must fail planning: a link that is absolute or climbs above the
     /// root holding it, and a path beneath no root (BGF3).
     const(TreeFault)[] faults() @safe;
+
+    /**
+    The identity of the regular file at `path` (BGP2): its device, inode,
+    size, modification and change times, found as `readText` finds it,
+    through the same links under the same rules (BGF3). False when there is
+    no such file or a lookup is refused, which `faults` then names. Nothing
+    is recorded in the read set.
+    */
+    bool identify(string path, out Stat stat) @safe;
+
+    /**
+    The digest of the regular file at `path` and its identity, both taken on
+    the one handle that read the bytes, with the identity unchanged across
+    the read (BGP2); false when there is no such file or it changed while it
+    was read. Nothing is recorded in the read set.
+    */
+    bool readIdentified(string path, out Stat stat, out ubyte[32] digest) @safe;
+
+    /// The target of the symbolic link at `path`, its directory found as
+    /// `exists` finds it (BGF3); false when `path` is no link. Nothing is
+    /// recorded in the read set.
+    bool linkTarget(string path, out string target) @safe;
 }
 
 /// A lookup the tree refused (BGF3).
@@ -266,6 +288,74 @@ final class VfsTree(V, Keep = typeof(null)) : ResolveTree
     }
 
     const(TreeFault)[] faults() @safe => faults_;
+
+    // What a file's identity is taken with.
+    private enum identityMask = cast(StatMask)(StatMask.mtime | StatMask.identity | StatMask.change);
+
+    bool identify(string path, out Stat stat) @safe
+    {
+        size_t at;
+        string dir, name;
+        Stat st;
+        if (!lookup(path, at, dir, name, st) || name.length == 0 || st.kind != EntryKind.regular)
+            return false;
+        auto full = statIn(at, dir, name, identityMask);
+        if (full.hasError || full.value.kind != EntryKind.regular)
+            return false;
+        stat = full.value;
+        return true;
+    }
+
+    bool readIdentified(string path, out Stat stat, out ubyte[32] digest) @safe
+    {
+        import sparkles.base.hash.blake3 : blake3;
+
+        size_t at;
+        string dir, name;
+        Stat st;
+        if (!lookup(path, at, dir, name, st) || name.length == 0 || st.kind != EntryKind.regular)
+            return false;
+        bool from(D)(ref D d)
+        {
+            auto file = d.openFile!(OpenMode.read)(name);
+            if (file.hasError)
+                return false;
+            auto before = file.value.stat(identityMask);
+            const(ubyte)[] bytes;
+            if (before.hasError || before.value.kind != EntryKind.regular || !readAllOf(file.value, bytes))
+                return false;
+            auto after = file.value.stat(identityMask);
+            if (after.hasError || !sameIdentity(before.value, after.value) || after.value.size != bytes.length)
+                return false;
+            stat = after.value;
+            digest = blake3(bytes);
+            return true;
+        }
+        if (dir.length == 0)
+            return from(mounts[at].dir);
+        auto parent = mounts[at].dir.walk(dir);
+        return !parent.hasError && from(parent.value);
+    }
+
+    bool linkTarget(string path, out string target) @safe
+    {
+        const p = slashes(path);
+        size_t slash = p.length;
+        while (slash > 0 && p[slash - 1] != '/')
+            --slash;
+        if (slash == 0 || slash == p.length)
+            return false;
+        // The link's directory, reached through no link (as `lookup` leaves it).
+        size_t at;
+        string dir, name;
+        Stat st;
+        const parentPath = slash == 1 ? "/" : p[0 .. slash - 1];
+        if (!lookup(parentPath, at, dir, name, st) || st.kind != EntryKind.directory)
+            return false;
+        const holder = name.length ? (dir.length ? dir ~ "/" ~ name : name) : dir;
+        char[4096] buffer;
+        return readlinkIn(at, holder, p[slash .. $], buffer, target);
+    }
 
     string[] files(string root, scope const(string)[] names) @safe
     {
@@ -481,14 +571,14 @@ final class VfsTree(V, Keep = typeof(null)) : ResolveTree
 
     // The entry `name` in the directory `parent` beneath mount `at`, links
     // not followed.
-    private auto statIn(size_t at, string parent, string name) @safe
+    private auto statIn(size_t at, string parent, string name, StatMask mask = StatMask.basic) @safe
     {
         if (parent.length == 0)
-            return mounts[at].dir.statAt(name);
+            return mounts[at].dir.statAt(name, mask);
         auto d = mounts[at].dir.walk(parent);
         if (d.hasError)
-            return typeof(d.value.statAt(name))(d.error);
-        return d.value.statAt(name);
+            return typeof(d.value.statAt(name, mask))(d.error);
+        return d.value.statAt(name, mask);
     }
 
     private bool readlinkIn(size_t at, string parent, string name, ref char[4096] buffer, out string target) @safe
@@ -514,15 +604,24 @@ final class VfsTree(V, Keep = typeof(null)) : ResolveTree
     private static bool readIn(D)(ref D dir, scope const(char)[] name, out const(ubyte)[] bytes) @safe
     {
         auto file = dir.openFile!(OpenMode.read)(name);
-        if (file.hasError)
-            return false;
+        return !file.hasError && readAllOf(file.value, bytes);
+    }
+
+    // Whether two stats of one handle name the file unchanged.
+    private static bool sameIdentity(const ref Stat a, const ref Stat b) @safe pure nothrow @nogc
+        => a.hasIdentity && b.hasIdentity && a.hasMtime && b.hasMtime && a.hasCtime && b.hasCtime
+        && a.device == b.device && a.inode == b.inode && a.size == b.size && a.mtimeNs == b.mtimeNs
+        && a.ctimeNs == b.ctimeNs;
+
+    private static bool readAllOf(F)(ref F file, out const(ubyte)[] bytes) @safe
+    {
         ubyte[] buffer = new ubyte[4096];
         size_t n;
         while (true)
         {
             if (n == buffer.length)
                 buffer.length *= 2;
-            auto r = file.value.read(buffer[n .. $]);
+            auto r = file.read(buffer[n .. $]);
             if (r.hasError)
                 return false;
             if (r.value == 0)

@@ -1381,6 +1381,40 @@ again, such as `ci`'s invalidator list
 ([CIC5](../../ci/task-dag/SPEC.md#_4-selection-policy)), is checked against it.
 See [D37](./decisions.md#d37-planning-records-its-read-set-accepted).
 
+**BGP2: A plan reused while its read set holds.** A driver **may** keep a plan
+with its read set and take it, instead of planning, for a later request. It
+**must** take it only when the request is the same and every entry of the read
+set still holds:
+
+- **The request:** every value planning reads that the read set does not hold:
+  the arguments, the tools and their toolchain's identity (BGT2), the toolchain
+  table's digest (BGH4), the store's layout and format versions, the driver's
+  own program, and the environment it reads before planning, every variable
+  `pkg-config` or its wrapper may read among it.
+- **A file:** its identity (device, inode, size, modification and change times)
+  is the one recorded, found through the tree planning reads through under its
+  rules (BGF3); it lies on the file system whose clock was read as planning
+  began, and neither time is within two seconds of that clock, as BGK5 holds a
+  cached digest; otherwise it is read, and its digest compared. The identity
+  recorded **must** be taken on the handle that read the file, unchanged across
+  the read, from bytes whose digest is the one planning recorded. A file in the
+  Nix store holds while it exists.
+- **A probe, a listing or a link:** made again through that tree, and compared.
+  A lookup the tree refuses plans again.
+- **A variable:** read again, and compared; one a host's entry in the toolchain
+  table supplies is held by the table's digest in the request.
+- **A `pkg-config` query:** held unasked only when the program and every
+  directory it searches (its path variables, and its compiled-in default for
+  the build platform; the entry's directory for a host) lie in the Nix store,
+  whose contents are fixed by their names (BGK2), and the request holds them;
+  otherwise asked again, and its answer compared.
+
+Any entry that cannot be checked plans again. A reused plan **must** be the one
+planning would make: the same actions, edges and rendered plan. The reason a
+kept plan was not taken is reported. A dry run **must not** keep a plan, and a
+kept plan **must** be published whole, under a name no other writer uses
+before it is renamed into place.
+
 ## 12. File-system access
 
 The build graph reaches the file system only through the
