@@ -321,6 +321,60 @@ Gate:
 - `ci commits build-each` over a range builds the modules on the graph, and a
   second run reuses every action.
 
+## E6: A warm run in 100–200 ms
+
+A warm `ci test --build-only` of every package, all 406 actions served by the
+store, takes as long as the work it skips is small: the target is 100–200 ms
+on a 32-core host, the time of a no-op `ninja`. Measured on pc2-local (32
+cores) with the LDC fork's `--makedeps-probes`, before this milestone:
+
+| Phase                                                | Wall time |
+| ---------------------------------------------------- | --------- |
+| planning (`planRepository`: recipes, lint, variants) | 15.5 s    |
+| the graph run: 406 lookups, all hits                 | 11.0 s    |
+| total                                                | 27.0 s    |
+
+`ci`'s own CPU over such a run was 104 s against its children's 2 s: 44 % of its
+samples spin in `sched_yield`, 12 % on the GC's lock.
+
+Stages, each measured as it lands:
+
+1. **Quick wins.** Each recipe text parsed once per process, not once per
+   request; each archive's `pragma(lib)` names read once per run, not by every
+   link above it; `readBytes` sized from the file and left unzeroed; a lease's
+   recency written without an fsync (D38: recency only orders eviction). The
+   run 11.0 s → 3.8 s, the total 27.0 s → 17.0 s.
+2. **Plan reuse (BGP2).** `ci test` keeps each request's plan with its read set
+   beside the store and takes it while every entry holds: a file by its
+   identity, unread, on the device of the cache's clock; a probe, listing or
+   link made again; a variable read; a `pkg-config` query unasked while all it
+   searches lies in the Nix store, else asked again. A warm run 17.1 s →
+   4.4 s: 2,680 entries checked and no file read, the kept plan 11.7 MB of
+   JSON; the graph run is 3.7 s of it. The parallel test leg's `-t` follows
+   the host's load (`hwParallelism`), and a test action carries it, so a run
+   right after a heavy one can plan again.
+3. **The run's cost per hit.** What each of the 406 lookups still costs: the
+   lease, the manifest check, linking the outputs into the run directory, the
+   preimage, and the run's records.
+4. **No spinning.** The event loop's idle workers park on a futex instead of
+   yielding in a loop (`raw_pool.d`, `job_queue.d`).
+5. **Less allocation.** The GC's lock stops being contended: the hot paths
+   allocate once per run, or per thread.
+6. **Optionally, a resident process.** Below 100 ms needs no planning and no
+   lookups at all: a process that keeps the plan and the store's answers
+   between runs and learns what changed from the file system's events (the
+   fileset workspace's watch).
+
+Gate:
+
+- Oracle `bgp2`: a second request with nothing changed takes the kept plan,
+  equal to the fresh one; an edited module, a module added to a listed
+  directory, a path planning found absent appearing, a changed variable and a
+  changed `.pc` file outside the Nix store each plan again; a dry run keeps no
+  plan.
+- A warm `ci test --build-only` of every package on pc2-local within 200 ms,
+  its phases recorded here at each stage.
+
 ## Progress
 
 | Milestone | State       |
@@ -332,3 +386,4 @@ Gate:
 | E3        | done        |
 | E4        | not started |
 | E5        | in progress |
+| E6        | in progress |

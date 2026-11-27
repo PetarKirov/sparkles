@@ -42,7 +42,11 @@ import sparkles.build_primitives.resolve.tree : ResolveTree, memoryTree, rootedT
 import sparkles.build_primitives.task.action : EnvEntry, InProcessAction, InertAction, ProcessAction, TaskAction;
 import sparkles.build_primitives.task.executor : TaskContext;
 import sparkles.build_primitives.task.process : InProcessHandler;
+import sparkles.base.vfs.handles : Dir;
+import sparkles.base.vfs.types : Rights;
 import sparkles.event_horizon.sched : Sched;
+import sparkles.event_horizon.sys : BlockingVfs;
+import plan_reuse : PlanClock;
 import sparkles.build_primitives.workspace.discovery : ReadKind, ReadSet, readWorkspaceAt;
 import sparkles.build_primitives.workspace.package_graph : RecipeRole, buildPackageGraph;
 import sparkles.unittest_layout.lint : checkLayout;
@@ -116,7 +120,12 @@ Expected!(ToolchainTable, string) toolchainTable() @safe
             why = "SPARKLES_TOOLCHAINS names no toolchain table; run in the dev shell, or through `nix run .#ci`";
         else
         {
-            auto parsed = parseToolchainTable(readText(path));
+            import sparkles.base.hash.blake3 : blake3;
+            import sparkles.build_graph.store : hexOf;
+
+            const source = readText(path);
+            tableDigest = hexOf(blake3(cast(const(ubyte)[]) source));
+            auto parsed = parseToolchainTable(source);
             if (parsed.hasError)
                 why = text("SPARKLES_TOOLCHAINS (", path, "): ", parsed.error);
             else
@@ -125,6 +134,16 @@ Expected!(ToolchainTable, string) toolchainTable() @safe
         read = true;
     }
     return why.length ? err!ToolchainTable(why) : ok(table);
+}
+
+private string tableDigest; // per thread, beside the table it was read with
+
+/// The digest of the toolchain table's text as $(LREF toolchainTable) read
+/// it: a plan request holds it (BGP2). Empty when there is none.
+string toolchainTableDigest() @safe
+{
+    cast(void) toolchainTable();
+    return tableDigest;
 }
 
 /++
@@ -546,14 +565,17 @@ Planned planRepository(string root, bool markers = false, string only = null, To
         }
     }
     // The variables the resolved values refer to: the build platform's
-    // requests pass none, a host's its entry's (BGH4).
+    // requests pass none, a host's its entry's (BGH4). Each is recorded under
+    // its platform (`recipe:<config>:NAME`): the table supplies it, not this
+    // process's environment, and the plan request holds the table (BGP2).
     foreach (ref r; rs)
         foreach (name; r.environmentInputs)
         {
             const entry = table.hasValue && r.platform.config != table.value.build
                 ? table.value.host(r.platform.config) : null;
             const value = entry is null ? null : name in entry.environment;
-            tree.noteEnvironment(name, value is null ? null : *value, value !is null);
+            tree.noteEnvironment("recipe:" ~ r.platform.config ~ ":" ~ name, value is null ? null : *value,
+                value !is null);
         }
 
     auto pkgConfig = new RecordingPkgConfig(answers(d.pkgConfig), tree, d.pkgConfigVariables.dup);
@@ -936,6 +958,13 @@ struct RunOptions
     string[] replaceTasks; /// BGS7: tasks whose published result a fresh execution replaces
     Confinement confine;    /// D39's spike
     bool traceCompiles;     /// oracle 3: every compile under `strace`
+    /// BGP2: take the plan kept for this request when nothing it read has
+    /// changed, and keep the plan made otherwise (beside the store, in
+    /// `cache`). For callers that read only what $(LREF Planned) carries but
+    /// its variant plan, which a reused plan does not.
+    bool reusePlan;
+    /// BGP2's oracle: plan, or take the kept plan, keep it, and run nothing.
+    bool planOnly;
     uint jobs;              /// the weight admitted at once; 0 for one per processor
     bool echo;              /// the reporter's lines also go to standard output
     bool failFast;          /// cancel the rest at the first failure
@@ -1001,8 +1030,344 @@ struct GraphRun
     RunStats stats;      /// what each action did (BGS8, BGK1)
     string log;          /// the reporter's lines
     string dubCalls;     /// what tests passed to `dub` (BGX1); empty when none ran it
+    bool planReused;     /// BGP2: the plan was the one kept for its request, not made
 }
 
+// ── BGP2: a plan kept while nothing it read changes ────────────────────────
+
+// The variables `pkg-config`, or a wrapper around it, may read: the request
+// holds each, so a change plans again. The Nix wrapper rebuilds
+// `PKG_CONFIG_PATH` from role variables (`PKG_CONFIG_PATH_<role>`).
+private string[string] pkgConfigEnvironment() @safe
+{
+    string[string] vars;
+    foreach (name, value; (() @trusted => environment.toAA())())
+        if (name.startsWith("PKG_CONFIG") || name.startsWith("NIX_PKG_CONFIG"))
+            vars[name] = value;
+    return vars;
+}
+
+// The request a plan answers: what planning reads that its read set does not
+// hold. `ci`'s own binary is in it, so a rebuilt `ci` plans again, and so is
+// the toolchain table's digest, so a host's variables it supplies need not be
+// read again.
+private string planRequestOf(string root, string only, const ref Tools tools, string toolchain, bool lint,
+    const string[] packages, bool coverage, const string[] singleFiles, const string[] applications,
+    const string[][string] hostApplications)
+{
+    import std.algorithm.sorting : sort;
+    import std.array : join;
+    import std.file : thisExePath;
+    import sparkles.build_graph.store : formatVersion, layoutVersion;
+    import plan_reuse : planRequest;
+
+    const exe = thisExePath;
+    const d = driverEnvironment();
+    string[] parts = [
+        text("store ", layoutVersion, " ", formatVersion),
+        "ci " ~ exe ~ " " ~ ambientIdentity(exe),
+        "root " ~ root, "only " ~ only, "toolchain " ~ toolchain, text("lint ", lint),
+        "packages " ~ packages.join(" "), text("coverage ", coverage), "single " ~ singleFiles.join(" "),
+        "applications " ~ applications.join(" "), "host " ~ host().join(" "),
+        "toolchains " ~ environment.get("SPARKLES_TOOLCHAINS", "") ~ " " ~ toolchainTableDigest(),
+        "sources " ~ d.sources, "pkg-config " ~ d.pkgConfig,
+    ];
+    foreach (config; hostApplications.keys.sort.release)
+        parts ~= "for " ~ config ~ " " ~ hostApplications[config].join(" ");
+    const vars = pkgConfigEnvironment();
+    foreach (name; vars.keys.sort.release)
+        parts ~= "env " ~ name ~ "=" ~ vars[name];
+    return planRequest(tools, parts);
+}
+
+// `ci`'s own binary's identity (device, inode, size, modification and change
+// times) as text; empty when it cannot be stat'ed.
+private string ambientIdentity(string path) @safe
+{
+    version (Posix)
+    {
+        import core.sys.posix.sys.stat : stat, stat_t;
+        import std.string : toStringz;
+
+        stat_t st;
+        const z = path.toStringz;
+        if (!path.length || (() @trusted => stat(z, &st))() != 0)
+            return null;
+        // The time fields' names follow each druntime `stat_t`: `st_mtim`
+        // (x86_64 Linux), `st_mtimespec` (Darwin), `st_mtimensec` (aarch64
+        // Linux).
+        static if (__traits(compiles, st.st_mtim))
+            return text(st.st_dev, " ", st.st_ino, " ", st.st_size, " ", st.st_mtim.tv_sec, ".", st.st_mtim.tv_nsec,
+                " ", st.st_ctim.tv_sec, ".", st.st_ctim.tv_nsec);
+        else static if (__traits(compiles, st.st_mtimespec))
+            return text(st.st_dev, " ", st.st_ino, " ", st.st_size, " ", st.st_mtimespec.tv_sec, ".",
+                st.st_mtimespec.tv_nsec, " ", st.st_ctimespec.tv_sec, ".", st.st_ctimespec.tv_nsec);
+        else static if (__traits(compiles, st.st_mtimensec))
+            return text(st.st_dev, " ", st.st_ino, " ", st.st_size, " ", st.st_mtime, ".", st.st_mtimensec,
+                " ", st.st_ctime, ".", st.st_ctimensec);
+        else
+            return text(st.st_dev, " ", st.st_ino, " ", st.st_size, " ", st.st_mtime, " ", st.st_ctime);
+    }
+    else
+        return null;
+}
+
+// Whether `path` is absolute, in the Nix store, and climbs nowhere.
+private bool inNixStore(string path) @safe
+    => path.startsWith("/nix/store/") && !path.split('/').canFind("..");
+
+// The directories a `pkg-config` path variable names, every one in the Nix
+// store; false when one is not, or is relative.
+private bool storeOnly(string value) @safe
+{
+    foreach (dir; value.split(':'))
+        if (dir.length && !inNixStore(dir))
+            return false;
+    return true;
+}
+
+/*
+Whether a `pkg-config` query recorded by planning still answers the same
+(BGP2). It holds unasked when nothing it could read has changed: the
+program and every directory it searches lie in the Nix store, and the
+request holds the program's path and every variable it reads. A host's
+query (`<host>: …`) runs in an environment of its toolchain table entry's
+directory alone, which the request holds through the table's digest; the
+build platform's searches its path variables and its compiled-in default.
+Otherwise the query is asked again and its answer compared.
+*/
+private final class QueryCheck
+{
+    import sparkles.base.hash.blake3 : blake3;
+
+    private DriverEnvironment d;
+    private string[string] vars;
+    private int buildUnasked = -1; // unknown until a build-platform query asks
+
+    this()
+    {
+        d = driverEnvironment();
+        vars = pkgConfigEnvironment();
+    }
+
+    bool holds(string arguments, bool succeeded, const ubyte[32] answer) @safe
+    {
+        string[] args = arguments.split(' ');
+        string label;
+        if (args.length && args[0].endsWith(":"))
+        {
+            label = args[0][0 .. $ - 1];
+            args = args[1 .. $];
+        }
+        PkgConfigDriver driver;
+        if (label.length)
+        {
+            const table = toolchainTable();
+            const entry = table.hasValue ? table.value.host(label) : null;
+            if (entry is null || !entry.pkgConfigLibdir.length)
+                return false;
+            if (inNixStore(d.pkgConfig) && storeOnly(entry.pkgConfigLibdir))
+                return true;
+            driver = new SystemPkgConfig(d.pkgConfig, ["PKG_CONFIG_LIBDIR": entry.pkgConfigLibdir,
+                "PKG_CONFIG_PATH": ""]);
+        }
+        else
+        {
+            if (buildUnasked < 0)
+                buildUnasked = storeBound() ? 1 : 0;
+            if (buildUnasked == 1)
+                return true;
+            driver = new SystemPkgConfig(d.pkgConfig);
+        }
+        bool ok;
+        string output;
+        if (!ask(driver, args, ok, output))
+            return false;
+        return ok == succeeded && blake3(cast(const(ubyte)[]) text(ok ? 0 : 1, "\n", output)) == answer;
+    }
+
+    // Whether the build platform's `pkg-config` reads only the Nix store.
+    private bool storeBound() @safe
+    {
+        import std.process : execute;
+
+        if (!inNixStore(d.pkgConfig))
+            return false;
+        foreach (name, value; vars)
+            if ((name.canFind("PATH") || name.canFind("LIBDIR") || name.canFind("DIR")) && !storeOnly(value))
+                return false;
+        // Its compiled-in default, searched after `PKG_CONFIG_PATH` (or in
+        // place of it under `PKG_CONFIG_LIBDIR`).
+        try
+        {
+            const r = (() @trusted => execute([d.pkgConfig, "--variable", "pc_path", "pkg-config"]))();
+            import std.string : strip;
+
+            return r.status == 0 && storeOnly(r.output.strip);
+        }
+        catch (Exception)
+            return false;
+    }
+
+    // Asks `driver` the query `args` names, as `RecordingPkgConfig` asked it.
+    private static bool ask(PkgConfigDriver driver, const string[] args, out bool ok, out string output) @safe
+    {
+        if (!args.length)
+            return false;
+        const rest = args[1 .. $];
+        switch (args[0])
+        {
+        case "--exists":
+            ok = rest.length == 1 && driver.exists(rest[0]);
+            return rest.length == 1;
+        case "--libs":
+            ok = driver.libs(rest, output);
+            return true;
+        case "--cflags":
+            ok = driver.cflags(rest, output);
+            return true;
+        case "--path":
+            if (rest.length != 1)
+                return false;
+            output = driver.pcFile(rest[0]);
+            ok = output !is null;
+            return true;
+        case "--search-path":
+            output = driver.searchPath().join("\n");
+            ok = true;
+            return true;
+        case "--requires":
+            if (rest.length != 1)
+                return false;
+            output = driver.requires(rest[0]).join("\n");
+            ok = true;
+            return true;
+        default:
+            return false;
+        }
+    }
+}
+
+// The cache's `plans` directory, opened with every right; false when it
+// cannot be made.
+private bool openPlans(string cache, out Dir!(BlockingVfs, Rights.all) plans) @safe
+{
+    import core.lifetime : move;
+    import sparkles.base.vfs.handles : ambientAuthority, openRoot;
+    import sparkles.base.vfs.types : DotDotPolicy, ResolvePolicy, SymlinkPolicy;
+
+    auto root = openRoot!(Rights.all)(new BlockingVfs, cache, ambientAuthority(),
+        ResolvePolicy(SymlinkPolicy.beneath, DotDotPolicy.reject));
+    if (root.hasError)
+        return false;
+    auto made = root.value.walkAll("plans");
+    if (made.hasError)
+        return false;
+    plans = move(made.value);
+    return true;
+}
+
+// BGK5: the clock of the file system holding `cache`, as the mtime of a file
+// written in its `plans` directory now; unknown when none can be written.
+private PlanClock planClock(string cache) @safe
+{
+    import sparkles.base.vfs.types : StatMask;
+
+    Dir!(BlockingVfs, Rights.all) plans;
+    if (!openPlans(cache, plans) || plans.writeFileAtomic("clock-probe", "").hasError)
+        return PlanClock.init;
+    auto st = plans.statAt("clock-probe", StatMask.mtime);
+    if (st.hasError || !st.value.hasMtime)
+        return PlanClock.init;
+    return PlanClock(true, st.value.mtimeNs, st.value.device);
+}
+
+// Takes the plan kept in `file` for `request` into `plan` when nothing it
+// read changed; says why not at trace level.
+private bool takeKeptPlan(string file, string request, out Planned plan)
+{
+    import std.file : exists, readText;
+    import sparkles.base.logger : trace;
+    import plan_reuse : Checked, reusePlan;
+
+    if (!exists(file))
+    {
+        trace(i"plan: none kept for this request; planning");
+        return false;
+    }
+    string source;
+    try
+        source = readText(file);
+    catch (Exception e)
+    {
+        trace(i"plan: the kept plan cannot be read ($(e.msg)); planning");
+        return false;
+    }
+    bool variable(string name, out string value) @trusted
+    {
+        value = environment.get(name);
+        return value !is null;
+    }
+    auto queries = new QueryCheck;
+    const c = reusePlan(source, request, delegate(const(string)[] roots) => rootedTree(roots), &variable,
+        &queries.holds);
+    if (!c.reused)
+    {
+        trace(i"plan: planning again: $(c.why)");
+        return false;
+    }
+    trace(i"plan: reused, $(c.plan.reads.entries.length) reads checked, $(c.rehashed) files read");
+    plan.graph = cast(ActionGraph) c.plan.graph;
+    plan.reads = cast(ReadSet) c.plan.reads;
+    plan.text = c.plan.text;
+    plan.requests = c.plan.requests;
+    plan.targets = c.plan.targets;
+    plan.packageDirectories = c.plan.packageDirectories.dup;
+    plan.roots = c.plan.roots.dup;
+    foreach (k, v; c.plan.testTools)
+        plan.testTools[k] = v.dup;
+    foreach (k, v; c.plan.singleFileLinks)
+        plan.singleFileLinks[k] = v;
+    foreach (k, v; c.plan.singleFileErrors)
+        plan.singleFileErrors[k] = v;
+    return true;
+}
+
+// Keeps `plan`, made for `request` by `clock`, in the cache's `plans`
+// directory, written atomically under a name of its own: a failure only
+// costs the next run its reuse. Each file's identity is taken on the handle
+// that reads it again, and kept only when it still holds the digest planning
+// recorded.
+private void keepPlan(string cache, string request, const ref Planned plan, PlanClock clock)
+{
+    import plan_reuse : ReusablePlan, planText;
+    import sparkles.base.vfs.types : Stat;
+
+    ReusablePlan r;
+    r.graph = cast(ActionGraph) plan.graph;
+    r.reads = cast(ReadSet) plan.reads;
+    r.text = plan.text;
+    r.requests = plan.requests;
+    r.targets = plan.targets;
+    r.packageDirectories = plan.packageDirectories.dup;
+    r.roots = plan.roots.dup;
+    foreach (k, v; plan.testTools)
+        r.testTools[k] = v.dup;
+    foreach (k, v; plan.singleFileLinks)
+        r.singleFileLinks[k] = v;
+    foreach (k, v; plan.singleFileErrors)
+        r.singleFileErrors[k] = v;
+    auto tree = rootedTree(r.roots);
+    bool identity(string path, const ubyte[32] digest, out Stat st) @safe
+    {
+        ubyte[32] now;
+        return tree.readIdentified(path, st, now) && now == digest;
+    }
+    const json = planText(r, request, clock, &identity);
+    Dir!(BlockingVfs, Rights.all) plans;
+    if (json.length && openPlans(cache, plans))
+        cast(void) plans.writeFileAtomic(request ~ ".json", json);
+}
 /// A run planned and lowered onto the executor's nodes, not yet run
 /// ($(LREF prepareGraph)).
 struct PreparedRun
@@ -1048,16 +1413,37 @@ PreparedRun prepareGraph(string root, string only, RunOptions o)
         tools.testArguments[pkg] = more.dup;
     if (const why = hostTools(tools, o.hostApplications.keys))
         return PreparedRun(GraphRun(why));
-    g.plan = planRepository(root, false, only, tools, g.toolchain.identity, !o.noLayoutLint, o.packages,
-        o.coverage, o.singleFiles, o.applications, o.hostApplications);
+    // A dry run writes nothing (CIC1): no run directory, no dub trap, no plan.
+    const dry = o.reporting.dryRun || o.explain;
+    // BGP2: the plan kept for this request, when nothing it read changed.
+    const reuse = o.reusePlan && o.cache.length && !o.traceCompiles;
+    string request;
+    bool reused;
+    if (reuse)
+    {
+        request = planRequestOf(root, only, tools, g.toolchain.identity, !o.noLayoutLint, o.packages, o.coverage,
+            o.singleFiles, o.applications, o.hostApplications);
+        reused = takeKeptPlan(buildPath(o.cache, "plans", request ~ ".json"), request, g.plan);
+    }
+    if (!reused)
+    {
+        // The file system's clock as planning begins: a file modified within
+        // two seconds of it is read on reuse (BGK5).
+        const clock = reuse && !dry ? planClock(o.cache) : PlanClock.init;
+        g.plan = planRepository(root, false, only, tools, g.toolchain.identity, !o.noLayoutLint, o.packages,
+            o.coverage, o.singleFiles, o.applications, o.hostApplications);
+        if (reuse && !dry && !g.plan.error.length)
+            keepPlan(o.cache, request, g.plan, clock);
+    }
+    g.planReused = reused;
     if (g.plan.error.length)
         return PreparedRun(GraphRun(g.plan.error));
+    if (o.planOnly)
+        return PreparedRun(g);
     // Single files that all failed to plan leave nothing to run but are no
     // error of the run's: each is its own (§5.5).
     if (g.plan.requests == 0 && !o.singleFiles.length)
         return PreparedRun(GraphRun("no package " ~ only));
-    // A dry run writes nothing (CIC1): no run directory, no dub trap.
-    const dry = o.reporting.dryRun || o.explain;
     if (!dry)
         mkdirRecurse(o.into);
     // Oracle 3: every compile under `strace`, its trace beside its manifest.
@@ -1241,7 +1627,7 @@ GraphRun runGraph(string root, string only, RunOptions o)
     import sparkles.build_graph.execute : runActions;
 
     auto p = prepareGraph(root, only, o);
-    if (p.run.error.length)
+    if (p.run.error.length || o.planOnly)
         return p.run;
     static struct Tee
     {
