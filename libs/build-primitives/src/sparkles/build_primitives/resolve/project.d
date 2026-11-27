@@ -155,7 +155,7 @@ final class Project
     Package[string] byName;  /// every package reached, by full name
     private Package[string] byRecipe; // root packages by recipe directory
     private Package[string] subPackages; // subpackages by full name, once read
-    private RecipeRead[string] recipesRead; // by directory: each recipe read and parsed once
+    private ParsedRecipe[string] recipesRead; // by directory: each recipe read and parsed once
     private ResolveTree tree;
     private RegistrySources registry;
     private InTreeSources inTree;
@@ -308,14 +308,26 @@ private struct RecipeRead
     string error;
 }
 
+// A recipe as read, shared by every request that reads its text: never
+// changed once made, so no caller can alter another's manifest.
+private final class ParsedRecipe
+{
+    const RecipeRead read;
+
+    this(RecipeRead read) @safe pure nothrow
+    {
+        this.read = read;
+    }
+}
+
 // The recipe in `directory`, read and parsed once per project. Finding a
 // subpackage by name reads the recipes its base lists until one has that
 // name, and hidden-edge detection reads them all, so without this a request
 // parsed each recipe once per subpackage it reached.
-private RecipeRead recipeIn(Project project, string directory) @safe
+private const(RecipeRead) recipeIn(Project project, string directory) @safe
 {
     if (auto found = directory in project.recipesRead)
-        return *found;
+        return found.read;
     RecipeRead read;
     string source;
     foreach (file; ["dub.sdl", "dub.json", "package.json"])
@@ -326,14 +338,33 @@ private RecipeRead recipeIn(Project project, string directory) @safe
         }
     if (read.path !is null)
     {
+        // A parse depends on the recipe's path and text alone, and planning
+        // resolves the same recipes for every request of a run: one parse per
+        // text in the thread. Bounded, for a process that plans many
+        // revisions (`ci commits build-each`).
+        static ParsedRecipe[string] parsedOnce;
+        enum parsedBound = 4096;
+        const key = read.path ~ "\0" ~ source;
+        if (auto hit = key in parsedOnce)
+        {
+            project.recipesRead[directory] = *hit;
+            return hit.read;
+        }
         auto parsed = parseDubRecipeText(source, read.path);
         if (parsed.hasError)
             read.error = parsed.error.text;
         else
             read.manifest = parsed.value;
+        if (parsedOnce.length >= parsedBound)
+            parsedOnce = null;
+        auto made = new ParsedRecipe(read);
+        parsedOnce[key] = made;
+        project.recipesRead[directory] = made;
+        return made.read;
     }
-    project.recipesRead[directory] = read;
-    return read;
+    auto none = new ParsedRecipe(read);
+    project.recipesRead[directory] = none;
+    return none.read;
 }
 
 // Reads the root recipe in `directory`, once per directory.
