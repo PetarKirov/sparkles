@@ -174,8 +174,18 @@ private Bounded runWithin(string[] args, string[string] env,
     static shared size_t serial;
     const log = buildPath(tempDir, text("sparkles-scenario-", thisProcessID, "-",
         atomicOp!"+="(serial, 1), ".log"));
+    // Windows keeps a file a just-exited child held open undeletable for a
+    // moment (a sharing violation), which failed the scenario that owned it
+    // instead of its cleanup: retry briefly, and leave a log that stays held.
     scope (exit)
-        remove(log);
+        foreach (attempt; 0 .. 50)
+        {
+            import std.exception : collectException;
+
+            if (collectException(remove(log)) is null)
+                break;
+            Thread.sleep(20.msecs);
+        }
     Bounded outcome;
     {
         auto output = File(log, "w");
