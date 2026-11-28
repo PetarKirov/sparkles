@@ -1875,5 +1875,13 @@ master to match: a regression there reaches the DMD job first. A DMD without
 the option (a release, before upstream takes it) rejects these compiles; the
 graph plans for the toolchain's compiler only.
 
-**Revisit when** upstream DMD has `-ffile-prefix-map` and reproducible `-lib`
-in a release: build that instead, and drop the fork.
+A third cause reached CI afterwards, and only now and then: the backend folded
+an operator into a constant in place and kept part of an operand's heap
+address in the constant's unwritten bytes, which a constant pushed as a stack
+argument carried into the object (`sparkles-test-runner.o`, CI run
+45970839226). The fork fixes it too (UD12, UD13 in the
+[upstreaming plan](../../toolchain/upstreaming.md#_2-dmd-sparkles-main));
+the dlang.nix pin moved to it on 2026-11-28.
+
+**Revisit when** upstream DMD has `-ffile-prefix-map`, reproducible `-lib` and
+UD12 and UD13 in a release: build that instead, and drop the fork.
