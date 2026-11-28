@@ -509,56 +509,254 @@ version (OSX)
 {
     private extern (C) int proc_listpids(uint type, uint typeinfo, void* buffer,
         int bufferSize) nothrow @nogc;
+    private extern (C) int proc_pidinfo(int pid, int flavor, ulong arg,
+        void* buffer, int bufferSize) nothrow @nogc;
 
-    /**
-    Whether `root` is the only member of process group `pgid`. The caller has
-    observed the root's exit, so that member is its zombie.
-
-    Linux delivers a group signal to a group that holds only the root's
-    WNOWAIT-pinned zombie; XNU refuses it with `EPERM`. `proc_listpids(PROC_PGRP_ONLY)` lists the zombie, so a
-    group listing nothing but the root has no live member left to kill — the
-    group signal's outcome on Linux. Any other member, or a failed listing,
-    leaves `EPERM` standing.
-    */
-    private bool onlyMemberIs(int pgid, int root) @trusted nothrow @nogc
+    /// `struct proc_bsdshortinfo` (<sys/proc_info.h>).
+    private struct ProcBsdShortInfo
     {
-        enum uint PROC_PGRP_ONLY = 2; // <sys/proc_info.h>
-        int[2] members;
-        const bytes = proc_listpids(PROC_PGRP_ONLY, cast(uint) pgid,
-            members.ptr, cast(int) members.sizeof);
-        return bytes == int.sizeof && members[0] == root;
+        uint pid, ppid, pgid, status; // `status` is `p_stat`: SZOMB, SRUN, …
+        char[16] comm;
+        uint flags; // PROC_FLAG_*
+        uint uid, gid, ruid, rgid, svuid, svgid;
+        uint reserved;
     }
 
-    @("supervise.signalGroup.darwinZombieOnlyGroup")
-    @system
-    unittest
+    static assert(ProcBsdShortInfo.sizeof == 64);
+
+    /// What `proc_pidinfo` says of one process.
+    private enum Liveness
+    {
+        live,    /// running (or unreadable: never assumed gone)
+        exiting, /// in `exit()` or a zombie: no signal can matter to it
+        gone,    /// reaped: no such process
+    }
+
+    /// The liveness of `pid` and, when readable, its process group.
+    private Liveness liveness(int pid, out uint pgid) @system nothrow @nogc
+    {
+        import core.stdc.errno : errno;
+
+        enum int PROC_PIDT_SHORTBSDINFO = 13; // <sys/proc_info.h>
+        enum uint PROC_FLAG_INEXIT = 4;       // <sys/proc_info.h>: P_LEXIT
+        enum uint SZOMB = 5;                  // <sys/proc.h>
+
+        ProcBsdShortInfo info;
+        errno = 0;
+        // A non-zero `arg` asks XNU to find zombies, and exiting processes
+        // already off `proc_find`, as well.
+        const got = proc_pidinfo(pid, PROC_PIDT_SHORTBSDINFO, 1, &info,
+            cast(int) info.sizeof);
+        if (got == info.sizeof)
+        {
+            pgid = info.pgid;
+            return info.status == SZOMB || (info.flags & PROC_FLAG_INEXIT) != 0
+                ? Liveness.exiting : Liveness.live;
+        }
+        return got <= 0 && errno == ESRCH ? Liveness.gone : Liveness.live;
+    }
+
+    /**
+    Whether every member of process group `pgid` has exited or is exiting.
+
+    `proc_listpids(PROC_PGRP_ONLY)` walks `allproc` and `zombproc`, so it
+    lists zombies and processes partway through `exit()`. A member reaped
+    since the listing, or one that left the group, is no member. The group
+    is listed twice and must pass both times, so a member forked into it
+    by one that exits between its listing and its read is still seen. A
+    listing that fails or may be truncated proves nothing.
+    */
+    private bool onlyExitedMembers(int pgid) @system nothrow @nogc
+    {
+        enum uint PROC_PGRP_ONLY = 2; // <sys/proc_info.h>
+
+        foreach (pass; 0 .. 2)
+        {
+            int[1025] members;
+            const bytes = proc_listpids(PROC_PGRP_ONLY, cast(uint) pgid,
+                members.ptr, cast(int) members.sizeof);
+            if (bytes <= 0 || bytes >= members.sizeof)
+                return false;
+            foreach (pid; members[0 .. bytes / int.sizeof])
+            {
+                uint group;
+                final switch (liveness(pid, group))
+                {
+                    case Liveness.gone:
+                        continue;
+                    case Liveness.exiting:
+                        continue;
+                    case Liveness.live:
+                        if (group != cast(uint) pgid && group != 0)
+                            continue; // left the group since the listing
+                        return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+    Whether a group signal XNU refused with `EPERM` had no live target: the
+    root has exited or is exiting, and so has every member of `pgid`.
+
+    XNU's `killpg1` skips each `SZOMB` member and each member already off
+    `proc_find` — from `proc_prepareexit`, which sets `P_REF_DEAD`, until
+    `p_stat` becomes `SZOMB`, the stretch of `exit()` that closes the
+    process's descriptors — and answers `EPERM` when it signalled none.
+    Linux and FreeBSD count such members as found and deliver. A member
+    that closed the run's last pipe and is still finishing `exit()` leaves
+    exactly that group behind, so a hard kill the EOF triggers meets it.
+
+    The root, the supervisor's unreaped child (its pid cannot be reused), is
+    checked by pid as well: a root that left its group while alive still
+    needs the direct signal. A live member re-sends the group signal, at
+    most twice; one that still refuses leaves `EPERM` standing.
+    */
+    private bool noLiveTarget(int pgid, int root, int signal) @system nothrow @nogc
     {
         import core.stdc.errno : errno;
         import core.sys.posix.signal : kill;
+
+        uint rootGroup;
+        if (root <= 0 || liveness(root, rootGroup) != Liveness.exiting)
+            return false;
+        foreach (attempt; 0 .. 3)
+        {
+            if (attempt > 0)
+            {
+                if (kill(-pgid, signal) == 0)
+                    return true;
+                if (errno != EPERM)
+                    return false;
+            }
+            if (onlyExitedMembers(pgid))
+                return true;
+        }
+        return false;
+    }
+
+    version (unittest)
+    {
         import core.sys.posix.spawn : posix_spawn, posix_spawnattr_destroy,
-            posix_spawnattr_init, posix_spawnattr_setflags, posix_spawnattr_t,
-            POSIX_SPAWN_SETPGROUP;
-        import core.sys.posix.sys.wait : idtype_t, siginfo_t, waitid, waitpid,
-            WEXITED, WNOWAIT;
-        import core.sys.posix.unistd : pid_t;
+            posix_spawnattr_init, posix_spawnattr_setflags,
+            posix_spawnattr_setpgroup, posix_spawnattr_t, POSIX_SPAWN_SETPGROUP;
+        import core.sys.posix.sys.wait : idtype_t, siginfo_t, waitid, WEXITED,
+            WNOWAIT;
         import sparkles.event_horizon.live : SigInfo; // druntime's is undersized
 
-        posix_spawnattr_t attr;
-        posix_spawnattr_init(&attr);
-        scope (exit) posix_spawnattr_destroy(&attr);
-        posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP); // pgroup 0: its own
-        pid_t pid;
-        char*[2] argv = [cast(char*) "/usr/bin/true".ptr, null];
-        assert(posix_spawn(&pid, argv[0], null, &attr, argv.ptr, null) == 0);
-        SigInfo info;
-        assert(waitid(idtype_t.P_PID, pid, cast(siginfo_t*) &info, WEXITED | WNOWAIT) == 0);
-        scope (exit) cast(void) waitpid(pid, null, 0);
+        /// Spawns `path` in process group `pgroup` (0: a group of its own),
+        /// with no inherited descriptors beyond the standard three.
+        private int spawnInGroup(const(char)* path, int pgroup) @system nothrow @nogc
+        {
+            enum short POSIX_SPAWN_CLOEXEC_DEFAULT = 0x4000; // <spawn.h>, Darwin
+            posix_spawnattr_t attr;
+            posix_spawnattr_init(&attr);
+            scope (exit) posix_spawnattr_destroy(&attr);
+            posix_spawnattr_setflags(&attr,
+                cast(short)(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT));
+            posix_spawnattr_setpgroup(&attr, pgroup);
+            int pid;
+            char*[3] argv = [cast(char*) path, cast(char*) "30".ptr, null];
+            return posix_spawn(&pid, path, null, &attr, argv.ptr, null) == 0 ? pid : -1;
+        }
 
-        // The pinned zombie is the group's one member, and XNU refuses the
-        // group signal that Linux delivers.
-        assert(kill(-pid, SIGKILL) != 0 && errno == EPERM);
-        assert(onlyMemberIs(pid, pid));
-        assert(!onlyMemberIs(pid, pid + 1));
+        /// Waits for `pid` to exit and leaves it a zombie.
+        private bool pinZombie(int pid) @system nothrow @nogc
+        {
+            import core.stdc.errno : errno, EINTR;
+
+            SigInfo info;
+            int got;
+            do
+                got = waitid(idtype_t.P_PID, pid, cast(siginfo_t*) &info, WEXITED | WNOWAIT);
+            while (got != 0 && errno == EINTR);
+            return got == 0;
+        }
+    }
+
+    version (unittest)
+    {
+        import sparkles.test_runner.attributes : serial;
+
+        @("supervise.signalGroup.darwinZombieOnlyGroup")
+        @serial
+        @system
+        unittest
+        {
+            import core.stdc.errno : errno;
+            import core.sys.posix.signal : kill;
+            import core.sys.posix.sys.wait : waitpid;
+
+            const root = spawnInGroup("/usr/bin/true", 0);
+            assert(root > 0);
+            scope (exit) cast(void) waitpid(root, null, 0);
+            assert(pinZombie(root));
+
+            // The pinned zombie is the group's one member, and XNU refuses the
+            // group signal that Linux delivers.
+            assert(kill(-root, SIGKILL) != 0 && errno == EPERM);
+            assert(noLiveTarget(root, root, SIGKILL));
+        }
+
+        @("supervise.signalGroup.darwinGroupOfZombies")
+        @serial
+        @system
+        unittest
+        {
+            import core.stdc.errno : errno;
+            import core.sys.posix.signal : kill;
+            import core.sys.posix.sys.wait : waitpid;
+
+            // Besides the root's pinned zombie, the group holds another exited
+            // member, as it does while a member finishes `exit()`. XNU refuses
+            // the group signal; nothing live is left to kill.
+            const root = spawnInGroup("/usr/bin/true", 0);
+            assert(root > 0);
+            scope (exit) cast(void) waitpid(root, null, 0);
+            assert(pinZombie(root));
+            const other = spawnInGroup("/usr/bin/true", root);
+            assert(other > 0);
+            scope (exit) cast(void) waitpid(other, null, 0);
+            assert(pinZombie(other));
+
+            enum uint PROC_PGRP_ONLY = 2;
+            int[4] members;
+            assert(proc_listpids(PROC_PGRP_ONLY, root, members.ptr,
+                cast(int) members.sizeof) == 2 * int.sizeof, "two zombies listed");
+            assert(kill(-root, SIGKILL) != 0 && errno == EPERM);
+            assert(noLiveTarget(root, root, SIGKILL));
+        }
+
+        @("supervise.signalGroup.darwinLiveTargetIsNeverProvenGone")
+        @serial
+        @system
+        unittest
+        {
+            import core.sys.posix.signal : kill;
+            import core.sys.posix.sys.wait : waitpid;
+
+            const root = spawnInGroup("/usr/bin/true", 0);
+            assert(root > 0);
+            scope (exit) cast(void) waitpid(root, null, 0);
+            assert(pinZombie(root));
+            const live = spawnInGroup("/bin/sleep", root);
+            assert(live > 0);
+            scope (exit)
+            {
+                cast(void) kill(live, SIGKILL);
+                cast(void) waitpid(live, null, 0);
+            }
+
+            // A live member: the group is not all exited, and a live root (here
+            // `live`, by pid) is never taken for an exited one.
+            assert(!onlyExitedMembers(root));
+            assert(!noLiveTarget(root, live, SIGKILL));
+            assert(!onlyExitedMembers(root + 1_000_000), "no such group lists nothing");
+
+            assert(kill(live, SIGKILL) == 0 && pinZombie(live));
+            assert(onlyExitedMembers(root), "both members are zombies now");
+        }
     }
 }
 
@@ -603,8 +801,7 @@ private KillOutcome signalGroup(ref Run run, int signal) @trusted nothrow
         return KillOutcome(KillResult.delivered, 0);
     const err = errno;
     version (OSX)
-        if (err == EPERM && run.observer == RootObserverState.observed
-            && onlyMemberIs(run.processGroup, run.child.pid))
+        if (err == EPERM && noLiveTarget(run.processGroup, run.child.pid, signal))
             return KillOutcome(KillResult.delivered, 0);
     // The root-only fallback never proves the tree terminated.
     if (run.child.pid > 0)
