@@ -85,6 +85,8 @@ final class StatusTranscript : Transcript
             scope const(StatusSpan)[] spans) @safe {
             if (level == LogLevel.trace)
                 status!(LogLevel.trace)(verb, tone, spans);
+            else if (level == LogLevel.warning)
+                status!(LogLevel.warning)(verb, tone, spans);
             else
                 status(verb, tone, spans);
         };
@@ -111,6 +113,7 @@ final class StatusTranscript : Transcript
             (const TaskOutput o) { keep(o.task, e.text); },
             (const TaskStale s) { why[s.task.value] = staleWhy(s.reason, e.text); },
             (const TaskReused r) { reused[r.task.value] = true; },
+            (const TaskNotice n) { noticed(n.task, e.text); },
             (const TaskFinished f) { finished(f.task, f.outcome, f.elapsed); },
             (const CancellationRequested c) { cancelled(c); },
             (const RunFinished r) { exitCode = r.exitCode; },
@@ -267,6 +270,24 @@ private:
         }
     }
 
+    // A line the task's driver reported of its own (TDM21): a warning row per
+    // line, at once and whatever the task's outcome turns out to be, fenced
+    // from the CI service's command parser as a failure's lines are.
+    void noticed(TaskIndex t, string note) @safe
+    {
+        const p = parts[t.value];
+        const label = (*graph)[t].label.length ? (*graph)[t].label : (*graph)[t].id.text;
+        bare((ref w) => options.ci.beginUntrusted(w), LogLevel.warning);
+        foreach (l; note.split('\n'))
+        {
+            auto w = appender!string;
+            options.ci.writeUntrusted(w, l);
+            row(LogLevel.warning, "Warning", Tone.warning, p.pkg.length ? p.pkg : label, p.variant, null, p.handle,
+                [plain(w[])]);
+        }
+        bare((ref w) => options.ci.endUntrusted(w), LogLevel.warning);
+    }
+
     void finished(TaskIndex t, const TaskOutcome outcome, Duration took) @safe
     {
         const p = parts[t.value];
@@ -400,14 +421,16 @@ private:
 
     // The whole lines `write` puts, each as a bare line: a CI service's
     // commands, which end in a line break.
-    void bare(scope void delegate(ref typeof(appender!string())) @safe write) @safe
+    // At `level`, the level of the lines they fence, so that a filter that
+    // lets those through keeps their fence.
+    void bare(scope void delegate(ref typeof(appender!string())) @safe write, LogLevel level = LogLevel.info) @safe
     {
         import std.string : lineSplitter;
 
         auto w = appender!string;
         write(w);
         foreach (l; w[].lineSplitter)
-            say(null, Tone.plain, plain(l));
+            line(level, l);
     }
 
     // Every redacted environment value the graph's actions carry, masked on
@@ -701,6 +724,34 @@ public string taskName(const ref TaskGraph graph, TaskIndex t) @safe pure
     ], run.trace.join("\n"));
 }
 
+/// TDM21: a notice of a task that succeeds quietly, reused here, is a
+/// warning row all the same.
+@("task.reporter_status.StatusTranscript.noticeOfAQuietTask")
+@system unittest
+{
+    const run = scriptedRun(TableStyle.clean, 0, ["replacing 4a0065 waits for a lease", "two\nlines"]);
+    assert(run.warning == [
+        "     Warning  base  library    compile:4a0065        replacing 4a0065 waits for a lease",
+        "     Warning  base  library    compile:4a0065        two",
+        "     Warning  base  library    compile:4a0065        lines",
+    ], run.warning.join("\n"));
+    assert(run.trace[0] == "      Reused  base  library    compile:4a0065", run.trace.join("\n"));
+
+    // On a CI service, each notice is fenced from its command parser at the
+    // notice's own level, which a filter that keeps the rows keeps too.
+    import sparkles.ci_provider : CiProvider;
+
+    CiLog github;
+    github.provider = CiProvider.githubActions;
+    github.stopToken = "feedfacefeedfacefeedfacefeedface";
+    const ci = scriptedRun(TableStyle.clean, 0, ["::error::planted"], github);
+    assert(ci.warning == [
+        "::stop-commands::feedfacefeedfacefeedfacefeedface",
+        "     Warning  base  library    compile:4a0065        ::error::planted",
+        "::feedfacefeedfacefeedfacefeedface::",
+    ], ci.warning.join("\n"));
+}
+
 /// Boxed, the same rows are framed and headed, and a failure's lines span
 /// the columns beneath its row.
 @("task.reporter_status.StatusTranscript.boxed")
@@ -730,11 +781,11 @@ version (unittest)
 {
     struct ScriptedLines
     {
-        string[] info, trace;
+        string[] info, trace, warning;
     }
 
     // `aRunAsStatusLines`'s run, as the lines the transcript writes.
-    ScriptedLines scriptedRun(TableStyle table, size_t width = 0)
+    ScriptedLines scriptedRun(TableStyle table, size_t width = 0, string[] libNotices = null, CiLog ci = CiLog.init)
     {
         import core.time : msecs;
         import sparkles.base.status_line : StatusLine, writeStatusLine;
@@ -758,7 +809,7 @@ version (unittest)
         auto g = new TaskGraph;
         *g = graphOf([node(lib), node(cov), node(test), node(broken), node(fallback)], null);
         auto run = runFake(*g, [
-            lib: Script(1.msecs, reused: true),
+            lib: Script(1.msecs, reused: true, notices: libNotices),
             cov: Script(2.msecs, freshness: Freshness(Freshness.Kind.stale, reason: StaleReason.inputChanged,
                 path: "libs/ui/src/sparkles/ui/layout.d")),
             test: Script(3.msecs, lines: ["✓ base.one", summaryLine(1078, 0, 4)]),
@@ -769,10 +820,10 @@ version (unittest)
 
         ScriptedLines lines;
         auto transcript = new StatusTranscript(g, StatusOptions(packages: ["base", "ui"], table: table,
-            width: width), (LogLevel level, const(char)[] verb, Tone tone, scope const(StatusSpan)[] spans) @safe {
+            width: width, ci: ci), (LogLevel level, const(char)[] verb, Tone tone, scope const(StatusSpan)[] spans) @safe {
                 auto w = appender!string;
                 writeStatusLine(w, StatusLine(verb, tone, spans), false);
-                (level == LogLevel.trace ? lines.trace : lines.info) ~= w[];
+                (level == LogLevel.trace ? lines.trace : level == LogLevel.warning ? lines.warning : lines.info) ~= w[];
             });
         foreach (ref e; run.events)
             transcript.onEvent(e);
