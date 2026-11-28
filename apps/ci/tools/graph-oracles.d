@@ -1340,20 +1340,10 @@ string explained(string cache, string task)
     return w.data;
 }
 
-/// The class and detail of `task`'s miss in `g`'s log: `declared: differs in …`.
-string missOf(ref const GraphRun g, string task)
-{
-    import std.string : indexOf, lineSplitter;
-
-    foreach (line; g.log.lineSplitter)
-        if (line.startsWith("[" ~ task ~ " stderr] miss ("))
-        {
-            const rest = line[line.indexOf("miss (") + 6 .. $];
-            const close = rest.indexOf("): ");
-            return (rest[0 .. close] ~ ": " ~ rest[close + 3 .. $]).idup;
-        }
-    return null;
-}
+/// The class and detail of `task`'s miss in `g`: `declared: differs in …`,
+/// as the run's statistics record it (BGS8); the transcript shows the note
+/// only with a failure's tail (BGA8).
+string missOf(ref const GraphRun g, string task) => g.stats.missExplained.get(task, null);
 
 Verdict[] oracle18()
 {
@@ -3011,7 +3001,8 @@ string[] verdictLines(string output)
     foreach (raw; output.lineSplitter)
     {
         auto line = raw.idup.replaceAll(ansi, "");
-        if (line.startsWith("[test:"))
+        // A test's lines carry its label (BGA8), or its id when it has none.
+        if (line.startsWith("[test ") || line.startsWith("[test:"))
             line = line.canFind("] ") ? line[line.indexOf("] ") + 2 .. $] : line;
         if (line.startsWith("Summary: "))
             lines ~= line.replaceAll(time, "");
@@ -3033,6 +3024,8 @@ string equivalence(string pkg, out size_t tests)
 
     RunOptions o;
     o.jobs = std.process.environment.get("ORACLE2_JOBS", "0").to!uint;
+    // Every test's verdict, not only a passing leg's summary line (BGA8).
+    o.replayOutput = true;
     const cache = freshCache("o2");
     auto g = run(pkg, cache, o);
     scope (exit)
@@ -3528,6 +3521,15 @@ Verdict[] oracle3()
 
 // === Oracle 21: incremental equals clean ===
 
+/// A run whose test nodes show every line, so that each test's verdict, not
+/// only a passing leg's summary, is compared (BGA8).
+RunOptions testOutput()
+{
+    RunOptions o;
+    o.replayOutput = true;
+    return o;
+}
+
 /// How the incremental run `inc` (on the store beneath `incCache`) differs
 /// from the cold run `cold` (beneath `coldCache`): exit status, test
 /// verdicts, compiler diagnostics, result keys and every output's bytes.
@@ -3645,9 +3647,9 @@ string editSequence(uint seed, ref Fixture pkg, ref Fixture lib, size_t steps, o
             if (kind == "switch worktree")
                 at = other;
         }
-        auto inc = run(pkg.name, cache, RunOptions.init, at);
+        auto inc = run(pkg.name, cache, testOutput, at);
         const coldCache = freshCache("o21");
-        auto cold = run(pkg.name, coldCache, RunOptions.init, at);
+        auto cold = run(pkg.name, coldCache, testOutput, at);
         const step = text("seed ", seed, ", step ", i, applied.length ? " (" ~ applied[$ - 1] ~ ")" : "", ": ");
         const differs = differsFromCold(inc, cache, cold, coldCache);
         rmdirRecurse(coldCache);
@@ -3712,11 +3714,11 @@ Verdict[] oracle21()
         scope (exit)
             dropAbsentCandidates = false;
         const cache = freshCache("o21");
-        auto first = run(t.name, cache);
+        auto first = run(t.name, cache, testOutput);
         t.put("a/m.d", "module m;\n\nenum mValue = 7;\n");
-        auto inc = run(t.name, cache);
+        auto inc = run(t.name, cache, testOutput);
         const coldCache = freshCache("o21");
-        auto cold = run(t.name, coldCache);
+        auto cold = run(t.name, coldCache, testOutput);
         const compile = taskOf(first, t.task("compile"));
         vs ~= Verdict("revert check", first.exitCode ? "the fixture failed:" ~ tailOf(first.log)
             : inc.stats.resultKeys.get(compile, "a") != first.stats.resultKeys.get(compile, "b")
@@ -3766,9 +3768,9 @@ Verdict[] oracle21Replay()
         string why;
         foreach (pkg; packages)
         {
-            auto inc = run(pkg, cache, RunOptions.init, tree);
+            auto inc = run(pkg, cache, testOutput, tree);
             const coldCache = freshCache("o21r");
-            auto cold = run(pkg, coldCache, RunOptions.init, tree);
+            auto cold = run(pkg, coldCache, testOutput, tree);
             if (const d = differsFromCold(inc, cache, cold, coldCache))
                 why ~= " " ~ pkg ~ ":" ~ d;
             else if (k > 0)
