@@ -92,6 +92,7 @@ struct TaskContext(X)
     private void delegate(TaskIndex, OutputStream, scope const(char)[], bool) outputFn;
     private void delegate(TaskIndex, ulong, Duration) usageFn;
     private void delegate(TaskIndex) reusedFn;
+    private void delegate(TaskIndex, scope const(char)[]) noticeFn;
 
     /// Reports one assembled output line (without its terminator); the
     /// executor numbers it and forwards it as a `TaskOutput` event.
@@ -104,6 +105,11 @@ struct TaskContext(X)
     /// Reports that the task adopts a stored result rather than executing
     /// its action (TDM17); the executor forwards it as a `TaskReused` event.
     void reused() => reusedFn(task);
+
+    /// Reports a line of the driver's own, apart from the action's output,
+    /// that every reporter shows whatever the node's output policy (TDM21);
+    /// the executor forwards it as a `TaskNotice` event.
+    void notice(scope const(char)[] line) => noticeFn(task, line);
 
     /// Whether the run asked this task to stop: a cancellation checkpoint
     /// for in-process actions.
@@ -678,7 +684,7 @@ private:
             fibers[t.value] = null;
             cast(void) protect!(() => completions.put(*exec, Completion(t, outcome)))(*exec);
         }
-        auto ctx = TaskContext!X(exec, t, &(*graph)[t], &onOutput, &onUsage, &onReused);
+        auto ctx = TaskContext!X(exec, t, &(*graph)[t], &onOutput, &onUsage, &onReused, &onNotice);
         if (isCleanup(t))
             outcome = protect!(() => driveCatching(ctx))(*exec);
         else if (cancelling)
@@ -746,6 +752,11 @@ private:
     void onReused(TaskIndex t)
     {
         emit(TaskEventPayload(TaskReused(t)));
+    }
+
+    void onNotice(TaskIndex t, scope const(char)[] line)
+    {
+        emit(TaskEventPayload(TaskNotice(t)), line.idup);
     }
 
     void finishBatch(Completion[] batch)
@@ -1017,6 +1028,28 @@ unittest
             (TaskFinished f) { seen ~= "finished " ~ g[f.task].id.text; },
             (_) {});
     assert(seen == ["reused a", "finished a", "finished b"], seen.join(", "));
+}
+
+/// TDM21: a driver's notice reaches the sink as its own event, with its line,
+/// apart from the task's output.
+@("build_primitives.task.executor.notice.apartFromTheOutput")
+@system
+unittest
+{
+    import std.array : join;
+    import std.conv : text;
+
+    const g = graphOf([tnode("a")], null);
+    auto run = runFake(g, ["a": Script(2.msecs, lines: ["out"], notices: ["not published: no room"])],
+        ExecutorOptions(capacity: 1));
+    assert(run.result.exitCode == 0);
+    string[] seen;
+    foreach (e; run.events)
+        e.payload.match!(
+            (TaskOutput o) { seen ~= "output " ~ e.text; },
+            (TaskNotice n) { seen ~= text("notice ", g[n.task].id.text, " ", e.text); },
+            (_) {});
+    assert(seen == ["output out", "notice a not published: no room"], seen.join(", "));
 }
 
 @("build_primitives.task.executor.failFast.simultaneousFailuresPickTheLowestKey")

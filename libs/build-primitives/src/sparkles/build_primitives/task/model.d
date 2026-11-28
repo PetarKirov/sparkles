@@ -664,6 +664,17 @@ struct TaskReused
     TaskIndex task; ///
 }
 
+/**
+A line the running task's driver reports of its own, apart from the
+action's output: a result that could not be published, a nondeterministic
+rebuild, an input edited while the action ran (TDM21). Its text is
+`TaskEvent.text`. A reporter shows it whatever the node's output policy.
+*/
+struct TaskNotice
+{
+    TaskIndex task; ///
+}
+
 /// A resource-usage observation of a running task.
 struct TaskUsage
 {
@@ -706,22 +717,22 @@ struct RunFinished
 
 /// What happened ([SPEC TDM12, TDM13]).
 alias TaskEventPayload = SumType!(GraphPlanned, TaskReady, TaskStarted, TaskOutput,
-    TaskUsage, TaskFinished, CancellationRequested, RunFinished, TaskFresh, TaskStale, TaskReused);
+    TaskUsage, TaskFinished, CancellationRequested, RunFinished, TaskFresh, TaskStale, TaskReused, TaskNotice);
 
 /**
 An event: a run-local sequence number and monotonic timestamp around its
 payload. The executor is the sole producer.
 
-The variable-length data, a `TaskOutput` line and a `TaskStale` path,
-travel in `text` beside the payload rather than in it: a `SumType` with an
-indirection is `@system` to assign, and keeping the payload pointer-free
-keeps every event `@safe` to move through a channel. `text` is empty for
-every other payload.
+The variable-length data, a `TaskOutput` or `TaskNotice` line and a
+`TaskStale` path, travel in `text` beside the payload rather than in it: a
+`SumType` with an indirection is `@system` to assign, and keeping the
+payload pointer-free keeps every event `@safe` to move through a channel.
+`text` is empty for every other payload.
 */
 struct TaskEvent
 {
     ulong sequence;           ///
     MonoTime at;              ///
     TaskEventPayload payload; ///
-    string text;              /// a `TaskOutput` line, a `TaskStale` path
+    string text;              /// a `TaskOutput` or `TaskNotice` line, a `TaskStale` path
 }

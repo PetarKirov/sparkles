@@ -48,6 +48,8 @@ struct Script
     Freshness freshness;
     /// Report, while running, that a stored result is adopted (TDM17).
     bool reused;
+    /// The driver's own lines, reported apart from the output (TDM21).
+    string[] notices;
 }
 
 /// Sleeps each task's scripted duration on the virtual clock, then
@@ -77,6 +79,8 @@ struct FakeDriver
                 ctx.output(OutputStream.stderr, line[1 .. $]);
             else
                 ctx.output(OutputStream.stdout, line);
+        foreach (line; script.notices)
+            ctx.notice(line);
         cast(void) clock.sleep(script.duration);
         foreach (_; 0 .. script.yields)
         {
