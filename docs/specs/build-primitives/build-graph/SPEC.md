@@ -484,7 +484,16 @@ and the first six digits of its variant key (`compile doc-view:test-root
 48f533`), the name a transcript gives it ([task DAG TDO3](../task-dag/SPEC.md)).
 A `test` node's output policy is `lastLineOnSuccess`, so a passing leg shows
 its summary line; every other node's is `tailOnFailure`, so a build action's
-output (deprecations, cache notes) shows only when it fails.
+output (deprecations, cache notes) shows only when it fails. What the build
+graph reports of an action whatever its outcome is a notice
+([task DAG TDM21](../task-dag/SPEC.md)), which every policy shows: a
+publication that failed (BGS2), a nondeterministic result (BGS3, BGS5), a
+corrupt entry a lookup discarded (BGS6), a replacement that waits for a lease
+(BGS7), an input edited during a compile (BGK7). A line that explains a failure, such as a read outside the declared
+roots (BGK8), stays among the action's lines, which the failure shows. So
+does a cache note (a miss's explanation, a result a digest record serves),
+which only explains an outcome; the run's statistics record both (BGS5,
+BGS8).
 
 **BGA9: Which results are published.** A result **must** be published only for
 an action that ran to completion and exited on its own:
@@ -721,7 +730,9 @@ string import root it searches: the input state id of its declared read set
 (BGW7 and BGW9 of the
 [fileset-native workspace](./fileset-native-workspace.md)), which needs no
 listing code of its own. Its result is published under that key and reported
-as conservatively keyed.
+as conservatively keyed: the run's statistics name the task, and a failed
+compile keyed so because it wrote none of the dependency output it was asked
+for says so among its lines (BGA8).
 
 **BGK8: Reads outside the declared roots.** A compile whose manifest lists a
 file outside all of the following **must** fail, and its result **must not**
@@ -933,7 +944,9 @@ a diagnostic is reported. Corruption is detected at three points:
 
 Removal and replacement **must** wait for every live lease on an entry held by
 another process, as eviction does (BGS5 steps 1 and 3), and report the
-entries they wait for. The operating process's own leases do not hold it back.
+entries they wait for. A replacement that waits leaves the published result;
+a notice reports it, and the run's statistics name the task, so that `ci cache
+replace` fails, as it does when nothing took the published result's place. The operating process's own leases do not hold it back.
 
 `apps/ci` exposes them as `ci cache` commands: `stats`, `list`, `gc`, `verify`,
 `remove`, `replace` and `explain`. The store's top directory,
@@ -962,7 +975,9 @@ it as one of:
 3. **evicted:** a manifest matches, but its result is gone and no record
    serves the lookup.
 
-Each miss is reported with its class. `ci cache explain <task>` plans the
+Each miss is reported with its class and its explanation: in the run's
+statistics, by class and per task, and as a cache note among the action's
+lines (BGA8). `ci cache explain <task>` plans the
 selection the last `ci test` beneath the store recorded (its packages, legs
 and coverage, so that its task ids and keys are that run's), or every
 package when none is recorded; it takes an id, a prefix of one, or a task's
