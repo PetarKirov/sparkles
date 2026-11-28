@@ -1,0 +1,1 @@
+{"tasks":[{"id":"test:dub-manifest:special:serial","series":"ab771367f19c793f4e88ba9232ed46fb09b08ccf9502a0397c097355b267df8e","outcome":"passed","start":1115128125700,"end":1124379313000,"metrics":{"task.wall":9251187300}}]}
