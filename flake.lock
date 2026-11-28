@@ -21,11 +21,11 @@
         "phobos-master": "phobos-master"
       },
       "locked": {
-        "lastModified": 1795738261,
-        "narHash": "sha256-VLskSFz+Sr08xG2dq01VntTRQX0P7KOZ4gU2O/344I0=",
+        "lastModified": 1795826896,
+        "narHash": "sha256-52jFGMR3O2R4B/0PcpijA49zOlNUhfF+fwXS963uD5w=",
         "owner": "PetarKirov",
         "repo": "dlang.nix",
-        "rev": "c146e4d282f99b845bb58fbee72cf76bf0a41cca",
+        "rev": "d44f7b766f27d2086dd8c12d3f9f6caab2561505",
         "type": "github"
       },
       "original": {
@@ -55,11 +55,11 @@
     "dmd-sparkles": {
       "flake": false,
       "locked": {
-        "lastModified": 1795571516,
-        "narHash": "sha256-V+Py3EkcIEWUOjwBh8jsgd2hsSGNXSbyq8+PbRIkswg=",
+        "lastModified": 1795826623,
+        "narHash": "sha256-0JoBCDj1tFFSrFk4NTxfH6FySu95i1rGGJqSr0CQ2UQ=",
         "owner": "PetarKirov",
         "repo": "dmd",
-        "rev": "d19ed4c2ecc67ecdbd64f550351fdb3e4dddb1d6",
+        "rev": "c95151e5022cba4c0b1781596cffd7a2734969c3",
         "type": "github"
       },
       "original": {
