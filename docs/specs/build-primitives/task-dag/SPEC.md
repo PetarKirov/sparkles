@@ -419,6 +419,8 @@ alias TaskEvent = SumType!(
     RunFinished,
     TaskFresh,
     TaskStale,
+    TaskReused,
+    TaskNotice,
 );
 ```
 
@@ -495,8 +497,20 @@ there is one.
 to adopt a stored result instead of executing the node's action **may** say
 so through its context, which emits `TaskReused` before the node's outcome.
 The build graph's store hit is the case
-([BGK3](../build-graph/SPEC.md)). The event changes no outcome and no
-transcript; a live view counts the node as reused rather than executed.
+([BGK3](../build-graph/SPEC.md)). The event changes no outcome and no line
+of the plain transcript; a live view counts the node as reused rather than
+executed.
+
+**TDM21: Notices.** A driver **may** report a line of its own, apart from the
+action's output, through its context, which emits `TaskNotice` with the line
+in the envelope's `text`. A notice says what the driver found that a reader
+must see whatever the node's outcome: a result that could not be published, a
+rebuild unlike its record, an input edited while the action ran. Reporters
+show every notice whatever the node's output policy (TDO3): a block holds its
+notices after the lines its policy shows, each prefixed `[<label> notice] `,
+and an interlaced transcript writes each as it arrives. A notice changes no
+outcome. The action's own output, and the driver's notes that only explain
+an outcome, such as a cache note, remain output lines.
 
 ## 4. Event Horizon-only execution
 
@@ -670,9 +684,12 @@ node's output policy decides which lines the block holds:
   its last line when it did, as a test run ends with its summary.
 - `none`: none.
 
+A block then holds the node's notices (TDM21), whatever its policy, after
+those lines and before its `<label>: <outcome>` line.
+
 Elapsed times are the only part that varies with execution, and they are
-optional. With them off, the transcript is byte-identical for the same graph
-and outcomes.
+optional. With them off, the transcript is byte-identical for the same graph,
+outcomes, output and notices.
 
 A heartbeat **may** report aggregate `completed/total` progress to stderr during
 a long silent run. It carries no task output, is disabled when stderr is not
@@ -693,9 +710,10 @@ line of a `replay` node as soon as the reporter receives it:
   retained.
 - An unterminated final fragment is emitted once.
 - Ordering across tasks is nondeterministic.
-- A node of another policy (TDO3) streams nothing: the lines its policy shows
-  depend on how it ended, so they come with the terminal lines, a failure's in
-  the failure replay.
+- A node of another policy (TDO3) streams none of its output: the lines its
+  policy shows depend on how it ended, so they come with the terminal lines, a
+  failure's in the failure replay.
+- A notice (TDM21) streams as it arrives, whatever the node's policy.
 
 The terminal lines, the failure replay and the summary are written together at
 the end, sorted in presentation order. With a provider's groups, the terminal

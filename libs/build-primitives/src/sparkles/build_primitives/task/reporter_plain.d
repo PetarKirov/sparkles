@@ -100,6 +100,13 @@ struct PlainReporter(Writer)
                     writeLine(o.task, o.stream, e.text);
                 blocks.output(o.task, o.stream, e.text, o.unterminated);
             },
+            (const TaskNotice n) {
+                // A notice shows whatever the policy (TDM21): interlaced, it
+                // streams at once; buffered, its block holds it.
+                if (options.interlaced)
+                    writeNotice(n.task, e.text);
+                blocks.notice(n.task, e.text);
+            },
             (const TaskFinished f) {
                 blocks.finished(f.task, f.outcome, f.elapsed);
                 tally.add(f.outcome);
@@ -166,13 +173,22 @@ private:
     // A line, prefixed; text holding line breaks (a multi-line message sent
     // as one) is written as that many lines, each prefixed.
     void writeLine(TaskIndex t, OutputStream stream, scope const(char)[] text)
+        => writePrefixed(t, notice: false, stream, text);
+
+    // A notice (TDM21), as a line prefixed `[<label> notice] `.
+    void writeNotice(TaskIndex t, scope const(char)[] text) => writePrefixed(t, notice: true, OutputStream.init, text);
+
+    void writePrefixed(TaskIndex t, bool notice, OutputStream stream, scope const(char)[] text)
     {
         while (true)
         {
             size_t end;
             while (end < text.length && text[end] != '\n')
                 ++end;
-            writeLinePrefix(*writer, *graph, t, stream);
+            if (notice)
+                writeNoticePrefix(*writer, *graph, t);
+            else
+                writeLinePrefix(*writer, *graph, t, stream);
             options.ci.writeUntrusted(*writer, text[0 .. end]);
             put(*writer, '\n');
             if (end >= text.length)
@@ -221,8 +237,10 @@ private:
         options.ci.endUntrusted(*writer);
     }
 
-    // A block's lines, as its policy shows them, fenced from the provider's
-    // command parser.
+    // A block's lines, as its policy shows them, then its driver's notices,
+    // whatever the policy (TDM21), each fenced from the provider's command
+    // parser. The notices stay outside the block's group, which a provider
+    // folds away.
     void writeBlock(TaskIndex t)
     {
         const what = shown(t);
@@ -233,6 +251,14 @@ private:
             writeShown(t, what);
         if (grouped)
             options.ci.closeGroup(*writer);
+        const notices = blocks.noticesOf(t);
+        if (notices.length)
+        {
+            options.ci.beginUntrusted(*writer);
+            foreach (n; notices)
+                writeNotice(t, n);
+            options.ci.endUntrusted(*writer);
+        }
         writeTerminal(t);
     }
 
@@ -756,4 +782,54 @@ unittest
         ~ "summary: 5 tasks: 4 succeeded, 1 failed, 0 degraded, 0 skipped, 0 blocked, 0 unneeded, 0 cancelled\n"
         ~ "failed: b\n"
         ~ "exit: 1\n", text);
+}
+
+// TDM21: a driver's notices show whatever the node's policy, after the lines
+// the policy shows: `a` succeeds quietly, `b` fails with its tail, `d` shows
+// nothing of its own, and `the e` is labelled; whatever the completion order.
+@("build_primitives.task.reporter_plain.noticesShowWhateverThePolicy")
+@system
+unittest
+{
+    Script[string] withNotices(const(int)[] durations)
+    {
+        auto scripts = policyScripts(durations);
+        scripts["a"].notices = ["not published: cannot publish the entry"];
+        scripts["b"].notices = ["two\nlines"];
+        scripts["d"].notices = ["unstable input: a.d changed while the compiler ran"];
+        scripts["e"].notices = ["nondeterministic: e differs"];
+        return scripts;
+    }
+
+    const g = policyGraph();
+    enum expected =
+        "[a notice] not published: cannot publish the entry\n"
+        ~ "a: succeeded\n"
+        ~ "[b stdout] b noise\n"
+        ~ "[b stdout] b error\n"
+        ~ "[b notice] two\n"
+        ~ "[b notice] lines\n"
+        ~ "b: failed: exit-status 1\n"
+        ~ "[c stdout] Summary: 1 passed\n"
+        ~ "c: succeeded\n"
+        ~ "[d notice] unstable input: a.d changed while the compiler ran\n"
+        ~ "d: succeeded\n"
+        ~ "[the e stdout] one\n"
+        ~ "[the e stdout] two\n"
+        ~ "[the e notice] nondeterministic: e differs\n"
+        ~ "the e: succeeded\n"
+        ~ "summary: 5 tasks: 4 succeeded, 1 failed, 0 degraded, 0 skipped, 0 blocked, 0 unneeded, 0 cancelled\n"
+        ~ "failed: b\n"
+        ~ "exit: 1\n";
+    foreach (durations; permutations([1, 2, 3, 4, 5]))
+    {
+        auto run = runFake(g, withNotices(durations), ExecutorOptions(capacity: 3));
+        const text = transcript(g, run.events, PlainOptions(timings: false));
+        assert(text == expected, text);
+    }
+    // Interlaced, a notice streams as it arrives: `a`'s, the first task's,
+    // comes before any terminal line.
+    auto run = runFake(g, withNotices([1, 2, 3, 4, 5]), ExecutorOptions(capacity: 1));
+    const interlaced = transcript(g, run.events, PlainOptions(interlaced: true, timings: false));
+    assert(interlaced.startsWith("[a notice] not published: cannot publish the entry\n"), interlaced);
 }

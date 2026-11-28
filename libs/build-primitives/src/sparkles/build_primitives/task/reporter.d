@@ -97,6 +97,7 @@ struct OrderedBlocks
         elapsed = new Duration[taskCount];
         done = new bool[taskCount];
         notes = new FreshnessNote[taskCount];
+        notices = new string[][taskCount];
     }
 
     /// Records an output line.
@@ -105,6 +106,12 @@ struct OrderedBlocks
 
     /// Records that a task was fresh, or why it ran (TDM16).
     void freshness(TaskIndex t, FreshnessNote note) @safe pure nothrow @nogc { notes[t.value] = note; }
+
+    /// Records a line the task's driver reported of its own (TDM21).
+    void notice(TaskIndex t, string text) @safe pure nothrow { notices[t.value] ~= text; }
+
+    /// The lines `t`'s driver reported of its own, in order.
+    const(string)[] noticesOf(TaskIndex t) const @safe pure nothrow @nogc => notices[t.value];
 
     /// What the run said of `t`'s freshness.
     FreshnessNote freshness(TaskIndex t) const @safe pure nothrow @nogc => notes[t.value];
@@ -151,6 +158,7 @@ private:
     Duration[] elapsed;
     bool[] done;
     FreshnessNote[] notes;
+    string[][] notices;
     size_t next;
 }
 
@@ -468,4 +476,12 @@ void writeLinePrefix(Writer)(ref Writer w, const ref TaskGraph graph, TaskIndex 
     put(w, ' ');
     writeEnumMemberName!AnyFormat(w, stream);
     put(w, "] ");
+}
+
+/// Writes a notice's prefix (TDM21): `[<label> notice] `.
+void writeNoticePrefix(Writer)(ref Writer w, const ref TaskGraph graph, TaskIndex t)
+{
+    put(w, '[');
+    put(w, displayName(graph, t));
+    put(w, " notice] ");
 }
