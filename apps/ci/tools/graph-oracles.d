@@ -1210,7 +1210,8 @@ Verdict[] oracle17DigestRecords()
     const archive = taskOf(first, lib.task("compile"));
     const link = taskOf(first, app.task("link"));
     const archiveKey = first.stats.resultKeys.get(archive, null);
-    if (first.exitCode != 0 || !archiveKey.length)
+    const linkKey = first.stats.resultKeys.get(link, null);
+    if (first.exitCode != 0 || !archiveKey.length || !linkKey.length)
         return [Verdict("step 4", "the fixture did not build:" ~ tailOf(first.log))];
 
     // Evict the archive alone: every other result is leased by a live process.
@@ -1220,13 +1221,27 @@ Verdict[] oracle17DigestRecords()
             if (key != archiveKey)
                 s.leaseAs(key, "99999-3");
         bool other(string h) => h == "99999-3";
-        cast(void) s.store.evict(0, 1 << 30, &other);
+        const evicted = s.store.evict(0, 1 << 30, &other).evicted;
+        if (evicted != [archiveKey])
+            return [Verdict("step 4", text("the eviction took ", evicted, ", not the archive alone"))];
     }
     auto again = run(app.name, cache);
+    // Served from its record, the archive is neither executed nor a hit (a
+    // hit records its result key), yet succeeds; the run counts the one
+    // record it served, the only one the eviction left. Its "served from its
+    // digest record" line is no evidence: a build action that succeeds shows
+    // no lines (BGA8, TDO3).
+    import sparkles.build_primitives.task.model : OutcomeKind;
+
+    const archiveOutcome = archive in again.stats.outcomes;
+    const servedFromRecord = !stored(again, archive)
+        && archiveOutcome !is null && *archiveOutcome == OutcomeKind.succeeded
+        && again.stats.misses.get("record-served", 0) == 1;
     vs ~= Verdict("step 4 (link served)",
-        executed(again, archive) ? "the archive was rebuilt for a link that hits"
-        : executed(again, link) ? "the link did not hit"
-        : !again.log.canFind("served from its digest record") ? "the archive was not served from its record" : null,
+        again.exitCode != 0 ? "the run failed:" ~ tailOf(again.log)
+        : executed(again, archive) ? "the archive was rebuilt for a link that hits"
+        : executed(again, link) || again.stats.resultKeys.get(link, null) != linkKey ? "the link did not hit"
+        : !servedFromRecord ? text("the archive was not served from its record: ", again.stats.summary) : null,
         "the link hit, and the evicted archive was served from its digest record without rebuilding");
 
     // A new binary that links it: the archive is rebuilt, matching its record.
