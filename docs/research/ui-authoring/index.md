@@ -11,10 +11,10 @@ is catalogued elsewhere — [Solid's components][solid-components],
 catalog, [Clay][clay-layout] in the layout catalog, and
 [immediate mode at scale][imlv] in the virtualization catalog.
 
-This study answers six questions:
+This study answers seven questions:
 
 1. **What does a component look like, and what is it allowed to do?** — the
-   [decisions](#decisions), UI-Q1 to UI-Q7.
+   [decisions](#decisions), UI-Q1 to UI-Q8.
 2. **Which authoring surfaces were tried, and what does each one cost the
    author?** — the [master catalog](#master-catalog) and the
    [comparison of the alternatives](#the-alternatives).
@@ -24,10 +24,15 @@ This study answers six questions:
    [build cost](#build-cost).
 5. **Is a fit size computed at close cheaper than a separate pass, and does a
    structure-of-arrays or SIMD layout change that?** — [the fit pass](#the-fit-pass).
-6. **Which compiler and tooling defects did the experiments hit?** —
+6. **Which primitives does the builder need, and how does a widget get a
+   layout of its own?** — [primitives and custom layouts](#primitives-and-custom-layouts-ui-q8).
+7. **Which compiler and tooling defects did the experiments hit?** —
    [defects found](#defects-found).
 
-**Last reviewed:** November 25, 2026
+The decisions are specified as requirements in
+[`sparkles:ui` component authoring](../../specs/ui/authoring.md) (`AUT`).
+
+**Last reviewed:** November 26, 2026
 
 > [!NOTE]
 > Every experiment is a dub package or a single-file program under
@@ -70,19 +75,20 @@ ways under an explorer root; and, for the benchmark, the same pane with up to
 
 ## Decisions
 
-The owner's design sessions settled the model in seven decisions. They are
+The owner's design sessions settled the model in eight decisions. They are
 recorded here as decided; the experiments below are the evidence for the last
-two.
+three.
 
-| Id    | Decision                                                                                                                                                                                                                                                                                                                                                                                              | Evidence                                                |
-| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| UI-Q1 | Components are pure per-frame functions over `const` state. Cells are read at the edges. Memoisation never changes output. Lifecycle is a per-frame set difference of identities. Handlers yield messages.                                                                                                                                                                                            | [Solid][solid-components], [Flutter][flutter]           |
-| UI-Q2 | Attributes are named-only, enforced by a leading `NamedOnly` sentinel; children go in `children:`; `Node.none` keeps its slot, so the siblings after it keep their identity; lists go through `toUi(ui).mapKeyed!(key, row)` or `mapByIndex`; text is `ui.text(i"…")`, interned into a `TextPool`.                                                                                                    | [`ui-api-demo`][x-insideout-readme]                     |
-| UI-Q3 | Virtualisation runs over a retained tree and height index.                                                                                                                                                                                                                                                                                                                                            | [immediate mode at scale][imlv]                         |
-| UI-Q4 | Messages are erased `MsgRef`s made by `ui.on`; a subtree's messages are lifted by `ui.mapMsg!`; dispatch runs against the last frame's tree.                                                                                                                                                                                                                                                          | [`ui-api-demo`][x-insideout-readme]                     |
-| UI-Q5 | Domain state lives in the application; presentation state machines live in an identity-keyed element store; there are no hooks.                                                                                                                                                                                                                                                                       | [Flutter][flutter], [Compose][compose]                  |
-| UI-Q6 | Composites that need their parent's context are deferred: a value form (`componentForm`) and `ui.place`. **Superseded by UI-Q7.**                                                                                                                                                                                                                                                                     | [`ui-api-demo`][x-insideout-readme]                     |
-| UI-Q7 | Children are D lazy variadics, `scope Node delegate() @safe pure nothrow @nogc[] children...`, built top-down with a Clay-style children stack. Identity is the parent's id mixed with the argument position, and the key in keyed lists. A subtree as a value is a `scope` delegate. It requires the frontend fix for `scope` lazy variadic closures ([the requirement](#the-compiler-requirement)). | [`ui-api-demo-lazy`][x-lazy], [build cost](#build-cost) |
+| Id    | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Evidence                                                                                         |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| UI-Q1 | Components are pure per-frame functions over `const` state. Cells are read at the edges. Memoisation never changes output. Lifecycle is a per-frame set difference of identities. Handlers yield messages.                                                                                                                                                                                                                                                                                                                                                | [Solid][solid-components], [Flutter][flutter]                                                    |
+| UI-Q2 | Attributes are named-only, enforced by a leading `NamedOnly` sentinel; children go in `children:`; `Node.none` keeps its slot, so the siblings after it keep their identity; lists go through `toUi(ui).mapKeyed!(key, row)` or `mapByIndex`; text is `ui.text(i"…")`, interned into a `TextPool`.                                                                                                                                                                                                                                                        | [`ui-api-demo`][x-insideout-readme]                                                              |
+| UI-Q3 | Virtualisation runs over a retained tree and height index.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | [immediate mode at scale][imlv]                                                                  |
+| UI-Q4 | Messages are erased `MsgRef`s made by `ui.on`; a subtree's messages are lifted by `ui.mapMsg!`; dispatch runs against the last frame's tree.                                                                                                                                                                                                                                                                                                                                                                                                              | [`ui-api-demo`][x-insideout-readme]                                                              |
+| UI-Q5 | Domain state lives in the application; presentation state machines live in an identity-keyed element store; there are no hooks.                                                                                                                                                                                                                                                                                                                                                                                                                           | [Flutter][flutter], [Compose][compose]                                                           |
+| UI-Q6 | Composites that need their parent's context are deferred: a value form (`componentForm`) and `ui.place`. **Superseded by UI-Q7.**                                                                                                                                                                                                                                                                                                                                                                                                                         | [`ui-api-demo`][x-insideout-readme]                                                              |
+| UI-Q7 | Children are D lazy variadics, `scope Node delegate() @safe pure nothrow @nogc[] children...`, built top-down with a Clay-style children stack. Identity is the parent's id mixed with the argument position, and the key in keyed lists. A subtree as a value is a `scope` delegate. It requires the frontend fix for `scope` lazy variadic closures ([the requirement](#the-compiler-requirement)).                                                                                                                                                     | [`ui-api-demo-lazy`][x-lazy], [build cost](#build-cost)                                          |
+| UI-Q8 | The primitive set is pure: `box` and `text`, plus the `image` and `custom` escape hatches; there are no hybrid widget primitives. A widget such as a toggle is a composite of boxes and text that declares its semantics (`Sem`: role, checked, focusable, merge). A custom layout is `box(custom: ui.layout(Params))`, where `Params` is plain data with static `measure` (constraints → size) and `arrange` (positions each child from its fit size and its `LayoutData`); non-interactive ink is a paint-only leaf, `ui.custom(paint: ui.painter(P))`. | [`ui-primitives`][x-prim], [primitives and custom layouts](#primitives-and-custom-layouts-ui-q8) |
 
 **Deferred:** the hot/cold split of the layout record (`lazy-split`). It is
 re-benchmarked and decided once `libs/ui` and the rest of the codebase are
@@ -120,18 +126,19 @@ Against UI-Q2 to UI-Q6 as the inside-out sketch implemented them:
 One row per experiment. "Order" is the build order; "message check" says when
 a subtree sending the wrong message type is caught.
 
-| Experiment                                        | Surface                                                                   | Order                         | Message check                                            | Subtree as value                          | Compiler          | Link                         |
-| ------------------------------------------------- | ------------------------------------------------------------------------- | ----------------------------- | -------------------------------------------------------- | ----------------------------------------- | ----------------- | ---------------------------- |
-| **Inside-out** (`ui-api-demo`)                    | expressions, `children: [ … ]`; value forms + `ui.place` for context      | inside-out, deferred `expand` | end-of-frame walk (run time)                             | value form (`Composite`), POD             | stock             | [README][x-insideout-readme] |
-| **Clay scope probe** (`clay-style`)               | `with (ui.column(…)) { … }`, a handle closing in `~this() scope`          | top-down                      | —                                                        | —                                         | stock             | [README][x-claystyle]        |
-| **Scoped `with`** (`ui-api-demo-scoped`)          | statements under `with`; `Ui!M` typed by its message                      | top-down                      | **compile time** (run-time backstop for an outer handle) | lambda slot, value form, recorded subtree | stock (DMD 2.115) | [README][x-scoped]           |
-| **Markup DSL** (`ui-api-demo-markup`)             | `mixin(markup!q{ column { … } })`, a CTFE parser                          | top-down                      | **compile time**, at the markup line                     | `scope` fragment delegate                 | stock (DMD 2.115) | [README][x-markup]           |
-| **Lazy-variadic probes** (`lazy-variadic`)        | `ui.column(children: a, b)` over lazy variadics                           | top-down                      | —                                                        | `scope` delegate                          | **fixed**         | [README][x-lazyprobe]        |
-| **Lazy variadic** (`ui-api-demo-lazy`)            | the UI-Q2 expressions, children lazy                                      | top-down, linked children     | at `ui.on` (run time, debug)                             | `scope` delegate                          | **fixed**         | [README][x-lazy]             |
-| **Lazy + children stack** (`lazy-stack`)          | as above                                                                  | top-down, children stack      | at `ui.on` (run time, debug)                             | `scope` delegate                          | **fixed**         | [`lazystack.d`][x-lazystack] |
-| **Lazy + split / SoA** (`lazy-split`, `lazy-soa`) | as above                                                                  | top-down, children stack      | as above                                                 | as above                                  | **fixed**         | [`lazysplit.d`][x-lazysplit] |
-| **Clay** via ImportC (`bench/clay`)               | `with (ui.column(…)) { … }` over `Clay__OpenElement`/`Clay__CloseElement` | top-down, children stack      | none (Clay has no messages)                              | —                                         | stock             | [`clayui.d`][x-clayui]       |
-| **Fit-pass benchmark** (`layout-fit-bench`)       | a replayed event stream (no surface)                                      | fused vs separate fit         | —                                                        | —                                         | stock             | [README][x-fit]              |
+| Experiment                                        | Surface                                                                                                 | Order                                        | Message check                                            | Subtree as value                          | Compiler          | Link                         |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------- | -------------------------------------------------------- | ----------------------------------------- | ----------------- | ---------------------------- |
+| **Inside-out** (`ui-api-demo`)                    | expressions, `children: [ … ]`; value forms + `ui.place` for context                                    | inside-out, deferred `expand`                | end-of-frame walk (run time)                             | value form (`Composite`), POD             | stock             | [README][x-insideout-readme] |
+| **Clay scope probe** (`clay-style`)               | `with (ui.column(…)) { … }`, a handle closing in `~this() scope`                                        | top-down                                     | —                                                        | —                                         | stock             | [README][x-claystyle]        |
+| **Scoped `with`** (`ui-api-demo-scoped`)          | statements under `with`; `Ui!M` typed by its message                                                    | top-down                                     | **compile time** (run-time backstop for an outer handle) | lambda slot, value form, recorded subtree | stock (DMD 2.115) | [README][x-scoped]           |
+| **Markup DSL** (`ui-api-demo-markup`)             | `mixin(markup!q{ column { … } })`, a CTFE parser                                                        | top-down                                     | **compile time**, at the markup line                     | `scope` fragment delegate                 | stock (DMD 2.115) | [README][x-markup]           |
+| **Lazy-variadic probes** (`lazy-variadic`)        | `ui.column(children: a, b)` over lazy variadics                                                         | top-down                                     | —                                                        | `scope` delegate                          | **fixed**         | [README][x-lazyprobe]        |
+| **Lazy variadic** (`ui-api-demo-lazy`)            | the UI-Q2 expressions, children lazy                                                                    | top-down, linked children                    | at `ui.on` (run time, debug)                             | `scope` delegate                          | **fixed**         | [README][x-lazy]             |
+| **Lazy + children stack** (`lazy-stack`)          | as above                                                                                                | top-down, children stack                     | at `ui.on` (run time, debug)                             | `scope` delegate                          | **fixed**         | [`lazystack.d`][x-lazystack] |
+| **Lazy + split / SoA** (`lazy-split`, `lazy-soa`) | as above                                                                                                | top-down, children stack                     | as above                                                 | as above                                  | **fixed**         | [`lazysplit.d`][x-lazysplit] |
+| **Clay** via ImportC (`bench/clay`)               | `with (ui.column(…)) { … }` over `Clay__OpenElement`/`Clay__CloseElement`                               | top-down, children stack                     | none (Clay has no messages)                              | —                                         | stock             | [`clayui.d`][x-clayui]       |
+| **Fit-pass benchmark** (`layout-fit-bench`)       | a replayed event stream (no surface)                                                                    | fused vs separate fit                        | —                                                        | —                                         | stock             | [README][x-fit]              |
+| **Primitives** (`ui-primitives`)                  | the UI-Q7 surface over `box`/`text` (pure) or with four widget kinds (hybrid); custom layouts four ways | top-down, children stack, then a layout pass | at `ui.on` (run time, debug)                             | `scope` delegate                          | **fixed**         | [README][x-prim]             |
 
 ---
 
@@ -570,6 +577,70 @@ build is 2–3× slower than LDC's, its fit pass about the same.
 
 ---
 
+## Primitives and custom layouts (UI-Q8)
+
+The [primitives prototype][x-prim] grows the children-stack builder into a
+small toolkit ([`uicore.d`][x-prim-core]: one `box` with Clay-style config
+structs, the measured `text` leaf, `image`, paint-only `custom`, a top-down
+layout pass, hit testing, semantics and dispatch) and asks two questions of
+it. The same application — the Stats pane and a settings page of 8 toggles, 8
+number fields, a text field, 3 buttons and a 1000-row virtual list — is mixed
+verbatim into two widget libraries: **pure**, where every widget is a
+composite of boxes and text, and **hybrid**, where `toggle`, `textInput`,
+`scrollView` and `virtualList` are core kinds.
+
+- **Machine and build:** a 32-core host at load average 3–5; `-b bench`
+  (assertions live) with `--perf`, the patched LDC 1.43 and DMD 2.115 of
+  [the requirement](#the-compiler-requirement); two LDC runs and one DMD run.
+  DMD and LDC print byte-identical demo output.
+- **Tests:** 14, on both compilers ([`tests.d`][x-prim-tests]): the pure and
+  hybrid settings pages, and every custom layout's coordinates worked by hand.
+
+**Pure against hybrid.** The per-node cost is the same; pure spends more
+nodes on a widget-heavy page and nothing measurable on a data-heavy one.
+
+| measure, LDC                     |       pure |     hybrid |
+| -------------------------------- | ---------: | ---------: |
+| nodes, settings page             |        135 |        106 |
+| nodes, Stats pane with 1000 rows |       3012 |       3009 |
+| build + layout, settings page    |       6 µs |       4 µs |
+| build + layout, Stats pane       | 124–131 µs | 125–130 µs |
+| instructions per node, settings  |        769 |        755 |
+
+The semantics trees a backend or a test sees are byte-identical (35 nodes;
+`primitives.settings.sameSemantics`), the Tab order is the same, and a press
+on a toggle's knob bubbles to the toggle's own box. Each hybrid kind costs a
+dozen dispatch sites in the core — 13 for the four kinds, about 120 lines —
+which is the "adding a kind silently skips a backend" risk
+[`WGT3`](../../specs/ui/widgets.md) names, and an application's own widget can
+only ever be a composite. What the hybrid kinds carry is data, and it fits on
+the two primitives: the caret on `text`, clip and offset on `box`, role and
+checked state in `Sem`.
+
+**Custom layouts.** A clock face, a timeline of lane-stacked events and a
+week calendar with overlap columns ([`layouts.d`][x-prim-layouts]) were each
+written four ways:
+
+| mechanism                                                                               | places children from their measured size | children are real nodes | verdict                                             |
+| --------------------------------------------------------------------------------------- | ---------------------------------------- | ----------------------- | --------------------------------------------------- |
+| (a) layout protocol: static `measure`/`arrange` over plain-data params                  | yes                                      | yes                     | **adopted**, the extension point                    |
+| (b) build-time placement with floating children (`layoutBuilder`, or last frame's size) | no: the view measures                    | yes                     | rejected: breaks build-then-layout, or lags a frame |
+| (c) paint-only leaf: `paint(in P, Rect, ref DrawList)`                                  | —                                        | no: one node            | **adopted**, for ink                                |
+| (d) anchored fractions (`Dir.anchor`)                                                   | no                                       | yes                     | optional convenience                                |
+
+Only (a) stacks timeline lanes by measured label width and wraps calendar
+titles in their columns; it keeps hit testing, identity, semantics and `memo`
+unchanged, because a layout is two function pointers over plain data copied
+into the frame. A 10⁴-event timeline lays out in 309–313 µs against
+214–220 µs for the same events in a plain column (+79 instructions per node),
+because the lane stacking runs in `measure`, again in `arrange` and once more
+at close; a measure cache ([`LAY13`](../../specs/ui/layout.md)) would remove
+two of the three runs. The README lists the open questions the prototype
+leaves (measure-to-arrange state, relayout of a child at another width,
+sorted-input contracts, native widgets behind a role).
+
+---
+
 ## Defects found
 
 | Defect                                                                                                                                                                                                                                                                                                                                                                                                                                      | Where it is tracked                                                                                                      |
@@ -589,6 +660,13 @@ is empty in a delegate literal's parameter list; DMD 2.115 leaves
 `TextPool.compact`'s capacity-sized stack array overflowed a test worker's
 stack at 2¹⁹ slots (fixed on `fix/base-bench-findings`, `dbf273c98`).
 
+The primitives prototype adds three: a member function shadows a UFCS free
+function of the same name (`Ui.layout` hid `ui.layout(Params)`, so the pass is
+`layOut`); dip1000 rejects handing a context that points at `ref this` to a
+layout's `arrange` unless the parameter is `scope ref`; and `package`
+visibility reaches nothing between top-level modules
+([README][x-prim], "Compiler errors and limitations hit").
+
 ---
 
 ## Milestones
@@ -600,6 +678,8 @@ stack at 2¹⁹ slots (fixed on `fix/base-bench-findings`, `dbf273c98`).
 | November 24 | Scoped `with` probe and builder; markup DSL; fit-pass benchmark                                                 |
 | November 24 | Lazy-variadic probes find the closure bug; the lazy-variadic port and the first three-builder benchmark         |
 | November 25 | Children stack (`lazy-stack`), split and SoA layouts with the `place` pass, Clay through ImportC; UI-Q7 decided |
+| November 25 | Primitives prototype (`ui-primitives`): pure against hybrid primitives, four custom-layout mechanisms           |
+| November 26 | UI-Q8 decided: pure primitives, the layout protocol and paint-only leaves                                       |
 | _pending_   | The split decision, after `libs/ui` is migrated to the new builder                                              |
 
 ---
@@ -615,6 +695,9 @@ stack at 2¹⁹ slots (fixed on `fix/base-bench-findings`, `dbf273c98`).
 - **I am designing the layout passes.** [The fit pass](#the-fit-pass) →
   [split and SoA](#split-and-soa-and-the-place-pass) →
   [Clay][clay-layout] in the layout catalog.
+- **I am writing a widget or a custom layout.** [Primitives and custom
+  layouts](#primitives-and-custom-layouts-ui-q8) → [`layouts.d`][x-prim-layouts]
+  (the clock, timeline and calendar) → the [prototype README][x-prim].
 - **I am working on the compiler forks.** [The requirement](#the-compiler-requirement)
   → [defects found](#defects-found) → [`lazy-variadic/`][x-lazyprobe].
 
@@ -627,7 +710,8 @@ stack at 2¹⁹ slots (fixed on `fix/base-bench-findings`, `dbf273c98`).
   [`clay-style`][x-claystyle], [`ui-api-demo-scoped`][x-scoped],
   [`ui-api-demo-markup`][x-markup], [`lazy-variadic`][x-lazyprobe],
   [`ui-api-demo-lazy`][x-lazy] with [`bench/`][x-bench] and its
-  [`results/`][x-tables], and [`layout-fit-bench`][x-fit].
+  [`results/`][x-tables], [`layout-fit-bench`][x-fit] and
+  [`ui-primitives`][x-prim].
 - Clay at `e6cc36941ab2af5d81107617039d6f527a1c660b`: [`clay.h`][clay-h]
   ([`CLAY__CONFIG_WRAPPER`][clay-wrapper], [`Clay__LayoutElementChildren`][clay-children],
   [`Clay_LayoutElement`][clay-element], [`Clay__HashNumber`][clay-hashnumber],
@@ -678,6 +762,11 @@ stack at 2¹⁹ slots (fixed on `fix/base-bench-findings`, `dbf273c98`).
 [x-fit]: ./experiments/layout-fit-bench/README.md
 [x-fitbench]: ./experiments/layout-fit-bench/fitbench.d
 [x-fit-summary]: ./experiments/layout-fit-bench/summary-ldc.md
+[x-prim]: ./experiments/ui-primitives/README.md
+[x-prim-core]: ./experiments/ui-primitives/src/uicore.d
+[x-prim-layouts]: ./experiments/ui-primitives/src/layouts.d
+[x-prim-tests]: ./experiments/ui-primitives/src/tests.d
+[x-prim-results]: ./experiments/ui-primitives/results/ldc-1.txt
 [clay-h]: https://github.com/nicbarker/clay/blob/e6cc36941ab2af5d81107617039d6f527a1c660b/clay.h
 [clay-wrapper]: https://github.com/nicbarker/clay/blob/e6cc36941ab2af5d81107617039d6f527a1c660b/clay.h#L160
 [clay-children]: https://github.com/nicbarker/clay/blob/e6cc36941ab2af5d81107617039d6f527a1c660b/clay.h#L1207-L1210

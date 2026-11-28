@@ -173,7 +173,8 @@ indent_style = unset
 indent_style = unset
 
 # The UI-authoring experiments' captured compiler output (stock compilers
-# rejecting the lazy-variadic port) is kept verbatim, carets aligned.
-[docs/research/ui-authoring/experiments/**/out/*.txt]
+# rejecting the lazy-variadic port, the dub build logs) is kept verbatim,
+# carets aligned.
+[docs/research/ui-authoring/experiments/**/{out,results}/*.txt]
 indent_style = unset
 indent_size = unset

@@ -428,19 +428,20 @@ routing concept; nothing above it can be tested without the arena.
 
 ## Relationship to existing specs
 
-| Piece                                                                               | Role                                                                                                      |
-| ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| [Anchored-overlay catalog](../../research/anchored-overlays/index.md)               | the evidence base — 38 subjects, the ten questions, the baseline and the verdict ledger                   |
-| [principles.md](./principles.md) `PRN6`–`PRN8`, `PRN11`                             | the value-semantics, single-definition and property-test rules every requirement here is written against  |
-| [state-machines.md](./state-machines.md) `STM4`–`STM11`                             | the machines this primitive **composes**; `TRG6` is the only new one and carries its `PRN8` justification |
-| [input.md](./input.md) `INP10`, `INP13`, `INP14`, `INP16`                           | the hit-testing model, the dismiss equivalence, the capability axes and the missing key release           |
-| [containers.md](./containers.md) `DCK5`, `DCK13`                                    | the homeless overlay view and the empty routing rung this spec fills                                      |
-| [backends.md](./backends.md) `TGT5`, `TGT10`                                        | declared degradation — the overlay table above is its chrome half — and the parity harness                |
-| [widgets.md](./widgets.md) `WGT7`, `WGT13`, `WGT16`                                 | the `popup` kind this spec re-defines, and the two consumers it stays out of                              |
-| [theme.md](./theme.md) `THM3`                                                       | the resolved `Visual` that must learn the arrow's side                                                    |
-| [layout.md](./layout.md) `LAY3`                                                     | the integer-cell rule that makes the solve exact and the caret categorical                                |
-| [open-issues.md](./open-issues.md) `UI-O2`, `UI-O3`                                 | the tagged widget payload `POP6` depends on, and the grab `MDL11` refuses to assume                       |
-| [window-system-integration](../../research/window-system-integration/index.md)      | the eventual native path `POP5` must not foreclose                                                        |
-| [hue notifier](../hue/notifier.md) `NTF`, [`DEF10`](../hue/feature-requirements.md) | the `notify` band's waiting consumer, which shares the solve and nothing else                             |
+| Piece                                                                               | Role                                                                                                                                  |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| [Anchored-overlay catalog](../../research/anchored-overlays/index.md)               | the evidence base — 38 subjects, the ten questions, the baseline and the verdict ledger                                               |
+| [principles.md](./principles.md) `PRN6`–`PRN8`, `PRN11`                             | the value-semantics, single-definition and property-test rules every requirement here is written against                              |
+| [state-machines.md](./state-machines.md) `STM4`–`STM11`                             | the machines this primitive **composes**; `TRG6` is the only new one and carries its `PRN8` justification                             |
+| [input.md](./input.md) `INP10`, `INP13`, `INP14`, `INP16`                           | the hit-testing model, the dismiss equivalence, the capability axes and the missing key release                                       |
+| [containers.md](./containers.md) `DCK5`, `DCK13`                                    | the homeless overlay view and the empty routing rung this spec fills                                                                  |
+| [backends.md](./backends.md) `TGT5`, `TGT10`                                        | declared degradation — the overlay table above is its chrome half — and the parity harness                                            |
+| [widgets.md](./widgets.md) `WGT7`, `WGT13`, `WGT16`                                 | the `popup` kind this spec re-defines, and the two consumers it stays out of                                                          |
+| [theme.md](./theme.md) `THM3`                                                       | the resolved `Visual` that must learn the arrow's side                                                                                |
+| [layout.md](./layout.md) `LAY3`                                                     | the integer-cell rule that makes the solve exact and the caret categorical                                                            |
+| [authoring.md](./authoring.md) `AUT41`–`AUT48`                                      | the construction model's half of this spec: identity, clips, the floating step, emission order, closing, the arrow side and the bound |
+| [open-issues.md](./open-issues.md) `UI-O2`, `UI-O3`                                 | the tagged widget payload `POP6` depends on, and the grab `MDL11` refuses to assume                                                   |
+| [window-system-integration](../../research/window-system-integration/index.md)      | the eventual native path `POP5` must not foreclose                                                                                    |
+| [hue notifier](../hue/notifier.md) `NTF`, [`DEF10`](../hue/feature-requirements.md) | the `notify` band's waiting consumer, which shares the solve and nothing else                                                         |
 
 → [Overview](./index.md) · [Input](./input.md) · [Containers](./containers.md)

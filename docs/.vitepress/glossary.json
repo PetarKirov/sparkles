@@ -554,6 +554,91 @@
     "seeAlso": ["slot", "cell"]
   },
   {
+    "id": "element-identity",
+    "term": "element identity",
+    "aliases": ["positional identity"],
+    "summary": "The 64-bit name a UI element keeps from frame to frame: its parent's identity mixed with its argument position, and with its key in a keyed list.",
+    "definition": "In `sparkles:ui`, every element built in a frame has an identity derived from where it was written rather than from a counter or a source location, so a conditional that builds nothing elsewhere leaves it unchanged. The element store, overlay anchors and lifecycle all address elements by it.",
+    "authority": [
+      {
+        "text": "sparkles:ui component authoring: identity",
+        "link": "/specs/ui/authoring#_4-identity-ui-q7"
+      }
+    ],
+    "owner": "sparkles:ui",
+    "seeAlso": ["children-stack", "generational-handle"]
+  },
+  {
+    "id": "children-stack",
+    "term": "children stack",
+    "summary": "The scratch stack a top-down UI builder pushes each closed child onto, so the parent computes its size to content from one contiguous run when it closes.",
+    "definition": "Each element that closes pushes its handle and fit size; its parent's close reduces its own children's run for its [fit size](/glossary#fit-size), copies the run into the frame's children table and pops it, so no earlier record is updated. The idea is Clay's.",
+    "authority": [
+      {
+        "text": "sparkles:ui component authoring: the build and its records",
+        "link": "/specs/ui/authoring#_5-the-build-and-its-records-ui-q7"
+      },
+      {
+        "text": "UI component authoring study: lazy variadic + children stack",
+        "link": "/research/ui-authoring/#lazy-variadic-children-stack-ui-q7"
+      }
+    ],
+    "owner": "sparkles:ui",
+    "seeAlso": ["element-identity", "fit-size"]
+  },
+  {
+    "id": "fit-size",
+    "term": "fit size",
+    "aliases": ["fit"],
+    "summary": "An element's size to content on an axis: what its children, gaps and padding need, computed when the element closes.",
+    "definition": "In `sparkles:ui`, _fit_ means size to content, the `Sizing.fit` mode, and nothing else; placement verdicts use another word. A text run's fit size comes from measuring it; a box's from its children.",
+    "authority": [
+      {
+        "text": "sparkles:ui component authoring: fit size at close",
+        "link": "/specs/ui/authoring#_5-the-build-and-its-records-ui-q7"
+      },
+      {
+        "text": "sparkles:ui layout: sizing",
+        "link": "/specs/ui/layout"
+      }
+    ],
+    "owner": "sparkles:ui",
+    "seeAlso": ["children-stack", "layout-protocol"]
+  },
+  {
+    "id": "layout-protocol",
+    "term": "layout protocol",
+    "aliases": ["custom layout"],
+    "summary": "How a UI widget brings its own geometry: plain-data parameters with a static measure, from constraints to a size, and a static arrange that positions each child from its measured size.",
+    "definition": "A box takes `custom: ui.layout(params)`; the core copies the parameters into the frame and calls their `measure` and `arrange` inside its one layout pass, measuring each child once. The children stay ordinary elements, so hit testing, semantics and identity are unchanged. Non-interactive ink is a [paint-only leaf](/glossary#paint-only-leaf) instead.",
+    "authority": [
+      {
+        "text": "sparkles:ui component authoring: custom layouts",
+        "link": "/specs/ui/authoring#_7-custom-layouts-ui-q8"
+      },
+      {
+        "text": "UI component authoring study: primitives and custom layouts",
+        "link": "/research/ui-authoring/#primitives-and-custom-layouts-ui-q8"
+      }
+    ],
+    "owner": "sparkles:ui",
+    "seeAlso": ["paint-only-leaf", "fit-size"]
+  },
+  {
+    "id": "paint-only-leaf",
+    "term": "paint-only leaf",
+    "summary": "A UI element that draws into the rectangle layout gives it and contributes no child elements, so what it paints has no hit targets or semantics of its own.",
+    "definition": "In `sparkles:ui`, `ui.custom(paint: ui.painter(params))` holds plain-data parameters with a static `paint`; it suits axes, grid lines, a gauge's arc or a clock's hands, painted behind real text elements.",
+    "authority": [
+      {
+        "text": "sparkles:ui component authoring: paint-only leaves",
+        "link": "/specs/ui/authoring#_7-custom-layouts-ui-q8"
+      }
+    ],
+    "owner": "sparkles:ui",
+    "seeAlso": ["layout-protocol"]
+  },
+  {
     "id": "content-kind",
     "term": "content kind",
     "summary": "The category hue assigns to a loaded document, such as highlighted source, markdown, a delimiter-separated table, a diff or an annotated code sample, which decides how it is viewed.",
