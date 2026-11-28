@@ -2738,6 +2738,7 @@ int replaceTask(W)(string root, string cache, string task, ref W writer)
 {
     import std.datetime.systime : Clock;
     import std.process : thisProcessID;
+    import std.string : lineSplitter;
 
     void say(string line) { writer.put(line); writer.put("\n"); }
 
@@ -2751,10 +2752,65 @@ int replaceTask(W)(string root, string cache, string task, ref W writer)
     }
     string why;
     const target = g.plan.graph.actions.length ? uniqueTask(g.plan.graph, task, why) : null;
+    // What the run found (TDM21), which the verdict may point to.
+    foreach (line; g.log.lineSplitter)
+        if (line.canFind(" notice] "))
+            say(line.idup);
+    string verdict;
+    const status = replaceVerdict(g, target, verdict);
+    say(verdict);
+    return status;
+}
+
+/**
+What `ci cache replace` says of the run `g` that replaced `target` (BGS7),
+and its exit status, from the run's statistics: 0 only when the action's own
+result took the published one's place; 1 when the action failed, when a live
+lease another process holds kept the published result, or when nothing was
+published (a publication that failed leaves the action successful, BGS2).
+*/
+int replaceVerdict(ref const GraphRun g, string target, out string verdict) @safe pure
+{
+    const held = g.stats.replaceWaits.canFind(target);
+    const replaced = g.stats.replaced.canFind(target);
     const key = g.stats.resultKeys.get(target, null);
-    const held = g.log.canFind("waits for a live lease");
-    say(g.exitCode != 0 ? text("replace ", target, ": the action failed; the published result stays")
-        : held ? text("replace ", target, ": a live lease another process holds keeps the published result")
-        : text("replace ", target, ": published ", key, "; the result it replaced is in trash/"));
-    return g.exitCode != 0 || held ? 1 : 0;
+    const before = g.stats.trashed.canFind(target) ? "; the result it replaced is in trash/"
+        : "; no result was published before it";
+    verdict = held ? text("replace ", target, ": a live lease another process holds keeps the published result")
+        : g.exitCode != 0 ? (replaced
+            ? text("replace ", target, ": the action failed; its failure, ", key, ", is published", before)
+            : text("replace ", target, ": the action failed; the published result stays"))
+        : !replaced ? text("replace ", target, ": the action published nothing in its place; see its notices")
+        : text("replace ", target, ": published ", key, before);
+    return replaced && !held && g.exitCode == 0 ? 0 : 1;
+}
+
+/// A replacement a live lease held back fails, whatever the transcript
+/// shows; one that published succeeds.
+@("graph_driver.replaceVerdict.aLiveLeaseFails")
+@safe unittest
+{
+    enum t = "compile:sparkles.p:library:ldc:abc";
+    GraphRun g;
+    g.stats.resultKeys[t] = "k1";
+    string verdict;
+    // A successful action that published nothing (BGS2) replaced nothing.
+    assert(replaceVerdict(g, t, verdict) == 1 && verdict.canFind("published nothing"), verdict);
+    g.stats.replaced = [t];
+    assert(replaceVerdict(g, t, verdict) == 0, verdict);
+    assert(verdict == "replace " ~ t ~ ": published k1; no result was published before it", verdict);
+    g.stats.trashed = [t];
+    assert(replaceVerdict(g, t, verdict) == 0, verdict);
+    assert(verdict == "replace " ~ t ~ ": published k1; the result it replaced is in trash/", verdict);
+    g.stats.replaceWaits = [t];
+    assert(replaceVerdict(g, t, verdict) == 1, verdict);
+    assert(verdict == "replace " ~ t ~ ": a live lease another process holds keeps the published result", verdict);
+    g.exitCode = 1;
+    g.stats.replaceWaits = null;
+    // A deterministic failure is published (BGA9): it took the result's place.
+    assert(replaceVerdict(g, t, verdict) == 1, verdict);
+    assert(verdict == "replace " ~ t ~ ": the action failed; its failure, k1, is published; the result it replaced "
+        ~ "is in trash/", verdict);
+    g.stats.replaced = null;
+    assert(replaceVerdict(g, t, verdict) == 1 && verdict.canFind("the published result stays"), verdict);
 }

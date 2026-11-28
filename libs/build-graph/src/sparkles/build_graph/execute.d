@@ -91,6 +91,9 @@ struct RunLayout
     }
 }
 
+// How BGK7's conflict begins, whatever the compiler's status.
+private enum unstableInput = "unstable input: ";
+
 /// The fixed `SOURCE_DATE_EPOCH` of every build action (BGA4).
 enum sourceDateEpoch = "1";
 
@@ -387,6 +390,21 @@ struct RunStats
     string[string] declaredKeys;
     /// Per task: the result key it was served or published under (BGK2).
     string[string] resultKeys;
+    /// Per task that missed: its class and explanation, `<class>: <why>`
+    /// (BGS8). A cache note, so the transcript shows it only with a
+    /// failure's tail (BGA8).
+    string[string] missExplained;
+    /// The tasks published under a conservative key (BGK6).
+    string[] conservativelyKeyed;
+    /// The tasks whose replacement (BGS7) waits for a live lease another
+    /// process holds: their published result stays.
+    string[] replaceWaits;
+    /// The tasks whose replacement (BGS7) moved the published result to
+    /// `trash/` and published its own in its place.
+    string[] replaced;
+    /// Of those, the tasks whose replacement moved a published result to
+    /// `trash/`: the rest had none before.
+    string[] trashed;
     /// The tasks that executed, in the order they finished; every other
     /// keyed task was reused.
     string[] executedTasks;
@@ -439,6 +457,8 @@ struct RunStats
                 ~ text(reused.get(k, 0)) ~ " reused";
         foreach (c; misses.keys.sort)
             s ~= "; " ~ text(misses[c]) ~ " " ~ c ~ " misses";
+        if (conservativelyKeyed.length)
+            s ~= "; " ~ text(conservativelyKeyed.length) ~ " conservatively keyed (BGK6)";
         if (futureTimes.length)
             s ~= "; " ~ text(futureTimes.length) ~ " files dated in the future, rehashed: " ~ futureTimes.join(", ");
         return s;
@@ -798,11 +818,23 @@ struct ActionDriver
         // BGS9: checked actions run with their own lookup bypassed.
         const checking = layout.check && (layout.checkTasks.length == 0 || layout.checkTasks.canFind(id.text));
         const replacing = layout.replaceTasks.canFind(id.text);
+        // BGS6: a corrupt entry a lookup moved to `trash/` is a notice.
+        const(ResultRecord)* lookupReporting()
+        {
+            auto r = lookup(**a, declared);
+            // Taken before any notice: delivering one can park this fiber
+            // while another task looks up.
+            const discarded = store.discarded;
+            store.discarded = null;
+            foreach (d; discarded)
+                ctx.notice(d);
+            return r;
+        }
         if (declared.length && checking)
-            checked = lookup(**a, declared);
+            checked = lookupReporting();
         else if (declared.length && !replacing)
         {
-            if (auto hit = lookup(**a, declared))
+            if (auto hit = lookupReporting())
                 if (adopt(id, *hit))
                 {
                     ctx.reused();
@@ -838,6 +870,7 @@ struct ActionDriver
             // BGS8: every miss is classified and explained.
             const miss = explainMiss(**a, declared, preimage);
             stats.miss(miss[0]);
+            stats.missExplained[id.text] = miss[0] ~ ": " ~ miss[1];
             ctx.output(OutputStream.stderr, "miss (" ~ miss[0] ~ "): " ~ miss[1]);
             missed = miss[0] ~ ": " ~ miss[1];
         }
@@ -851,7 +884,7 @@ struct ActionDriver
             return TaskOutcome(Failed(FailureReason.contract));
         }
         if (stored && a !is null)
-            if (const why = materializeInputs(**a, (string m) => ctx.output(OutputStream.stderr, m)))
+            if (const why = materializeInputs(**a, (string m) => ctx.notice(m), (string m) => ctx.output(OutputStream.stderr, m)))
             {
                 ctx.output(OutputStream.stderr, why);
                 return TaskOutcome(Failed(FailureReason.contract));
@@ -950,7 +983,8 @@ struct ActionDriver
         }
         if (!declared.length)
             return outcome;
-        if (!publishRun(id, **a, declared, preimage, record, (string m) => ctx.output(OutputStream.stderr, m)))
+        if (!publishRun(id, **a, declared, preimage, record, (string m) => ctx.notice(m),
+            (string m) => ctx.output(OutputStream.stderr, m)))
             return TaskOutcome(Failed(FailureReason.contract));
         return outcome;
     }
@@ -968,7 +1002,10 @@ struct ActionDriver
         import sparkles.build_primitives.task.model : FailureReason, Failed, Succeeded;
 
         const id = task.text;
-        void say(string what) { stats.explained ~= id ~ ": " ~ what; }
+        // One line per action, which `--require-cached` reads as its verdict;
+        // a corrupt entry the lookup moved to `trash/` (BGS6) ends it.
+        string corrupt;
+        void say(string what) { stats.explained ~= id ~ ": " ~ what ~ corrupt; }
         if (a !is null && (*a).kind == ActionKind.test)
         {
             say("runs on every request: a test's result is never reused (BGX2)");
@@ -979,7 +1016,11 @@ struct ActionDriver
             say(stored ? "has no key, so it would run" : "would run: the run has no store");
             return TaskOutcome(Failed(FailureReason.contract));
         }
-        if (auto hit = lookup(*a, declared))
+        const hit = lookup(*a, declared);
+        foreach (d; store.discarded)
+            corrupt ~= " (" ~ d ~ ", moved to trash/)";
+        store.discarded = null;
+        if (hit !is null)
             if (adopt(task, *hit))
             {
                 say(text("hit: result ", hit.resultKey, hit.status ? text(", a failure with status ", hit.status,
@@ -1004,32 +1045,34 @@ struct ActionDriver
     through its manifest. False only when BGK8 fails the compile.
     */
     private bool publishRun(TaskId id, ref const Action a, string declared, string preimage,
-        ref ResultRecord record, scope void delegate(string) note)
+        ref ResultRecord record, scope void delegate(string) notice, scope void delegate(string) explain)
     {
         Manifest manifest;
         bool hasManifest = withManifest(a);
-        if (a.kind == ActionKind.compile && !hasManifest)
-            note("conservatively keyed: no dependency output (BGK6)");
+        bool conservative = a.kind == ActionKind.compile && !hasManifest;
         string why;
         if (hasManifest && !readManifest(id, manifest, why))
         {
-            // BGA9: a failed compile the compiler wrote no dependency output
-            // for is keyed conservatively (BGK6), so its failure replays too.
-            if (record.status == 0)
+            // BGK7: an input edited while the compiler ran publishes nothing,
+            // whatever the compiler's status. BGA9: a failed compile the
+            // compiler wrote no dependency output for is keyed
+            // conservatively (BGK6), so its failure replays too.
+            if (record.status == 0 || why.startsWith(unstableInput))
             {
-                note("not published: " ~ why);
+                notice("not published: " ~ why);
                 return true;
             }
             hasManifest = false;
+            conservative = true;
             record.resultKey = failureKey(a, declared);
-            note("a failure keyed conservatively: the compiler wrote no dependency output (BGK6)");
+            explain("a failure keyed conservatively: the compiler wrote no dependency output (BGK6)");
         }
         else if (hasManifest)
         {
             // BGK8: a read outside the declared roots fails the compile.
             if (const outside = outsideRoots(a, manifest))
             {
-                note("read outside its declared roots: " ~ outside);
+                explain("read outside its declared roots: " ~ outside);
                 return false;
             }
             record.resultKey = resultKey(declared, manifest);
@@ -1039,12 +1082,20 @@ struct ActionDriver
         const name = layout.outOf(id);
         auto parent = run_.walk(relativeToRun(parentOf(name)));
         if (parent.hasError)
+        {
+            notice("not published: cannot open the directory of " ~ name);
             return true;
+        }
         bool alive(string holder) => holderRuns(holder);
-        const published = store.publish(parent.value, baseNameOf(name), record, linkTo(name),
-            layout.replaceTasks.canFind(id.text), &alive);
-        if (store.note.length)
-            note(store.note);
+        const replacing = layout.replaceTasks.canFind(id.text);
+        const published = store.publish(parent.value, baseNameOf(name), record, linkTo(name), replacing, &alive);
+        // What the store found, taken before any notice: delivering one can
+        // park this fiber while another task publishes.
+        const found = store.note;
+        const waits = store.replaceWaits;
+        const trashed = store.trashedOld;
+        const discarded = store.discarded;
+        store.discarded = null;
         if (published !is null)
         {
             store.recordPreimage(id.text, preimage);
@@ -1052,7 +1103,22 @@ struct ActionDriver
             if (hasManifest)
                 store.useManifest(declared, manifest, published.resultKey);
             outputsDigestOf[id.text] = published.outputsDigest;
+            // BGK6: a compiler without dependency output keys every compile
+            // so; the run's statistics report it, not a notice per compile.
+            if (conservative)
+                stats.conservativelyKeyed ~= id.text;
+            // BGS7: this record, not a concurrent winner's, replaced the old.
+            if (replacing && !waits && published is &record)
+                stats.replaced ~= id.text;
+            if (replacing && trashed && published is &record)
+                stats.trashed ~= id.text;
         }
+        if (waits)
+            stats.replaceWaits ~= id.text;
+        foreach (d; discarded)
+            notice(d);
+        if (found.length)
+            notice(found);
         return true;
     }
 
@@ -1079,7 +1145,8 @@ struct ActionDriver
     differ from its record is reported nondeterministic. Returns why one
     could not be made, or null.
     */
-    private string materializeInputs(ref const Action a, scope void delegate(string) note)
+    private string materializeInputs(ref const Action a, scope void delegate(string) notice,
+        scope void delegate(string) explain)
     {
         import std.process : Config, execute;
 
@@ -1094,7 +1161,7 @@ struct ActionDriver
             auto concrete = producer in concreteProcess;
             if (pa is null || concrete is null)
                 return "cannot make " ~ producer ~ ": it is not planned";
-            if (const why = materializeInputs(**pa, note))
+            if (const why = materializeInputs(**pa, notice, explain))
                 return why;
             const id = (**pa).id;
             if (!makeDirectories(id))
@@ -1119,12 +1186,18 @@ struct ActionDriver
             record.declaredKey = rec.declared;
             record.outputs = outputsOf(id);
             const digest = record.outputsDigest;
-            if (digest != outputsDigestOf.get(producer, digest))
-                note("nondeterministic: " ~ producer ~ " differs from its digest record (BGS5)");
+            const differs = digest != outputsDigestOf.get(producer, digest);
             outputsDigestOf[producer] = digest;
             noteLibraries(id, record);
-            if (!publishRun(id, **pa, rec.declared, rec.preimage, record, note))
+            // The consumer reports for its producer, which it names. A notice
+            // waits until the producer is published: delivering one can park
+            // this fiber, and another consumer of it may then run.
+            void noticeFor(string m) { notice(producer ~ ": " ~ m); }
+            void explainFor(string m) { explain(producer ~ ": " ~ m); }
+            if (!publishRun(id, **pa, rec.declared, rec.preimage, record, &noticeFor, &explainFor))
                 return producer ~ " read outside its declared roots";
+            if (differs)
+                notice("nondeterministic: " ~ producer ~ " differs from its digest record (BGS5)");
         }
         return null;
     }
@@ -1874,7 +1947,7 @@ struct ActionDriver
                 ubyte[32] now;
                 if (!digestOf(e.path, now, fresh: true) || now != e.digest)
                 {
-                    why = "unstable input: " ~ e.path ~ " changed while the compiler ran";
+                    why = unstableInput ~ e.path ~ " changed while the compiler ran";
                     return false;
                 }
             }
@@ -2541,6 +2614,83 @@ private void tickLiveView(ref Sched s, LiveView view, const(bool)* working)
         "the edge across the parts orders them");
 }
 
+/// BGS7 and TDM21: a replacement that another live process's lease holds
+/// back leaves the published result, says so in the run's statistics, and
+/// its notice reaches the transcript although the action succeeds, whose
+/// own output the policy keeps quiet (BGA8).
+@("build_graph.execute.replace.waitsForALiveLease")
+@system unittest
+{
+    import core.sys.posix.unistd : getppid;
+    import std.algorithm.iteration : splitter;
+    import std.array : appender;
+    import std.file : exists, mkdirRecurse, readText, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.process : environment, thisProcessID;
+    import sparkles.build_graph.actions : DeclaredOutput, defaultWeight;
+    import sparkles.build_graph.store : layoutVersion;
+    import sparkles.build_primitives.task.model : OutputPolicy, taskId;
+
+    string sh;
+    foreach (dir; environment.get("PATH", "").splitter(':'))
+        if (exists(buildPath(dir, "sh")))
+        {
+            sh = buildPath(dir, "sh");
+            break;
+        }
+    assert(sh.length, "sh is on PATH");
+    const top = buildPath(tempDir, text("replace-lease-", thisProcessID));
+    scope (exit)
+        if (exists(top))
+            rmdirRecurse(top);
+    const root = buildPath(top, "tree"), cache = buildPath(top, "cache");
+    mkdirRecurse(root);
+    const id = taskId("generate", "r.where", "library", "ldc", "abc").value;
+    ActionGraph g;
+    g.actions ~= Action(ActionKind.generate, id, 0,
+        TaskAction(ProcessAction(argv: [sh, "-c", "echo quiet output; head -c 16 /dev/urandom | od -An -tx1 > $OUT/done"])),
+        [DeclaredOutput("done")], defaultWeight(ActionKind.generate));
+    RunStats stats;
+    string runOnce(string name, string[] replacing)
+    {
+        const run = buildPath(cache, "runs", name);
+        mkdirRecurse(run);
+        auto layout = RunLayout(root, run, cache);
+        layout.replaceTasks = replacing;
+        auto nodes = executionNodes(g, layout, [EnvEntry("PATH", environment.get("PATH", ""))]);
+        foreach (ref n; nodes)
+            n.outputPolicy = OutputPolicy.tailOnFailure;
+        auto log = appender!string;
+        const r = runActions(nodes, g, layout, log, 1, &stats);
+        assert(r.exitCode == 0, log[]);
+        return log[];
+    }
+
+    cast(void) runOnce("first", null);
+    const key = stats.resultKeys.get(id.text, null);
+    assert(key.length, "the first run published");
+    // A lease another live process holds: this test's parent.
+    const result = buildPath(cache, "build", text("v", layoutVersion), "results", key);
+    const made = readText(buildPath(result, "out", "done"));
+    const leases = buildPath(cache, "build", text("v", layoutVersion), "leases", key);
+    mkdirRecurse(leases);
+    write(buildPath(leases, text(getppid(), "-7")), "");
+
+    const transcript = runOnce("second", [id.text]);
+    assert(stats.replaceWaits == [id.text], text(stats.replaceWaits));
+    assert(transcript.canFind("notice] replacing " ~ key ~ " waits for a live lease"), transcript);
+    assert(!transcript.canFind("quiet output"), transcript);
+    assert(!stats.replaced.length, text(stats.replaced));
+    assert(readText(buildPath(result, "out", "done")) == made, "the result stays");
+
+    // Once the lease ends, the replacement takes the published result's place.
+    rmdirRecurse(leases);
+    cast(void) runOnce("third", [id.text]);
+    assert(stats.replaced == [id.text] && stats.trashed == [id.text] && !stats.replaceWaits.length,
+        text(stats.replaced, stats.trashed, stats.replaceWaits));
+    assert(readText(buildPath(result, "out", "done")) != made, "the replacement is published");
+}
+
 @("build_graph.execute.expand.outRelative")
 @safe unittest
 {
@@ -2696,8 +2846,11 @@ private void tickLiveView(ref Sched s, LiveView view, const(bool)* working)
     assert(!dOut.value.writeFileAtomic("f", flipped[]).hasError);
     assert(store.find("d-key") !is null);
     store.releaseLeases();
+    store.discarded = null;
     store.hashSample = 1;
     assert(store.find("d-key") is null);
+    // The lookup that discarded it says why, for the run to report.
+    assert(store.discarded == ["corrupt result d-key: output f does not match its digest"], text(store.discarded));
     store.releaseLeases();
 
     // Removal by task, then garbage collection.

@@ -351,6 +351,16 @@ struct Store(D)
 
     /// Why a publication failed, or what it found; null when nothing.
     string note;
+    /// Whether the last publication, a replacement (BGS7), left the result
+    /// in place because another live process leases it.
+    bool replaceWaits;
+    /// Whether the last publication, a replacement (BGS7), moved the result
+    /// published before it to `trash/`.
+    bool trashedOld;
+    /// What each corrupt entry a lookup or a verification moved to `trash/`
+    /// said (BGS6), `corrupt result <key>: <why>`, oldest first, until the
+    /// caller takes them.
+    string[] discarded;
 
     /// BGS6: the fraction of hits whose every recorded digest a lookup
     /// rehashes, chosen at random; one rehashes every hit.
@@ -686,10 +696,10 @@ struct Store(D)
     beside its record, the entry is renamed into `results/`, and `name`
     becomes a link to the published `out/`, written as `linkTarget`, the
     path from `parent` to `<store>/results/<key>/out` (`{}` standing for the
-    key). Returns the record of what `name` names afterwards: this one, or
-    the one a concurrent producer published first (BGS3), with `note`
-    naming the outputs that differ. Null when nothing was published, with
-    `note` saying why: `name` is then as it was.
+    key). Returns the record of what `name` names afterwards: this one
+    (`&record`), or the one a concurrent producer published first (BGS3),
+    with `note` naming the outputs that differ. Null when nothing was
+    published, with `note` saying why: `name` is then as it was.
 
     With `replacing` (BGS7), a result already published under the key moves
     to `trash/` first, unless a live process other than this one leases it,
@@ -702,6 +712,8 @@ struct Store(D)
         import std.array : replace;
 
         note = null;
+        replaceWaits = false;
+        trashedOld = false;
         const key = record.resultKey;
         const stage = text(key[0 .. key.length < 16 ? $ : 16], "-", holder, "-", staged++);
         auto staging = v.walk("staging");
@@ -723,32 +735,48 @@ struct Store(D)
         if (replacing && published(key))
         {
             if (alive !is null && leasedByOthers(key, alive))
+            {
+                replaceWaits = true;
                 note = "replacing " ~ key ~ " waits for a live lease another process holds on it";
+            }
             else
             {
                 unpruned(); // the replacement may fail, leaving no result
-                cast(void) moveToTrash(key);
+                trashedOld = moveToTrash(key);
+                if (!trashedOld)
+                    note = "cannot move the published result " ~ key ~ " to trash/";
             }
         }
         auto results = v.walk("results");
         const(ResultRecord)* published = &record;
         if (results.hasError || staging.value.renameAt(stage, results.value, key).hasError)
         {
-            // BGS3: the first rename won; adopt its entry, if it is whole.
+            // BGS3: the first rename won; adopt its entry, if it is whole. A
+            // corrupt one goes to `discarded`; the note stays this one's.
+            const kept = note;
             auto winner = find(key);
+            note = kept;
             if (winner is null)
             {
-                // Put the outputs back: they serve this run (BGS2).
+                // Put the outputs back: they serve this run (BGS2). No
+                // published result waits for a lease any more.
+                replaceWaits = false;
                 cast(void) entry.value.renameAt("out", parent, name);
                 return failed("cannot publish the entry");
             }
             const differing = differences(*winner, record);
             if (differing.length)
-                note = "nondeterministic: result " ~ key ~ " differs in " ~ differing;
+                note ~= (note.length ? "; " : "") ~ "nondeterministic: result " ~ key ~ " differs in " ~ differing;
             auto trash = v.walk("trash");
             if (!trash.hasError)
                 cast(void) staging.value.renameAt(stage, trash.value, stage);
             published = winner;
+        }
+        else if (replaceWaits)
+        {
+            // The leased entry went meanwhile, and this one took its place.
+            replaceWaits = false;
+            note = null;
         }
         if (parent.symlinkAt(name, linkTarget.replace("{}", key)).hasError)
             note ~= (note.length ? "; " : "") ~ "cannot link " ~ name ~ " to the result";
@@ -1292,7 +1320,7 @@ struct Store(D)
 
     private const(ResultRecord)* failed(string why)
     {
-        note = why;
+        note ~= (note.length ? "; " : "") ~ why; // after the lease a replacement waits for
         return null;
     }
 
@@ -1300,6 +1328,7 @@ struct Store(D)
     private ResultRecord* discard(string key, string why)
     {
         note = "corrupt result " ~ key ~ ": " ~ why;
+        discarded ~= note;
         unpruned();
         auto results = v.walk("results");
         auto trash = v.walk("trash");
