@@ -34,7 +34,7 @@ import sparkles.build_graph.platforms : HostToolchain, ToolchainTable;
 import sparkles.base.expected : Expected;
 import sparkles.build_graph.variants : LayoutCheck, PlanError, PlanOptions, Role, ToolchainIdentity,
     VariantPlan, planVariants;
-import sparkles.build_primitives.task.model : PlanExpected, TaskNode, planErr, planOk;
+import sparkles.build_primitives.task.model : OutputPolicy, PlanExpected, TaskNode, planErr, planOk;
 import sparkles.build_primitives.resolve.configure : Resolution, ResolveRequest, resolve;
 import sparkles.build_primitives.resolve.libraries : PkgConfigDriver, RecordingPkgConfig, SystemPkgConfig;
 import sparkles.build_primitives.resolve.platform : BuildPlatform;
@@ -970,6 +970,9 @@ struct RunOptions
     bool echo;              /// the reporter's lines also go to standard output
     bool failFast;          /// cancel the rest at the first failure
     bool noLayoutLint;      /// plan without BGV4's lint (oracle 8's revert check)
+    /// Every test node's lines in the transcript, whatever its output
+    /// policy (TDO3): oracle 2 compares each test's verdict with `dub test`'s.
+    bool replayOutput;
     double hashSample = 1.0 / 64; /// BGS6: the fraction of hits a lookup rehashes
     /// Tests run through the runner core, as `test:leg` actions (CIC11),
     /// instead of as their binaries' own processes.
@@ -1604,6 +1607,10 @@ PreparedRun prepareGraph(string root, string only, RunOptions o)
                 (() @trusted { n.action = leg; })();
             }
     }
+    if (o.replayOutput)
+        foreach (ref n; nodes)
+            if (n.id.text.startsWith("test:"))
+                n.outputPolicy = OutputPolicy.replay;
     if (o.adjustExecution !is null)
         foreach (ref n; nodes)
         {
