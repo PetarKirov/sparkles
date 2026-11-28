@@ -1281,6 +1281,120 @@ version (unittest)
         return true;
     }
 
+    /**
+    Whether `process` holds a handle on the same kernel object as
+    `target` (a handle of this process): 1 if so, 0 if not, -1 when its
+    handle table cannot be read. A leak probe asks this, not whether one
+    handle value is open in the child: values are per process, so the
+    value a handle had in the parent can be open in the child on
+    something unrelated — its console, an event of the loader's — and a
+    value probe then reports a leak that never happened. Comparing
+    objects also finds a leak at a different value (as when
+    `CreateProcess` duplicates a parent's standard handles), and does no
+    I/O on any handle, so it cannot wait behind a pending read.
+
+    The table is `NtQueryInformationProcess(ProcessHandleInformation)`
+    (Windows 8+); each entry another process also holds is duplicated
+    here with no access (the comparison needs none) and compared with
+    `CompareObjectHandles` (Windows 10 1607+). `process` must be another,
+    live process: an object it shares with `target` has a handle count of
+    at least two, so its private handles are never duplicated at all.
+    */
+    private int heldBy(HANDLE process, HANDLE target) @trusted nothrow
+    {
+        if (target is null || target == invalidHandle)
+            return -1;
+        auto api = heldByApi();
+        if (api.query is null || api.compare is null)
+            return -1;
+        // PROCESS_HANDLE_SNAPSHOT_INFORMATION: a count, a reserved word,
+        // then PROCESS_HANDLE_TABLE_ENTRY_INFO entries.
+        static struct Entry
+        {
+            HANDLE value;
+            size_t handleCount, pointerCount;
+            uint grantedAccess, objectTypeIndex, attributes, reserved;
+        }
+
+        version (Win64)
+            static assert(Entry.sizeof == 40);
+
+        enum int ProcessHandleInformation = 51;
+        enum int STATUS_INFO_LENGTH_MISMATCH = cast(int) 0xC000_0004;
+        auto info = new size_t[](512);
+        int status = STATUS_INFO_LENGTH_MISMATCH;
+        // A scripted child holds few handles: a bounded number of growths.
+        foreach (attempt; 0 .. 8)
+        {
+            uint needed;
+            status = api.query(process, ProcessHandleInformation, info.ptr,
+                cast(uint) (info.length * size_t.sizeof), &needed);
+            if (status != STATUS_INFO_LENGTH_MISMATCH)
+                break;
+            info = new size_t[](info.length * 2 + needed / size_t.sizeof);
+        }
+        if (status < 0)
+            return -1;
+        const count = info[0];
+        if (count > (info.length - 2) * size_t.sizeof / Entry.sizeof)
+            return -1;
+        foreach (entry; (cast(Entry*) &info[2])[0 .. count])
+        {
+            if (entry.handleCount < 2)
+                continue;
+            HANDLE copy;
+            // Not every object can be duplicated; the ones a leak is made of
+            // (pipes, files, events) can.
+            if (!DuplicateHandle(process, entry.value, GetCurrentProcess(), &copy, 0,
+                    false, 0))
+                continue;
+            const same = api.compare(copy, target) != 0;
+            CloseHandle(copy);
+            if (same)
+                return 1;
+        }
+        return 0;
+    }
+
+    /// `heldBy`'s entry points, resolved at run time: either is null where
+    /// the host lacks it (before Windows 10 1607, or under Wine).
+    private struct HeldByApi
+    {
+        extern (Windows) nothrow @nogc
+        {
+            int function(HANDLE process, int infoClass, void* info, uint length,
+                uint* returned) query;
+            BOOL function(HANDLE a, HANDLE b) compare;
+        }
+    }
+
+    private HeldByApi heldByApi() @trusted nothrow @nogc
+    {
+        HeldByApi api;
+        if (auto ntdll = GetModuleHandleW("ntdll.dll"w.ptr))
+            api.query = cast(typeof(api.query)) GetProcAddress(ntdll,
+                "NtQueryInformationProcess");
+        if (auto kernelbase = GetModuleHandleW("kernelbase.dll"w.ptr))
+            api.compare = cast(typeof(api.compare)) GetProcAddress(kernelbase,
+                "CompareObjectHandles");
+        return api;
+    }
+
+    /// Skips only where `heldBy` cannot work and the host is Wine; native
+    /// Windows 10 1607+ (every CI host) must have it.
+    private void requireHeldBy() @safe
+    {
+        import sparkles.event_horizon.sys.nt : runningUnderWine;
+        import sparkles.test_runner.skip : skipTest;
+
+        const api = heldByApi();
+        if (api.query is null || api.compare is null)
+        {
+            assert(runningUnderWine(), "native Windows 10 1607+ has CompareObjectHandles");
+            skipTest("no CompareObjectHandles on this host");
+        }
+    }
+
     /// Commits and touches `mb` MiB, so it is all in the working set.
     private void touchMegabytes(int mb) @trusted nothrow @nogc
     {
@@ -1295,51 +1409,108 @@ version (unittest)
     /**
     The `pty-host` script: this child's own stdin, stdout and stderr are the
     pipes its test parent made, and it calls `spawnPty` for a `pty-report`
-    grandchild given the value of that redirected stdout. It reads the
-    master synchronously (no port in a scripted child) until the report
-    line, reaps, and forwards `via-master: <report>` and the exit code to
-    its own stdout. A grandchild writing to the redirected stdout instead
-    would show up there unprefixed.
+    grandchild. It reads the master synchronously (no port in a scripted
+    child) until the report, which ends in `;`. The grandchild then waits
+    for a line of input, so it is alive while the host asks whether it
+    holds any of the host's three redirected streams (`heldBy`: the
+    objects, at any handle value). The host then sends the line, reaps,
+    and forwards `via-master: <report> <clean|inherited>` and the exit
+    code to its own stdout. A grandchild writing to the redirected stdout
+    instead would show up there unprefixed. The grandchild exits 0 only
+    after reading that line, so a zero exit proves it was alive while
+    inspected. Every wait is bounded, so a grandchild that never reports
+    fails the test instead of hanging it.
     */
     private int runPtyHost() @trusted
     {
         import std.algorithm.searching : countUntil;
         import std.conv : to;
 
-        enum uint OUT = cast(uint) -11;
-        const redirected = cast(size_t) GetStdHandle(OUT);
-        auto spawned = spawnPty(childArgv("pty-report", redirected.to!string), 80, 24);
+        enum uint OUT = cast(uint) -11, ERR = cast(uint) -12, IN = cast(uint) -10;
+        enum uint deadlineMs = 30_000, WAIT_OBJECT_0 = 0, ERROR_IO_PENDING = 997;
+        auto spawned = spawnPty(childArgv("pty-report"), 80, 24);
         if (spawned.hasError)
         {
             childWrite(OUT, "spawnPty failed\n");
             return 5;
         }
         auto child = move(spawned.value);
+        auto process = child.process.borrowFd.fd;
+        auto event = CreateEventW(null, TRUE, 0, null);
+        if (event is null)
+            return 5;
+        scope (exit) CloseHandle(event);
+
+        // One overlapped transfer on a port-less handle, its count always
+        // from `GetOverlappedResult`, waited for until `deadline`; past it
+        // the transfer is cancelled and reported as failed.
+        import core.time : MonoTime, msecs;
+
+        const deadline = MonoTime.currTime + deadlineMs.msecs;
+        bool transfer(bool reading, HANDLE h, void[] buf, out uint done)
+        {
+            OVERLAPPED_ ov;
+            ov.hEvent = event;
+            const started = reading ? ReadFile(h, buf.ptr, cast(uint) buf.length, null, &ov)
+                : WriteFile(h, buf.ptr, cast(uint) buf.length, null, &ov);
+            if (!started && GetLastError() != ERROR_IO_PENDING)
+                return false;
+            const left = deadline - MonoTime.currTime;
+            if (WaitForSingleObject(event, left.isNegative ? 0
+                    : cast(uint) left.total!"msecs") != WAIT_OBJECT_0)
+                CancelIoEx(h, &ov);
+            return GetOverlappedResult(h, &ov, &done, TRUE) != 0;
+        }
+
+        // The report's bytes, ASCII, up to the `|` that ends it (no VT
+        // sequence contains one).
         auto master = child.ptyMaster.borrowFd.fd;
-        char[] seen;
+        ubyte[] seen;
         ptrdiff_t at = -1, end = -1;
         while (end < 0)
         {
             ubyte[512] buf;
-            OVERLAPPED_ ov;
             uint got;
-            if (!ReadFile(master, buf.ptr, buf.length, &got, &ov)
-                && (GetLastError() != 997 || !GetOverlappedResult(master, &ov, &got, TRUE)))
+            if (!transfer(true, master, buf[], got) || got == 0)
                 break;
-            if (got == 0)
-                break;
-            seen ~= cast(char[]) buf[0 .. got];
-            at = seen.countUntil("report ");
+            seen ~= buf[0 .. got];
+            at = seen.countUntil(cast(const(ubyte)[]) "report ");
             if (at >= 0)
             {
-                const rest = seen[at .. $].countUntil!(c => c == '\r' || c == '\n');
+                const rest = seen[at .. $].countUntil(cast(ubyte) '|');
                 end = rest < 0 ? -1 : at + rest;
             }
         }
-        WaitForSingleObject(child.process.borrowFd.fd, uint.max);
+        string verdict = "clean";
+        foreach (id; [IN, OUT, ERR])
+        {
+            const held = heldBy(process, GetStdHandle(id));
+            if (held > 0)
+            {
+                verdict = "inherited";
+                break;
+            }
+            if (held < 0)
+                verdict = "unknown";
+        }
+        // Released only once inspected; never released without a report.
+        ubyte[1] enter = ['\r'];
+        uint sent;
+        if (end < 0 || !transfer(false, child.stdinW.borrowFd.fd, enter[], sent)
+                || sent != enter.length)
+            verdict = "unreleased";
+        const left = deadline - MonoTime.currTime;
+        if (end < 0 || WaitForSingleObject(process, left.isNegative ? 0
+                : cast(uint) left.total!"msecs") != WAIT_OBJECT_0)
+            TerminateProcess(process, killedExitCode);
+        WaitForSingleObject(process, uint.max); // a terminated process ends at once
         uint code;
-        GetExitCodeProcess(child.process.borrowFd.fd, &code);
-        childWrite(OUT, "via-master: " ~ (end >= 0 ? seen[at .. end] : "nothing") ~ "\n");
+        GetExitCodeProcess(process, &code);
+        // The master closes before the pseudoconsole does, so conhost can
+        // never block writing output nobody drains (pre-24H2 close hang).
+        child.ptyMaster.close();
+        childWrite(OUT, "via-master: " ~ (end >= 0
+            ? cast(string) seen[at .. end].idup ~ " " ~ verdict : "nothing") ~ "\n");
         childWrite(OUT, "exit=" ~ code.to!string ~ "\n");
         return 0;
     }
@@ -1433,28 +1604,24 @@ version (unittest)
                 childWrite(ERR, "err\n");
             }
             return 0;
-        case "has-handle":
-            uint flags;
-            auto h = cast(HANDLE) cast(ptrdiff_t) number(1);
-            childWrite(OUT, GetHandleInformation(h, &flags) ? "yes\n" : "no\n");
-            return 0;
         case "pty-report":
-            // Where this ConPTY child's stdio really goes: the console size,
-            // whether stdout is a character (console) device, and whether
-            // handle value H — the redirected stdout of the process that
-            // called `spawnPty` — leaked into it.
+            // Where this ConPTY child's stdio really goes: the console size
+            // and whether stdout is a character (console) device, ended by
+            // `|`. Then it waits for a line, so `pty-host` can inspect its
+            // handles while it is alive.
             import std.conv : to;
 
             ConsoleBufferInfo info;
             const sized = GetConsoleScreenBufferInfo(GetStdHandle(OUT), &info) != 0;
-            uint flags;
-            auto leaked = cast(HANDLE) cast(ptrdiff_t) number(1);
             childWrite(OUT, "report "
                 ~ (sized ? (info.right - info.left + 1).to!string ~ " "
                     ~ (info.bottom - info.top + 1).to!string : "nosize")
-                ~ (GetFileType(GetStdHandle(OUT)) == 2 ? " char" : " notchar")
-                ~ (GetHandleInformation(leaked, &flags) ? " inherited" : " clean") ~ "\n");
-            return 0;
+                ~ (GetFileType(GetStdHandle(OUT)) == 2 ? " char" : " notchar") ~ "|\n");
+            // Exit 0 only on the host's line: never before it has looked.
+            ubyte[64] line;
+            uint read;
+            return ReadFile(GetStdHandle(IN), line.ptr, line.length, &read, null)
+                && read != 0 && line[0] == '\r' ? 0 : 7;
         case "pty-host":
             try
                 return runPtyHost();
@@ -1502,10 +1669,10 @@ version (unittest)
         void* VirtualAlloc(void* address, size_t size, uint type, uint protect);
         void ExitProcess(uint code);
         BOOL SetConsoleCtrlHandler(BOOL function(uint) nothrow @nogc handler, BOOL add);
-        BOOL GetHandleInformation(HANDLE, uint*);
         BOOL GetConsoleScreenBufferInfo(HANDLE console, ConsoleBufferInfo* info);
         HANDLE CreateEventW(SECURITY_ATTRIBUTES* attributes, BOOL manual, BOOL initial,
             const(wchar)* name);
+        BOOL CancelIoEx(HANDLE, OVERLAPPED_*);
     }
 
     private extern (Windows) wchar** CommandLineToArgvW(const(wchar)* line, int* argc)
@@ -1553,8 +1720,7 @@ $(UL
         `alloc-tree MB MS` does the same beside a grandchild `alloc MB MS`;)
     $(LI `feed` — stdin to stdout, then `err` to stderr, exit 3;
         `console-size MS` — prints its console window's `cols rows`, sleeps;)
-    $(LI `chatty N` — N lines to each stream, interleaved;)
-    $(LI `has-handle H` — `yes` if handle value H is open in the child.))
+    $(LI `chatty N` — N lines to each stream, interleaved.))
 */
 package string[] childArgv()(scope string[] script...)
     => [selfPath(), "--eh-child"] ~ script.dup;
@@ -1762,11 +1928,16 @@ version (unittest)
 }
 
 /// Only the child's stdio ends are inherited: an inheritable handle of the
-/// parent's that is not in the handle list is absent in the child.
+/// parent's that is not in the handle list is absent from the child's
+/// handle table, and present once it is one of the child's stdio ends —
+/// so the oracle (`heldBy`, by object, not by value) can say yes: the
+/// child's copy is the same event at a different value. The child blocks
+/// on its stdin pipe while it is inspected.
 @("live.windows.handleListRestrictsInheritance")
 @system unittest
 {
     requireProcessWait();
+    requireHeldBy();
     SECURITY_ATTRIBUTES inherit = {nLength: SECURITY_ATTRIBUTES.sizeof, bInheritHandle: TRUE};
     auto leaked = CreateEventW(&inherit, TRUE, 0, null);
     assert(leaked !is null);
@@ -1774,12 +1945,20 @@ version (unittest)
     Sched s;
     schedOrSkip(s);
     auto r = s.run(() {
-        import std.conv : to;
-
-        auto child = move(spawnProcess(childArgv("has-handle",
-            (cast(size_t) leaked).to!string)).value);
-        assert(cast(string) drainAll(child.stdoutR.borrowFd) == "no\n");
+        ProcessConfig cfg;
+        cfg.stdinSpec = StdioSpec(StdioMode.pipe);
+        auto child = move(spawnProcess(childArgv("cat"), cfg).value);
+        assert(heldBy(child.process.borrowFd.fd, leaked) == 0, "not in the handle list");
+        child.stdinW.close();
+        assert(drainAll(child.stdoutR.borrowFd).length == 0);
         assert(wait(s, child).value.ok);
+
+        cfg.stderrSpec = StdioSpec(StdioMode.fd, cast(int) cast(ptrdiff_t) leaked);
+        auto holder = move(spawnProcess(childArgv("cat"), cfg).value);
+        assert(heldBy(holder.process.borrowFd.fd, leaked) == 1, "listed as its stderr");
+        holder.stdinW.close();
+        assert(drainAll(holder.stdoutR.borrowFd).length == 0);
+        assert(wait(s, holder).value.ok);
     });
     assert(!r.hasError);
 }
@@ -2178,8 +2357,10 @@ private extern (Windows) int getsockname(size_t s, void* addr, int* length) noth
 
 /// `spawnPty` from a parent whose own stdin, stdout and stderr are all
 /// redirected pipes (a scripted `pty-host` child): the ConPTY child reports
-/// a console of the preset size, its stdout is a console device, the
-/// parent's redirected stdout did not leak into it, and its output arrives
+/// a console of the preset size, its stdout is a console device, none of
+/// the parent's redirected streams is in its handle table (`heldBy`, by
+/// object: the old by-value probe flaked when an unrelated handle of the
+/// child's own had the same value), and its output arrives
 /// on the master (forwarded with a prefix) — never directly on the
 /// parent's stdout. This is the `STARTF_USESTDHANDLES`-with-null-handles
 /// path: without it, a console child of a redirected parent would get the
@@ -2188,6 +2369,7 @@ private extern (Windows) int getsockname(size_t s, void* addr, int* length) noth
 @system unittest
 {
     requireConPty();
+    requireHeldBy();
     Sched s;
     schedOrSkip(s);
     auto r = s.run(() {
