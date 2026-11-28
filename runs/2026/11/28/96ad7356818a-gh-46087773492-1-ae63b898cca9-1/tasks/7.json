@@ -1,0 +1,1 @@
+{"tasks":[{"id":"test:dub-manifest-nix-wasm:unittest:parallel","series":"fe56b8d2a96c9a489c55cb6c7e84d87277cfc41f3dcd5293082cca1a896e49c1","outcome":"passed","start":931007214400,"end":931037503400,"metrics":{"task.wall":30289000}}]}
