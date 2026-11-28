@@ -89,6 +89,19 @@ struct TtyReporter
                 else
                     tasks.output(o.task.value, e.text);
             },
+            (const TaskNotice n) {
+                // Whatever the task's policy and outcome (TDM21), a line
+                // each, prefixed.
+                import std.algorithm.iteration : splitter;
+
+                foreach (l; e.text.splitter('\n'))
+                {
+                    auto w = appender!string;
+                    writeNoticePrefix(w, *graph, n.task);
+                    w.put(l);
+                    region.printAbove(w[]);
+                }
+            },
             (const TaskFinished f) {
                 blocks.finished(f.task, f.outcome, f.elapsed);
                 tally.add(f.outcome);

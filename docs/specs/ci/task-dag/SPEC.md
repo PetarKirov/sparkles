@@ -181,6 +181,9 @@ failure's lines spanning the columns beneath its row. By default the console
 - each failure, with the lines its child wrote that explain it (a test leg's
   passing tests and summary left out), fenced and masked for the CI service
   as the plain transcript is (task-DAG TDO7);
+- each notice a task's driver reports (task-DAG TDM21), as it arrives and
+  whatever the task's outcome: a `Warning` row per line at
+  `LogLevel.warning`, fenced for the CI service at that level;
 - a summary: the packages, the time, how many results were reused and how
   many tasks ran; then each package's coverage, past six packages the total
   and the three lowest.
