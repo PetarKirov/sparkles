@@ -1025,12 +1025,30 @@ Verdict[] oracle17()
 
     // Step 1: recency is the leases' order, not the files' access times.
     {
+        import core.thread : Thread;
+
         auto s = ScratchStore.make("o17");
         s.publish("compile:p.a:x", "A", 100);
         s.publish("compile:p.b:x", "B", 100);
         s.store.releaseLeases();
-        s.store.lease("A");
-        s.store.releaseLeases();
+        // A lease stamps the file's mtime from the kernel's coarse clock, one
+        // tick of 1–10 ms, so a lease in the tick B was published in leaves
+        // the two equal: lease A again until it is the later.
+        long recencyOf(string key)
+        {
+            foreach (e; s.store.entries)
+                if (e.key == key)
+                    return e.recency;
+            return long.min;
+        }
+        foreach (attempt; 0 .. 1000)
+        {
+            s.store.lease("A");
+            s.store.releaseLeases();
+            if (recencyOf("A") > recencyOf("B"))
+                break;
+            Thread.sleep(1.msecs);
+        }
         // An access time pushed far into the past changes nothing.
         const f = buildPath(s.dir, "build", layoutDir, "results", "A", "out", "f");
         setTimes(f, SysTime(0), SysTime.fromUnixTime(2_000_000_000));
