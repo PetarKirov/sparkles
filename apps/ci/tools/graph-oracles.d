@@ -9,7 +9,7 @@
     dependency "sparkles:test-runner-core" path="../../.."
     // The driver the oracles run the graph through, and ci's statement of
     // the workspace inputs it plans against.
-    dflags "-I=$PACKAGE_DIR/../src" "-i=repository_inputs" "-i=graph_driver" "-i=plan_reuse" "-i=test_leg" platform="ldc"
+    dflags "-I=$PACKAGE_DIR/../src" "-i=repository_inputs" "-i=graph_driver" "-i=plan_reuse" "-i=run_resources" "-i=run_scope" "-i=test_leg" platform="ldc"
 
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"
