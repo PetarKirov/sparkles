@@ -44,6 +44,12 @@ This survey answers ten questions:
 
 The shared vocabulary is defined once in [concepts]; the deep-dives use it.
 
+Animation, the problem FRP was invented for, has a catalog of its own:
+[UI animation][ui-animation] surveys how interfaces express motion, and its
+[FRP page][ui-animation-frp] extends the [yampa], [elm] and [reflex] deep-dives
+here with Fran's behaviours, tweens as functions of time and retargeting as
+switching.
+
 **Last reviewed:** November 23, 2026
 
 ---
@@ -162,6 +168,9 @@ The shared vocabulary is defined once in [concepts]; the deep-dives use it.
 - **I want the signal algorithm.** [tc39-signals] (the smallest specification),
   [angular-signals] (the graph the polyfill forked), [solid-signals] (async in the
   graph), then [sodium] (transactions).
+- **I want animation as FRP.** [UI animation § FRP][ui-animation-frp], then
+  [yampa] and [elm] for their runtimes, then the animation catalog's
+  [comparison § FRP and animation][ui-animation-cmp-frp].
 - **I want the operator libraries.** [rxjs], [rx-dotnet], [effect-ts],
   [kotlin-flow], [swift-async-algorithms], [rust-streams], [fs2], [pekko-streams].
 - **I am naming the API.** [comparison § API structure and naming][cmp-api], then
@@ -224,6 +233,9 @@ the [master catalog](#master-catalog). The Sparkles side of the comparison cites
 [solid-components]: ./solid-components.md
 [flutter]: ./flutter.md
 [ui-authoring]: ../ui-authoring/index.md
+[ui-animation]: ../ui-animation/index.md
+[ui-animation-frp]: ../ui-animation/frp.md
+[ui-animation-cmp-frp]: ../ui-animation/comparison.md#frp-and-animation
 [sodium]: ./sodium.md
 [elm]: ./elm.md
 [synchronous-languages]: ./synchronous-languages.md

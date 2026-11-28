@@ -11,6 +11,11 @@ is catalogued elsewhere — [Solid's components][solid-components],
 catalog, [Clay][clay-layout] in the layout catalog, and
 [immediate mode at scale][imlv] in the virtualization catalog.
 
+How components animate — where the animation's state lives in the element
+store, who owns the clock, and what layout and exit animations need from last
+frame (UI-Q9, UI-Q10) — is surveyed in the [UI animation catalog][ui-animation],
+whose [comparison][ui-animation-cmp] ends in candidate designs for both.
+
 This study answers six questions:
 
 1. **What does a component look like, and what is it allowed to do?** — the
@@ -646,6 +651,8 @@ stack at 2¹⁹ slots (fixed on `fix/base-bench-findings`, `dbf273c98`).
 [compose]: ../reactive-programming/jetpack-compose.md
 [clay-layout]: ../ui-layout/clay.md
 [imlv]: ../ui-virtualization/immediate-mode-large-views.md
+[ui-animation]: ../ui-animation/index.md
+[ui-animation-cmp]: ../ui-animation/comparison.md
 [x-insideout-readme]: ./experiments/ui-api-demo/README.md
 [x-insideout-readme]: ./experiments/ui-api-demo/README.md
 [x-insideout-sketch]: ./experiments/ui-api-demo/ui_sketch.d

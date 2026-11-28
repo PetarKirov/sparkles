@@ -7098,6 +7098,107 @@
         ]
       },
       {
+        "text": "UI Animation",
+        "link": "/research/ui-animation/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Cross-Cutting",
+            "collapsed": true,
+            "items": [
+              { "text": "Concepts", "link": "/research/ui-animation/concepts" },
+              {
+                "text": "Comparison",
+                "link": "/research/ui-animation/comparison"
+              },
+              {
+                "text": "Sparkles baseline",
+                "link": "/research/ui-animation/sparkles-baseline"
+              }
+            ]
+          },
+          {
+            "text": "Retained Frameworks",
+            "collapsed": true,
+            "items": [
+              { "text": "Flutter", "link": "/research/ui-animation/flutter" },
+              {
+                "text": "Jetpack Compose",
+                "link": "/research/ui-animation/jetpack-compose"
+              },
+              { "text": "SwiftUI", "link": "/research/ui-animation/swiftui" },
+              {
+                "text": "Core Animation",
+                "link": "/research/ui-animation/core-animation"
+              }
+            ]
+          },
+          {
+            "text": "Web Platform",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "CSS Transitions and Animations",
+                "link": "/research/ui-animation/css-transitions-and-animations"
+              },
+              {
+                "text": "Web Animations",
+                "link": "/research/ui-animation/web-animations"
+              },
+              {
+                "text": "Scroll-driven and View Transitions",
+                "link": "/research/ui-animation/scroll-and-view-transitions"
+              }
+            ]
+          },
+          {
+            "text": "JavaScript Libraries",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Motion and React Spring",
+                "link": "/research/ui-animation/react-motion-and-spring"
+              },
+              { "text": "Svelte", "link": "/research/ui-animation/svelte" }
+            ]
+          },
+          {
+            "text": "Functional Reactive",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Fran, Yampa, Elm, Reflex",
+                "link": "/research/ui-animation/frp"
+              }
+            ]
+          },
+          {
+            "text": "Immediate Mode and Terminal",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Immediate-mode GUIs",
+                "link": "/research/ui-animation/immediate-mode"
+              },
+              {
+                "text": "Terminal UIs",
+                "link": "/research/ui-animation/terminal-uis"
+              }
+            ]
+          },
+          {
+            "text": "Engines and Tools",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Godot, Rive, Lottie, GSAP",
+                "link": "/research/ui-animation/engines-and-tools"
+              }
+            ]
+          }
+        ]
+      },
+      {
         "text": "UI Layout",
         "collapsed": true,
         "items": [
